@@ -5,20 +5,33 @@ static void cmeta_object_clear(cmeta_object_ref *ref) {
         *ref = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
 }
 
+bool cmeta_object_method_provider_valid(
+    const cmeta_object_method_provider *provider) {
+    return provider != NULL && provider->size >= sizeof(*provider) &&
+           cmeta_receiver_method_set_valid(provider->methods) &&
+           provider->bind != NULL;
+}
+
 static cmeta_status cmeta_object_contract_status(
     void *object, const cmeta_data_desc *data,
-    const cmeta_receiver_method_set *methods) {
+    const cmeta_receiver_method_set *methods,
+    const cmeta_object_method_provider *provider) {
     if (object == NULL || !cmeta_data_desc_valid(data))
         return CMETA_INVALID_ARGUMENT;
     if (data->storage_type == NULL ||
         !cmeta_type_desc_valid(data->storage_type))
         return CMETA_TRAIT_MISSING;
-    if (methods == NULL)
-        return CMETA_OK;
-    if (!cmeta_receiver_method_set_valid(methods))
-        return CMETA_INVALID_ARGUMENT;
-    if (!cmeta_type_equal(methods->receiver_type, data->storage_type))
-        return CMETA_TYPE_MISMATCH;
+    if (methods != NULL) {
+        if (!cmeta_receiver_method_set_valid(methods))
+            return CMETA_INVALID_ARGUMENT;
+        if (!cmeta_type_equal(methods->receiver_type, data->storage_type))
+            return CMETA_TYPE_MISMATCH;
+    }
+    if (provider != NULL) {
+        if (!cmeta_object_method_provider_valid(provider) ||
+            provider->methods != methods)
+            return CMETA_INVALID_ARGUMENT;
+    }
     return CMETA_OK;
 }
 
@@ -27,7 +40,8 @@ bool cmeta_object_ref_valid(const cmeta_object_ref *ref) {
         ref->lifetime != CMETA_OBJECT_LIFETIME_BORROWED)
         return false;
     return cmeta_object_contract_status(
-               ref->object, ref->data, ref->methods) == CMETA_OK;
+               ref->object, ref->data, ref->methods,
+               ref->method_provider) == CMETA_OK;
 }
 
 cmeta_status cmeta_object_borrow(
@@ -39,13 +53,38 @@ cmeta_status cmeta_object_borrow(
         return CMETA_INVALID_ARGUMENT;
     cmeta_object_clear(out);
 
-    status = cmeta_object_contract_status(object, data, methods);
+    status = cmeta_object_contract_status(object, data, methods, NULL);
     if (status != CMETA_OK)
         return status;
 
     out->object = object;
     out->data = data;
     out->methods = methods;
+    out->method_provider = NULL;
+    out->lifetime = CMETA_OBJECT_LIFETIME_BORROWED;
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_object_borrow_with_provider(
+    cmeta_object_ref *out, void *object, const cmeta_data_desc *data,
+    const cmeta_object_method_provider *provider) {
+    cmeta_status status;
+
+    if (out == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    cmeta_object_clear(out);
+    if (!cmeta_object_method_provider_valid(provider))
+        return CMETA_INVALID_ARGUMENT;
+
+    status = cmeta_object_contract_status(
+        object, data, provider->methods, provider);
+    if (status != CMETA_OK)
+        return status;
+
+    out->object = object;
+    out->data = data;
+    out->methods = provider->methods;
+    out->method_provider = provider;
     out->lifetime = CMETA_OBJECT_LIFETIME_BORROWED;
     return CMETA_OK;
 }
