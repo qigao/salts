@@ -197,9 +197,9 @@ void cmeta_object_release(cmeta_object_ref *ref);
  * valid only while the native object remains alive and the field is not
  * otherwise invalidated by caller-owned mutation.
  *
- * This phase is intentionally read-only. Reflected field presence alone does
- * not imply write permission; a later mutation API must carry an explicit
- * mutability contract instead of inferring writability from layout metadata.
+ * Reflected field presence alone does not imply write permission.
+ * cmeta_object_field_assign() is admitted only when this object carries an
+ * explicit cmeta_object_field_provider.
  */
 cmeta_status cmeta_object_field_read(
     const cmeta_object_ref *ref, const char *name,
