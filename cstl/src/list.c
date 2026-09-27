@@ -119,6 +119,40 @@ stl_status list_raw_init(list_t *list,
                          element_type->align, element_limit);
 }
 
+static bool list_is_typed_semantic_zero(const list_t *list) {
+  return list != NULL && list->impl == NULL &&
+         list->cmeta.descriptor == &stl_list_container_desc &&
+         list->element_type != NULL &&
+         cmeta_type_desc_valid(list->element_type);
+}
+
+static stl_status list_materialize_for_mutation(
+    list_t *list, list_t *zero_snapshot, bool *materialized) {
+  stl_status status;
+  if (zero_snapshot == NULL || materialized == NULL)
+    return STL_INVALID_ARGUMENT;
+  *materialized = false;
+  if (list_valid(list)) return STL_OK;
+  if (!list_is_typed_semantic_zero(list)) return STL_INVALID_ARGUMENT;
+
+  *zero_snapshot = *list;
+  status = list_raw_init(list, zero_snapshot->element_type, SIZE_MAX);
+  if (status != STL_OK) {
+    *list = *zero_snapshot;
+    return status;
+  }
+  list->generation = zero_snapshot->generation;
+  *materialized = true;
+  return STL_OK;
+}
+
+static void list_rollback_materialization(
+    list_t *list, const list_t *zero_snapshot, bool materialized) {
+  if (!materialized) return;
+  list_raw_destroy_storage(list);
+  *list = *zero_snapshot;
+}
+
 static stl_status list_insert_between(
     list_t *list, list_node_t *previous,
     list_node_t *next, const void *elem,
@@ -149,18 +183,38 @@ static stl_status list_insert_between(
 
 stl_status list_push_front(list_t *list, const void *elem,
                            list_iter_t *out_iterator) {
-  list_impl_t *impl = list_impl(list);
-  if (impl == NULL) return STL_INVALID_ARGUMENT;
-  return list_insert_between(list, NULL, impl->head, elem,
-                             out_iterator);
+  list_t zero_snapshot = {0};
+  list_impl_t *impl;
+  bool materialized = false;
+  stl_status status;
+  if (elem == NULL) return STL_INVALID_ARGUMENT;
+  status = list_materialize_for_mutation(
+      list, &zero_snapshot, &materialized);
+  if (status != STL_OK) return status;
+  impl = list_impl(list);
+  status = list_insert_between(list, NULL, impl->head, elem,
+                               out_iterator);
+  if (status != STL_OK)
+    list_rollback_materialization(list, &zero_snapshot, materialized);
+  return status;
 }
 
 stl_status list_push_back(list_t *list, const void *elem,
                           list_iter_t *out_iterator) {
-  list_impl_t *impl = list_impl(list);
-  if (impl == NULL) return STL_INVALID_ARGUMENT;
-  return list_insert_between(list, impl->tail, NULL, elem,
-                             out_iterator);
+  list_t zero_snapshot = {0};
+  list_impl_t *impl;
+  bool materialized = false;
+  stl_status status;
+  if (elem == NULL) return STL_INVALID_ARGUMENT;
+  status = list_materialize_for_mutation(
+      list, &zero_snapshot, &materialized);
+  if (status != STL_OK) return status;
+  impl = list_impl(list);
+  status = list_insert_between(list, impl->tail, NULL, elem,
+                               out_iterator);
+  if (status != STL_OK)
+    list_rollback_materialization(list, &zero_snapshot, materialized);
+  return status;
 }
 
 static bool list_iterator_matches(const list_t *list,
