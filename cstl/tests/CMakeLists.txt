@@ -18,6 +18,20 @@ cmake_add_test(cstl_imported_metadata_test
   LIBS Salts::Core Salts::CSTL Salts::TinyTest
   FOLDER "cstl/tests")
 
+if(WIN32)
+  add_executable(cstl_imported_tstr_map_smoke
+    cstl_imported_tstr_map_smoke.c)
+  target_link_libraries(cstl_imported_tstr_map_smoke
+    PRIVATE Salts::Core Salts::CSTL)
+  set_target_properties(cstl_imported_tstr_map_smoke PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    FOLDER "cstl/tests")
+  add_test(NAME cstl_imported_tstr_map_smoke
+    COMMAND cstl_imported_tstr_map_smoke)
+endif()
+
 cmake_add_test(cstl_tinytest_test
   SOURCES cstl_tinytest_test.c
   LIBS Salts::CSTL Salts::TinyTest
