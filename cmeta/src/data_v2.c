@@ -1068,6 +1068,22 @@ static bool cmeta_data_value_move_supported_depth(
                     return false;
             }
             return true;
+        case CMETA_DATA_VARIANT: {
+            const cmeta_data_variant_shape *variant =
+                (const cmeta_data_variant_shape *)desc->shape;
+            if (cmeta_data_variant_ops_of(desc) == NULL ||
+                variant == NULL ||
+                (variant->case_count != 0u && variant->cases == NULL))
+                return false;
+            for (i = 0u; i < variant->case_count; ++i) {
+                const cmeta_data_variant_case *item = &variant->cases[i];
+                if (item->value == NULL ||
+                    !cmeta_data_value_move_supported_depth(
+                        item->value, depth + 1u))
+                    return false;
+            }
+            return true;
+        }
         default:
             return cmeta_data_construct_ops_of(desc) != NULL;
     }
@@ -1155,6 +1171,55 @@ static cmeta_status cmeta_data_struct_move(
             }
             return rollback_status == CMETA_OK ? status : rollback_status;
         }
+    }
+    return CMETA_OK;
+}
+
+
+static cmeta_status cmeta_data_variant_move(
+    const cmeta_data_desc *desc, void *destination, void *source) {
+    const cmeta_data_variant_shape *shape;
+    const cmeta_data_variant_case *active_case;
+    bool source_zero = false;
+    bool destination_zero = false;
+    int64_t tag = 0;
+    cmeta_status status;
+
+    if (desc == NULL || destination == NULL || source == NULL ||
+        destination == source ||
+        !cmeta_data_value_move_supported_depth(desc, 0u))
+        return CMETA_TRAIT_MISSING;
+
+    status = cmeta_data_variant_is_zero(desc, source, &source_zero);
+    if (status != CMETA_OK) return status;
+    status = cmeta_data_variant_is_zero(desc, destination, &destination_zero);
+    if (status != CMETA_OK) return status;
+    if (!destination_zero) return CMETA_INVALID_ARGUMENT;
+    if (source_zero) return CMETA_OK;
+
+    status = cmeta_data_variant_active_tag(desc, source, &tag);
+    if (status != CMETA_OK) return status;
+    shape = (const cmeta_data_variant_shape *)desc->shape;
+    active_case = cmeta_data_variant_case_by_tag(shape, tag);
+    if (active_case == NULL || active_case->value == NULL)
+        return CMETA_CALLBACK_ERROR;
+
+    status = cmeta_data_variant_select(desc, destination, tag);
+    if (status != CMETA_OK) return status;
+
+    status = cmeta_data_value_move(
+        active_case->value,
+        (unsigned char *)destination + active_case->offset,
+        (unsigned char *)source + active_case->offset);
+    if (status != CMETA_OK) {
+        (void)cmeta_data_variant_restore_zero(desc, destination);
+        return status;
+    }
+
+    status = cmeta_data_variant_restore_zero(desc, source);
+    if (status != CMETA_OK) {
+        (void)cmeta_data_variant_restore_zero(desc, destination);
+        return CMETA_CALLBACK_ERROR;
     }
     return CMETA_OK;
 }
@@ -1549,6 +1614,8 @@ cmeta_status cmeta_data_value_move(
             return cmeta_data_buffer_move(desc, destination, source);
         case CMETA_DATA_STRUCT:
             return cmeta_data_struct_move(desc, destination, source);
+        case CMETA_DATA_VARIANT:
+            return cmeta_data_variant_move(desc, destination, source);
         default:
             break;
     }
