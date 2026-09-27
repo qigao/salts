@@ -181,6 +181,44 @@ suite("CSTL ownership") {
         counted_destroy(&source);
     }
 
+    it("rolls sequence-family first materialization back when copying fails") {
+        deque_t deque =
+            SALTS_STL_DEQUE_INITIALIZER_WITH_TYPE(
+                counted_value, &counted_type);
+        cstl_stack_t stack =
+            SALTS_STL_STACK_INITIALIZER_WITH_TYPE(
+                counted_value, &counted_type);
+        queue_t queue =
+            SALTS_STL_QUEUE_INITIALIZER_WITH_TYPE(
+                counted_value, &counted_type);
+        heap_t heap =
+            SALTS_STL_HEAP_INITIALIZER_WITH_TYPE(
+                counted_value, &counted_type);
+        deque_t deque_before = deque;
+        cstl_stack_t stack_before = stack;
+        queue_t queue_before = queue;
+        heap_t heap_before = heap;
+        counted_value source;
+
+        counted_reset();
+        source = counted_source(4);
+        counted_copy_allowed = false;
+
+        check_equal(deque_push_back(&deque, &source), STL_OUT_OF_MEMORY);
+        check_equal(stack_push(&stack, &source), STL_OUT_OF_MEMORY);
+        check_equal(queue_push(&queue, &source), STL_OUT_OF_MEMORY);
+        check_equal(heap_push(&heap, &source), STL_OUT_OF_MEMORY);
+
+        check_equal(memcmp(&deque, &deque_before, sizeof(deque)), 0);
+        check_equal(memcmp(&stack, &stack_before, sizeof(stack)), 0);
+        check_equal(memcmp(&queue, &queue_before, sizeof(queue)), 0);
+        check_equal(memcmp(&heap, &heap_before, sizeof(heap)), 0);
+        check_equal(counted_copies, (size_t)0u);
+
+        counted_copy_allowed = true;
+        counted_destroy(&source);
+    }
+
     it("rejects typed vector growth because no default constructor exists") {
         vec_t vec = {0};
         counted_value source;
