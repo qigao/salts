@@ -36,6 +36,7 @@ typedef struct cnet_websocket_impl {
   cnet_websocket_message_type inbound_message_type;
 
   uint8_t *output;
+  mem_buffer_t *output_buffer;
   size_t output_capacity;
   size_t output_size;
 
@@ -48,6 +49,7 @@ typedef struct cnet_websocket_impl {
   bool operation_active;
   bool callback_active;
   bool write_active;
+  bool output_async_pending;
 } cnet_websocket_impl;
 
 static cnet_websocket_impl *cnet_websocket_get(cnet_websocket *websocket) {
@@ -153,11 +155,22 @@ static void cnet_websocket_emit_event(cnet_websocket_impl *impl, cnet_websocket_
 static int cnet_websocket_write_output(cnet_websocket_impl *impl) {
   int status;
   if (impl->output_size == 0u) return SALTS_OK;
+  if (impl->output_async_pending) return SALTS_EBUSY;
+  if (impl->output_buffer != NULL) mem_set_used(impl->output_buffer, impl->output_size);
   impl->write_active = true;
   status = impl->write(impl->user, impl->output, impl->output_size);
   impl->write_active = false;
-  if (status == SALTS_OK) impl->output_size = 0u;
-  else if (status != SALTS_EBUSY) {
+  if (status == SALTS_OK) {
+    impl->output_size = 0u;
+  } else if (status == CNET_WEBSOCKET_WRITE_PENDING) {
+    if (impl->output_buffer == NULL) {
+      impl->output_size = 0u;
+      cnet_websocket_record_error(impl, SALTS_EPROTO);
+      impl->state = CNET_WEBSOCKET_FAILED;
+      return SALTS_EPROTO;
+    }
+    impl->output_async_pending = true;
+  } else if (status != SALTS_EBUSY) {
     impl->output_size = 0u;
     cnet_websocket_record_error(impl, status);
     impl->state = CNET_WEBSOCKET_FAILED;
@@ -194,7 +207,7 @@ static int cnet_websocket_emit_frame(cnet_websocket_impl *impl, uint8_t opcode, 
   }
   impl->output_size = header_size + payload_size;
   status = cnet_websocket_write_output(impl);
-  return status == SALTS_EBUSY ? SALTS_OK : status;
+  return status == SALTS_EBUSY || status == CNET_WEBSOCKET_WRITE_PENDING ? SALTS_OK : status;
 }
 
 static int cnet_websocket_fail(cnet_websocket_impl *impl, int status, uint16_t close_code) {
@@ -387,13 +400,27 @@ int cnet_websocket_init(cnet_websocket *websocket, const cnet_websocket_config *
   total_capacity = config->max_buffered_input_bytes + config->max_message_bytes + output_capacity;
   if (total_capacity == 0u) return SALTS_ERANGE;
 
+  if (config->output_buffer != NULL &&
+      (mem_buffer_data(config->output_buffer) == NULL ||
+       mem_buffer_capacity(config->output_buffer) < output_capacity))
+    return SALTS_EINVAL;
+
   impl = (cnet_websocket_impl *)calloc(1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
   impl->input = (uint8_t *)malloc(config->max_buffered_input_bytes);
   impl->message = (uint8_t *)malloc(config->max_message_bytes);
-  impl->output = (uint8_t *)malloc(output_capacity);
+  if (config->output_buffer != NULL) {
+    impl->output_buffer = mem_buffer_retain(config->output_buffer);
+    impl->output = impl->output_buffer != NULL
+                       ? (uint8_t *)mem_buffer_data(impl->output_buffer)
+                       : NULL;
+    if (impl->output_buffer != NULL) mem_set_used(impl->output_buffer, 0u);
+  } else {
+    impl->output = (uint8_t *)malloc(output_capacity);
+  }
   if (impl->input == NULL || impl->message == NULL || impl->output == NULL) {
-    free(impl->output);
+    if (impl->output_buffer != NULL) mem_buffer_release(impl->output_buffer);
+    else free(impl->output);
     free(impl->message);
     free(impl->input);
     free(impl);
@@ -418,8 +445,11 @@ int cnet_websocket_destroy(cnet_websocket *websocket) {
   if (websocket == NULL) return SALTS_EINVAL;
   impl = cnet_websocket_get(websocket);
   if (impl == NULL) return SALTS_OK;
-  if (impl->operation_active || impl->callback_active || impl->write_active) return SALTS_EBUSY;
-  free(impl->output);
+  if (impl->operation_active || impl->callback_active || impl->write_active ||
+      impl->output_async_pending)
+    return SALTS_EBUSY;
+  if (impl->output_buffer != NULL) mem_buffer_release(impl->output_buffer);
+  else free(impl->output);
   free(impl->message);
   free(impl->input);
   free(impl);
@@ -474,7 +504,9 @@ int cnet_websocket_flush(cnet_websocket *websocket) {
   cnet_websocket_impl *impl = cnet_websocket_get(websocket);
   int status;
   if (impl == NULL) return SALTS_EINVAL;
-  if (impl->operation_active || impl->callback_active || impl->write_active) return SALTS_EBUSY;
+  if (impl->operation_active || impl->callback_active || impl->write_active ||
+      impl->output_async_pending)
+    return SALTS_EBUSY;
   impl->operation_active = true;
   status = cnet_websocket_write_output(impl);
   if (status == SALTS_OK && impl->output_size == 0u && impl->sent_close && impl->received_close &&
@@ -485,6 +517,40 @@ int cnet_websocket_flush(cnet_websocket *websocket) {
     status = cnet_websocket_process_input(impl);
   impl->operation_active = false;
   return status;
+}
+
+int cnet_websocket_write_complete(cnet_websocket *websocket, size_t bytes, int status) {
+  cnet_websocket_impl *impl = cnet_websocket_get(websocket);
+  int process_status = SALTS_OK;
+
+  if (impl == NULL || status > SALTS_OK) return SALTS_EINVAL;
+  if (impl->operation_active || impl->callback_active || impl->write_active) return SALTS_EBUSY;
+  if (!impl->output_async_pending || impl->output_size == 0u) return SALTS_ENOENT;
+
+  impl->operation_active = true;
+  impl->output_async_pending = false;
+  if (status != SALTS_OK) {
+    impl->output_size = 0u;
+    cnet_websocket_record_error(impl, status);
+    impl->state = CNET_WEBSOCKET_FAILED;
+    impl->operation_active = false;
+    return status;
+  }
+  if (bytes != impl->output_size) {
+    impl->output_size = 0u;
+    cnet_websocket_record_error(impl, SALTS_EPROTO);
+    impl->state = CNET_WEBSOCKET_FAILED;
+    impl->operation_active = false;
+    return SALTS_EPROTO;
+  }
+
+  impl->output_size = 0u;
+  if (impl->sent_close && impl->received_close && impl->state == CNET_WEBSOCKET_CLOSING)
+    impl->state = CNET_WEBSOCKET_CLOSED;
+  if (impl->state != CNET_WEBSOCKET_FAILED && impl->state != CNET_WEBSOCKET_CLOSED)
+    process_status = cnet_websocket_process_input(impl);
+  impl->operation_active = false;
+  return process_status;
 }
 
 static int cnet_websocket_send_frame(cnet_websocket_impl *impl, uint8_t opcode, const void *data,
@@ -623,6 +689,7 @@ int cnet_websocket_transport_closed(cnet_websocket *websocket) {
   if (impl->operation_active || impl->callback_active || impl->write_active) return SALTS_EBUSY;
   if (impl->state == CNET_WEBSOCKET_CLOSED) return SALTS_EALREADY;
   impl->operation_active = true;
+  impl->output_async_pending = false;
   impl->output_size = 0u;
   impl->input_start = 0u;
   impl->input_size = 0u;
