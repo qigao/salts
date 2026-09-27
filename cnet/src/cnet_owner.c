@@ -316,6 +316,44 @@ static int cnet_owner_queue_session_work(cnet_owner_impl *impl,
   return SALTS_OK;
 }
 
+static int cnet_owner_cancel_session_work(cnet_owner_impl *impl,
+                                          cnet_owner_session *session) {
+  size_t offset;
+  size_t found = SIZE_MAX;
+  if (impl == NULL || session == NULL) return SALTS_EINVAL;
+  if (!session->owner_work_queued) return SALTS_OK;
+  if (impl->session_work_count == 0u) return SALTS_EPROTO;
+
+  for (offset = 0u; offset < impl->session_work_count; ++offset) {
+    const size_t index =
+        (impl->session_work_head + offset) % impl->connection_capacity;
+    const cnet_session_handle queued = impl->session_work[index];
+    if (queued.slot == session->handle.slot &&
+        queued.generation == session->handle.generation) {
+      found = offset;
+      break;
+    }
+  }
+  if (found == SIZE_MAX) return SALTS_EPROTO;
+
+  for (offset = found; offset + 1u < impl->session_work_count; ++offset) {
+    const size_t destination =
+        (impl->session_work_head + offset) % impl->connection_capacity;
+    const size_t source =
+        (impl->session_work_head + offset + 1u) % impl->connection_capacity;
+    impl->session_work[destination] = impl->session_work[source];
+  }
+  {
+    const size_t tail =
+        (impl->session_work_head + impl->session_work_count - 1u) %
+        impl->connection_capacity;
+    impl->session_work[tail] = (cnet_session_handle){0};
+  }
+  --impl->session_work_count;
+  session->owner_work_queued = false;
+  return SALTS_OK;
+}
+
 static int cnet_owner_process_session_work(cnet_owner_impl *impl) {
   while (impl->session_work_count != 0u) {
     const cnet_session_handle handle = impl->session_work[impl->session_work_head];
@@ -2422,6 +2460,13 @@ int cnet_owner_test_process_session_work(cnet_owner *owner) {
   return impl != NULL ? cnet_owner_process_session_work(impl) : SALTS_EINVAL;
 }
 
+int cnet_owner_test_queue_session_work(cnet_owner *owner,
+                                       cnet_session_handle session) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  return impl != NULL ? cnet_owner_queue_session_work(impl, session)
+                      : SALTS_EINVAL;
+}
+
 int cnet_owner_test_set_send_chunk_bytes(cnet_owner *owner, size_t bytes) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
   if (impl == NULL) return SALTS_EINVAL;
@@ -2489,6 +2534,8 @@ int cnet_owner_release_session(cnet_owner *owner, cnet_session_handle session_ha
     return SALTS_EBUSY;
   status = cnet_session_table_state(impl->sessions, session_handle, &state);
   if (status != SALTS_ENOENT) return SALTS_EBUSY;
+  status = cnet_owner_cancel_session_work(impl, session);
+  if (status != SALTS_OK) return status;
   free(session->receive_buffer);
   memset(session, 0, sizeof(*session));
   --impl->occupied_sessions;
