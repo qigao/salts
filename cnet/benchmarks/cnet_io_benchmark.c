@@ -2194,6 +2194,222 @@ static int io_bench_sg_write_csv(const char *prefix, const char *backend,
   return status;
 }
 
+
+typedef struct io_bench_sg_window_summary {
+  size_t payload_size;
+  size_t segment_count;
+  size_t expected_windows;
+  double p50_delta_vs_flatten;
+  double p50_delta_vs_flatten_mad;
+  double rate_delta_vs_flatten;
+  double rate_delta_vs_flatten_mad;
+  double p50_delta_vs_retained;
+  double p50_delta_vs_retained_mad;
+  double rate_delta_vs_retained;
+  double rate_delta_vs_retained_mad;
+  double vector_submissions_per_op;
+  double vector_spans_per_submission;
+  double profiled_vector_bytes_per_op;
+  double terminal_callbacks_per_op;
+} io_bench_sg_window_summary;
+
+static int io_bench_sg_window_write_csv(
+    const char *prefix, const char *backend,
+    const io_bench_sg_window_summary *rows, size_t count) {
+  char path[IO_BENCH_CSV_LINE_CAPACITY];
+  salts_file_t file;
+  int length;
+  int status;
+  if (prefix == NULL || rows == NULL) return SALTS_OK;
+  if (*prefix == '\0') return SALTS_EINVAL;
+  length = snprintf(path, sizeof(path), "%s.sg-window.csv", prefix);
+  if (length < 0 || (size_t)length >= sizeof(path)) return SALTS_ERANGE;
+  file = salts_fs_open(path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
+                       SALTS_FS_DEFAULT_MODE);
+  if (file == SALTS_INVALID_FILE) return SALTS_EIO;
+  status = io_bench_csv_line(
+      file,
+      "backend,payload_bytes,segments,expected_windows,"
+      "p50_delta_vs_flatten_pct,p50_delta_vs_flatten_mad_pp,"
+      "rate_delta_vs_flatten_pct,rate_delta_vs_flatten_mad_pp,"
+      "p50_delta_vs_retained_pct,p50_delta_vs_retained_mad_pp,"
+      "rate_delta_vs_retained_pct,rate_delta_vs_retained_mad_pp,"
+      "vector_submissions_per_op,vector_spans_per_submission,"
+      "profiled_vector_bytes_per_op,terminal_callbacks_per_op\n");
+  for (size_t index = 0u; status == SALTS_OK && index < count; ++index) {
+    const io_bench_sg_window_summary *row = &rows[index];
+    status = io_bench_csv_line(
+        file,
+        "%s,%zu,%zu,%zu,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,"
+        "%.6f,%.6f,%.6f,%.6f\n",
+        backend, row->payload_size, row->segment_count, row->expected_windows,
+        row->p50_delta_vs_flatten, row->p50_delta_vs_flatten_mad,
+        row->rate_delta_vs_flatten, row->rate_delta_vs_flatten_mad,
+        row->p50_delta_vs_retained, row->p50_delta_vs_retained_mad,
+        row->rate_delta_vs_retained, row->rate_delta_vs_retained_mad,
+        row->vector_submissions_per_op, row->vector_spans_per_submission,
+        row->profiled_vector_bytes_per_op, row->terminal_callbacks_per_op);
+  }
+  {
+    const int close_status = salts_fs_close(file);
+    if (status == SALTS_OK) status = close_status;
+  }
+  return status;
+}
+
+static int io_bench_compare_sg_windows(
+    const cnet_io_benchmark_backend *backend, const char *prefix) {
+  enum {
+    WINDOW_METHODS = 3,
+    WINDOW_REPLICATES = 4,
+    WINDOW_CASES = 6,
+    WINDOW_WARMUPS = 8,
+    WINDOW_EXCHANGES = 32,
+    WINDOW_PROFILE_WARMUPS = 4,
+    WINDOW_PROFILE_EXCHANGES = 16
+  };
+  static const struct {
+    size_t payload_size;
+    size_t segment_count;
+  } cases[WINDOW_CASES] = {
+      {65536u, 16u}, {65536u, 17u}, {65536u, 32u},
+      {1024u * 1024u, 16u}, {1024u * 1024u, 17u}, {1024u * 1024u, 32u}};
+  static const io_bench_sg_method methods[WINDOW_METHODS] = {
+      {"cnet_sendv_flatten", IO_BENCH_CNET, IO_BENCH_SEND_VECTOR_COPY, true, true},
+      {"cnet_retained_sg", IO_BENCH_CNET, IO_BENCH_SEND_RETAINED_VECTOR, false, false},
+      {"cnet_retained", IO_BENCH_CNET, IO_BENCH_SEND_RETAINED, false, false}};
+  io_bench_sg_window_summary summaries[WINDOW_CASES] = {{0}};
+
+  printf("\nCNet retained-SG NativeIO-window qualification: backend=%s; "
+         "%d repeats, %d warmups, %d persistent TCP RTTs/run.\n",
+         backend->name, WINDOW_REPLICATES, WINDOW_WARMUPS, WINDOW_EXCHANGES);
+
+  for (size_t case_index = 0u; case_index < WINDOW_CASES; ++case_index) {
+    io_bench_result *runs =
+        (io_bench_result *)calloc(WINDOW_METHODS * WINDOW_REPLICATES, sizeof(*runs));
+    io_bench_result diagnostic = {0};
+    double flatten_p50[WINDOW_REPLICATES];
+    double sg_p50[WINDOW_REPLICATES];
+    double retained_p50[WINDOW_REPLICATES];
+    double flatten_rate[WINDOW_REPLICATES];
+    double sg_rate[WINDOW_REPLICATES];
+    double retained_rate[WINDOW_REPLICATES];
+    cnet_benchmark_summary p50_vs_flatten = {0};
+    cnet_benchmark_summary rate_vs_flatten = {0};
+    cnet_benchmark_summary p50_vs_retained = {0};
+    cnet_benchmark_summary rate_vs_retained = {0};
+    const size_t payload_size = cases[case_index].payload_size;
+    const size_t segment_count = cases[case_index].segment_count;
+    const size_t expected_windows =
+        (segment_count + NATIVE_IO_VECTOR_MAX - 1u) / NATIVE_IO_VECTOR_MAX;
+    int status = SALTS_OK;
+
+    if (runs == NULL) return SALTS_ENOMEM;
+    for (size_t repeat = 0u; repeat < WINDOW_REPLICATES; ++repeat) {
+      static const size_t balanced_order[WINDOW_METHODS] = {0u, 2u, 1u};
+      for (size_t order = 0u; order < WINDOW_METHODS; ++order) {
+        const size_t method =
+            (balanced_order[order] + case_index + repeat) % WINDOW_METHODS;
+        io_bench_result *result = &runs[method * WINDOW_REPLICATES + repeat];
+        status = io_bench_run_counted(
+            IO_BENCH_TCP, methods[method].driver, payload_size, false,
+            backend->kind, methods[method].mode, segment_count,
+            WINDOW_WARMUPS, WINDOW_EXCHANGES, result);
+        if (status != SALTS_OK) {
+          free(runs);
+          return status;
+        }
+      }
+    }
+
+    for (size_t repeat = 0u; repeat < WINDOW_REPLICATES; ++repeat) {
+      const io_bench_result *flatten = &runs[0u * WINDOW_REPLICATES + repeat];
+      const io_bench_result *sg = &runs[1u * WINDOW_REPLICATES + repeat];
+      const io_bench_result *retained = &runs[2u * WINDOW_REPLICATES + repeat];
+      flatten_p50[repeat] = (double)flatten->p50_ns;
+      sg_p50[repeat] = (double)sg->p50_ns;
+      retained_p50[repeat] = (double)retained->p50_ns;
+      flatten_rate[repeat] = io_bench_rate(flatten);
+      sg_rate[repeat] = io_bench_rate(sg);
+      retained_rate[repeat] = io_bench_rate(retained);
+    }
+
+    status = cnet_benchmark_summarize_paired_delta(
+        flatten_p50, sg_p50, WINDOW_REPLICATES, &p50_vs_flatten);
+    if (status == SALTS_OK)
+      status = cnet_benchmark_summarize_paired_delta(
+          flatten_rate, sg_rate, WINDOW_REPLICATES, &rate_vs_flatten);
+    if (status == SALTS_OK)
+      status = cnet_benchmark_summarize_paired_delta(
+          retained_p50, sg_p50, WINDOW_REPLICATES, &p50_vs_retained);
+    if (status == SALTS_OK)
+      status = cnet_benchmark_summarize_paired_delta(
+          retained_rate, sg_rate, WINDOW_REPLICATES, &rate_vs_retained);
+    if (status != SALTS_OK) {
+      free(runs);
+      return status;
+    }
+
+    status = io_bench_run_counted(
+        IO_BENCH_TCP, IO_BENCH_CNET, payload_size, true, backend->kind,
+        IO_BENCH_SEND_RETAINED_VECTOR, segment_count,
+        WINDOW_PROFILE_WARMUPS, WINDOW_PROFILE_EXCHANGES, &diagnostic);
+    if (status != SALTS_OK) {
+      free(runs);
+      return status;
+    }
+    if (diagnostic.round_trips == 0u ||
+        diagnostic.cnet_profile.owner.vector_submit_calls <
+            (uint64_t)(expected_windows * diagnostic.round_trips) ||
+        diagnostic.cnet_send_terminal_calls != diagnostic.round_trips) {
+      free(runs);
+      return SALTS_EPROTO;
+    }
+
+    summaries[case_index] = (io_bench_sg_window_summary){
+        payload_size,
+        segment_count,
+        expected_windows,
+        p50_vs_flatten.median,
+        p50_vs_flatten.mad,
+        rate_vs_flatten.median,
+        rate_vs_flatten.mad,
+        p50_vs_retained.median,
+        p50_vs_retained.mad,
+        rate_vs_retained.median,
+        rate_vs_retained.mad,
+        (double)diagnostic.cnet_profile.owner.vector_submit_calls /
+            (double)diagnostic.round_trips,
+        diagnostic.cnet_profile.owner.vector_submit_calls == 0u
+            ? 0.0
+            : (double)diagnostic.cnet_profile.owner.vector_submit_spans /
+                  (double)diagnostic.cnet_profile.owner.vector_submit_calls,
+        (double)diagnostic.cnet_profile.owner.vector_submit_bytes /
+            (double)diagnostic.round_trips,
+        (double)diagnostic.cnet_send_terminal_calls /
+            (double)diagnostic.round_trips};
+
+    printf("SG window delta payload=%zu segments=%zu windows=%zu: "
+           "retained-SG vs sendv-flatten p50=%+.2f%% +/- %.2fpp, "
+           "rate=%+.2f%% +/- %.2fpp; vs contiguous-retained "
+           "p50=%+.2f%% +/- %.2fpp, rate=%+.2f%% +/- %.2fpp; "
+           "vector submissions/op=%.3f, spans/submission=%.3f, "
+           "profiled vector bytes/op=%.1f, terminals/op=%.3f\n",
+           payload_size, segment_count, expected_windows,
+           p50_vs_flatten.median, p50_vs_flatten.mad,
+           rate_vs_flatten.median, rate_vs_flatten.mad,
+           p50_vs_retained.median, p50_vs_retained.mad,
+           rate_vs_retained.median, rate_vs_retained.mad,
+           summaries[case_index].vector_submissions_per_op,
+           summaries[case_index].vector_spans_per_submission,
+           summaries[case_index].profiled_vector_bytes_per_op,
+           summaries[case_index].terminal_callbacks_per_op);
+    free(runs);
+  }
+
+  return io_bench_sg_window_write_csv(prefix, backend->name, summaries, WINDOW_CASES);
+}
+
 static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const char *prefix) {
   enum { SG_METHODS = 6, SG_REPLICATES = 6, SG_PAYLOADS = 4, SG_SEGMENTS = 4 };
   static const size_t payloads[SG_PAYLOADS] = {1024u, 8192u, 32768u, 65536u};
