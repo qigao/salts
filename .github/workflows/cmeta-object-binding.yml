@@ -87,6 +87,9 @@ jobs:
           ctest --test-dir build/linux-gcc-release \
             --output-on-failure \
             -R '^(cmeta_object_test|cmeta_data_test|cmeta_method_test|cmeta_invokable_test|cmeta_header_cpp_test)
+        shell: bash
+        run: git diff --check
+
 
       - name: Source hygiene
         shell: bash
