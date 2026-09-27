@@ -554,6 +554,78 @@ spec("CNet bounded write ownership queue") {
     check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
   }
 
+  it("resumes inside a retained range across the native vector window boundary") {
+    enum { RANGE_COUNT = 17u, RANGE_BYTES = 2u };
+    cnet_write_queue queue = {0};
+    const cnet_write_queue_config config = {1u, 1u, 64u, 64u};
+    const cnet_session_handle connection = {1u, 18u};
+    cnet_write_queue_free_probe free_probe;
+    mem_buffer_t *buffer;
+    mem_slice_t slices[RANGE_COUNT];
+    cnet_write_handle handle = {0};
+    cnet_write_view view = {0};
+    native_io_buffer_span spans[NATIVE_IO_VECTOR_MAX] = {{0}};
+    size_t span_count = 0u;
+    size_t span_bytes = 0u;
+
+    atomic_init(&free_probe.freed, 0);
+    check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
+    buffer = cnet_write_queue_external(RANGE_COUNT * RANGE_BYTES, 0u, &free_probe);
+    check_true(buffer != NULL);
+    for (size_t index = 0u; index < RANGE_COUNT * RANGE_BYTES; ++index)
+      mem_buffer_data(buffer)[index] = (char)(index + 1u);
+    for (size_t index = 0u; index < RANGE_COUNT; ++index)
+      slices[index] = mem_slice(buffer, index * RANGE_BYTES, RANGE_BYTES);
+
+    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, slices,
+                                                RANGE_COUNT, false, &handle),
+                SALTS_OK);
+    for (size_t index = 0u; index < RANGE_COUNT; ++index)
+      mem_slice_release(&slices[index]);
+    mem_buffer_release(buffer);
+
+    check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
+    /*
+     * Limit the first native submission to 31 bytes: 15 complete 2-byte ranges
+     * plus one byte of range 16. This fills all 16 NativeIO spans while leaving
+     * the logical cursor inside range 16.
+     */
+    check_equal(cnet_write_queue_build_vector(&queue, &view, 31u, spans,
+                                              &span_count, &span_bytes),
+                SALTS_OK);
+    check_equal(span_count, (size_t)NATIVE_IO_VECTOR_MAX);
+    check_equal(span_bytes, (size_t)31u);
+    check_equal(spans[NATIVE_IO_VECTOR_MAX - 1u].length, (size_t)1u);
+    check_equal(((const unsigned char *)
+                     spans[NATIVE_IO_VECTOR_MAX - 1u].data)[0],
+                (unsigned char)31u);
+
+    check_equal(cnet_write_queue_advance(&queue, &view, span_bytes), SALTS_OK);
+    check_equal(view.offset, (size_t)31u);
+    check_equal(view.remaining, (size_t)3u);
+
+    span_count = 0u;
+    span_bytes = 0u;
+    check_equal(cnet_write_queue_build_vector(&queue, &view, view.remaining,
+                                              spans, &span_count, &span_bytes),
+                SALTS_OK);
+    check_equal(span_count, (size_t)2u);
+    check_equal(span_bytes, (size_t)3u);
+    /* Resume with the second byte of range 16, then the complete range 17. */
+    check_equal(spans[0].length, (size_t)1u);
+    check_equal(((const unsigned char *)spans[0].data)[0], (unsigned char)32u);
+    check_equal(spans[1].length, (size_t)2u);
+    check_equal(((const unsigned char *)spans[1].data)[0], (unsigned char)33u);
+    check_equal(((const unsigned char *)spans[1].data)[1], (unsigned char)34u);
+
+    check_equal(cnet_write_queue_advance(&queue, &view, span_bytes), SALTS_OK);
+    check_equal(view.remaining, (size_t)0u);
+    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
+    check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 1);
+    check_equal(cnet_write_queue_close(&queue), SALTS_OK);
+    check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
+  }
+
   it("preserves FIFO around one multi-window retained logical write") {
     cnet_write_queue queue = {0};
     const cnet_write_queue_config config = {1u, 4u, 96u, 96u};
