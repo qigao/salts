@@ -29,4 +29,21 @@ if(wake_marker EQUAL -1)
   message(FATAL_ERROR "CNet concurrent wake contract marker missing")
 endif()
 
-message(STATUS "CNet client single-owner data-path lock contract passed")
+foreach(direct_marker
+    "cnet_shards_send_buffer_direct(&impl->shards"
+    "cnet_shards_send_slice_direct(&impl->shards"
+    "cnet_shards_send_slicev_direct(&impl->shards"
+    "cnet_shards_receive_direct(&impl->shards"
+    "cnet_shards_close_direct(&impl->shards")
+  string(FIND "${data_path}" "${direct_marker}" direct_path)
+  if(direct_path EQUAL -1)
+    message(FATAL_ERROR "CNet owner-local direct path missing: ${direct_marker}")
+  endif()
+endforeach()
+
+string(FIND "${data_path}" "if (cnet_active_callback_client == impl)" callback_marker)
+if(callback_marker EQUAL -1)
+  message(FATAL_ERROR "CNet callback reentrancy routing marker missing")
+endif()
+
+message(STATUS "CNet client single-owner lock/direct-path contract passed")
