@@ -2,6 +2,7 @@
 #define CNET_WEBSOCKET_H
 
 #include <salts/error_codes.h>
+#include <salts_buffer.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -19,7 +20,8 @@ enum {
   CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR = 1002,
   CNET_WEBSOCKET_CLOSE_INVALID_TEXT = 1007,
   CNET_WEBSOCKET_CLOSE_MESSAGE_TOO_BIG = 1009,
-  CNET_WEBSOCKET_CLOSE_ABNORMAL = 1006
+  CNET_WEBSOCKET_CLOSE_ABNORMAL = 1006,
+  CNET_WEBSOCKET_WRITE_PENDING = 1
 };
 
 typedef struct cnet_websocket {
@@ -61,8 +63,14 @@ typedef struct cnet_websocket_event {
 } cnet_websocket_event;
 
 /**
- * The callback must copy the complete frame before returning SALTS_OK.
- * SALTS_EBUSY retains exactly one frame inside the session for flush retry.
+ * Write one complete frame.
+ *
+ * SALTS_OK means the frame reached a synchronous terminal before return.
+ * SALTS_EBUSY means the frame was not admitted and remains queued for retry.
+ * CNET_WEBSOCKET_WRITE_PENDING is valid only when config.output_buffer is
+ * supplied: async retained admission succeeded, the engine freezes that frame,
+ * and the owner must later call cnet_websocket_write_complete() from the
+ * authoritative transport terminal.
  */
 typedef int (*cnet_websocket_write_fn)(void *user, const uint8_t *data, size_t size);
 typedef void (*cnet_websocket_event_fn)(void *user, cnet_websocket *websocket,
@@ -77,6 +85,7 @@ typedef struct cnet_websocket_config {
   cnet_websocket_write_fn write;
   cnet_websocket_event_fn on_event;
   void *user;
+  mem_buffer_t *output_buffer;
 } cnet_websocket_config;
 
 /**
@@ -122,6 +131,15 @@ int cnet_websocket_feed(cnet_websocket *websocket, const void *data, size_t size
  * errors are terminal and move the session to CNET_WEBSOCKET_FAILED.
  */
 int cnet_websocket_flush(cnet_websocket *websocket);
+
+/**
+ * Settle one async retained output admitted with CNET_WEBSOCKET_WRITE_PENDING.
+ *
+ * status == SALTS_OK requires bytes to equal the complete retained frame size.
+ * A successful terminal clears that frame and resumes buffered input/state
+ * progress. A failed terminal records status and makes the session FAILED.
+ */
+int cnet_websocket_write_complete(cnet_websocket *websocket, size_t bytes, int status);
 
 /**
  * Send one data fragment. message_type identifies the complete message on
