@@ -87,7 +87,9 @@ W3 then enables bounded multiple-write FIFO admission. NativeIO now exposes
 bounded scatter/gather writes, but `cnet_sendv()` deliberately remains the
 copy-on-admission convenience API: its caller-owned segment descriptors and
 payload pointers are borrowed only for the synchronous call. Zero-copy vectored
-stream sends use the explicit retained `cnet_send_slicev()` contract instead:
+stream sends use the explicit retained `cnet_send_slicev()` contract instead.
+`cnet_send_slicev_and_close()` uses the same retained scatter/gather ownership
+for the final logical write and closes only after that vector settles:
 CNet validates 1..16 canonical `mem_slice_t` ranges, retains each unique
 backing buffer once, copies only fixed range descriptors into the owner-local
 write slot, and preserves those ranges into NativeIO scatter/gather until the

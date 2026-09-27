@@ -2245,6 +2245,26 @@ int cnet_owner_send_slicev_direct(cnet_owner *owner,
   return cnet_owner_finish_write_admission(impl, session, handle);
 }
 
+int cnet_owner_send_slicev_close_direct(cnet_owner *owner,
+                                        cnet_session_handle session_handle,
+                                        const mem_slice_t *segments, size_t segment_count) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  cnet_write_handle handle = {0};
+  native_io_endpoint endpoint;
+  int status = cnet_owner_send_direct_ready(impl, session_handle, &session);
+  if (status != SALTS_OK) return status;
+  if (session->peer.scheme == CNET_URI_TLS || session->peer.scheme == CNET_URI_UDP)
+    return SALTS_ENOTSUP;
+  endpoint = cnet_transport_write_endpoint(&session->transport);
+  if (!native_io_backend_endpoint_supports_vector_write(&impl->backend, endpoint))
+    return SALTS_ENOTSUP;
+  status = cnet_write_queue_enqueue_slicev(&impl->writes, session_handle, segments,
+                                           segment_count, true, &handle);
+  if (status != SALTS_OK) return status;
+  return cnet_owner_finish_write_admission(impl, session, handle);
+}
+
 int cnet_owner_sendv_direct(cnet_owner *owner, cnet_session_handle session_handle,
                             const cnet_const_buffer *segments, size_t segment_count) {
   cnet_owner_impl *impl = cnet_owner_get(owner);

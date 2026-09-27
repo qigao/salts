@@ -135,6 +135,9 @@ int cnet_owner_send_slice_direct(cnet_owner *owner, cnet_session_handle session,
                                  const mem_slice_t *slice);
 int cnet_owner_send_slicev_direct(cnet_owner *owner, cnet_session_handle session,
                                   const mem_slice_t *segments, size_t segment_count);
+/** Admits one retained final vector through the same close-after-send write-slot semantics. */
+int cnet_owner_send_slicev_close_direct(cnet_owner *owner, cnet_session_handle session,
+                                        const mem_slice_t *segments, size_t segment_count);
 int cnet_owner_sendv_direct(cnet_owner *owner, cnet_session_handle session,
                             const cnet_const_buffer *segments, size_t segment_count);
 /** Admits one copied final write behind already accepted write slots. */

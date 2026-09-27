@@ -89,6 +89,12 @@ using cnet_send_slicev_function =
     int (*)(cnet_client *, cnet_connection, const mem_slice_t *, std::size_t);
 static_assert(std::is_same<decltype(&cnet_send_slicev), cnet_send_slicev_function>::value,
               "retained-vector send must keep its C linkage signature");
+using cnet_send_slicev_and_close_function =
+    int (*)(cnet_client *, cnet_connection, const mem_slice_t *, std::size_t);
+static_assert(
+    std::is_same<decltype(&cnet_send_slicev_and_close),
+                 cnet_send_slicev_and_close_function>::value,
+    "retained final-vector send must keep its C linkage signature");
 using cnet_websocket_write_complete_function =
     int (*)(cnet_websocket *, std::size_t, int);
 static_assert(
