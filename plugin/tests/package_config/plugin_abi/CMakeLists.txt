@@ -10,6 +10,19 @@ if(NOT TARGET Salts::Plugin)
   message(FATAL_ERROR "installed package is missing Salts::Plugin")
 endif()
 
+foreach(retired_target IN ITEMS
+    Salts::BindingsCpp
+    Salts::Lua
+    Salts::QuickJS
+    Salts::CBind
+    Salts::PluginCFlow
+    Salts::PluginCFlowABI)
+  if(TARGET ${retired_target})
+    message(FATAL_ERROR
+      "installed Salts 1.8 package still exports retired target ${retired_target}")
+  endif()
+endforeach()
+
 get_target_property(plugin_abi_type Salts::PluginABI TYPE)
 if(NOT plugin_abi_type STREQUAL "INTERFACE_LIBRARY")
   message(FATAL_ERROR
