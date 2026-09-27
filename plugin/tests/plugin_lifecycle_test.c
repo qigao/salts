@@ -94,7 +94,7 @@ static void lifecycle_send_worker(void *arg) {
 
         {
             plugin_lifecycle_test_api *api =
-                (plugin_lifecycle_test_api *)entry->interface_value;
+                (plugin_lifecycle_test_api *)entry->value.interface.value;
             if (!plugin_lifecycle_test_api_valid(api)) {
                 atomic_store(&worker->unexpected,
                              (int)SALTS_PLUGIN_INCOMPATIBLE_CONTRACT);
@@ -168,7 +168,7 @@ describe("lease-owned DSO access") {
         check_not_null(entry);
         {
             plugin_lifecycle_test_api *api =
-                (plugin_lifecycle_test_api *)entry->interface_value;
+                (plugin_lifecycle_test_api *)entry->value.interface.value;
             check_true(plugin_lifecycle_test_api_valid(api));
             check_true(plugin_lifecycle_test_api_send(api, 7));
             check_equal(plugin_lifecycle_test_api_accepted(api),
