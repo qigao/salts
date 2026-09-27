@@ -11,6 +11,9 @@
 
 #define CNET_WRITE_SLOT_NONE UINT32_MAX
 
+_Static_assert(CNET_RETAINED_VECTOR_MAX >= NATIVE_IO_VECTOR_MAX,
+               "CNet logical retained vectors must cover one NativeIO window");
+
 typedef enum cnet_write_entry_state {
   CNET_WRITE_ENTRY_FREE = 0,
   CNET_WRITE_ENTRY_QUEUED
