@@ -8,6 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+_Static_assert(CNET_RETAINED_VECTOR_MAX >= 32u,
+               "CNet logical retained vector must cover 32 ranges");
+
 typedef struct cnet_write_queue_free_probe {
   atomic_int freed;
 } cnet_write_queue_free_probe;
@@ -369,6 +372,81 @@ spec("CNet bounded write ownership queue") {
     check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
   }
 
+  it("windows a 32-range logical retained vector through two native batches") {
+    cnet_write_queue queue = {0};
+    const cnet_write_queue_config config = {1u, 1u, 64u, 64u};
+    const cnet_session_handle connection = {1u, 16u};
+    cnet_write_queue_free_probe free_probe;
+    mem_buffer_t *buffer;
+    mem_slice_t slices[32];
+    cnet_write_handle handle = {0};
+    cnet_write_view view = {0};
+    native_io_buffer_span spans[NATIVE_IO_VECTOR_MAX] = {{0}};
+    size_t span_count = 0u;
+    size_t span_bytes = 0u;
+
+    atomic_init(&free_probe.freed, 0);
+    check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
+    buffer = cnet_write_queue_external(32u, 0u, &free_probe);
+    check_true(buffer != NULL);
+    for (size_t index = 0u; index < 32u; ++index) {
+      mem_buffer_data(buffer)[index] = (char)(index + 1u);
+      slices[index] = mem_slice(buffer, index, 1u);
+      check_equal(slices[index].length, (size_t)1u);
+    }
+    check_equal(mem_buffer_ref_count(buffer), UINT32_C(33));
+
+    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, slices, 32u,
+                                                false, &handle),
+                SALTS_OK);
+    /* Thirty-two slice refs plus the caller ref plus one unique queue owner. */
+    check_equal(mem_buffer_ref_count(buffer), UINT32_C(34));
+    for (size_t index = 0u; index < 32u; ++index)
+      mem_slice_release(&slices[index]);
+    check_equal(mem_buffer_ref_count(buffer), UINT32_C(2));
+    mem_buffer_release(buffer);
+    check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 0);
+
+    check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
+    check_equal(view.size, (size_t)32u);
+    check_equal(view.remaining, (size_t)32u);
+    check_true(view.vector_write);
+
+    check_equal(cnet_write_queue_build_vector(&queue, &view, view.remaining,
+                                              spans, &span_count, &span_bytes),
+                SALTS_OK);
+    check_equal(span_count, (size_t)NATIVE_IO_VECTOR_MAX);
+    check_equal(span_bytes, (size_t)NATIVE_IO_VECTOR_MAX);
+    for (size_t index = 0u; index < NATIVE_IO_VECTOR_MAX; ++index) {
+      check_equal(spans[index].length, (size_t)1u);
+      check_equal(((const unsigned char *)spans[index].data)[0],
+                  (unsigned char)(index + 1u));
+    }
+
+    check_equal(cnet_write_queue_advance(&queue, &view, span_bytes), SALTS_OK);
+    check_equal(view.offset, (size_t)NATIVE_IO_VECTOR_MAX);
+    check_equal(view.remaining, (size_t)(32u - NATIVE_IO_VECTOR_MAX));
+    span_count = 0u;
+    span_bytes = 0u;
+    check_equal(cnet_write_queue_build_vector(&queue, &view, view.remaining,
+                                              spans, &span_count, &span_bytes),
+                SALTS_OK);
+    check_equal(span_count, (size_t)(32u - NATIVE_IO_VECTOR_MAX));
+    check_equal(span_bytes, (size_t)(32u - NATIVE_IO_VECTOR_MAX));
+    for (size_t index = 0u; index < span_count; ++index) {
+      check_equal(spans[index].length, (size_t)1u);
+      check_equal(((const unsigned char *)spans[index].data)[0],
+                  (unsigned char)(NATIVE_IO_VECTOR_MAX + index + 1u));
+    }
+
+    check_equal(cnet_write_queue_advance(&queue, &view, span_bytes), SALTS_OK);
+    check_equal(view.remaining, (size_t)0u);
+    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
+    check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 1);
+    check_equal(cnet_write_queue_close(&queue), SALTS_OK);
+    check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
+  }
+
   it("rejects invalid retained vectors without acquiring backing references") {
     cnet_write_queue queue = {0};
     const cnet_write_queue_config config = {1u, 1u, 16u, 16u};
@@ -393,7 +471,8 @@ spec("CNet bounded write ownership queue") {
     check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, segments, 0u, false, &handle),
                 SALTS_EINVAL);
     check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, segments,
-                                                NATIVE_IO_VECTOR_MAX + 1u, false, &handle),
+                                                CNET_RETAINED_VECTOR_MAX + 1u,
+                                                false, &handle),
                 SALTS_EINVAL);
     check_equal(mem_buffer_ref_count(buffer), UINT32_C(1));
 
