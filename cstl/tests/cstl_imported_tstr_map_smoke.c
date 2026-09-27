@@ -7,10 +7,6 @@ typed(Map, ImportSafeTstrSmokeMap, tstr, int,
       SALTS_TSTR_CMETA_TYPE_REF, SALTS_TSTR_CMETA_DATA_REF,
       &cmeta_type_int, &cmeta_data_int);
 
-static int fail_if(int condition, int code) {
-  return condition ? code : 0;
-}
-
 int main(void) {
   ImportSafeTstrSmokeMap values = {0};
   tstr beta = tstr_dup("beta");
