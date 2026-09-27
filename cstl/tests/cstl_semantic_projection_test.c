@@ -447,6 +447,82 @@ spec("CSTL semantic projection") {
                     &meta_list_collection_data, &list), CMETA_OK);
   }
 
+  it("materializes Deque Stack Queue and Heap typed zero on first mutation") {
+    deque_t deque =
+        SALTS_STL_DEQUE_INITIALIZER_WITH_TYPE(int, &cmeta_type_int);
+    cstl_stack_t stack =
+        SALTS_STL_STACK_INITIALIZER_WITH_TYPE(int, &cmeta_type_int);
+    queue_t queue =
+        SALTS_STL_QUEUE_INITIALIZER_WITH_TYPE(int, &cmeta_type_int);
+    heap_t heap =
+        SALTS_STL_HEAP_INITIALIZER_WITH_TYPE(int, &cmeta_type_int);
+    deque_t raw_deque = {0};
+    cstl_stack_t raw_stack = {0};
+    queue_t raw_queue = {0};
+    heap_t raw_heap = {0};
+    int first = 3;
+    int second = 5;
+
+    check_true(deque_empty(&deque));
+    check_true(stack_empty(&stack));
+    check_true(queue_empty(&queue));
+    check_true(heap_empty(&heap));
+    check_false(deque.initialized);
+    check_false(stack.raw.initialized);
+    check_false(queue.raw.initialized);
+    check_false(heap.initialized);
+
+    check_equal(deque_push_back(&deque, &first), STL_OK);
+    check_equal(stack_push(&stack, &first), STL_OK);
+    check_equal(queue_push(&queue, &first), STL_OK);
+    check_equal(heap_push(&heap, &first), STL_OK);
+
+    check_true(deque.initialized);
+    check_true(stack.raw.initialized);
+    check_true(queue.raw.initialized);
+    check_true(heap.initialized);
+    check_equal(deque.element_limit, (size_t)SIZE_MAX);
+    check_equal(stack.raw.element_limit, (size_t)SIZE_MAX);
+    check_equal(queue.raw.element_limit, (size_t)SIZE_MAX);
+    check_equal(heap.element_limit, (size_t)SIZE_MAX);
+    check_true(deque.cmeta.descriptor == &stl_deque_container_desc);
+    check_true(stack.raw.cmeta.descriptor == &stl_stack_container_desc);
+    check_true(queue.raw.cmeta.descriptor == &stl_queue_container_desc);
+    check_true(heap.cmeta.descriptor == &stl_heap_container_desc);
+
+    deque_destroy(&deque);
+    stack_destroy(&stack);
+    queue_destroy(&queue);
+    heap_destroy(&heap);
+    check_false(deque.initialized);
+    check_false(stack.raw.initialized);
+    check_false(queue.raw.initialized);
+    check_false(heap.initialized);
+    check_true(deque.cmeta.descriptor == &stl_deque_container_desc);
+    check_true(stack.raw.cmeta.descriptor == &stl_stack_container_desc);
+    check_true(queue.raw.cmeta.descriptor == &stl_queue_container_desc);
+    check_true(heap.cmeta.descriptor == &stl_heap_container_desc);
+
+    check_equal(deque_push_front(&deque, &second), STL_OK);
+    check_equal(stack_push(&stack, &second), STL_OK);
+    check_equal(queue_push(&queue, &second), STL_OK);
+    check_equal(heap_push(&heap, &second), STL_OK);
+    check_equal(deque_size(&deque), (size_t)1u);
+    check_equal(stack_size(&stack), (size_t)1u);
+    check_equal(queue_size(&queue), (size_t)1u);
+    check_equal(heap_size(&heap), (size_t)1u);
+
+    check_equal(deque_push_back(&raw_deque, &first), STL_INVALID_ARGUMENT);
+    check_equal(stack_push(&raw_stack, &first), STL_INVALID_ARGUMENT);
+    check_equal(queue_push(&raw_queue, &first), STL_INVALID_ARGUMENT);
+    check_equal(heap_push(&raw_heap, &first), STL_INVALID_ARGUMENT);
+
+    deque_destroy(&deque);
+    stack_destroy(&stack);
+    queue_destroy(&queue);
+    heap_destroy(&heap);
+  }
+
   it("materializes canonical Set and Map zero with an unbounded default limit") {
     meta_set set = {0};
     meta_map map = {0};

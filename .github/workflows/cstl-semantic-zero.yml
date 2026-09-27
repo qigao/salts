@@ -6,10 +6,13 @@ on:
       - "cstl/CMakeLists.txt"
       - "cstl/benchmarks/**"
       - "cstl/src/vec.c"
+      - "cstl/src/deque.c"
+      - "cstl/src/heap.c"
       - "cstl/src/list.c"
       - "cstl/src/set.c"
       - "cstl/src/map.c"
       - "cstl/tests/cstl_semantic_projection_test.c"
+      - "cstl/tests/cstl_ownership_test.c"
       - "cstl/tests/cstl_list_test.c"
       - "cstl/tests/cstl_map_test.c"
       - ".github/workflows/cstl-semantic-zero.yml"
@@ -18,10 +21,13 @@ on:
       - "cstl/CMakeLists.txt"
       - "cstl/benchmarks/**"
       - "cstl/src/vec.c"
+      - "cstl/src/deque.c"
+      - "cstl/src/heap.c"
       - "cstl/src/list.c"
       - "cstl/src/set.c"
       - "cstl/src/map.c"
       - "cstl/tests/cstl_semantic_projection_test.c"
+      - "cstl/tests/cstl_ownership_test.c"
       - "cstl/tests/cstl_list_test.c"
       - "cstl/tests/cstl_map_test.c"
       - ".github/workflows/cstl-semantic-zero.yml"
@@ -65,6 +71,7 @@ jobs:
           set -euo pipefail
           cmake --build --preset linux-release-user --parallel 2 --target \
             cstl_semantic_projection_test \
+            cstl_ownership_test \
             cstl_list_test \
             cstl_map_test \
             cstl_semantic_zero_benchmark
@@ -75,7 +82,7 @@ jobs:
           set -euo pipefail
           ctest --test-dir build/linux-gcc-release \
             --output-on-failure \
-            -R '^(cstl_semantic_projection_test|cstl_list_test|cstl_map_test)$'
+            -R '^(cstl_semantic_projection_test|cstl_ownership_test|cstl_list_test|cstl_map_test)$'
 
       - name: Run semantic-zero benchmark
         shell: bash
@@ -108,13 +115,13 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          cmake --build build/cstl-semantic-msvc --config Release --parallel 2 --target cstl_semantic_projection_test cstl_list_test cstl_map_test cstl_semantic_zero_benchmark
+          cmake --build build/cstl-semantic-msvc --config Release --parallel 2 --target cstl_semantic_projection_test cstl_ownership_test cstl_list_test cstl_map_test cstl_semantic_zero_benchmark
 
       - name: Run semantic-zero tests
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          ctest --test-dir build/cstl-semantic-msvc -C Release --output-on-failure -R "^(cstl_semantic_projection_test|cstl_list_test|cstl_map_test)$"
+          ctest --test-dir build/cstl-semantic-msvc -C Release --output-on-failure -R "^(cstl_semantic_projection_test|cstl_ownership_test|cstl_list_test|cstl_map_test)$"
 
       - name: Source hygiene
         shell: pwsh
