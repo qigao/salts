@@ -6,6 +6,8 @@
 #include <salts/error_codes.h>
 
 #include <stdint.h>
+#include <stdatomic.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum {
@@ -20,7 +22,12 @@ typedef struct websocket_probe {
   size_t output_size[TEST_OUTPUT_FRAMES];
   size_t output_count;
   int busy_writes;
+  int pending_writes;
   int write_status;
+  size_t write_calls;
+  const uint8_t *last_write_data;
+  size_t last_write_size;
+  mem_buffer_t *retained_output;
   cnet_websocket_event events[TEST_OUTPUT_FRAMES];
   uint8_t event_data[TEST_OUTPUT_FRAMES][TEST_MESSAGE_BYTES];
   size_t event_count;
@@ -31,9 +38,20 @@ typedef struct websocket_probe {
 
 static int websocket_test_write(void *user, const uint8_t *data, size_t size) {
   websocket_probe *probe = (websocket_probe *)user;
+  ++probe->write_calls;
+  probe->last_write_data = data;
+  probe->last_write_size = size;
   if (probe->busy_writes > 0) {
     --probe->busy_writes;
     return SALTS_EBUSY;
+  }
+  if (probe->pending_writes > 0) {
+    --probe->pending_writes;
+    if (probe->retained_output == NULL ||
+        data != (const uint8_t *)mem_buffer_const_data(probe->retained_output) ||
+        size != mem_buffer_used(probe->retained_output))
+      return SALTS_EPROTO;
+    return CNET_WEBSOCKET_WRITE_PENDING;
   }
   if (probe->write_status != SALTS_OK) return probe->write_status;
   if (probe->output_count >= TEST_OUTPUT_FRAMES || size > sizeof(probe->output[0]))
@@ -103,7 +121,197 @@ static uint16_t websocket_test_close_code(const uint8_t *wire, size_t wire_size)
   return (uint16_t)(((uint16_t)frame.payload[0] << 8u) | frame.payload[1]);
 }
 
+typedef struct websocket_output_free_probe {
+  atomic_int freed;
+} websocket_output_free_probe;
+
+static void websocket_test_output_free(void *data, void *user_data) {
+  websocket_output_free_probe *probe = (websocket_output_free_probe *)user_data;
+  free(data);
+  if (probe != NULL) atomic_fetch_add_explicit(&probe->freed, 1, memory_order_release);
+}
+
+static mem_buffer_t *websocket_test_output_buffer(size_t capacity,
+                                                  websocket_output_free_probe *probe) {
+  void *data = malloc(capacity);
+  mem_buffer_t *buffer;
+  if (data == NULL) return NULL;
+  buffer = mem_wrap_external(data, capacity, websocket_test_output_free, probe);
+  if (buffer == NULL) free(data);
+  return buffer;
+}
+
 spec("CNet WebSocket session") {
+  it("retains caller-owned output storage for the WebSocket lifetime") {
+    cnet_websocket websocket = {0};
+    websocket_probe probe = {0};
+    websocket_output_free_probe free_probe;
+    cnet_websocket_config config = websocket_test_config(&probe, CNET_WEBSOCKET_SERVER);
+    const size_t output_capacity = TEST_FRAME_BYTES + CNET_WEBSOCKET_MAX_HEADER_BYTES;
+    mem_buffer_t *output;
+
+    atomic_init(&free_probe.freed, 0);
+    output = websocket_test_output_buffer(output_capacity, &free_probe);
+    check_not_null(output);
+    check_equal(mem_buffer_ref_count(output), UINT32_C(1));
+    config.output_buffer = output;
+    check_equal(cnet_websocket_init(&websocket, &config), SALTS_OK);
+    check_equal(mem_buffer_ref_count(output), UINT32_C(2));
+    check_true(mem_buffer_const_data(output) != NULL);
+    check_equal(mem_buffer_used(output), (size_t)0u);
+
+    mem_buffer_release(output);
+    output = NULL;
+    check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 0);
+    check_equal(cnet_websocket_destroy(&websocket), SALTS_OK);
+    check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 1);
+  }
+
+  it("rejects undersized caller-owned output storage without retaining it") {
+    cnet_websocket websocket = {0};
+    websocket_probe probe = {0};
+    websocket_output_free_probe free_probe;
+    cnet_websocket_config config = websocket_test_config(&probe, CNET_WEBSOCKET_SERVER);
+    mem_buffer_t *output;
+
+    atomic_init(&free_probe.freed, 0);
+    output = websocket_test_output_buffer(
+        TEST_FRAME_BYTES + CNET_WEBSOCKET_MAX_HEADER_BYTES - 1u, &free_probe);
+    check_not_null(output);
+    config.output_buffer = output;
+    check_equal(cnet_websocket_init(&websocket, &config), SALTS_EINVAL);
+    check_equal(mem_buffer_ref_count(output), UINT32_C(1));
+    mem_buffer_release(output);
+    check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 1);
+  }
+
+  it("freezes retained async output until exact terminal acknowledgement") {
+    cnet_websocket websocket = {0};
+    websocket_probe probe = {.pending_writes = 1};
+    websocket_output_free_probe free_probe;
+    cnet_websocket_config config = websocket_test_config(&probe, CNET_WEBSOCKET_CLIENT);
+    mem_buffer_t *output;
+    size_t pending_size;
+
+    atomic_init(&free_probe.freed, 0);
+    output = websocket_test_output_buffer(
+        TEST_FRAME_BYTES + CNET_WEBSOCKET_MAX_HEADER_BYTES, &free_probe);
+    check_not_null(output);
+    probe.retained_output = output;
+    config.output_buffer = output;
+
+    check_equal(cnet_websocket_init(&websocket, &config), SALTS_OK);
+    check_equal(cnet_websocket_send_text(&websocket, "hello", 5u), SALTS_OK);
+    check_true(cnet_websocket_has_pending_output(&websocket));
+    check_equal(probe.write_calls, (size_t)1u);
+    pending_size = probe.last_write_size;
+    check_greater(pending_size, (size_t)5u);
+    check_equal(mem_buffer_used(output), pending_size);
+    check_equal(cnet_websocket_flush(&websocket), SALTS_EBUSY);
+    check_equal(probe.write_calls, (size_t)1u);
+    check_equal(cnet_websocket_send_binary(&websocket, "x", 1u), SALTS_EBUSY);
+    check_equal(cnet_websocket_destroy(&websocket), SALTS_EBUSY);
+
+    check_equal(cnet_websocket_write_complete(&websocket, pending_size, SALTS_OK), SALTS_OK);
+    check_false(cnet_websocket_has_pending_output(&websocket));
+    check_equal(cnet_websocket_write_complete(&websocket, pending_size, SALTS_OK), SALTS_ENOENT);
+    check_equal(cnet_websocket_destroy(&websocket), SALTS_OK);
+    mem_buffer_release(output);
+    check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 1);
+  }
+
+  it("resumes buffered input only after retained output terminal") {
+    cnet_websocket websocket = {0};
+    websocket_probe probe = {.pending_writes = 1};
+    websocket_output_free_probe free_probe;
+    cnet_websocket_config config = websocket_test_config(&probe, CNET_WEBSOCKET_SERVER);
+    mem_buffer_t *output;
+    uint8_t wire[96];
+    size_t ping_size;
+    size_t message_size;
+    size_t pending_size;
+
+    atomic_init(&free_probe.freed, 0);
+    output = websocket_test_output_buffer(
+        TEST_FRAME_BYTES + CNET_WEBSOCKET_MAX_HEADER_BYTES, &free_probe);
+    check_not_null(output);
+    probe.retained_output = output;
+    config.output_buffer = output;
+
+    ping_size = websocket_test_frame(wire, sizeof(wire), WS_OPCODE_PING, 1, 1, "?", 1u);
+    message_size = websocket_test_frame(wire + ping_size, sizeof(wire) - ping_size,
+                                        WS_OPCODE_TEXT, 1, 1, "later", 5u);
+    check_equal(cnet_websocket_init(&websocket, &config), SALTS_OK);
+    check_equal(cnet_websocket_feed(&websocket, wire, ping_size + message_size), SALTS_OK);
+    check_true(cnet_websocket_has_pending_output(&websocket));
+    check_equal(probe.event_count, (size_t)1u);
+    check_equal(probe.events[0].kind, CNET_WEBSOCKET_EVENT_PING);
+    pending_size = probe.last_write_size;
+
+    check_equal(cnet_websocket_write_complete(&websocket, pending_size, SALTS_OK), SALTS_OK);
+    check_false(cnet_websocket_has_pending_output(&websocket));
+    check_equal(probe.event_count, (size_t)2u);
+    check_equal(probe.events[1].kind, CNET_WEBSOCKET_EVENT_MESSAGE);
+    check_equal(probe.events[1].data, "later", 5u);
+    check_equal(cnet_websocket_destroy(&websocket), SALTS_OK);
+    mem_buffer_release(output);
+  }
+
+  it("fails retained async output on terminal error or byte mismatch") {
+    cnet_websocket websocket = {0};
+    websocket_probe probe = {.pending_writes = 1};
+    websocket_output_free_probe free_probe;
+    cnet_websocket_config config = websocket_test_config(&probe, CNET_WEBSOCKET_SERVER);
+    mem_buffer_t *output;
+    cnet_websocket_state state = CNET_WEBSOCKET_OPEN;
+    int last_error = SALTS_OK;
+    size_t pending_size;
+
+    atomic_init(&free_probe.freed, 0);
+    output = websocket_test_output_buffer(
+        TEST_FRAME_BYTES + CNET_WEBSOCKET_MAX_HEADER_BYTES, &free_probe);
+    check_not_null(output);
+    probe.retained_output = output;
+    config.output_buffer = output;
+
+    check_equal(cnet_websocket_init(&websocket, &config), SALTS_OK);
+    check_equal(cnet_websocket_send_ping(&websocket, "x", 1u), SALTS_OK);
+    pending_size = probe.last_write_size;
+    check_equal(cnet_websocket_write_complete(&websocket, pending_size - 1u, SALTS_OK),
+                SALTS_EPROTO);
+    check_equal(cnet_websocket_state_get(&websocket, &state), SALTS_OK);
+    check_equal(state, CNET_WEBSOCKET_FAILED);
+    check_equal(cnet_websocket_last_error(&websocket, &last_error), SALTS_OK);
+    check_equal(last_error, SALTS_EPROTO);
+    check_equal(cnet_websocket_destroy(&websocket), SALTS_OK);
+
+    memset(&websocket, 0, sizeof(websocket));
+    memset(&probe, 0, sizeof(probe));
+    probe.pending_writes = 1;
+    probe.retained_output = output;
+    config = websocket_test_config(&probe, CNET_WEBSOCKET_SERVER);
+    config.output_buffer = output;
+    check_equal(cnet_websocket_init(&websocket, &config), SALTS_OK);
+    check_equal(cnet_websocket_send_ping(&websocket, "y", 1u), SALTS_OK);
+    pending_size = probe.last_write_size;
+    check_equal(cnet_websocket_write_complete(&websocket, pending_size, SALTS_EIO), SALTS_EIO);
+    check_equal(cnet_websocket_state_get(&websocket, &state), SALTS_OK);
+    check_equal(state, CNET_WEBSOCKET_FAILED);
+    check_equal(cnet_websocket_destroy(&websocket), SALTS_OK);
+    mem_buffer_release(output);
+  }
+
+  it("rejects async-pending callback results without caller-owned output storage") {
+    cnet_websocket websocket = {0};
+    websocket_probe probe = {.pending_writes = 1};
+    cnet_websocket_config config = websocket_test_config(&probe, CNET_WEBSOCKET_SERVER);
+
+    check_equal(cnet_websocket_init(&websocket, &config), SALTS_OK);
+    check_equal(cnet_websocket_send_ping(&websocket, "x", 1u), SALTS_EPROTO);
+    check_equal(cnet_websocket_destroy(&websocket), SALTS_OK);
+  }
+
+
   it("requires explicit valid limits and callbacks") {
     cnet_websocket websocket = {0};
     websocket_probe probe = {0};
