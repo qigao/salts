@@ -67,6 +67,16 @@ jobs:
             --output-on-failure \
             -R '^salts_plugin_(contract|header_cpp|loader|lifecycle)_test$'
 
+      - name: Qualify installed Plugin ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$RUNNER_TEMP/salts-plugin-sdk"
+          cmake --install build/linux-gcc-release --prefix "$prefix"
+          cmake -S plugin/tests/package_config/plugin_abi                 -B build/plugin-installed-linux -G Ninja                 -DCMAKE_BUILD_TYPE=Release                 -DCMAKE_PREFIX_PATH="$prefix"
+          cmake --build build/plugin-installed-linux --parallel 2
+          ./build/plugin-installed-linux/plugin_abi_installed_consumer
+
       - name: Source hygiene
         shell: bash
         run: git diff --check
@@ -111,3 +121,14 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           ctest --test-dir build\Msvc-Release --output-on-failure -R "^salts_plugin_(contract|header_cpp|loader|lifecycle)_test$"
+
+      - name: Qualify installed Plugin ownership
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "prefix=%RUNNER_TEMP%\salts-plugin-sdk"
+          cmake --install build\Msvc-Release --prefix "%prefix%"
+          cmake -S plugin\tests\package_config\plugin_abi -B build\plugin-installed-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="%prefix%"
+          cmake --build build\plugin-installed-windows --parallel 2
+          build\plugin-installed-windows\plugin_abi_installed_consumer.exe
