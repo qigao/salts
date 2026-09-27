@@ -723,6 +723,19 @@ int cnet_send_slicev(cnet_client *client, cnet_connection connection,
                      const mem_slice_t *segments, size_t segment_count);
 
 /**
+ * Retained scatter/gather final send.
+ *
+ * Admission matches cnet_send_slicev(), but the accepted vector is the final
+ * logical write for the connection. CNet retains the canonical backing buffers,
+ * preserves vector boundaries through NativeIO, publishes the ordinary send
+ * terminal, and closes only after the final bytes settle. No payload flattening
+ * or copied-byte storage is introduced. Unsupported vector transports return
+ * SALTS_ENOTSUP without retaining or silently copying.
+ */
+int cnet_send_slicev_and_close(cnet_client *client, cnet_connection connection,
+                               const mem_slice_t *segments, size_t segment_count);
+
+/**
  * Copies the ordered concatenation of immutable, non-empty `segments` into
  * one bounded write slot before returning success. The descriptor array and
  * its backing ranges are borrowed only for this call. Completion, ordering,
