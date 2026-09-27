@@ -99,6 +99,14 @@ CNet logical vector advances through successive native span windows without
 flattening or publishing an intermediate CNet send terminal. Unsupported/TLS
 paths return `SALTS_ENOTSUP`; there is no hidden flatten fallback.
 
+The larger logical range bound remains fixed-memory. On a 64-bit build, raising
+the retained range/owner arrays from 16 to 32 adds approximately 512 bytes per
+owner-local write slot. Write slots are preallocated at
+`write_capacity_per_shard` (derived from the client command capacity), so the
+incremental metadata is approximately
+`512 * command_capacity * shard_count` bytes and does not grow with payload
+size or runtime duration. For a 16-slot shard this is about 8 KiB.
+
 ## Canonical session-state authority
 
 The generation-checked `cnet_session_table` is the sole CNet connection
