@@ -58,13 +58,17 @@ network authority, so its bounded name after `pipe://` is preserved byte-for-byt
 outgoing TCP/TLS connections and adopted listener sockets. Set it on a stopped
 `cnet_client` with `cnet_client_set_stream_socket_options()`; listener owners use
 `cnet_listener_init_ex()` with versioned `cnet_listener_options`. The policy
-exposes OS receive/send buffers, keepalive enable plus idle/interval/probe count,
-and linger. `cnet_datagram_config.reuse_port` exposes the same listener-port
+exposes OS receive/send buffers, explicit `TCP_NODELAY` via `nodelay`,
+keepalive enable plus idle/interval/probe count, and linger.
+`cnet_datagram_config.reuse_port` exposes the same listener-port
 sharing decision for UDP and the unified UDP/KCP packet endpoint.
 
-Zero-valued buffer and timing fields preserve platform defaults. Keepalive
-detail without `keepalive` is invalid; enabled linger with zero milliseconds is
-an abortive close. CNet copies every policy into its owner command, so no caller
+Zero-valued buffer and timing fields preserve platform defaults. `nodelay=0`
+keeps the platform's Nagle policy; `nodelay=1` requests `TCP_NODELAY` and is
+appropriate for latency-sensitive protocols that may emit one logical frame
+through multiple native write windows. Keepalive detail without `keepalive`
+is invalid; enabled linger with zero milliseconds is an abortive close. CNet
+copies every policy into its owner command, so no caller
 pointer is retained. Unsupported platform options return `SALTS_ENOTSUP` before
 the socket is published, and invalid sizes or combinations fail without a
 silent fallback.
