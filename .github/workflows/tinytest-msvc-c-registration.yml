@@ -2,6 +2,7 @@ name: TinyTest MSVC C registration
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "tinytest/include/tinytest.h"
       - "tinytest/test/**"
