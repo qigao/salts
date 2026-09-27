@@ -1909,10 +1909,12 @@ static int io_bench_print_diagnostics(const char *protocol, const io_bench_serie
   printf("\n%s CNet diagnostic internal evidence (mean us/RT)\n", protocol);
   printf("Within CNet only, not an explanation of the libuv gap. "
          "Observe still includes waiting. Payload copy is the admitted send copy only.\n");
-  printf("| payload | fixed control | payload copy | NativeIO prepare/reprepare | observe + flush | starts/RT | completions/RT |\n");
-  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+  printf("| payload | fixed control | payload copy | NativeIO prepare/reprepare | observe + flush | command publishes/RT | dispatcher callbacks/RT | starts/RT | completions/RT |\n");
+  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
-    double fixed = 0.0, copy = 0.0, submit = 0.0, observe = 0.0, starts = 0.0, completions = 0.0;
+    double fixed = 0.0, copy = 0.0, submit = 0.0, observe = 0.0;
+    double command_publishes = 0.0, dispatcher_callbacks = 0.0;
+    double starts = 0.0, completions = 0.0;
     for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
       const io_bench_result *result = &cnet[index].stage_profile_runs[repeat];
       cnet_benchmark_fixed_control_attribution attribution;
@@ -1923,14 +1925,22 @@ static int io_bench_print_diagnostics(const char *protocol, const io_bench_serie
       submit += (attribution.native_request_start_ns + attribution.native_request_resubmit_ns) /
                 IO_BENCH_REPLICATES;
       observe += attribution.native_observe_ns / IO_BENCH_REPLICATES;
+      command_publishes +=
+          io_bench_mean(result->cnet_profile.owner.command_queue_publish_calls +
+                            result->cnet_profile.owner.command_queue_payload_publish_calls,
+                        result->round_trips) /
+          IO_BENCH_REPLICATES;
+      dispatcher_callbacks +=
+          io_bench_mean(result->cnet_profile.dispatcher_observer_calls, result->round_trips) /
+          IO_BENCH_REPLICATES;
       starts += io_bench_mean(result->cnet_profile.owner.request_start_calls, result->round_trips) /
                 IO_BENCH_REPLICATES;
       completions += io_bench_mean(result->cnet_profile.owner.request_completion_calls,
                                    result->round_trips) / IO_BENCH_REPLICATES;
     }
-    printf("| %zu KiB | %.3f | %.3f | %.3f | %.3f | %.2f | %.2f |\n",
+    printf("| %zu KiB | %.3f | %.3f | %.3f | %.3f | %.2f | %.2f | %.2f | %.2f |\n",
            cnet[index].payload_size / 1024u, fixed / 1000.0, copy / 1000.0, submit / 1000.0,
-           observe / 1000.0, starts, completions);
+           observe / 1000.0, command_publishes, dispatcher_callbacks, starts, completions);
   }
   return SALTS_OK;
 }
