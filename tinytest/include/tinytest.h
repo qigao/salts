@@ -139,12 +139,18 @@ extern "C" {
     }                                                                                              \
     static void fn(void)
 #elif defined(_WIN32) && defined(__clang__)
+  /*
+   * Windows C has no language-level global constructor. Use the documented
+   * post-compiler initializer slot instead of impersonating compiler-owned
+   * .CRT$XCU. The pointer must be retained even though no C expression reads
+   * it directly; the CRT walks the section before main().
+   */
   #ifdef read
     #pragma push_macro("read")
     #undef read
     #define TTEST_POP_READ__ 1
   #endif
-  #pragma section(".CRT$XCU", read)
+  #pragma section(".CRT$XCV", read)
   #ifdef TTEST_POP_READ__
     #pragma pop_macro("read")
     #undef TTEST_POP_READ__
@@ -152,16 +158,21 @@ extern "C" {
 typedef void(__cdecl *ttest_ctor_fn__)(void);
   #define TTEST_CONSTRUCTOR__(fn)                                                                  \
     static void __cdecl fn(void);                                                                  \
-    __declspec(allocate(".CRT$XCU"))                                                               \
+    __declspec(allocate(".CRT$XCV"))                                                               \
     __attribute__((used)) static ttest_ctor_fn__ TTEST_CAT2(ttest_ctor_, fn) = fn;                 \
     static void __cdecl fn(void)
 #elif defined(_MSC_VER)
+  /*
+   * MSVC may eliminate an ordinary variable manually placed in .CRT$XCU.
+   * Keep a volatile registration pointer in the documented post-compiler
+   * initializer slot so Release optimization cannot erase suite registration.
+   */
   #ifdef read
     #pragma push_macro("read")
     #undef read
     #define TTEST_POP_READ__ 1
   #endif
-  #pragma section(".CRT$XCU", read)
+  #pragma section(".CRT$XCV", read)
   #ifdef TTEST_POP_READ__
     #pragma pop_macro("read")
     #undef TTEST_POP_READ__
@@ -169,7 +180,8 @@ typedef void(__cdecl *ttest_ctor_fn__)(void);
 typedef void(__cdecl *ttest_ctor_fn__)(void);
   #define TTEST_CONSTRUCTOR__(fn)                                                                  \
     static void __cdecl fn(void);                                                                  \
-    __declspec(allocate(".CRT$XCU")) static ttest_ctor_fn__ TTEST_CAT2(ttest_ctor_, fn) = fn;      \
+    __declspec(allocate(".CRT$XCV")) static volatile ttest_ctor_fn__                               \
+        TTEST_CAT2(ttest_ctor_, fn) = fn;                                                          \
     static void __cdecl fn(void)
 #elif defined(__GNUC__) || defined(__clang__)
   #define TTEST_CONSTRUCTOR__(fn)                                                                  \
