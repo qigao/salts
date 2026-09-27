@@ -8,7 +8,7 @@ endif()
 
 project(
   Salts
-  VERSION 1.7.9
+  VERSION 1.8.0
   LANGUAGES C CXX)
 
 # Project configuration - output directories
@@ -62,7 +62,6 @@ add_subdirectory(native-io)
 add_subdirectory(uri)
 add_subdirectory(cmeta)
 add_subdirectory(plugin)
-add_subdirectory(bindings)
 add_subdirectory(simd)
 add_subdirectory(tinymock)
 add_subdirectory(cflow)
@@ -70,7 +69,6 @@ add_subdirectory(cstl)
 add_subdirectory(cnet)
 add_subdirectory(cflow/cnet-adapter)
 add_subdirectory(cserde)
-add_subdirectory(cbind)
 add_subdirectory(utils)
 
 # Package Configuration
