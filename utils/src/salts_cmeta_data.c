@@ -190,7 +190,37 @@ static void salts_tstr_cmeta_move(void *destination, void *source) {
 static const cmeta_type_identity salts_tstr_cmeta_identity =
     CMETA_TYPE_ID_ATOM_INIT("salts.tstr");
 
-CMETA_DEFINE_DATA_TRAITS(salts_tstr, &salts_tstr_cmeta_data);
+CMETA_INLINE bool salts_tstr_cmeta_data_copy_construct(
+    void *destination, const void *source) {
+  return cmeta_data_trait_copy_construct(
+      &salts_tstr_cmeta_data, destination, source);
+}
+
+CMETA_INLINE void salts_tstr_cmeta_data_move_construct(
+    void *destination, void *source) {
+  cmeta_data_trait_move_construct(
+      &salts_tstr_cmeta_data, destination, source);
+}
+
+CMETA_INLINE void salts_tstr_cmeta_data_destroy(void *object) {
+  cmeta_data_trait_destroy(&salts_tstr_cmeta_data, object);
+}
+
+static int salts_tstr_cmeta_compare(
+    const void *left, const void *right) {
+  return tstr_cmp(*(const tstr *)left, *(const tstr *)right);
+}
+
+CMETA_LOCAL const cmeta_type_traits cmeta_traits_salts_tstr = {
+    .flags = CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY |
+             CMETA_TRAIT_COMPARE,
+    .equal = NULL,
+    .hash = NULL,
+    .compare = salts_tstr_cmeta_compare,
+    .copy_construct = salts_tstr_cmeta_data_copy_construct,
+    .move_construct = salts_tstr_cmeta_data_move_construct,
+    .destroy = salts_tstr_cmeta_data_destroy
+};
 
 SALTS_API const cmeta_type_desc salts_tstr_cmeta_type = {
     "tstr", sizeof(tstr), CMETA_ALIGNOF(tstr), CMETA_T_OBJECT,
