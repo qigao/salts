@@ -72,6 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           prefix="$RUNNER_TEMP/salts-plugin-sdk"
+          cmake --build --preset linux-release-user --parallel 2
           cmake --install build/linux-gcc-release --prefix "$prefix"
           cmake -S plugin/tests/package_config/plugin_abi                 -B build/plugin-installed-linux -G Ninja                 -DCMAKE_BUILD_TYPE=Release                 -DCMAKE_PREFIX_PATH="$prefix"
           cmake --build build/plugin-installed-linux --parallel 2
@@ -128,6 +129,8 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "prefix=%RUNNER_TEMP%\salts-plugin-sdk"
+          cmake --build --preset win-release-user --parallel 2
+          if errorlevel 1 exit /b 1
           cmake --install build\Msvc-Release --prefix "%prefix%"
           cmake -S plugin\tests\package_config\plugin_abi -B build\plugin-installed-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="%prefix%"
           cmake --build build\plugin-installed-windows --parallel 2
