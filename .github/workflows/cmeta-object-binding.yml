@@ -8,9 +8,8 @@ on:
       - "cmeta/include/cmeta/invokable.h"
       - "cmeta/include/cmeta/meta.h"
       - "cmeta/src/object.c"
+      - "cmeta/src/data.c"
       - "cmeta/src/data_v2.c"
-      - "cmeta/src/method.c"
-      - "cmeta/src/invokable.c"
       - "cmeta/tests/cmeta_object_test.c"
       - "cmeta/tests/cmeta_data_test.c"
       - "cmeta/tests/cmeta_method_test.c"
@@ -25,9 +24,8 @@ on:
       - "cmeta/include/cmeta/invokable.h"
       - "cmeta/include/cmeta/meta.h"
       - "cmeta/src/object.c"
+      - "cmeta/src/data.c"
       - "cmeta/src/data_v2.c"
-      - "cmeta/src/method.c"
-      - "cmeta/src/invokable.c"
       - "cmeta/tests/cmeta_object_test.c"
       - "cmeta/tests/cmeta_data_test.c"
       - "cmeta/tests/cmeta_method_test.c"
@@ -86,10 +84,7 @@ jobs:
           set -euo pipefail
           ctest --test-dir build/linux-gcc-release \
             --output-on-failure \
-            -R '^(cmeta_object_test|cmeta_data_test|cmeta_method_test|cmeta_invokable_test|cmeta_header_cpp_test)
-        shell: bash
-        run: git diff --check
-
+            -R '^(cmeta_object_test|cmeta_data_test|cmeta_method_test|cmeta_invokable_test|cmeta_header_cpp_test)$'
 
       - name: Source hygiene
         shell: bash
