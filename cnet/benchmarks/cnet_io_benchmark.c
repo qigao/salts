@@ -1416,10 +1416,12 @@ static void io_bench_free_payload(void *data, void *user) {
   free(data);
 }
 
-static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size_t payload_size,
-                        bool profile_stages, native_io_backend_kind backend_kind,
-                        io_bench_send_mode send_mode, size_t segment_count,
-                        io_bench_result *result) {
+static int io_bench_run_counted(io_bench_protocol protocol, io_bench_driver driver,
+                                size_t payload_size, bool profile_stages,
+                                native_io_backend_kind backend_kind,
+                                io_bench_send_mode send_mode, size_t segment_count,
+                                size_t warmup_exchanges, size_t measure_exchanges,
+                                io_bench_result *result) {
   io_bench_fixture fixture;
   unsigned char *sent = NULL;
   unsigned char *received = NULL;
@@ -1427,6 +1429,8 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
   mem_buffer_t *send_buffer = NULL;
   uint64_t wall_started = 0u;
   size_t latency_count = 0u;
+  size_t send_completions_before_measure = 0u;
+  size_t total_exchanges = 0u;
   uv_rusage_t usage_before = {0};
   uv_rusage_t usage_after = {0};
 #ifdef _WIN32
@@ -1434,14 +1438,19 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
 #endif
   const char *phase = "init";
   int status;
+  if (result == NULL || measure_exchanges == 0u ||
+      measure_exchanges > IO_BENCH_TOTAL_EXCHANGES ||
+      warmup_exchanges > SIZE_MAX - measure_exchanges)
+    return SALTS_EINVAL;
+  total_exchanges = warmup_exchanges + measure_exchanges;
   memset(result, 0, sizeof(*result));
   status = io_bench_fixture_init(&fixture, protocol, driver, payload_size, backend_kind, send_mode,
-                                 segment_count);
+                                 segment_count, total_exchanges);
   if (status != SALTS_OK) goto cleanup;
   phase = "allocate";
   sent = (unsigned char *)malloc(payload_size);
   received = (unsigned char *)malloc(payload_size);
-  latencies = (uint64_t *)malloc(sizeof(*latencies) * IO_BENCH_TOTAL_EXCHANGES);
+  latencies = (uint64_t *)malloc(sizeof(*latencies) * measure_exchanges);
   if (sent == NULL || received == NULL || latencies == NULL) {
     status = SALTS_ENOMEM;
     goto cleanup;
@@ -1493,17 +1502,19 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
     }
   }
   phase = "warmup";
-  for (size_t index = 0u; index < IO_BENCH_WARMUP_EXCHANGES; ++index) {
+  for (size_t index = 0u; index < warmup_exchanges; ++index) {
     status = io_bench_exchange(&fixture, sent, received, payload_size);
     if (status != SALTS_OK) goto cleanup;
   }
+  if (driver == IO_BENCH_CNET)
+    send_completions_before_measure = fixture.cnet.send_completions;
   if (driver == IO_BENCH_CNET && profile_stages) {
     status = io_bench_cnet_begin_measurement(&fixture.cnet);
     if (status != SALTS_OK) goto cleanup;
   }
   phase = "measure";
   if (io_bench_trace_enabled) {
-    fprintf(stderr, "IO_BENCH_MEASURE_BEGIN rounds=%d\n", IO_BENCH_TOTAL_EXCHANGES);
+    fprintf(stderr, "IO_BENCH_MEASURE_BEGIN rounds=%zu\n", measure_exchanges);
     fflush(stderr);
   }
   status = uv_getrusage_thread(&usage_before);
@@ -1515,7 +1526,7 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
   }
 #endif
   wall_started = salts_hrtime();
-  for (size_t exchange = 0u; exchange < IO_BENCH_EXCHANGES_PER_REPLICATE; ++exchange) {
+  for (size_t exchange = 0u; exchange < measure_exchanges; ++exchange) {
     const io_bench_sample before = profile_stages ? io_bench_snapshot(&fixture, result)
                                                    : (io_bench_sample){0};
     const uint64_t started = salts_hrtime();
@@ -1553,7 +1564,7 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
   status = uv_getrusage_thread(&usage_after);
   if (status != 0) goto cleanup;
   if (io_bench_trace_enabled) {
-    fprintf(stderr, "IO_BENCH_MEASURE_END rounds=%d\n", IO_BENCH_TOTAL_EXCHANGES);
+    fprintf(stderr, "IO_BENCH_MEASURE_END rounds=%zu\n", measure_exchanges);
     fflush(stderr);
   }
   if (io_bench_cpu_ns(&usage_after) < io_bench_cpu_ns(&usage_before)) {
@@ -1563,10 +1574,14 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
   result->cpu_ns = io_bench_cpu_ns(&usage_after) - io_bench_cpu_ns(&usage_before);
   result->voluntary_switches = usage_after.ru_nvcsw - usage_before.ru_nvcsw;
   result->involuntary_switches = usage_after.ru_nivcsw - usage_before.ru_nivcsw;
-  if (driver == IO_BENCH_CNET && send_mode != IO_BENCH_SEND_BASELINE &&
-      fixture.cnet.send_completions != IO_BENCH_ALL_EXCHANGES) {
-    status = SALTS_EIO;
-    goto cleanup;
+  if (driver == IO_BENCH_CNET && send_mode != IO_BENCH_SEND_BASELINE) {
+    if (fixture.cnet.send_completions != total_exchanges ||
+        fixture.cnet.send_completions < send_completions_before_measure) {
+      status = SALTS_EIO;
+      goto cleanup;
+    }
+    result->cnet_send_terminal_calls =
+        fixture.cnet.send_completions - send_completions_before_measure;
   }
   qsort(latencies, latency_count, sizeof(latencies[0]), io_bench_u64_compare);
   result->p50_ns = latencies[(latency_count - 1u) * 50u / 100u];
@@ -1608,6 +1623,17 @@ cleanup:
             io_bench_driver_name(driver), protocol == IO_BENCH_TCP ? "TCP" : "UDP", payload_size,
             (int)send_mode, phase, status);
   return status;
+}
+
+static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver,
+                        size_t payload_size, bool profile_stages,
+                        native_io_backend_kind backend_kind,
+                        io_bench_send_mode send_mode, size_t segment_count,
+                        io_bench_result *result) {
+  return io_bench_run_counted(protocol, driver, payload_size, profile_stages,
+                              backend_kind, send_mode, segment_count,
+                              IO_BENCH_WARMUP_EXCHANGES,
+                              IO_BENCH_EXCHANGES_PER_REPLICATE, result);
 }
 
 static double io_bench_rate(const io_bench_result *result) {
