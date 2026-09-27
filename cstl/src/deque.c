@@ -1,4 +1,5 @@
 #include <cstl/deque.h>
+#include <cstl/detail/instance_meta.h>
 
 #include "sequence_internal.h"
 
@@ -9,6 +10,47 @@
 static bool deque_valid(const deque_t *deque) {
     return deque != NULL && deque->initialized && deque->elem_size != 0u;
 }
+
+static bool deque_is_typed_semantic_zero(const deque_t *deque) {
+    return deque != NULL && !deque->initialized && deque->data == NULL &&
+           deque->size == 0u && deque->capacity == 0u &&
+           deque->elem_size == 0u && deque->elem_stride == 0u &&
+           deque->elem_align == 0u && deque->element_limit == 0u &&
+           deque->head == 0u &&
+           (deque->cmeta.descriptor == &stl_deque_container_desc ||
+            deque->cmeta.descriptor == &stl_queue_container_desc) &&
+           deque->element_type != NULL &&
+           cmeta_type_desc_valid(deque->element_type);
+}
+
+static stl_status deque_materialize_for_mutation(
+    deque_t *deque, deque_t *zero_snapshot, bool *materialized) {
+    stl_status status;
+    if (zero_snapshot == NULL || materialized == NULL)
+        return STL_INVALID_ARGUMENT;
+    *materialized = false;
+    if (deque_valid(deque)) return STL_OK;
+    if (!deque_is_typed_semantic_zero(deque)) return STL_INVALID_ARGUMENT;
+
+    *zero_snapshot = *deque;
+    status = deque_raw_init(deque, zero_snapshot->element_type, SIZE_MAX);
+    if (status != STL_OK) {
+        *deque = *zero_snapshot;
+        return status;
+    }
+    deque->cmeta.descriptor = zero_snapshot->cmeta.descriptor;
+    deque->generation = zero_snapshot->generation;
+    *materialized = true;
+    return STL_OK;
+}
+
+static void deque_rollback_materialization(
+    deque_t *deque, const deque_t *zero_snapshot, bool materialized) {
+    if (!materialized) return;
+    deque_raw_destroy_storage(deque);
+    *deque = *zero_snapshot;
+}
+
 static size_t deque_physical(const deque_t *deque, size_t index) {
     return (deque->head + index) % deque->capacity;
 }
@@ -187,39 +229,78 @@ stl_status deque_reserve(deque_t *deque, size_t min_capacity) {
 }
 
 stl_status deque_push_back(deque_t *deque, const void *elem) {
+    deque_t zero_snapshot = {0};
     void *prepared = NULL;
+    bool materialized = false;
     stl_status status;
     size_t physical;
-    if (!deque_valid(deque) || !elem) return STL_INVALID_ARGUMENT;
-    if (deque->size >= deque->element_limit) return STL_CAPACITY_EXCEEDED;
-    status = deque_prepare_copy(deque, elem, &prepared);
+    if (elem == NULL) return STL_INVALID_ARGUMENT;
+    status = deque_materialize_for_mutation(
+        deque, &zero_snapshot, &materialized);
     if (status != STL_OK) return status;
+    if (deque->size >= deque->element_limit) {
+        deque_rollback_materialization(deque, &zero_snapshot, materialized);
+        return STL_CAPACITY_EXCEEDED;
+    }
+    status = deque_prepare_copy(deque, elem, &prepared);
+    if (status != STL_OK) {
+        deque_rollback_materialization(deque, &zero_snapshot, materialized);
+        return status;
+    }
     status = deque_grow_to(deque, deque->size + 1u, NULL);
-    if (status != STL_OK) { deque_discard_prepared(deque, prepared); return status; }
+    if (status != STL_OK) {
+        deque_discard_prepared(deque, prepared);
+        deque_rollback_materialization(deque, &zero_snapshot, materialized);
+        return status;
+    }
     physical = deque_physical(deque, deque->size);
     status = sequence_move_destroy(deque->element_type, deque->elem_size,
         deque_slot(deque, physical), prepared);
     sequence_deallocate(prepared);
-    if (status != STL_OK) return status;
-    ++deque->size; ++deque->generation;
+    if (status != STL_OK) {
+        deque_rollback_materialization(deque, &zero_snapshot, materialized);
+        return status;
+    }
+    ++deque->size;
+    ++deque->generation;
     return STL_OK;
 }
 stl_status deque_push_front(deque_t *deque, const void *elem) {
+    deque_t zero_snapshot = {0};
     void *prepared = NULL;
+    bool materialized = false;
     stl_status status;
     size_t head;
-    if (!deque_valid(deque) || !elem) return STL_INVALID_ARGUMENT;
-    if (deque->size >= deque->element_limit) return STL_CAPACITY_EXCEEDED;
-    status = deque_prepare_copy(deque, elem, &prepared);
+    if (elem == NULL) return STL_INVALID_ARGUMENT;
+    status = deque_materialize_for_mutation(
+        deque, &zero_snapshot, &materialized);
     if (status != STL_OK) return status;
+    if (deque->size >= deque->element_limit) {
+        deque_rollback_materialization(deque, &zero_snapshot, materialized);
+        return STL_CAPACITY_EXCEEDED;
+    }
+    status = deque_prepare_copy(deque, elem, &prepared);
+    if (status != STL_OK) {
+        deque_rollback_materialization(deque, &zero_snapshot, materialized);
+        return status;
+    }
     status = deque_grow_to(deque, deque->size + 1u, NULL);
-    if (status != STL_OK) { deque_discard_prepared(deque, prepared); return status; }
+    if (status != STL_OK) {
+        deque_discard_prepared(deque, prepared);
+        deque_rollback_materialization(deque, &zero_snapshot, materialized);
+        return status;
+    }
     head = deque->head == 0u ? deque->capacity - 1u : deque->head - 1u;
     status = sequence_move_destroy(deque->element_type, deque->elem_size,
         deque_slot(deque, head), prepared);
     sequence_deallocate(prepared);
-    if (status != STL_OK) return status;
-    deque->head = head; ++deque->size; ++deque->generation;
+    if (status != STL_OK) {
+        deque_rollback_materialization(deque, &zero_snapshot, materialized);
+        return status;
+    }
+    deque->head = head;
+    ++deque->size;
+    ++deque->generation;
     return STL_OK;
 }
 stl_status deque_pop_back(deque_t *deque, void *out_elem) {
