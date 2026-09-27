@@ -16,7 +16,8 @@ static bool vec_is_typed_semantic_zero(const vec_t *vec) {
            vec->size == 0u && vec->capacity == 0u && vec->elem_size == 0u &&
            vec->elem_stride == 0u && vec->elem_align == 0u &&
            vec->element_limit == 0u &&
-           vec->cmeta.descriptor == &stl_vec_container_desc &&
+           (vec->cmeta.descriptor == &stl_vec_container_desc ||
+            vec->cmeta.descriptor == &stl_stack_container_desc) &&
            vec->element_type != NULL &&
            cmeta_type_desc_valid(vec->element_type);
 }
