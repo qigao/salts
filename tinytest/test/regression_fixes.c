@@ -36,3 +36,10 @@ suite("review fixes") {
     check_equal(ttest_active_config__->warn_count, warn_before + 1);
   }
 }
+
+
+suite("MSVC C registration retention") {
+  it("retains a second C suite registration entry") {
+    check_true(1);
+  }
+}

@@ -483,6 +483,22 @@ int cnet_shards_send_slicev_direct(cnet_shards *shards,
              : status;
 }
 
+int cnet_shards_send_slicev_close_direct(cnet_shards *shards,
+                                         cnet_shard_connection connection,
+                                         const mem_slice_t *segments,
+                                         size_t segment_count) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_shard_record *record;
+  int status;
+  if (segments == NULL || segment_count == 0u || segment_count > NATIVE_IO_VECTOR_MAX)
+    return SALTS_EINVAL;
+  status = cnet_shards_direct_write_ready(impl, connection, &record);
+  return status == SALTS_OK
+             ? cnet_owner_send_slicev_close_direct(&record->owner, connection.session,
+                                                   segments, segment_count)
+             : status;
+}
+
 int cnet_shards_sendv_direct(cnet_shards *shards, cnet_shard_connection connection,
                              const cnet_const_buffer *segments, size_t segment_count) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
