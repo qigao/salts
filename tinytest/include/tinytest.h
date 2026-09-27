@@ -163,9 +163,10 @@ typedef void(__cdecl *ttest_ctor_fn__)(void);
     static void __cdecl fn(void)
 #elif defined(_MSC_VER)
   /*
-   * MSVC may eliminate an ordinary variable manually placed in .CRT$XCU.
-   * Keep a volatile registration pointer in the documented post-compiler
-   * initializer slot so Release optimization cannot erase suite registration.
+   * MSVC treats manually allocated CRT initializer pointers as ordinary data.
+   * Release linking enables /OPT:REF, so the pointer must be an explicit linker
+   * root. Keep it in the documented post-compiler initializer slot and force
+   * only that symbol; do not disable dead stripping for the whole executable.
    */
   #ifdef read
     #pragma push_macro("read")
@@ -178,10 +179,17 @@ typedef void(__cdecl *ttest_ctor_fn__)(void);
     #undef TTEST_POP_READ__
   #endif
 typedef void(__cdecl *ttest_ctor_fn__)(void);
+  #define TTEST_MSVC_STRINGIFY_IMPL__(value) #value
+  #define TTEST_MSVC_STRINGIFY__(value) TTEST_MSVC_STRINGIFY_IMPL__(value)
+  #if defined(_M_IX86)
+    #define TTEST_MSVC_LINKER_SYMBOL__(value) "_" TTEST_MSVC_STRINGIFY__(value)
+  #else
+    #define TTEST_MSVC_LINKER_SYMBOL__(value) TTEST_MSVC_STRINGIFY__(value)
+  #endif
   #define TTEST_CONSTRUCTOR__(fn)                                                                  \
     static void __cdecl fn(void);                                                                  \
-    __declspec(allocate(".CRT$XCV")) static volatile ttest_ctor_fn__                               \
-        TTEST_CAT2(ttest_ctor_, fn) = fn;                                                          \
+    __declspec(allocate(".CRT$XCV")) ttest_ctor_fn__ TTEST_CAT2(ttest_ctor_, fn) = fn;             \
+    __pragma(comment(linker, "/include:" TTEST_MSVC_LINKER_SYMBOL__(TTEST_CAT2(ttest_ctor_, fn)))) \
     static void __cdecl fn(void)
 #elif defined(__GNUC__) || defined(__clang__)
   #define TTEST_CONSTRUCTOR__(fn)                                                                  \
