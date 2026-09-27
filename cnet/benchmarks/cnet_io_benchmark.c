@@ -2566,7 +2566,9 @@ static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const c
            row->p50_ns / 1000.0, row->p95_ns / 1000.0, mib_per_second,
            row->cpu_cost, row->copied_bytes_per_op, row->payload_buffer_acquires_per_op);
   }
-  return io_bench_sg_write_csv(prefix, backend->name, summaries, summary_count);
+  status = io_bench_sg_write_csv(prefix, backend->name, summaries, summary_count);
+  if (status != SALTS_OK) return status;
+  return io_bench_compare_sg_windows(backend, prefix);
 }
 
 spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchmark") {
