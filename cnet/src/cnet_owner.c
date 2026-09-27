@@ -732,6 +732,11 @@ static int cnet_owner_submit_request(cnet_owner_impl *impl, cnet_owner_request *
 #if defined(CNET_INTERNAL_PROFILING)
     {
       const uint64_t profile_started = cnet_owner_profile_start(impl);
+      if (impl->profile_active) {
+        ++impl->profile.vector_submit_calls;
+        impl->profile.vector_submit_spans += span_count;
+        impl->profile.vector_submit_bytes += submitted_size;
+      }
       status = native_io_backend_submit_vector(&impl->backend, &vector_operation, &native_request);
       if (first_submit)
         cnet_owner_profile_finish(impl, profile_started, &impl->profile.request_start_ns,
