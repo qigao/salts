@@ -346,12 +346,16 @@ spec("CNet public client API") {
     options = (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
     options.linger_ms = 1000u;
     check_equal(cnet_stream_socket_options_validate(&options), SALTS_EINVAL);
+    options = (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
+    options.nodelay = 2;
+    check_equal(cnet_stream_socket_options_validate(&options), SALTS_EINVAL);
 
     options = (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
     options.receive_buffer_bytes = 32768u;
     options.send_buffer_bytes = 32768u;
     options.keepalive = 1;
     options.linger = 1;
+    options.nodelay = 1;
     check_equal(cnet_client_init(&client, &config), SALTS_OK);
     check_equal(cnet_client_set_stream_socket_options(&client, &options), SALTS_OK);
     check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
