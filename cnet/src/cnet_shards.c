@@ -474,7 +474,7 @@ int cnet_shards_send_slicev_direct(cnet_shards *shards,
   cnet_shards_impl *impl = cnet_shards_get(shards);
   cnet_shard_record *record;
   int status;
-  if (segments == NULL || segment_count == 0u || segment_count > NATIVE_IO_VECTOR_MAX)
+  if (segments == NULL || segment_count == 0u || segment_count > CNET_RETAINED_VECTOR_MAX)
     return SALTS_EINVAL;
   status = cnet_shards_direct_write_ready(impl, connection, &record);
   return status == SALTS_OK
@@ -490,7 +490,7 @@ int cnet_shards_send_slicev_close_direct(cnet_shards *shards,
   cnet_shards_impl *impl = cnet_shards_get(shards);
   cnet_shard_record *record;
   int status;
-  if (segments == NULL || segment_count == 0u || segment_count > NATIVE_IO_VECTOR_MAX)
+  if (segments == NULL || segment_count == 0u || segment_count > CNET_RETAINED_VECTOR_MAX)
     return SALTS_EINVAL;
   status = cnet_shards_direct_write_ready(impl, connection, &record);
   return status == SALTS_OK
