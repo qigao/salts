@@ -388,14 +388,14 @@ static void io_bench_server_entry(void *argument) {
 }
 
 static int io_bench_server_init(io_bench_server *server, io_bench_protocol protocol,
-                                size_t payload_size) {
+                                size_t payload_size, size_t exchange_count) {
   const int type = protocol == IO_BENCH_TCP ? SOCK_STREAM : SOCK_DGRAM;
   const int socket_protocol = protocol == IO_BENCH_TCP ? IPPROTO_TCP : IPPROTO_UDP;
   int status;
   memset(server, 0, sizeof(*server));
   server->protocol = protocol;
   server->payload_size = payload_size;
-  server->exchange_count = IO_BENCH_ALL_EXCHANGES;
+  server->exchange_count = exchange_count;
   server->socket_value = socket(AF_INET, type, socket_protocol);
   if (!io_bench_socket_valid(server->socket_value)) return io_bench_socket_error();
   status = io_bench_bind_loopback(server->socket_value, &server->address);
@@ -1212,16 +1212,17 @@ static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol
   return cnet_connect(&fixture->client, &options, &fixture->connection);
 }
 
-static int io_bench_cnet_ready(io_bench_cnet *fixture, size_t payload_size) {
+static int io_bench_cnet_ready(io_bench_cnet *fixture, size_t payload_size,
+                               size_t exchange_count) {
   size_t receive_demand;
   int status = io_bench_wait_cnet(fixture, &fixture->connected, 1);
   if (status == SALTS_OK) status = fixture->status;
   if (status != SALTS_OK) return status;
   if (fixture->protocol == IO_BENCH_TCP) {
-    if (payload_size > SIZE_MAX / IO_BENCH_ALL_EXCHANGES) return SALTS_ERANGE;
-    receive_demand = payload_size * IO_BENCH_ALL_EXCHANGES;
+    if (exchange_count == 0u || payload_size > SIZE_MAX / exchange_count) return SALTS_ERANGE;
+    receive_demand = payload_size * exchange_count;
   } else {
-    receive_demand = IO_BENCH_ALL_EXCHANGES;
+    receive_demand = exchange_count;
   }
   status = cnet_receive(&fixture->client, fixture->connection, receive_demand);
   return status;
@@ -1284,7 +1285,7 @@ static int io_bench_cnet_destroy(io_bench_cnet *fixture) {
 static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol protocol,
                                  io_bench_driver driver, size_t payload_size,
                                  native_io_backend_kind backend_kind, io_bench_send_mode send_mode,
-                                 size_t segment_count) {
+                                 size_t segment_count, size_t exchange_count) {
   int status;
   memset(fixture, 0, sizeof(*fixture));
   fixture->driver = driver;
@@ -1294,7 +1295,8 @@ static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol pr
   fixture->server.socket_value = IO_BENCH_INVALID_SOCKET;
   fixture->native.socket_value = IO_BENCH_INVALID_SOCKET;
   status = io_bench_network_start(fixture);
-  if (status == SALTS_OK) status = io_bench_server_init(&fixture->server, protocol, payload_size);
+  if (status == SALTS_OK)
+    status = io_bench_server_init(&fixture->server, protocol, payload_size, exchange_count);
   if (status == SALTS_OK) status = io_bench_server_start(&fixture->server);
   if (status == SALTS_OK) {
     if (driver == IO_BENCH_LIBUV)
@@ -1307,7 +1309,7 @@ static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol pr
                                   send_mode, segment_count);
   }
   if (status == SALTS_OK && driver == IO_BENCH_CNET)
-    status = io_bench_cnet_ready(&fixture->cnet, payload_size);
+    status = io_bench_cnet_ready(&fixture->cnet, payload_size, exchange_count);
   return status;
 }
 
