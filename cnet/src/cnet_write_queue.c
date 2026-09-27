@@ -35,8 +35,8 @@ typedef struct cnet_write_entry {
   size_t base_offset;
   size_t offset;
   size_t copied_bytes;
-  cnet_write_range ranges[NATIVE_IO_VECTOR_MAX];
-  mem_buffer_t *owners[NATIVE_IO_VECTOR_MAX];
+  cnet_write_range ranges[CNET_RETAINED_VECTOR_MAX];
+  mem_buffer_t *owners[CNET_RETAINED_VECTOR_MAX];
   size_t range_count;
   size_t owner_count;
   uint32_t generation;
@@ -361,7 +361,7 @@ int cnet_write_queue_enqueue_slicev(cnet_write_queue *queue,
   cnet_write_queue_impl *impl = cnet_write_impl(queue);
   const size_t connection_index =
       impl != NULL ? cnet_write_connection_index(impl, connection) : SIZE_MAX;
-  size_t base_offsets[NATIVE_IO_VECTOR_MAX];
+  size_t base_offsets[CNET_RETAINED_VECTOR_MAX];
   size_t total = 0u;
   uint32_t slot;
   uint32_t tail;
@@ -371,7 +371,7 @@ int cnet_write_queue_enqueue_slicev(cnet_write_queue *queue,
   if (out_handle == NULL) return SALTS_EINVAL;
   *out_handle = (cnet_write_handle){0};
   if (impl == NULL || segments == NULL || segment_count == 0u ||
-      segment_count > NATIVE_IO_VECTOR_MAX)
+      segment_count > CNET_RETAINED_VECTOR_MAX)
     return SALTS_EINVAL;
 
   for (size_t index = 0u; index < segment_count; ++index) {
@@ -545,7 +545,8 @@ int cnet_write_queue_build_vector(cnet_write_queue *queue,
     take = range->length - local;
     if (take > max_bytes - bytes) take = max_bytes - bytes;
     data = mem_buffer_const_data(range->buffer);
-    if (data == NULL || take == 0u || output >= NATIVE_IO_VECTOR_MAX) return SALTS_EPROTO;
+    if (data == NULL || take == 0u) return SALTS_EPROTO;
+    if (output == NATIVE_IO_VECTOR_MAX) break;
     out_spans[output++] =
         (native_io_buffer_span){(void *)(data + range->base_offset + local), take};
     bytes += take;
