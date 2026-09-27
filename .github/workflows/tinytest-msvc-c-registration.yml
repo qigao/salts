@@ -1,0 +1,88 @@
+name: TinyTest MSVC C registration
+
+on:
+  pull_request:
+    paths:
+      - "tinytest/include/tinytest.h"
+      - "tinytest/test/**"
+      - "tinytest/CMakeLists.txt"
+      - ".github/workflows/tinytest-msvc-c-registration.yml"
+  push:
+    paths:
+      - "tinytest/include/tinytest.h"
+      - "tinytest/test/**"
+      - "tinytest/CMakeLists.txt"
+      - ".github/workflows/tinytest-msvc-c-registration.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  linux:
+    name: GCC C registration control
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Install native build prerequisite
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y nasm
+
+      - name: Configure focused build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset linux-release-user \
+            -DENABLE_TESTS=ON \
+            -DBUILD_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            '-DVCPKG_INSTALL_OPTIONS=--only-binarycaching'
+
+      - name: Build and run TinyTest C registration regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build --preset linux-release-user --parallel 2 --target \
+            tinytest_regression_fixes
+          ctest --test-dir build/linux-gcc-release \
+            --output-on-failure \
+            -R '^tinytest_regression_fixes$'
+
+      - name: Source hygiene
+        shell: bash
+        run: git diff --check
+
+  windows:
+    name: MSVC Release C registration
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Configure focused MSVC build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cmake -S . -B build/tinytest-msvc -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:QIGAO_VCPKG_TOOLCHAIN_FILE" "-DVCPKG_TARGET_TRIPLET=x64-windows" "-DVCPKG_INSTALLED_DIR=$env:GITHUB_WORKSPACE\vcpkg_installed-tinytest" "-DVCPKG_INSTALL_OPTIONS=--only-binarycaching" "-DENABLE_TESTS=ON" "-DBUILD_TESTS=ON" "-DBUILD_BENCHMARKS=OFF" "-DBUILD_EXAMPLES=OFF"
+
+      - name: Build and run TinyTest C registration regression
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cmake --build build/tinytest-msvc --config Release --parallel 2 --target tinytest_regression_fixes
+          ctest --test-dir build/tinytest-msvc -C Release --output-on-failure -R "^tinytest_regression_fixes$"
+
+      - name: Source hygiene
+        shell: pwsh
+        run: git diff --check
