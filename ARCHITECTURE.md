@@ -407,9 +407,9 @@ native format syntax
         ↓
 SaltsUtils parser/event model
         ↓ format projection
-CSerde canonical values
+CSerde canonical values + CMeta semantic shape
         ↓
-CBind + CMeta semantic shape
+SaltsUtils DataBind
         ↓
 native C value
         ↓ optional composition
