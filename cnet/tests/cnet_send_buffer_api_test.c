@@ -498,4 +498,78 @@ spec("CNet retained buffer public send API") {
     cnet_send_buffer_test_close_socket(listener);
   }
 
+
+  it("retains one final buffer through send terminal and then closes") {
+    static const unsigned char expected[] = {0x71u, 0x72u, 0x73u, 0x74u};
+    cnet_client client = {0};
+    cnet_client_config config = cnet_send_buffer_test_config();
+    cnet_send_buffer_test_probe probe = {.client = &client, .expected_send_size = sizeof(expected)};
+    cnet_send_buffer_test_socket listener = CNET_SEND_BUFFER_TEST_INVALID_SOCKET;
+    cnet_send_buffer_test_socket accepted = CNET_SEND_BUFFER_TEST_INVALID_SOCKET;
+    cnet_connection connection = {0};
+    cnet_connect_options options;
+    cnet_observer observer = {.on_state = cnet_send_buffer_test_state,
+                              .on_receive = cnet_send_buffer_test_receive,
+                              .on_send = cnet_send_buffer_test_sent,
+                              .user = &probe};
+    cnet_send_buffer_free_probe free_probe;
+    mem_buffer_t *buffer;
+    unsigned char received[sizeof(expected)] = {0};
+    unsigned char rejected = 0x55u;
+    char uri[64];
+    uint16_t port = 0u;
+    size_t received_size = 0u;
+
+    atomic_init(&probe.connected, 0);
+    atomic_init(&probe.sent, 0);
+    atomic_init(&probe.terminal, 0);
+    atomic_init(&probe.failed, 0);
+    atomic_init(&probe.receive_admit_status, SALTS_OK);
+    atomic_init(&free_probe.freed, 0);
+
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_send_buffer_and_close(NULL, connection, NULL), SALTS_EINVAL);
+    check_equal(cnet_send_buffer_and_close(&client, connection, NULL), SALTS_EINVAL);
+    check_equal(cnet_send_buffer_test_listener(&listener, &port), SALTS_OK);
+    check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
+    options = (cnet_connect_options){.uri = uri, .observer = observer};
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
+    check_equal(cnet_send_buffer_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
+    accepted = accept(listener, NULL, NULL);
+    check_true(accepted != CNET_SEND_BUFFER_TEST_INVALID_SOCKET);
+    check_equal(cnet_send_buffer_test_set_receive_timeout(accepted), SALTS_OK);
+
+    buffer = cnet_send_buffer_test_external(sizeof(expected), 0u, &free_probe);
+    check_true(buffer != NULL);
+    memcpy(mem_buffer_data(buffer), expected, sizeof(expected));
+    check_equal(mem_buffer_ref_count(buffer), UINT32_C(1));
+    check_equal(cnet_send_buffer_and_close(&client, connection, buffer), SALTS_OK);
+    check_equal(mem_buffer_ref_count(buffer), UINT32_C(2));
+
+    check_equal(cnet_send(&client, connection, &rejected, sizeof(rejected)), SALTS_EBUSY);
+    check_equal(cnet_receive(&client, connection, 1u), SALTS_EBUSY);
+
+    mem_buffer_release(buffer);
+    check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 0);
+    check_equal(cnet_send_buffer_test_poll_until(&client, &probe.sent, 1), SALTS_OK);
+    check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 1);
+
+    while (received_size < sizeof(received)) {
+      const int got = recv(accepted, (char *)received + received_size,
+                           (int)(sizeof(received) - received_size), 0);
+      check_greater(got, 0);
+      if (got <= 0) break;
+      received_size += (size_t)got;
+    }
+    check_equal(received_size, sizeof(received));
+    check_equal(memcmp(received, expected, sizeof(expected)), 0);
+    check_equal(cnet_send_buffer_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
+    check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
+
+    check_equal(cnet_client_stop(&client, CNET_SEND_BUFFER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+    cnet_send_buffer_test_close_socket(accepted);
+    cnet_send_buffer_test_close_socket(listener);
+  }
+
 }
