@@ -2270,6 +2270,19 @@ int cnet_owner_send_close_direct(cnet_owner *owner, cnet_session_handle session_
   return cnet_owner_finish_write_admission(impl, session, handle);
 }
 
+int cnet_owner_send_buffer_close_direct(cnet_owner *owner,
+                                        cnet_session_handle session_handle,
+                                        mem_buffer_t *buffer) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  cnet_write_handle handle = {0};
+  int status = cnet_owner_send_direct_ready(impl, session_handle, &session);
+  if (status != SALTS_OK) return status;
+  status = cnet_write_queue_enqueue_buffer(&impl->writes, session_handle, buffer, true, &handle);
+  if (status != SALTS_OK) return status;
+  return cnet_owner_finish_write_admission(impl, session, handle);
+}
+
 int cnet_owner_receive_direct(cnet_owner *owner, cnet_session_handle session_handle,
                               size_t demand) {
   cnet_owner_impl *impl = cnet_owner_get(owner);

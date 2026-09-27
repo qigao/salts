@@ -747,6 +747,19 @@ int cnet_send_and_close(cnet_client *client, cnet_connection connection, const v
                         size_t size);
 
 /**
+ * Retains one non-empty immutable buffer as the final logical write without
+ * copying payload bytes into CNet storage. Ordering and close semantics are
+ * identical to cnet_send_and_close(): previously admitted writes drain first,
+ * further public send/receive admission closes immediately after success, and
+ * the transport/TLS close starts only after this retained logical write reaches
+ * terminal success. The caller may release its reference immediately after
+ * SALTS_OK but must not mutate data/used/capacity while CNet owns its retain.
+ * Rejection retains no lasting reference.
+ */
+int cnet_send_buffer_and_close(cnet_client *client, cnet_connection connection,
+                               mem_buffer_t *buffer);
+
+/**
  * Requests exactly `demand` future receive values. `on_receive` is required.
  * @return The same handle/state/queue errors as `cnet_send`; zero demand is
  * `SALTS_EINVAL`.

@@ -450,6 +450,7 @@ spec("CNet bounded TLS engine") {
     cnet_connect_options connect_options;
     cnet_start_tls_options upgrade = CNET_START_TLS_OPTIONS_INIT;
     cnet_connection client_connection = {0};
+    mem_buffer_t *final_buffer = NULL;
     char peer_certificate_sha256[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY] = {0};
     uint8_t client_channel_binding[CNET_TLS_CHANNEL_BINDING_BYTES] = {0};
     uint8_t server_channel_binding[CNET_TLS_CHANNEL_BINDING_BYTES] = {0};
@@ -567,9 +568,15 @@ spec("CNet bounded TLS engine") {
     server_probe.received_size = 0u;
     memset(server_probe.received, 0, sizeof(server_probe.received));
     check_equal(cnet_receive(&server, server_probe.connection, 1u), SALTS_OK);
-    check_equal(cnet_send_and_close(&client, client_connection, final_request,
-                                    sizeof(final_request) - 1u),
-                SALTS_OK);
+    final_buffer = mem_get_buffer(mem_global(), sizeof(final_request) - 1u);
+    check_not_null(final_buffer);
+    memcpy(mem_buffer_data(final_buffer), final_request, sizeof(final_request) - 1u);
+    mem_set_used(final_buffer, sizeof(final_request) - 1u);
+    check_equal(mem_buffer_ref_count(final_buffer), UINT32_C(1));
+    check_equal(cnet_send_buffer_and_close(&client, client_connection, final_buffer), SALTS_OK);
+    check_equal(mem_buffer_ref_count(final_buffer), UINT32_C(2));
+    mem_buffer_release(final_buffer);
+    final_buffer = NULL;
     check_equal(cnet_send(&client, client_connection, request, sizeof(request) - 1u), SALTS_EBUSY);
     check_equal(cnet_receive(&client, client_connection, 1u), SALTS_EBUSY);
     deadline = salts_monotonic_ms() + 5000u;

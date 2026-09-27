@@ -73,6 +73,12 @@ static_assert(std::is_same<decltype(&cnet_start_tls), cnet_start_tls_function>::
 using cnet_send_buffer_function = int (*)(cnet_client *, cnet_connection, mem_buffer_t *);
 static_assert(std::is_same<decltype(&cnet_send_buffer), cnet_send_buffer_function>::value,
               "retained-buffer send must keep its C linkage signature");
+using cnet_send_buffer_and_close_function =
+    int (*)(cnet_client *, cnet_connection, mem_buffer_t *);
+static_assert(
+    std::is_same<decltype(&cnet_send_buffer_and_close),
+                 cnet_send_buffer_and_close_function>::value,
+    "retained final-send must keep its C linkage signature");
 using cnet_send_slice_function =
     int (*)(cnet_client *, cnet_connection, const mem_slice_t *);
 static_assert(std::is_same<decltype(&cnet_send_slice), cnet_send_slice_function>::value,

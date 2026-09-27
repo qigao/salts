@@ -137,9 +137,12 @@ int cnet_owner_send_slicev_direct(cnet_owner *owner, cnet_session_handle session
                                   const mem_slice_t *segments, size_t segment_count);
 int cnet_owner_sendv_direct(cnet_owner *owner, cnet_session_handle session,
                             const cnet_const_buffer *segments, size_t segment_count);
-/** Admits one copied non-TLS final write behind already accepted write slots. */
+/** Admits one copied final write behind already accepted write slots. */
 int cnet_owner_send_close_direct(cnet_owner *owner, cnet_session_handle session,
                                  const void *data, size_t size);
+/** Admits one retained final buffer using the same close-after-send write-slot semantics. */
+int cnet_owner_send_buffer_close_direct(cnet_owner *owner, cnet_session_handle session,
+                                        mem_buffer_t *buffer);
 
 /**
  * Owner-thread quiescent close admission.

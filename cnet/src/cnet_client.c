@@ -808,7 +808,11 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
       status = SALTS_ERANGE;
     else {
       if (input->close_after_send) {
-        status = cnet_shards_send_close_direct(&impl->shards, internal, input->data, input->size);
+        status = input->retained_buffer != NULL
+                     ? cnet_shards_send_buffer_close_direct(&impl->shards, internal,
+                                                            input->retained_buffer)
+                     : cnet_shards_send_close_direct(&impl->shards, internal, input->data,
+                                                     input->size);
       } else if (input->retained_slices != NULL) {
         status = cnet_shards_send_slicev_direct(&impl->shards, internal, input->retained_slices,
                                                 input->segment_count);
@@ -917,6 +921,21 @@ int cnet_send_and_close(cnet_client *client, cnet_connection connection, const v
   const cnet_client_send_input input = {.data = data, .size = size, .close_after_send = true};
   if (impl == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
   if (size > impl->max_send_bytes) return SALTS_EMSGSIZE;
+  return cnet_client_send_admit(impl, connection, &input);
+}
+
+int cnet_send_buffer_and_close(cnet_client *client, cnet_connection connection,
+                               mem_buffer_t *buffer) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  size_t size;
+  cnet_client_send_input input;
+
+  if (impl == NULL || buffer == NULL) return SALTS_EINVAL;
+  size = mem_buffer_used(buffer);
+  if (size == 0u || mem_buffer_const_data(buffer) == NULL) return SALTS_EINVAL;
+  if (size > impl->max_send_bytes) return SALTS_EMSGSIZE;
+  input = (cnet_client_send_input){
+      .retained_buffer = buffer, .size = size, .close_after_send = true};
   return cnet_client_send_admit(impl, connection, &input);
 }
 
