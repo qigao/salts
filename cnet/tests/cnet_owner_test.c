@@ -311,8 +311,19 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
     check_equal(terminal.status, SALTS_ETIMEDOUT);
     check_equal(terminal.stage,
                 resolve_host ? CNET_SESSION_STAGE_RESOLVE : CNET_SESSION_STAGE_CONNECT);
+#if defined(CNET_INTERNAL_TESTING)
+    /*
+     * Owner work is advisory and may be queued by a callback before a later
+     * completion in the same batch makes this generation terminal. Recycling
+     * must remove that hint before the session record is zeroed.
+     */
+    check_equal(cnet_owner_test_queue_session_work(&owner, session), SALTS_OK);
+#endif
     check_equal(cnet_session_table_recycle(&sessions, session), SALTS_OK);
     check_equal(cnet_owner_release_session(&owner, session), SALTS_OK);
+#if defined(CNET_INTERNAL_TESTING)
+    check_equal(cnet_owner_test_process_session_work(&owner), SALTS_OK);
+#endif
     goto cleanup;
   }
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_OPEN),
