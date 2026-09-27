@@ -383,6 +383,194 @@ spec("CSTL semantic projection") {
     check_equal(explicit_owned_live, (size_t)0u);
   }
 
+  it("materializes canonical sequence semantic zero on first mutation") {
+    meta_vec vec = {0};
+    meta_list list = {0};
+    meta_vec raw_vec = {0};
+    meta_list raw_list = {0};
+    cmeta_data_collection_borrow_cursor vec_cursor = {0};
+    cmeta_data_collection_borrow_cursor list_cursor = {0};
+    size_t size = 99u;
+    const int *value;
+
+    check_equal(cmeta_data_value_init_zero(
+                    &meta_vec_collection_data, &vec), CMETA_OK);
+    check_equal(cmeta_data_value_init_zero(
+                    &meta_list_collection_data, &list), CMETA_OK);
+    check_false(vec.raw.initialized);
+    check_null(vec.raw.data);
+    check_null(list.raw.impl);
+
+    check_equal(cmeta_data_collection_borrow_begin(
+                    &meta_vec_collection_data, &vec, &vec_cursor), CMETA_OK);
+    check_equal(cmeta_data_collection_borrow_size(&vec_cursor, &size), CMETA_OK);
+    check_equal(size, (size_t)0u);
+    check_equal(cmeta_data_collection_borrow_begin(
+                    &meta_list_collection_data, &list, &list_cursor), CMETA_OK);
+    check_equal(cmeta_data_collection_borrow_size(&list_cursor, &size), CMETA_OK);
+    check_equal(size, (size_t)0u);
+
+    check_equal(meta_vec_push(&vec, 3), STL_OK);
+    check_equal(meta_list_add(&list, 5), STL_OK);
+    check_true(vec.raw.initialized);
+    check_not_null(vec.raw.data);
+    check_equal(vec.raw.element_limit, (size_t)SIZE_MAX);
+    check_not_null(list.raw.impl);
+    check_equal(meta_vec_size(&vec), (size_t)1u);
+    check_equal(meta_list_size(&list), (size_t)1u);
+    value = meta_vec_at_const(&vec, 0u);
+    check_not_null(value);
+    check_equal(*value, 3);
+    value = meta_list_front_const(&list);
+    check_not_null(value);
+    check_equal(*value, 5);
+
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_vec_collection_data, &vec), CMETA_OK);
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_list_collection_data, &list), CMETA_OK);
+    check_false(vec.raw.initialized);
+    check_null(vec.raw.data);
+    check_null(list.raw.impl);
+
+    check_equal(meta_vec_push(&vec, 7), STL_OK);
+    check_equal(meta_list_add(&list, 9), STL_OK);
+    check_equal(meta_vec_size(&vec), (size_t)1u);
+    check_equal(meta_list_size(&list), (size_t)1u);
+
+    check_equal(meta_vec_push(&raw_vec, 1), STL_INVALID_ARGUMENT);
+    check_equal(meta_list_add(&raw_list, 1), STL_INVALID_ARGUMENT);
+
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_vec_collection_data, &vec), CMETA_OK);
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_list_collection_data, &list), CMETA_OK);
+  }
+
+  it("materializes Deque Stack Queue and Heap typed zero on first mutation") {
+    deque_t deque =
+        SALTS_STL_DEQUE_INITIALIZER_WITH_TYPE(int, &cmeta_type_int);
+    cstl_stack_t stack =
+        SALTS_STL_STACK_INITIALIZER_WITH_TYPE(int, &cmeta_type_int);
+    queue_t queue =
+        SALTS_STL_QUEUE_INITIALIZER_WITH_TYPE(int, &cmeta_type_int);
+    heap_t heap =
+        SALTS_STL_HEAP_INITIALIZER_WITH_TYPE(int, &cmeta_type_int);
+    deque_t raw_deque = {0};
+    cstl_stack_t raw_stack = {0};
+    queue_t raw_queue = {0};
+    heap_t raw_heap = {0};
+    int first = 3;
+    int second = 5;
+
+    check_true(deque_empty(&deque));
+    check_true(stack_empty(&stack));
+    check_true(queue_empty(&queue));
+    check_true(heap_empty(&heap));
+    check_false(deque.initialized);
+    check_false(stack.raw.initialized);
+    check_false(queue.raw.initialized);
+    check_false(heap.initialized);
+
+    check_equal(deque_push_back(&deque, &first), STL_OK);
+    check_equal(stack_push(&stack, &first), STL_OK);
+    check_equal(queue_push(&queue, &first), STL_OK);
+    check_equal(heap_push(&heap, &first), STL_OK);
+
+    check_true(deque.initialized);
+    check_true(stack.raw.initialized);
+    check_true(queue.raw.initialized);
+    check_true(heap.initialized);
+    check_equal(deque.element_limit, (size_t)SIZE_MAX);
+    check_equal(stack.raw.element_limit, (size_t)SIZE_MAX);
+    check_equal(queue.raw.element_limit, (size_t)SIZE_MAX);
+    check_equal(heap.element_limit, (size_t)SIZE_MAX);
+    check_true(deque.cmeta.descriptor == &stl_deque_container_desc);
+    check_true(stack.raw.cmeta.descriptor == &stl_stack_container_desc);
+    check_true(queue.raw.cmeta.descriptor == &stl_queue_container_desc);
+    check_true(heap.cmeta.descriptor == &stl_heap_container_desc);
+
+    deque_destroy(&deque);
+    stack_destroy(&stack);
+    queue_destroy(&queue);
+    heap_destroy(&heap);
+    check_false(deque.initialized);
+    check_false(stack.raw.initialized);
+    check_false(queue.raw.initialized);
+    check_false(heap.initialized);
+    check_true(deque.cmeta.descriptor == &stl_deque_container_desc);
+    check_true(stack.raw.cmeta.descriptor == &stl_stack_container_desc);
+    check_true(queue.raw.cmeta.descriptor == &stl_queue_container_desc);
+    check_true(heap.cmeta.descriptor == &stl_heap_container_desc);
+
+    check_equal(deque_push_front(&deque, &second), STL_OK);
+    check_equal(stack_push(&stack, &second), STL_OK);
+    check_equal(queue_push(&queue, &second), STL_OK);
+    check_equal(heap_push(&heap, &second), STL_OK);
+    check_equal(deque_size(&deque), (size_t)1u);
+    check_equal(stack_size(&stack), (size_t)1u);
+    check_equal(queue_size(&queue), (size_t)1u);
+    check_equal(heap_size(&heap), (size_t)1u);
+
+    check_equal(deque_push_back(&raw_deque, &first), STL_INVALID_ARGUMENT);
+    check_equal(stack_push(&raw_stack, &first), STL_INVALID_ARGUMENT);
+    check_equal(queue_push(&raw_queue, &first), STL_INVALID_ARGUMENT);
+    check_equal(heap_push(&raw_heap, &first), STL_INVALID_ARGUMENT);
+
+    deque_destroy(&deque);
+    stack_destroy(&stack);
+    queue_destroy(&queue);
+    heap_destroy(&heap);
+  }
+
+  it("materializes canonical Set and Map zero with an unbounded default limit") {
+    meta_set set = {0};
+    meta_map map = {0};
+    meta_set raw_set = {0};
+    meta_map raw_map = {0};
+    const long *value;
+
+    check_equal(cmeta_data_value_init_zero(
+                    &meta_set_collection_data, &set), CMETA_OK);
+    check_equal(cmeta_data_value_init_zero(
+                    &meta_map_map_data, &map), CMETA_OK);
+    check_null(set.raw.map.impl);
+    check_null(map.raw.impl);
+    check_equal(meta_set_size(&set), (size_t)0u);
+    check_equal(meta_map_size(&map), (size_t)0u);
+
+    check_equal(meta_set_add(&set, 3), STL_OK);
+    check_equal(meta_map_put(&map, 7, 70L), STL_OK);
+    check_not_null(set.raw.map.impl);
+    check_not_null(map.raw.impl);
+    check_equal(set_element_limit(&set.raw), (size_t)SIZE_MAX);
+    check_equal(map_entry_limit(&map.raw), (size_t)SIZE_MAX);
+    check_true(meta_set_contains(&set, 3));
+    value = meta_map_get_const(&map, 7);
+    check_not_null(value);
+    check_equal(*value, 70L);
+
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_set_collection_data, &set), CMETA_OK);
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_map_map_data, &map), CMETA_OK);
+    check_null(set.raw.map.impl);
+    check_null(map.raw.impl);
+
+    check_equal(meta_set_add(&set, 5), STL_OK);
+    check_equal(meta_map_put(&map, 9, 90L), STL_OK);
+    check_equal(meta_set_size(&set), (size_t)1u);
+    check_equal(meta_map_size(&map), (size_t)1u);
+
+    check_equal(meta_set_add(&raw_set, 1), STL_INVALID_ARGUMENT);
+    check_equal(meta_map_put(&raw_map, 1, 1L), STL_INVALID_ARGUMENT);
+
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_set_collection_data, &set), CMETA_OK);
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_map_map_data, &map), CMETA_OK);
+  }
+
   it("keeps typed tree container semantic zero resource-free") {
     meta_set set = {0};
     meta_map source = {0};
@@ -429,14 +617,23 @@ spec("CSTL semantic projection") {
     check_not_null(destination.raw.impl);
     check_equal(meta_map_size(&source), (size_t)0u);
     check_equal(meta_map_size(&destination), (size_t)1u);
+    check_equal(meta_map_put(&source, 8, 80L), STL_OK);
+    check_equal(meta_map_size(&source), (size_t)1u);
+    value = meta_map_get_const(&source, 8);
+    check_not_null(value);
+    check_equal(*value, 80L);
     value = meta_map_get_const(&destination, 7);
     check_not_null(value);
     check_equal(*value, 70L);
 
     check_equal(cmeta_data_value_restore_zero(
                     &meta_map_map_data, &destination), CMETA_OK);
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_map_map_data, &source), CMETA_OK);
     check_null(destination.raw.impl);
+    check_null(source.raw.impl);
     check_equal(meta_map_size(&destination), (size_t)0u);
+    check_equal(meta_map_size(&source), (size_t)0u);
   }
 
   it("copies typed collection and map values through canonical CMeta") {

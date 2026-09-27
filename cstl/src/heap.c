@@ -1,4 +1,5 @@
 #include <cstl/heap.h>
+#include <cstl/detail/instance_meta.h>
 
 #include "sequence_internal.h"
 
@@ -10,6 +11,46 @@ static bool heap_valid(const heap_t *heap) {
     return heap != NULL && heap->initialized && heap->elem_size != 0u &&
            (heap->element_type != NULL || heap->compare != NULL);
 }
+
+static bool heap_is_typed_semantic_zero(const heap_t *heap) {
+    return heap != NULL && !heap->initialized && heap->data == NULL &&
+           heap->size == 0u && heap->capacity == 0u &&
+           heap->elem_size == 0u && heap->elem_stride == 0u &&
+           heap->elem_align == 0u && heap->element_limit == 0u &&
+           heap->compare == NULL && heap->compare_ctx == NULL &&
+           heap->cmeta.descriptor == &stl_heap_container_desc &&
+           heap->element_type != NULL &&
+           cmeta_type_desc_valid(heap->element_type);
+}
+
+static stl_status heap_materialize_for_mutation(
+    heap_t *heap, heap_t *zero_snapshot, bool *materialized) {
+    stl_status status;
+    if (zero_snapshot == NULL || materialized == NULL)
+        return STL_INVALID_ARGUMENT;
+    *materialized = false;
+    if (heap_valid(heap)) return STL_OK;
+    if (!heap_is_typed_semantic_zero(heap)) return STL_INVALID_ARGUMENT;
+
+    *zero_snapshot = *heap;
+    status = heap_raw_init(heap, zero_snapshot->element_type, SIZE_MAX);
+    if (status != STL_OK) {
+        *heap = *zero_snapshot;
+        return status;
+    }
+    heap->cmeta.descriptor = zero_snapshot->cmeta.descriptor;
+    heap->generation = zero_snapshot->generation;
+    *materialized = true;
+    return STL_OK;
+}
+
+static void heap_rollback_materialization(
+    heap_t *heap, const heap_t *zero_snapshot, bool materialized) {
+    if (!materialized) return;
+    heap_raw_destroy_storage(heap);
+    *heap = *zero_snapshot;
+}
+
 static unsigned char *heap_slot(heap_t *heap, size_t index) {
     return (unsigned char *)heap->data + index * heap->elem_stride;
 }
@@ -219,21 +260,45 @@ stl_status heap_reserve(heap_t *heap, size_t min_capacity) {
     return status;
 }
 stl_status heap_push(heap_t *heap, const void *elem) {
+    heap_t zero_snapshot = {0};
     void *prepared = NULL;
     void *scratch = NULL;
+    bool materialized = false;
     stl_status status;
-    if (!heap_valid(heap) || !elem) return STL_INVALID_ARGUMENT;
-    if (heap->size >= heap->element_limit) return STL_CAPACITY_EXCEEDED;
-    status = heap_prepare_copy(heap, elem, &prepared);
+    if (elem == NULL) return STL_INVALID_ARGUMENT;
+    status = heap_materialize_for_mutation(
+        heap, &zero_snapshot, &materialized);
     if (status != STL_OK) return status;
+    if (heap->size >= heap->element_limit) {
+        heap_rollback_materialization(heap, &zero_snapshot, materialized);
+        return STL_CAPACITY_EXCEEDED;
+    }
+    status = heap_prepare_copy(heap, elem, &prepared);
+    if (status != STL_OK) {
+        heap_rollback_materialization(heap, &zero_snapshot, materialized);
+        return status;
+    }
     status = sequence_allocate(1u, heap->elem_stride, heap->elem_align, &scratch);
-    if (status != STL_OK) { heap_discard_prepared(heap, prepared); return status; }
+    if (status != STL_OK) {
+        heap_discard_prepared(heap, prepared);
+        heap_rollback_materialization(heap, &zero_snapshot, materialized);
+        return status;
+    }
     status = heap_grow_to(heap, heap->size + 1u, NULL);
-    if (status != STL_OK) { sequence_deallocate(scratch); heap_discard_prepared(heap, prepared); return status; }
+    if (status != STL_OK) {
+        sequence_deallocate(scratch);
+        heap_discard_prepared(heap, prepared);
+        heap_rollback_materialization(heap, &zero_snapshot, materialized);
+        return status;
+    }
     status = sequence_move_destroy(heap->element_type, heap->elem_size,
         heap_slot(heap, heap->size), prepared);
     sequence_deallocate(prepared);
-    if (status != STL_OK) { sequence_deallocate(scratch); return status; }
+    if (status != STL_OK) {
+        sequence_deallocate(scratch);
+        heap_rollback_materialization(heap, &zero_snapshot, materialized);
+        return status;
+    }
     ++heap->size;
     heap_sift_up(heap, heap->size - 1u, scratch);
     sequence_deallocate(scratch);
