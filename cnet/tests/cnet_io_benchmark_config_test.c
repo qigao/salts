@@ -2,6 +2,7 @@
 #include "tinytest.h"
 
 #include <salts/error_codes.h>
+#include <stdio.h>
 #include <string.h>
 
 spec("CNet I/O benchmark backend selection") {
@@ -94,11 +95,16 @@ spec("CNet I/O benchmark backend selection") {
   }
 
   it("rejects malformed and oversized trace requests without selecting another workload") {
+    char oversized[64];
+    const int length = snprintf(
+        oversized, sizeof(oversized), "native:tcp:%zu",
+        (size_t)CNET_IO_BENCHMARK_MAX_PAYLOAD + 1u);
     const char *invalid[] = {"", "unknown:tcp:1024", "native:pipe:1024", "native:tcp:-1",
                             "native:tcp:+1", "native:tcp: 1", "native:tcp:0",
-                            "native:tcp:65537", "libuv:udp:8193", "cnet:tcp:12junk",
+                            oversized, "libuv:udp:8193", "cnet:tcp:12junk",
                             "cnet:tcp:999999999999999999999999999999"};
     cnet_io_benchmark_trace trace = {.payload_size = 42u};
+    check_true(length > 0 && (size_t)length < sizeof(oversized));
     for (size_t i = 0u; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
       check_not_equal(cnet_io_benchmark_select_trace(invalid[i], &trace), SALTS_OK);
       check_equal(trace.payload_size, (size_t)42u);
