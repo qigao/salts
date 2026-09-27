@@ -39,6 +39,8 @@ static_assert(std::is_standard_layout<cnet_start_tls_options>::value,
               "TLS upgrade policy must remain C ABI data");
 static_assert(std::is_standard_layout<cnet_websocket>::value,
               "WebSocket must be a C value wrapper");
+static_assert(std::is_standard_layout<cnet_websocket_config>::value,
+              "WebSocket config must remain C ABI data");
 static_assert(CNET_CONNECTION_CONNECTED != CNET_CONNECTION_FAILED,
               "connection states must remain distinct");
 static_assert(CNET_MESSAGE_BYTES != CNET_MESSAGE_DATAGRAM,
@@ -87,6 +89,12 @@ using cnet_send_slicev_function =
     int (*)(cnet_client *, cnet_connection, const mem_slice_t *, std::size_t);
 static_assert(std::is_same<decltype(&cnet_send_slicev), cnet_send_slicev_function>::value,
               "retained-vector send must keep its C linkage signature");
+using cnet_websocket_write_complete_function =
+    int (*)(cnet_websocket *, std::size_t, int);
+static_assert(
+    std::is_same<decltype(&cnet_websocket_write_complete),
+                 cnet_websocket_write_complete_function>::value,
+    "retained WebSocket terminal acknowledgement must keep its C linkage signature");
 using cnet_packet_poll_function = int (*)(cnet_packet_endpoint *, std::uint32_t, std::size_t *);
 static_assert(std::is_same<decltype(&cnet_packet_poll), cnet_packet_poll_function>::value,
               "packet poll must keep its C linkage signature");
