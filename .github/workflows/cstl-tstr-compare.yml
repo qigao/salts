@@ -6,12 +6,16 @@ on:
       - "utils/include/salts_cmeta_data.h"
       - "utils/src/salts_cmeta_data.c"
       - "cstl/tests/cstl_imported_metadata_test.c"
+      - "cstl/tests/cstl_imported_tstr_map_smoke.c"
+      - "cstl/tests/CMakeLists.txt"
       - ".github/workflows/cstl-tstr-compare.yml"
   push:
     paths:
       - "utils/include/salts_cmeta_data.h"
       - "utils/src/salts_cmeta_data.c"
       - "cstl/tests/cstl_imported_metadata_test.c"
+      - "cstl/tests/cstl_imported_tstr_map_smoke.c"
+      - "cstl/tests/CMakeLists.txt"
       - ".github/workflows/cstl-tstr-compare.yml"
   workflow_dispatch:
 
@@ -81,5 +85,5 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           cmake --build build/tstr-map-msvc --config Release --target cstl_imported_metadata_test cstl_imported_tstr_map_smoke --parallel 2
-          ctest --test-dir build/tstr-map-msvc -C Release --output-on-failure -R '^cstl_imported_tstr_map_smoke
+          ctest --test-dir build/tstr-map-msvc -C Release --output-on-failure -R "cstl_imported_tstr_map_smoke"
 
