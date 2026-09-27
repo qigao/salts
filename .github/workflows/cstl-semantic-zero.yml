@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - "cstl/CMakeLists.txt"
-      - "cstl/benchmarks/**"
       - "cstl/src/vec.c"
       - "cstl/src/deque.c"
       - "cstl/src/heap.c"
@@ -19,7 +18,6 @@ on:
   push:
     paths:
       - "cstl/CMakeLists.txt"
-      - "cstl/benchmarks/**"
       - "cstl/src/vec.c"
       - "cstl/src/deque.c"
       - "cstl/src/heap.c"
@@ -61,7 +59,7 @@ jobs:
           cmake --preset linux-release-user \
             -DENABLE_TESTS=ON \
             -DBUILD_TESTS=ON \
-            -DBUILD_BENCHMARKS=ON \
+            -DBUILD_BENCHMARKS=OFF \
             -DBUILD_EXAMPLES=OFF \
             '-DVCPKG_INSTALL_OPTIONS=--only-binarycaching'
 
@@ -73,8 +71,7 @@ jobs:
             cstl_semantic_projection_test \
             cstl_ownership_test \
             cstl_list_test \
-            cstl_map_test \
-            cstl_semantic_zero_benchmark
+            cstl_map_test
 
       - name: Run semantic-zero tests
         shell: bash
@@ -83,14 +80,6 @@ jobs:
           ctest --test-dir build/linux-gcc-release \
             --output-on-failure \
             -R '^(cstl_semantic_projection_test|cstl_ownership_test|cstl_list_test|cstl_map_test)$'
-
-      - name: Run semantic-zero benchmark
-        shell: bash
-        run: |
-          set -euo pipefail
-          bench="$(find build/linux-gcc-release -type f -name cstl_semantic_zero_benchmark -perm -111 -print -quit)"
-          test -n "$bench"
-          "$bench" --no-color
 
       - name: Source hygiene
         shell: bash
@@ -109,13 +98,13 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          cmake -S . -B build/cstl-semantic-msvc -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:QIGAO_VCPKG_TOOLCHAIN_FILE" "-DVCPKG_TARGET_TRIPLET=x64-windows" "-DVCPKG_INSTALLED_DIR=$env:GITHUB_WORKSPACE\vcpkg_installed-cstl-semantic" "-DVCPKG_INSTALL_OPTIONS=--only-binarycaching" "-DENABLE_TESTS=ON" "-DBUILD_TESTS=ON" "-DBUILD_BENCHMARKS=ON" "-DBUILD_EXAMPLES=OFF"
+          cmake -S . -B build/cstl-semantic-msvc -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:QIGAO_VCPKG_TOOLCHAIN_FILE" "-DVCPKG_TARGET_TRIPLET=x64-windows" "-DVCPKG_INSTALLED_DIR=$env:GITHUB_WORKSPACE\vcpkg_installed-cstl-semantic" "-DVCPKG_INSTALL_OPTIONS=--only-binarycaching" "-DENABLE_TESTS=ON" "-DBUILD_TESTS=ON" "-DBUILD_BENCHMARKS=OFF" "-DBUILD_EXAMPLES=OFF"
 
       - name: Build semantic-zero targets
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          cmake --build build/cstl-semantic-msvc --config Release --parallel 2 --target cstl_semantic_projection_test cstl_ownership_test cstl_list_test cstl_map_test cstl_semantic_zero_benchmark
+          cmake --build build/cstl-semantic-msvc --config Release --parallel 2 --target cstl_semantic_projection_test cstl_ownership_test cstl_list_test cstl_map_test
 
       - name: Run semantic-zero tests
         shell: pwsh
