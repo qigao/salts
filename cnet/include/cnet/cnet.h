@@ -100,6 +100,15 @@ typedef struct cnet_const_buffer {
   size_t size;
 } cnet_const_buffer;
 
+/**
+ * Maximum retained ranges in one CNet logical scatter/gather write.
+ *
+ * NativeIO still receives at most NATIVE_IO_VECTOR_MAX spans per individual
+ * backend submission. CNet advances larger retained vectors through multiple
+ * bounded native submissions while preserving one logical send terminal.
+ */
+enum { CNET_RETAINED_VECTOR_MAX = 32u };
+
 typedef enum cnet_datagram_address_family {
   CNET_DATAGRAM_ADDRESS_IPV4 = 4,
   CNET_DATAGRAM_ADDRESS_IPV6 = 6
@@ -707,12 +716,17 @@ int cnet_send_buffer(cnet_client *client, cnet_connection connection, mem_buffer
 int cnet_send_slice(cnet_client *client, cnet_connection connection, const mem_slice_t *slice);
 
 /**
- * Retains 1..NATIVE_IO_VECTOR_MAX canonical slice backing buffers on successful
- * admission and preserves their ordered ranges into NativeIO scatter/gather
- * without copying payload bytes. The slice descriptor array is borrowed only
- * for this call; after SALTS_OK the caller may immediately release every slice
- * and other caller references, but admitted backing bytes and buffer
- * data/used/capacity must remain immutable until terminal send settlement.
+ * Retains 1..CNET_RETAINED_VECTOR_MAX canonical slice ranges on successful
+ * admission and preserves their order into NativeIO scatter/gather without
+ * copying payload bytes. Distinct backing buffers are retained once per
+ * logical write. The slice descriptor array is borrowed only for this call;
+ * after SALTS_OK the caller may immediately release every slice and other
+ * caller references, but admitted backing bytes and buffer data/used/capacity
+ * must remain immutable until terminal send settlement.
+ *
+ * One NativeIO submission contains at most NATIVE_IO_VECTOR_MAX spans. Larger
+ * admitted vectors continue across multiple bounded native submissions under
+ * the same CNet logical write and publish exactly one ordinary send terminal.
  *
  * TLS and endpoint/backend combinations without NativeIO vector-write
  * capability return SALTS_ENOTSUP without retaining or flattening. Invalid,
