@@ -83,9 +83,16 @@ W1 installs and tests this ownership substrate. W2 routes ordinary non-TLS
 owner-local slots, bypassing the generic command mailbox while preserving the
 existing one-write public admission rule. TLS and `send_and_close` keep their
 current command/TLS ownership until W3 migrates their ordering semantics.
-W3 then enables bounded multiple-write FIFO admission. Until NativeIO gains an
-explicit scatter/gather operation contract, `cnet_sendv()` remains a checked
-copy into one owned write slot rather than claiming native vectored zero-copy.
+W3 then enables bounded multiple-write FIFO admission. NativeIO now exposes
+bounded scatter/gather writes, but `cnet_sendv()` deliberately remains the
+copy-on-admission convenience API: its caller-owned segment descriptors and
+payload pointers are borrowed only for the synchronous call. Zero-copy vectored
+stream sends use the explicit retained `cnet_send_slicev()` contract instead:
+CNet validates 1..16 canonical `mem_slice_t` ranges, retains each unique
+backing buffer once, copies only fixed range descriptors into the owner-local
+write slot, and preserves those ranges into NativeIO scatter/gather until the
+single logical terminal completion. Unsupported/TLS paths return
+`SALTS_ENOTSUP`; there is no hidden flatten fallback.
 
 ## Canonical session-state authority
 
