@@ -523,7 +523,7 @@ int cnet_websocket_write_complete(cnet_websocket *websocket, size_t bytes, int s
   cnet_websocket_impl *impl = cnet_websocket_get(websocket);
   int process_status = SALTS_OK;
 
-  if (impl == NULL) return SALTS_EINVAL;
+  if (impl == NULL || status > SALTS_OK) return SALTS_EINVAL;
   if (impl->operation_active || impl->callback_active || impl->write_active) return SALTS_EBUSY;
   if (!impl->output_async_pending || impl->output_size == 0u) return SALTS_ENOENT;
 
