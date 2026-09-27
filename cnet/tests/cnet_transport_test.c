@@ -18,6 +18,7 @@ typedef SOCKET cnet_test_socket;
     #include <linux/vm_sockets.h>
   #endif
   #include <netinet/in.h>
+  #include <netinet/tcp.h>
   #include <sys/socket.h>
   #include <unistd.h>
 typedef int cnet_test_socket;
