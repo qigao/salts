@@ -354,7 +354,9 @@ typedef struct cnet_start_tls_options {
  * Zero buffer sizes preserve platform defaults. Millisecond durations are
  * rounded up when a platform exposes only whole-second socket options.
  * Keepalive detail requires `keepalive == 1`; `linger_ms == 0` with
- * `linger == 1` requests abortive close.
+ * `linger == 1` requests abortive close. `nodelay == 1` requests
+ * `TCP_NODELAY` for latency-sensitive TCP/TLS streams; zero preserves the
+ * platform's default Nagle policy.
  */
 typedef struct cnet_stream_socket_options {
   size_t size;
@@ -366,10 +368,11 @@ typedef struct cnet_stream_socket_options {
   uint32_t linger_ms;
   int keepalive;
   int linger;
+  int nodelay;
 } cnet_stream_socket_options;
 
 #define CNET_STREAM_SOCKET_OPTIONS_INIT                                                            \
-  {sizeof(cnet_stream_socket_options), 0u, 0u, 0u, 0u, 0u, 0u, 0, 0}
+  {sizeof(cnet_stream_socket_options), 0u, 0u, 0u, 0u, 0u, 0u, 0, 0, 0}
 
 /** Optional listener policy consumed synchronously by `cnet_listener_init_ex()`. */
 typedef struct cnet_listener_options {
