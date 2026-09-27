@@ -94,6 +94,10 @@ typedef struct cnet_owner_profile {
   uint64_t request_lifecycle_calls;
   uint64_t request_start_calls;
   uint64_t request_resubmit_calls;
+  /** Vector-submit evidence for retained SG window qualification. */
+  uint64_t vector_submit_calls;
+  uint64_t vector_submit_spans;
+  uint64_t vector_submit_bytes;
   uint64_t observe_calls;
   uint64_t request_completion_calls;
   uint64_t event_publish_calls;

@@ -682,14 +682,49 @@ jobs:
           if (-not (Test-Path -LiteralPath "$env:CNET_IO_BENCHMARK_OUTPUT.sg.csv" -PathType Leaf)) {
             throw "SG comparison CSV was not produced"
           }
+          $windowCsv = "$env:CNET_IO_BENCHMARK_OUTPUT.sg-window.csv"
+          if (-not (Test-Path -LiteralPath $windowCsv -PathType Leaf)) {
+            throw "SG cross-window qualification CSV was not produced"
+          }
           $evidence = $output | Where-Object { $_ -match '^SG delta payload=' }
           if (@($evidence).Count -ne 16) {
             throw "Expected 16 SG paired-delta evidence rows, got $(@($evidence).Count)"
           }
+          $windowEvidence = $output | Where-Object { $_ -match '^SG window delta payload=' }
+          if (@($windowEvidence).Count -ne 6) {
+            throw "Expected 6 SG cross-window evidence rows, got $(@($windowEvidence).Count)"
+          }
+          $windowRows = @(Import-Csv -LiteralPath $windowCsv)
+          if ($windowRows.Count -ne 6) {
+            throw "Expected 6 SG cross-window CSV rows, got $($windowRows.Count)"
+          }
+          $expectedCases = @(
+            "65536:16", "65536:17", "65536:32",
+            "1048576:16", "1048576:17", "1048576:32"
+          )
+          foreach ($row in $windowRows) {
+            $key = "$($row.payload_bytes):$($row.segments)"
+            if ($expectedCases -notcontains $key) {
+              throw "Unexpected SG cross-window case: $key"
+            }
+            $segments = [int]$row.segments
+            $expectedWindows = if ($segments -le 16) { 1 } else { 2 }
+            if ([int]$row.expected_windows -ne $expectedWindows) {
+              throw "SG window count mismatch for $key"
+            }
+            if ([double]$row.vector_submissions_per_op + 0.000001 -lt $expectedWindows) {
+              throw "SG native submission count is below the logical window floor for $key"
+            }
+            if ([math]::Abs([double]$row.terminal_callbacks_per_op - 1.0) -gt 0.000001) {
+              throw "SG logical terminal count is not exactly one per send for $key"
+            }
+          }
           Write-Host "SG paired-delta evidence: $env:CNET_IO_BENCHMARK_BACKEND"
           $evidence | ForEach-Object { Write-Host $_ }
+          Write-Host "SG cross-window evidence: $env:CNET_IO_BENCHMARK_BACKEND"
+          $windowEvidence | ForEach-Object { Write-Host $_ }
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## Flatten versus NativeIO SG: $env:CNET_IO_BENCHMARK_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## Flatten versus retained SG + cross-window qualification: $env:CNET_IO_BENCHMARK_BACKEND"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 

@@ -90,11 +90,22 @@ payload pointers are borrowed only for the synchronous call. Zero-copy vectored
 stream sends use the explicit retained `cnet_send_slicev()` contract instead.
 `cnet_send_slicev_and_close()` uses the same retained scatter/gather ownership
 for the final logical write and closes only after that vector settles:
-CNet validates 1..16 canonical `mem_slice_t` ranges, retains each unique
-backing buffer once, copies only fixed range descriptors into the owner-local
-write slot, and preserves those ranges into NativeIO scatter/gather until the
-single logical terminal completion. Unsupported/TLS paths return
-`SALTS_ENOTSUP`; there is no hidden flatten fallback.
+CNet validates 1..`CNET_RETAINED_VECTOR_MAX` canonical `mem_slice_t`
+ranges (currently 32), retains each unique backing buffer once, copies only
+fixed range descriptors into the owner-local write slot, and preserves those
+ranges until the single logical terminal completion. One NativeIO submission
+still exposes at most `NATIVE_IO_VECTOR_MAX` spans (currently 16); a larger
+CNet logical vector advances through successive native span windows without
+flattening or publishing an intermediate CNet send terminal. Unsupported/TLS
+paths return `SALTS_ENOTSUP`; there is no hidden flatten fallback.
+
+The larger logical range bound remains fixed-memory. On a 64-bit build, raising
+the retained range/owner arrays from 16 to 32 adds approximately 512 bytes per
+owner-local write slot. Write slots are preallocated at
+`write_capacity_per_shard` (derived from the client command capacity), so the
+incremental metadata is approximately
+`512 * command_capacity * shard_count` bytes and does not grow with payload
+size or runtime duration. For a 16-slot shard this is about 8 KiB.
 
 ## Canonical session-state authority
 
