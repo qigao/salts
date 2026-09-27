@@ -34,7 +34,8 @@ static int cnet_transport_native_error(void);
 int cnet_stream_socket_options_validate(const cnet_stream_socket_options *options) {
   if (options == NULL || options->size != sizeof(*options) ||
       (options->keepalive != 0 && options->keepalive != 1) ||
-      (options->linger != 0 && options->linger != 1))
+      (options->linger != 0 && options->linger != 1) ||
+      (options->nodelay != 0 && options->nodelay != 1))
     return SALTS_EINVAL;
   if (options->receive_buffer_bytes > (size_t)INT_MAX ||
       options->send_buffer_bytes > (size_t)INT_MAX || options->keepalive_count > (uint32_t)INT_MAX)
@@ -90,6 +91,10 @@ int cnet_transport_apply_stream_socket_options(
   if (options->send_buffer_bytes != 0u) {
     status = cnet_transport_set_socket_int(socket_value, SOL_SOCKET, SO_SNDBUF,
                                            (int)options->send_buffer_bytes);
+    if (status != SALTS_OK) return status;
+  }
+  if (options->nodelay) {
+    status = cnet_transport_set_socket_int(socket_value, IPPROTO_TCP, TCP_NODELAY, 1);
     if (status != SALTS_OK) return status;
   }
   if (options->keepalive) {
