@@ -554,6 +554,83 @@ spec("CNet bounded write ownership queue") {
     check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
   }
 
+  it("preserves FIFO around one multi-window retained logical write") {
+    cnet_write_queue queue = {0};
+    const cnet_write_queue_config config = {1u, 4u, 96u, 96u};
+    const cnet_session_handle connection = {1u, 17u};
+    const unsigned char before = 0xa1u;
+    const unsigned char after = 0xb2u;
+    cnet_write_queue_free_probe free_probe;
+    mem_buffer_t *buffer;
+    mem_slice_t slices[32];
+    cnet_write_handle before_handle = {0};
+    cnet_write_handle vector_handle = {0};
+    cnet_write_handle after_handle = {0};
+    cnet_write_view view = {0};
+    native_io_buffer_span spans[NATIVE_IO_VECTOR_MAX] = {{0}};
+    size_t span_count = 0u;
+    size_t span_bytes = 0u;
+
+    atomic_init(&free_probe.freed, 0);
+    check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
+    buffer = cnet_write_queue_external(32u, 0u, &free_probe);
+    check_true(buffer != NULL);
+    for (size_t index = 0u; index < 32u; ++index) {
+      mem_buffer_data(buffer)[index] = (char)(index + 1u);
+      slices[index] = mem_slice(buffer, index, 1u);
+    }
+
+    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, &before, 1u,
+                                              false, &before_handle),
+                SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, slices, 32u,
+                                                false, &vector_handle),
+                SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, &after, 1u,
+                                              false, &after_handle),
+                SALTS_OK);
+    for (size_t index = 0u; index < 32u; ++index)
+      mem_slice_release(&slices[index]);
+    mem_buffer_release(buffer);
+
+    check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
+    check_equal(view.handle.slot, before_handle.slot);
+    check_false(view.vector_write);
+    check_equal(((const unsigned char *)view.data)[0], before);
+    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
+
+    check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
+    check_equal(view.handle.slot, vector_handle.slot);
+    check_true(view.vector_write);
+    check_equal(cnet_write_queue_build_vector(&queue, &view, view.remaining,
+                                              spans, &span_count, &span_bytes),
+                SALTS_OK);
+    check_equal(span_count, (size_t)NATIVE_IO_VECTOR_MAX);
+    check_equal(cnet_write_queue_advance(&queue, &view, span_bytes), SALTS_OK);
+
+    /* The same logical vector remains FIFO head after its first native window. */
+    check_equal(view.handle.slot, vector_handle.slot);
+    check_true(view.vector_write);
+    span_count = 0u;
+    span_bytes = 0u;
+    check_equal(cnet_write_queue_build_vector(&queue, &view, view.remaining,
+                                              spans, &span_count, &span_bytes),
+                SALTS_OK);
+    check_equal(span_count, (size_t)(32u - NATIVE_IO_VECTOR_MAX));
+    check_equal(cnet_write_queue_advance(&queue, &view, span_bytes), SALTS_OK);
+    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
+    check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 1);
+
+    check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
+    check_equal(view.handle.slot, after_handle.slot);
+    check_false(view.vector_write);
+    check_equal(((const unsigned char *)view.data)[0], after);
+    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
+
+    check_equal(cnet_write_queue_close(&queue), SALTS_OK);
+    check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
+  }
+
   it("releases retained-vector ownership exactly once on tail cancel and discard") {
     cnet_write_queue queue = {0};
     const cnet_write_queue_config config = {1u, 4u, 32u, 64u};
