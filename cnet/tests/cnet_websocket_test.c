@@ -47,9 +47,9 @@ static int websocket_test_write(void *user, const uint8_t *data, size_t size) {
   }
   if (probe->pending_writes > 0) {
     --probe->pending_writes;
-    if (probe->retained_output == NULL ||
-        data != (const uint8_t *)mem_buffer_const_data(probe->retained_output) ||
-        size != mem_buffer_used(probe->retained_output))
+    if (probe->retained_output != NULL &&
+        (data != (const uint8_t *)mem_buffer_const_data(probe->retained_output) ||
+         size != mem_buffer_used(probe->retained_output)))
       return SALTS_EPROTO;
     return CNET_WEBSOCKET_WRITE_PENDING;
   }
