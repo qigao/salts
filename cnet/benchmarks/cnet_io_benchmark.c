@@ -109,6 +109,7 @@ typedef struct io_bench_result {
   uint64_t native_observe_ns;
   size_t native_start_calls;
   size_t native_observe_calls;
+  size_t cnet_send_terminal_calls;
   cnet_client_poll_profile cnet_profile;
 } io_bench_result;
 
@@ -194,9 +195,9 @@ typedef struct io_bench_cnet {
   io_bench_send_mode send_mode;
   size_t segment_count;
   mem_buffer_t *send_buffer;
-  cnet_const_buffer send_segments[NATIVE_IO_VECTOR_MAX];
+  cnet_const_buffer send_segments[CNET_RETAINED_VECTOR_MAX];
   size_t send_segment_count;
-  mem_slice_t send_slices[NATIVE_IO_VECTOR_MAX];
+  mem_slice_t send_slices[CNET_RETAINED_VECTOR_MAX];
   size_t send_slice_count;
   int send_done;
   size_t send_completions;
@@ -556,9 +557,9 @@ static size_t io_bench_native_segments(const unsigned char *data, size_t length,
 
 static size_t io_bench_cnet_segments(const unsigned char *data, size_t length,
                                      size_t segment_count,
-                                     cnet_const_buffer segments[NATIVE_IO_VECTOR_MAX]) {
+                                     cnet_const_buffer segments[CNET_RETAINED_VECTOR_MAX]) {
   size_t start = 0u;
-  if (data == NULL || segment_count == 0u || segment_count > NATIVE_IO_VECTOR_MAX ||
+  if (data == NULL || segment_count == 0u || segment_count > CNET_RETAINED_VECTOR_MAX ||
       length < segment_count)
     return 0u;
   for (size_t index = 0u; index < segment_count; ++index) {
@@ -634,7 +635,7 @@ static int io_bench_native_flatten_exchange(io_bench_native *fixture,
                                             unsigned char *received, size_t length,
                                             size_t segment_count,
                                             unsigned char *flatten_buffer) {
-  cnet_const_buffer segments[NATIVE_IO_VECTOR_MAX];
+  cnet_const_buffer segments[CNET_RETAINED_VECTOR_MAX];
   size_t offset = 0u;
   const size_t count = io_bench_cnet_segments(sent, length, segment_count, segments);
   if (flatten_buffer == NULL || count == 0u) return SALTS_EINVAL;
@@ -1469,7 +1470,7 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
     }
     if (send_mode == IO_BENCH_SEND_RETAINED_VECTOR) {
       size_t offset = 0u;
-      if (segment_count == 0u || segment_count > NATIVE_IO_VECTOR_MAX ||
+      if (segment_count == 0u || segment_count > CNET_RETAINED_VECTOR_MAX ||
           payload_size < segment_count) {
         status = SALTS_EINVAL;
         goto cleanup;
