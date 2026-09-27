@@ -16,7 +16,8 @@ static bool vec_is_typed_semantic_zero(const vec_t *vec) {
            vec->size == 0u && vec->capacity == 0u && vec->elem_size == 0u &&
            vec->elem_stride == 0u && vec->elem_align == 0u &&
            vec->element_limit == 0u &&
-           vec->cmeta.descriptor == &stl_vec_container_desc &&
+           (vec->cmeta.descriptor == &stl_vec_container_desc ||
+            vec->cmeta.descriptor == &stl_stack_container_desc) &&
            vec->element_type != NULL &&
            cmeta_type_desc_valid(vec->element_type);
 }
@@ -220,10 +221,25 @@ stl_status vec_clear(vec_t *vec) {
 }
 
 stl_status vec_reserve(vec_t *vec, size_t min_capacity) {
+    vec_t zero_snapshot = {0};
+    bool materialized = false;
     bool changed;
-    stl_status status = vec_grow_to(vec, min_capacity, &changed, NULL);
-    if (status == STL_OK && changed) ++vec->generation;
-    return status;
+    stl_status status;
+
+    if (!vec_valid(vec)) {
+        if (!vec_is_typed_semantic_zero(vec)) return STL_INVALID_ARGUMENT;
+        if (min_capacity == 0u) return STL_OK;
+    }
+    status = vec_materialize_for_mutation(
+        vec, &zero_snapshot, &materialized);
+    if (status != STL_OK) return status;
+    status = vec_grow_to(vec, min_capacity, &changed, NULL);
+    if (status != STL_OK) {
+        vec_rollback_materialization(vec, &zero_snapshot, materialized);
+        return status;
+    }
+    if (changed) ++vec->generation;
+    return STL_OK;
 }
 
 static stl_status vec_resize_using(vec_t *vec, size_t new_size,
