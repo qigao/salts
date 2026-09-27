@@ -1,0 +1,84 @@
+name: CSTL tstr ordered metadata
+
+on:
+  pull_request:
+    paths:
+      - "utils/include/salts_cmeta_data.h"
+      - "utils/src/salts_cmeta_data.c"
+      - "cstl/tests/cstl_imported_metadata_test.c"
+      - ".github/workflows/cstl-tstr-compare.yml"
+  push:
+    paths:
+      - "utils/include/salts_cmeta_data.h"
+      - "utils/src/salts_cmeta_data.c"
+      - "cstl/tests/cstl_imported_metadata_test.c"
+      - ".github/workflows/cstl-tstr-compare.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  linux:
+    name: Linux C11 import-safe Map
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Install native build prerequisite
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y nasm
+
+      - name: Configure focused build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset linux-release-user \
+            -DENABLE_TESTS=ON \
+            -DBUILD_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            '-DVCPKG_INSTALL_OPTIONS=--only-binarycaching'
+
+      - name: Build and run imported metadata test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build --preset linux-release-user --parallel 2 \
+            --target cstl_imported_metadata_test
+          ctest --test-dir build/linux-gcc-release \
+            --output-on-failure \
+            -R '^cstl_imported_metadata_test$'
+
+      - name: Source hygiene
+        shell: bash
+        run: git diff --check
+
+  windows:
+    name: MSVC dllimport typed Map
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Configure focused MSVC build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cmake -S . -B build/tstr-map-msvc -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:QIGAO_VCPKG_TOOLCHAIN_FILE" "-DVCPKG_TARGET_TRIPLET=x64-windows" "-DVCPKG_INSTALLED_DIR=$env:GITHUB_WORKSPACE\vcpkg_installed-tstr-map" "-DVCPKG_INSTALL_OPTIONS=--only-binarycaching" "-DENABLE_TESTS=ON" "-DBUILD_TESTS=ON" "-DBUILD_BENCHMARKS=OFF" "-DBUILD_EXAMPLES=OFF"
+
+      - name: Build and run dllimport consumer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cmake --build build/tstr-map-msvc --config Release --target cstl_imported_metadata_test --parallel 2
+          ctest --test-dir build/tstr-map-msvc -C Release --output-on-failure -R '^cstl_imported_metadata_test$'
