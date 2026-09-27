@@ -98,6 +98,7 @@ static void cnet_test_stream_socket_options(void) {
   cnet_stream_socket_options options = CNET_STREAM_SOCKET_OPTIONS_INIT;
   struct linger linger_value = {0};
   int keepalive = 0;
+  int nodelay = 0;
 #if defined(_WIN32)
   int option_size = (int)sizeof(keepalive);
 #else
@@ -112,11 +113,16 @@ static void cnet_test_stream_socket_options(void) {
   options.keepalive = 1;
   options.linger = 1;
   options.linger_ms = 0u;
+  options.nodelay = 1;
   check_equal(cnet_transport_apply_stream_socket_options((uintptr_t)socket_value, &options),
               SALTS_OK);
   check_equal(getsockopt(socket_value, SOL_SOCKET, SO_KEEPALIVE, (char *)&keepalive, &option_size),
               0);
   check_true(keepalive != 0);
+  option_size = (int)sizeof(nodelay);
+  check_equal(getsockopt(socket_value, IPPROTO_TCP, TCP_NODELAY, (char *)&nodelay, &option_size),
+              0);
+  check_true(nodelay != 0);
   option_size = (int)sizeof(linger_value);
   check_equal(getsockopt(socket_value, SOL_SOCKET, SO_LINGER, (char *)&linger_value, &option_size),
               0);
