@@ -1225,6 +1225,38 @@ spec("CMeta semantic data descriptors") {
     check_false(cmeta_data_desc_valid(&duplicate_desc));
   }
 
+  it("rejects Variant tags and native members outside the canonical storage contract") {
+    cmeta_data_variant_case cases[2] = {
+        cmeta_data_test_variant_cases[0],
+        cmeta_data_test_variant_cases[1]
+    };
+    cmeta_data_variant_shape shape = cmeta_data_test_variant_shape;
+    cmeta_data_desc desc = cmeta_data_test_variant_desc;
+
+    cases[0].offset = sizeof(cmeta_data_test_variant_storage);
+    shape.cases = cases;
+    desc.shape = &shape;
+    check_false(cmeta_data_desc_valid(&desc));
+
+    cases[0] = cmeta_data_test_variant_cases[0];
+    shape.tag_offset = 1u;
+    check_false(cmeta_data_desc_valid(&desc));
+
+    shape = cmeta_data_test_variant_shape;
+    cases[0] = cmeta_data_test_variant_cases[0];
+    cases[0].offset = shape.tag_offset;
+    shape.cases = cases;
+    desc.shape = &shape;
+    check_false(cmeta_data_desc_valid(&desc));
+
+    shape = cmeta_data_test_variant_shape;
+    cases[0] = cmeta_data_test_variant_cases[0];
+    cases[0].tag = INT64_MAX;
+    shape.cases = cases;
+    desc.shape = &shape;
+    check_false(cmeta_data_desc_valid(&desc));
+  }
+
   it("checks variant lifecycle adapters and enforces select postconditions") {
     cmeta_data_test_variant_storage object = {0};
     cmeta_data_variant_ops ops = cmeta_data_test_variant_ops;
