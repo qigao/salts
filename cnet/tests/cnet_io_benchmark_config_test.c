@@ -92,6 +92,9 @@ spec("CNet I/O benchmark backend selection") {
     check_true(trace.udp);
     check_equal(cnet_io_benchmark_select_trace("cnet:tcp:65536", &trace), SALTS_OK);
     check_equal(trace.driver, 3u);
+    check_equal(cnet_io_benchmark_select_trace("cnet:tcp:1048576", &trace), SALTS_OK);
+    check_equal(trace.driver, 3u);
+    check_equal(trace.payload_size, (size_t)CNET_IO_BENCHMARK_MAX_PAYLOAD);
   }
 
   it("rejects malformed and oversized trace requests without selecting another workload") {
