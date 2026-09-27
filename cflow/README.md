@@ -1314,13 +1314,13 @@ and reopen gates are recorded in the
 | IOCP | Windows | completion | TCP/UDP plus accept/connect | overlapped named byte-pipe read/write | overlapped `READ_AT`/`WRITE_AT`; flush unsupported | Windows |
 | io_uring | Linux | completion | TCP/UDP plus accept/connect | native byte read/write | `READ_AT`/`WRITE_AT`/`FLUSH` | explicit only |
 
-New Pipe callers use `native_io_operation` with
-`cflow_io_native_adapter_actor_ops()`; attach each connected endpoint through
-`cflow_io_native_adapter_attach_pipe()`. The autonomous
-`cflow_io_native_pipe_operation` and
-`cflow_io_native_backend_pipe_actor_ops()` surface is deprecated but remains
-behaviorally unchanged until issue #147 authorizes public removal. A successful
-read or write may transfer fewer than `length` bytes. A zero-byte read after peer close maps to
+Pipe payload I/O has one CFlow integration path: use
+`native_io_operation` with `cflow_io_native_adapter_actor_ops()` and attach
+each connected endpoint through `cflow_io_native_adapter_attach_pipe()`.
+NativeIPC / `<cflow/io_pipe.h>` remain rendezvous and control-plane layers; the
+superseded autonomous CFlow Pipe backend was removed before the compatibility
+freeze. A successful read or write may transfer fewer than `length` bytes. A
+zero-byte read after peer close maps to
 `CFLOW_IO_COMPLETION_EOF`; a broken write maps its native error to
 `CFLOW_IO_COMPLETION_FAILED` without exposing `SIGPIPE` to the process.
 

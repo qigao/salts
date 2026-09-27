@@ -22,7 +22,6 @@ typedef enum cflow_iocp_record_phase {
 
 typedef enum cflow_iocp_resource_kind {
     CFLOW_IOCP_RESOURCE_SOCKET = 0,
-    CFLOW_IOCP_RESOURCE_PIPE,
     CFLOW_IOCP_RESOURCE_FILE
 } cflow_iocp_resource_kind;
 
@@ -34,7 +33,6 @@ typedef struct cflow_iocp_record {
     cflow_io_request_id request_id;
     cflow_io_actor *actor;
     cflow_io_native_operation *operation;
-    cflow_io_native_pipe_operation *pipe_operation;
     cflow_io_native_file_operation *file_operation;
     cflow_io_native_vector_operation_kind vector_kind;
     DWORD vector_buffer_count;
@@ -288,26 +286,6 @@ static int iocp_begin_vector_operation(cflow_iocp_record *record) {
     return status == WSA_IO_PENDING ? SALTS_OK : -(int)status;
 }
 
-static int iocp_begin_pipe_operation(cflow_iocp_record *record) {
-    cflow_io_native_pipe_operation *operation = record->pipe_operation;
-    BOOL started;
-    DWORD error;
-
-    if (operation->kind == CFLOW_IO_NATIVE_PIPE_READ) {
-        started = ReadFile(record->native_handle, operation->buffer,
-                           (DWORD)operation->length, NULL,
-                           &record->overlapped);
-    } else {
-        started = WriteFile(record->native_handle, operation->buffer,
-                            (DWORD)operation->length, NULL,
-                            &record->overlapped);
-    }
-    if (started)
-        return SALTS_OK;
-    error = GetLastError();
-    return error == ERROR_IO_PENDING ? SALTS_OK : iocp_error(error);
-}
-
 static int iocp_begin_file_operation(cflow_iocp_impl *impl,
                                      cflow_iocp_record *record) {
     cflow_io_native_file_operation *operation = record->file_operation;
@@ -381,7 +359,6 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
     cflow_io_actor *actor;
     cflow_io_request_id request_id;
     cflow_io_native_operation *operation;
-    cflow_io_native_pipe_operation *pipe_operation;
     cflow_io_native_file_operation *file_operation;
     cflow_io_completion completion;
     cflow_io_complete_status delivery_status;
@@ -401,7 +378,6 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
     actor = record->actor;
     request_id = record->request_id;
     operation = record->operation;
-    pipe_operation = record->pipe_operation;
     file_operation = record->file_operation;
     resource_kind = record->resource_kind;
     vector_kind = record->vector_kind;
@@ -421,7 +397,6 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
     record->request_id = 0u;
     record->actor = NULL;
     record->operation = NULL;
-    record->pipe_operation = NULL;
     record->file_operation = NULL;
     record->vector_buffer_count = 0u;
     record->native_handle = INVALID_HANDLE_VALUE;
@@ -437,12 +412,6 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
     if (cancelled) {
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_CANCELLED, 0u, SALTS_OK};
-    } else if (resource_kind == CFLOW_IOCP_RESOURCE_PIPE &&
-               pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_READ &&
-               (native_error == ERROR_BROKEN_PIPE ||
-                native_error == ERROR_HANDLE_EOF)) {
-        completion = (cflow_io_completion){
-            CFLOW_IO_COMPLETION_EOF, 0u, SALTS_OK};
     } else if (resource_kind == CFLOW_IOCP_RESOURCE_FILE &&
                file_operation->kind == CFLOW_IO_NATIVE_FILE_READ_AT &&
                native_error == ERROR_HANDLE_EOF) {
@@ -451,14 +420,6 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
     } else if (native_error != ERROR_SUCCESS) {
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_FAILED, 0u, iocp_error(native_error)};
-    } else if (resource_kind == CFLOW_IOCP_RESOURCE_PIPE) {
-        completion = pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_READ &&
-                             bytes == 0u
-                         ? (cflow_io_completion){
-                               CFLOW_IO_COMPLETION_EOF, 0u, SALTS_OK}
-                         : (cflow_io_completion){
-                               CFLOW_IO_COMPLETION_OK, (size_t)bytes,
-                               SALTS_OK};
     } else if (resource_kind == CFLOW_IOCP_RESOURCE_FILE) {
         completion = file_operation->kind == CFLOW_IO_NATIVE_FILE_READ_AT &&
                              bytes == 0u
@@ -618,7 +579,6 @@ static int iocp_submit_record(
     cflow_io_request_id request_id, cflow_iocp_resource_kind resource_kind,
     cflow_io_native_operation *operation,
     cflow_io_native_vector_operation *vector_operation,
-    cflow_io_native_pipe_operation *pipe_operation,
     cflow_io_native_file_operation *file_operation,
     HANDLE native_handle, SOCKET socket_value) {
     cflow_iocp_record *record;
@@ -651,7 +611,6 @@ static int iocp_submit_record(
                 (ULONG)vector_operation->buffers[index].length;
         }
     }
-    record->pipe_operation = pipe_operation;
     record->file_operation = file_operation;
     record->native_handle = native_handle;
     record->socket_value = socket_value;
@@ -667,8 +626,6 @@ static int iocp_submit_record(
             status = record->vector_buffer_count != 0u
                          ? iocp_begin_vector_operation(record)
                          : iocp_begin_operation(record);
-        else if (resource_kind == CFLOW_IOCP_RESOURCE_PIPE)
-            status = iocp_begin_pipe_operation(record);
         else
             status = iocp_begin_file_operation(impl, record);
     }
@@ -684,7 +641,6 @@ static int iocp_submit_record(
     record->request_id = 0u;
     record->actor = NULL;
     record->operation = NULL;
-    record->pipe_operation = NULL;
     record->file_operation = NULL;
     record->vector_buffer_count = 0u;
     record->native_handle = INVALID_HANDLE_VALUE;
@@ -705,7 +661,7 @@ static int iocp_submit(cflow_io_native_impl *base,
     cflow_iocp_impl *impl = (cflow_iocp_impl *)base;
     return iocp_submit_record(
         impl, actor, request_id, CFLOW_IOCP_RESOURCE_SOCKET, operation, NULL,
-        NULL, NULL, (HANDLE)(uintptr_t)operation->socket,
+        NULL, (HANDLE)(uintptr_t)operation->socket,
         (SOCKET)operation->socket);
 }
 
@@ -716,42 +672,8 @@ static int iocp_submit_vector(
     cflow_iocp_impl *impl = (cflow_iocp_impl *)base;
     return iocp_submit_record(
         impl, actor, request_id, CFLOW_IOCP_RESOURCE_SOCKET, NULL, operation,
-        NULL, NULL, (HANDLE)(uintptr_t)operation->socket,
+        NULL, (HANDLE)(uintptr_t)operation->socket,
         (SOCKET)operation->socket);
-}
-
-static int iocp_submit_pipe(cflow_io_native_impl *base,
-                            cflow_io_actor *actor,
-                            cflow_io_request_id request_id,
-                            cflow_io_native_pipe_operation *operation) {
-    cflow_iocp_impl *impl = (cflow_iocp_impl *)base;
-    HANDLE handle = (HANDLE)operation->handle;
-    DWORD pipe_flags = 0u;
-    DWORD file_type;
-    DWORD error;
-
-    if ((operation->flags & CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE) == 0u)
-        return SALTS_ENOTSUP;
-    if (handle == NULL || handle == INVALID_HANDLE_VALUE)
-        return SALTS_EINVAL;
-    SetLastError(ERROR_SUCCESS);
-    file_type = GetFileType(handle);
-    error = GetLastError();
-    if (file_type == FILE_TYPE_UNKNOWN && error != ERROR_SUCCESS)
-        return iocp_error(error);
-    if (file_type != FILE_TYPE_PIPE)
-        return SALTS_ENOTSUP;
-    if (!GetNamedPipeInfo(handle, &pipe_flags, NULL, NULL, NULL)) {
-        error = GetLastError();
-        if (error != ERROR_ACCESS_DENIED ||
-            operation->kind != CFLOW_IO_NATIVE_PIPE_WRITE)
-            return iocp_error(error);
-    } else if ((pipe_flags & PIPE_TYPE_MESSAGE) != 0u) {
-        return SALTS_ENOTSUP;
-    }
-    return iocp_submit_record(
-        impl, actor, request_id, CFLOW_IOCP_RESOURCE_PIPE, NULL, NULL,
-        operation, NULL, handle, INVALID_SOCKET);
 }
 
 static int iocp_submit_file(cflow_io_native_impl *base,
@@ -778,7 +700,7 @@ static int iocp_submit_file(cflow_io_native_impl *base,
         return SALTS_EINVAL;
     return iocp_submit_record(
         impl, actor, request_id, CFLOW_IOCP_RESOURCE_FILE, NULL, NULL,
-        NULL, operation, handle, INVALID_SOCKET);
+        operation, handle, INVALID_SOCKET);
 }
 
 static int iocp_cancel(cflow_io_native_impl *base,
@@ -866,11 +788,6 @@ static int iocp_forget_socket(cflow_io_native_impl *base,
     return iocp_forget_resource(base, closed_socket);
 }
 
-static int iocp_forget_pipe(cflow_io_native_impl *base,
-                            uintptr_t closed_handle) {
-    return iocp_forget_resource(base, closed_handle);
-}
-
 static int iocp_forget_file(cflow_io_native_impl *base,
                             uintptr_t closed_handle) {
     return iocp_forget_resource(base, closed_handle);
@@ -927,12 +844,10 @@ static int iocp_destroy(cflow_io_native_impl *base) {
 static const cflow_io_native_impl_ops iocp_ops = {
     .submit = iocp_submit,
     .submit_vector = iocp_submit_vector,
-    .submit_pipe = iocp_submit_pipe,
     .submit_file = iocp_submit_file,
     .cancel = iocp_cancel,
     .get_stats = iocp_get_stats,
     .forget_socket = iocp_forget_socket,
-    .forget_pipe = iocp_forget_pipe,
     .forget_file = iocp_forget_file,
     .shutdown = iocp_shutdown,
     .destroy = iocp_destroy};

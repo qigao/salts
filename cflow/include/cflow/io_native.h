@@ -37,15 +37,6 @@ typedef enum cflow_io_native_vector_operation_kind {
     CFLOW_IO_NATIVE_TCP_SEND_VECTOR
 } cflow_io_native_vector_operation_kind;
 
-typedef enum cflow_io_native_pipe_operation_kind {
-    CFLOW_IO_NATIVE_PIPE_READ = 0,
-    CFLOW_IO_NATIVE_PIPE_WRITE
-} cflow_io_native_pipe_operation_kind;
-
-typedef enum cflow_io_native_pipe_operation_flags {
-    CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE = 1u << 0
-} cflow_io_native_pipe_operation_flags;
-
 typedef enum cflow_io_native_file_operation_kind {
     CFLOW_IO_NATIVE_FILE_READ_AT = 0,
     CFLOW_IO_NATIVE_FILE_WRITE_AT,
@@ -112,34 +103,6 @@ typedef struct cflow_io_native_vector_operation {
 } cflow_io_native_vector_operation;
 
 /**
- * @deprecated Use native_io_operation with cflow_io_native_adapter. This
- * autonomous legacy descriptor remains available until issue #147 authorizes
- * public removal.
- *
- * Caller-owned byte-pipe operation borrowed from successful Actor submit
- * until its terminal completion callback returns. The buffer is immutable for
- * write and backend-exclusive mutable storage for read. The backend never
- * closes handle. A read may complete with fewer than length bytes or EOF; a
- * write may complete with a partial byte count.
- *
- * CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE declares that the caller created or
- * opened the endpoint for asynchronous operation. POSIX readiness backends
- * additionally verify O_NONBLOCK. IOCP cannot recover FILE_FLAG_OVERLAPPED
- * from an arbitrary pipe handle, so a false declaration violates this API's
- * precondition and may block the submitting thread. Byte mode is likewise a
- * caller precondition for a write-only Windows server handle: Windows denies
- * GetNamedPipeInfo on that least-privilege handle, so IOCP can only verify
- * byte mode when the endpoint grants attribute-query access.
- */
-typedef struct cflow_io_native_pipe_operation {
-    cflow_io_native_pipe_operation_kind kind;
-    uintptr_t handle;
-    void *buffer;
-    size_t length;
-    uint32_t flags;
-} cflow_io_native_pipe_operation;
-
-/**
  * Caller-owned regular-file operation borrowed from successful Actor submit
  * until its terminal completion callback returns. READ_AT and WRITE_AT use the
  * supplied offset without consuming a shared file position. The buffer is
@@ -191,10 +154,6 @@ typedef struct cflow_io_native_backend_stats {
 /** Returns compile-time availability only; active kernel policy may still reject init. */
 bool cflow_io_native_backend_supported(cflow_io_native_backend_kind kind);
 
-/** Returns compile-time pipe capability; per-endpoint checks occur on submit. */
-bool cflow_io_native_backend_pipe_supported(
-    cflow_io_native_backend_kind kind);
-
 /** Returns independent vectored TCP capability; no scalar fallback is used. */
 bool cflow_io_native_backend_vector_operation_supported(
     cflow_io_native_backend_kind kind,
@@ -219,13 +178,6 @@ cflow_io_backend_ops cflow_io_native_backend_actor_ops(void);
 /** Ops are used with vectored TCP operations and backend_user at the backend. */
 cflow_io_backend_ops cflow_io_native_backend_vector_actor_ops(void);
 
-/**
- * @deprecated Use cflow_io_native_adapter_actor_ops(). This autonomous legacy
- * backend preserves its worker/completion behavior until issue #147 authorizes
- * public removal.
- */
-cflow_io_backend_ops cflow_io_native_backend_pipe_actor_ops(void);
-
 /** Ops are used with file operations and backend_user pointing at the backend. */
 cflow_io_backend_ops cflow_io_native_backend_file_actor_ops(void);
 
@@ -248,13 +200,6 @@ bool cflow_io_native_backend_get_stats(
  */
 int cflow_io_native_backend_forget_socket(
     cflow_io_native_backend *backend, uintptr_t closed_socket);
-
-/**
- * Releases backend-side identity retained for a pipe endpoint after the caller
- * has closed it and all operations using it have completed.
- */
-int cflow_io_native_backend_forget_pipe(
-    cflow_io_native_backend *backend, uintptr_t closed_handle);
 
 /** Releases a retained regular-file identity after terminal drain and close. */
 int cflow_io_native_backend_forget_file(

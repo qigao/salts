@@ -14,7 +14,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
-#include <pthread.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -58,7 +57,6 @@ typedef struct cflow_readiness_record {
     cflow_io_request_id request_id;
     cflow_io_actor *actor;
     cflow_io_native_operation *operation;
-    cflow_io_native_pipe_operation *pipe_operation;
     struct iovec vector_buffers[CFLOW_IO_NATIVE_VECTOR_MAX];
     cflow_io_native_vector_operation_kind vector_kind;
     size_t vector_buffer_count;
@@ -135,13 +133,6 @@ static unsigned readiness_lane_kind(
     return operation->kind == CFLOW_IO_NATIVE_TCP_RECV ||
                    operation->kind == CFLOW_IO_NATIVE_UDP_RECV_FROM ||
                    operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT
-               ? CFLOW_READINESS_LANE_READ
-               : CFLOW_READINESS_LANE_WRITE;
-}
-
-static unsigned readiness_pipe_lane_kind(
-    const cflow_io_native_pipe_operation *operation) {
-    return operation->kind == CFLOW_IO_NATIVE_PIPE_READ
                ? CFLOW_READINESS_LANE_READ
                : CFLOW_READINESS_LANE_WRITE;
 }
@@ -292,60 +283,12 @@ static int readiness_attempt_connect(cflow_readiness_record *record) {
     }
 }
 
-static ssize_t readiness_write_without_sigpipe(
-    int fd, const void *buffer, size_t length) {
-#if defined(F_SETNOSIGPIPE)
-    return write(fd, buffer, length);
-#else
-    sigset_t blocked;
-    sigset_t previous;
-    sigset_t pending;
-    int had_pending = 0;
-    ssize_t result;
-
-    sigemptyset(&blocked);
-    sigaddset(&blocked, SIGPIPE);
-    if (pthread_sigmask(SIG_BLOCK, &blocked, &previous) != 0) {
-        errno = EIO;
-        return -1;
-    }
-    if (sigpending(&pending) == 0)
-        had_pending = sigismember(&pending, SIGPIPE);
-    result = write(fd, buffer, length);
-    if (result < 0 && errno == EPIPE && !had_pending) {
-        const int write_error = errno;
-        if (sigpending(&pending) == 0 &&
-            sigismember(&pending, SIGPIPE) == 1) {
-            int signal_number;
-            int wait_status;
-            do {
-                wait_status = sigwait(&blocked, &signal_number);
-            } while (wait_status == EINTR);
-        }
-        errno = write_error;
-    }
-    (void)pthread_sigmask(SIG_SETMASK, &previous, NULL);
-    return result;
-#endif
-}
-
 static int readiness_attempt(cflow_readiness_record *record,
                              size_t *bytes, int *accepted_fd) {
     cflow_io_native_operation *operation = record->operation;
-    cflow_io_native_pipe_operation *pipe_operation =
-        record->pipe_operation;
     const int fd = record->lane->duplicated_fd;
     ssize_t result;
     do {
-        if (pipe_operation != NULL) {
-            result = pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_READ
-                         ? read(fd, pipe_operation->buffer,
-                                pipe_operation->length)
-                         : readiness_write_without_sigpipe(
-                               fd, pipe_operation->buffer,
-                               pipe_operation->length);
-            continue;
-        }
         if (record->vector_buffer_count != 0u) {
             struct msghdr message;
             memset(&message, 0, sizeof(message));
@@ -476,9 +419,7 @@ static cflow_io_completion readiness_completion_for(
     if (((record->vector_buffer_count != 0u &&
           record->vector_kind == CFLOW_IO_NATIVE_TCP_RECV_VECTOR) ||
          (record->operation != NULL &&
-          record->operation->kind == CFLOW_IO_NATIVE_TCP_RECV) ||
-         (record->pipe_operation != NULL &&
-          record->pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_READ)) &&
+          record->operation->kind == CFLOW_IO_NATIVE_TCP_RECV)) &&
         bytes == 0u)
         return (cflow_io_completion){
             CFLOW_IO_COMPLETION_EOF, 0u, SALTS_OK};
@@ -709,8 +650,7 @@ static salts_readiness_callback_result readiness_drive_lane(
 }
 
 static int readiness_ensure_lane(cflow_readiness_lane *lane,
-                                 int original_fd,
-                                 bool suppress_sigpipe) {
+                                 int original_fd) {
     cflow_readiness_impl *impl = lane->owner;
     int duplicate;
     int status;
@@ -731,18 +671,6 @@ static int readiness_ensure_lane(cflow_readiness_lane *lane,
 
     duplicate = readiness_duplicate_socket(original_fd);
     status = duplicate < 0 ? duplicate : SALTS_OK;
-#if defined(F_SETNOSIGPIPE)
-    if (status == SALTS_OK && suppress_sigpipe) {
-        int result;
-        do {
-            result = fcntl(duplicate, F_SETNOSIGPIPE, 1);
-        } while (result < 0 && errno == EINTR);
-        if (result < 0)
-            status = -errno;
-    }
-#else
-    (void)suppress_sigpipe;
-#endif
     if (status == SALTS_OK)
         status = salts_readiness_register(
             &impl->reactor, duplicate, &lane->registration);
@@ -763,8 +691,7 @@ static int readiness_ensure_lane(cflow_readiness_lane *lane,
 static int readiness_submit_record(
     cflow_readiness_impl *impl, cflow_io_actor *actor,
     cflow_io_request_id request_id, cflow_io_native_operation *operation,
-    cflow_io_native_vector_operation *vector_operation,
-    cflow_io_native_pipe_operation *pipe_operation, uintptr_t identity,
+    cflow_io_native_vector_operation *vector_operation, uintptr_t identity,
     unsigned lane_kind) {
     cflow_readiness_record *record;
     cflow_readiness_socket_record *socket_record;
@@ -803,7 +730,6 @@ static int readiness_submit_record(
     record->request_id = request_id;
     record->actor = actor;
     record->operation = operation;
-    record->pipe_operation = pipe_operation;
     record->vector_buffer_count = 0u;
     if (vector_operation != NULL) {
         record->vector_kind = vector_operation->kind;
@@ -822,10 +748,7 @@ static int readiness_submit_record(
     ++socket_record->active_requests;
     salts_mutex_unlock(&impl->gate);
 
-    status = readiness_ensure_lane(
-        lane, (int)identity,
-        pipe_operation != NULL &&
-            pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_WRITE);
+    status = readiness_ensure_lane(lane, (int)identity);
     if (status != SALTS_OK) {
         salts_mutex_lock(&impl->gate);
         --impl->active_requests;
@@ -873,7 +796,7 @@ static int readiness_submit(cflow_io_native_impl *base,
             return SALTS_EINVAL;
     }
     return readiness_submit_record(
-        impl, actor, request_id, operation, NULL, NULL, operation->socket,
+        impl, actor, request_id, operation, NULL, operation->socket,
         readiness_lane_kind(operation));
 }
 
@@ -888,31 +811,8 @@ static int readiness_submit_vector(
     if (operation->socket > (uintptr_t)INT_MAX)
         return SALTS_EINVAL;
     return readiness_submit_record(
-        impl, actor, request_id, NULL, operation, NULL, operation->socket,
+        impl, actor, request_id, NULL, operation, operation->socket,
         lane_kind);
-}
-
-static int readiness_submit_pipe(
-    cflow_io_native_impl *base, cflow_io_actor *actor,
-    cflow_io_request_id request_id,
-    cflow_io_native_pipe_operation *operation) {
-    cflow_readiness_impl *impl = (cflow_readiness_impl *)base;
-    int flags;
-
-    if ((operation->flags & CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE) == 0u)
-        return SALTS_ENOTSUP;
-    if (operation->handle > (uintptr_t)INT_MAX)
-        return SALTS_EINVAL;
-    do {
-        flags = fcntl((int)operation->handle, F_GETFL);
-    } while (flags < 0 && errno == EINTR);
-    if (flags < 0)
-        return -errno;
-    if ((flags & O_NONBLOCK) == 0)
-        return SALTS_EINVAL;
-    return readiness_submit_record(
-        impl, actor, request_id, NULL, NULL, operation, operation->handle,
-        readiness_pipe_lane_kind(operation));
 }
 
 static int readiness_cancel(cflow_io_native_impl *base,
@@ -1040,11 +940,6 @@ static int readiness_forget_socket(cflow_io_native_impl *base,
     return status;
 }
 
-static int readiness_forget_pipe(cflow_io_native_impl *base,
-                                 uintptr_t closed_handle) {
-    return readiness_forget_socket(base, closed_handle);
-}
-
 static int readiness_shutdown(cflow_io_native_impl *base) {
     cflow_readiness_impl *impl = (cflow_readiness_impl *)base;
     int status;
@@ -1127,11 +1022,9 @@ static int readiness_destroy(cflow_io_native_impl *base) {
 static const cflow_io_native_impl_ops readiness_ops = {
     .submit = readiness_submit,
     .submit_vector = readiness_submit_vector,
-    .submit_pipe = readiness_submit_pipe,
     .cancel = readiness_cancel,
     .get_stats = readiness_get_stats,
     .forget_socket = readiness_forget_socket,
-    .forget_pipe = readiness_forget_pipe,
     .shutdown = readiness_shutdown,
     .destroy = readiness_destroy};
 

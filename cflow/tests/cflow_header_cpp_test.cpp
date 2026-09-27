@@ -98,8 +98,6 @@ static_assert(std::is_standard_layout<cflow_io_native_buffer_span>::value,
               "native IO span must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_io_native_vector_operation>::value,
               "native vectored IO operation must remain C-compatible");
-static_assert(std::is_standard_layout<cflow_io_native_pipe_operation>::value,
-              "native pipe operation must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_io_native_file_operation>::value,
               "native file operation must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_io_file>::value,
@@ -316,7 +314,6 @@ suite("CFlow C++ public header") {
     cflow_io_native_operation native_operation = {};
     cflow_io_native_buffer_span native_buffer_span = {};
     cflow_io_native_vector_operation native_vector_operation = {};
-    cflow_io_native_pipe_operation native_pipe_operation = {};
     cflow_io_native_file_operation native_file_operation = {};
     cflow_io_file io_file = {};
     cflow_io_file_config io_file_config = {};
@@ -327,11 +324,9 @@ suite("CFlow C++ public header") {
     cflow_io_publisher_stats io_source_stats = {};
     cflow_io_publisher_window_stats io_source_window_stats = {};
     cflow_io_native_backend_kind native_backend_kind = CFLOW_IO_NATIVE_POLL;
-    cflow_io_native_pipe_operation_kind native_pipe_kind = CFLOW_IO_NATIVE_PIPE_READ;
     cflow_io_native_file_operation_kind native_file_kind = CFLOW_IO_NATIVE_FILE_READ_AT;
     cflow_io_native_vector_operation_kind native_vector_kind = CFLOW_IO_NATIVE_TCP_RECV_VECTOR;
     cflow_io_backend_ops native_vector_ops = cflow_io_native_backend_vector_actor_ops();
-    cflow_io_backend_ops native_pipe_ops = cflow_io_native_backend_pipe_actor_ops();
     cflow_io_backend_ops native_file_ops = cflow_io_native_backend_file_actor_ops();
     cflow_timer_event_queue timer_events = {};
     cflow_event_id event_id = 0u;
@@ -408,10 +403,6 @@ suite("CFlow C++ public header") {
     check_not_null(native_vector_ops.submit);
     (void)cflow_io_native_backend_vector_operation_supported(native_backend_kind,
                                                              native_vector_kind);
-    check_true(native_pipe_operation.kind == CFLOW_IO_NATIVE_PIPE_READ);
-    check_true(native_pipe_kind == CFLOW_IO_NATIVE_PIPE_READ);
-    check_not_null(native_pipe_ops.submit);
-    (void)cflow_io_native_backend_pipe_supported(native_backend_kind);
     check_true(native_file_operation.kind == CFLOW_IO_NATIVE_FILE_READ_AT);
     check_true(native_file_kind == CFLOW_IO_NATIVE_FILE_READ_AT);
     check_not_null(native_file_ops.submit);
