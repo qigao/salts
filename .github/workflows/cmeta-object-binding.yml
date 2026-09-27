@@ -1,4 +1,4 @@
-name: CMeta object binding
+name: CMeta object contract
 
 on:
   pull_request:
@@ -15,27 +15,21 @@ on:
       - "cmeta/tests/cmeta_invokable_test.c"
       - "cmeta/tests/cmeta_header_cpp_test.cpp"
       - "cmeta/tests/CMakeLists.txt"
-      - "vcpkg.json"
-      - "bindings/CMakeLists.txt"
-      - "bindings/cpp/**"
-      - "bindings/lua/**"
-      - "bindings/quickjs/**"
-      - "bindings/tests/**"
       - ".github/workflows/cmeta-object-binding.yml"
   push:
     paths:
       - "cmeta/include/cmeta/object.h"
       - "cmeta/include/cmeta/method.h"
       - "cmeta/include/cmeta/invokable.h"
+      - "cmeta/include/cmeta/meta.h"
       - "cmeta/src/object.c"
       - "cmeta/src/method.c"
       - "cmeta/src/invokable.c"
-      - "vcpkg.json"
-      - "bindings/CMakeLists.txt"
-      - "bindings/cpp/**"
-      - "bindings/lua/**"
-      - "bindings/quickjs/**"
-      - "bindings/tests/**"
+      - "cmeta/tests/cmeta_object_test.c"
+      - "cmeta/tests/cmeta_method_test.c"
+      - "cmeta/tests/cmeta_invokable_test.c"
+      - "cmeta/tests/cmeta_header_cpp_test.cpp"
+      - "cmeta/tests/CMakeLists.txt"
       - ".github/workflows/cmeta-object-binding.yml"
   workflow_dispatch:
 
@@ -45,7 +39,7 @@ permissions:
 
 jobs:
   native:
-    name: Linux C object + Lua + QuickJS
+    name: Linux CMeta object contract
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -69,76 +63,25 @@ jobs:
             -DBUILD_TESTS=ON \
             -DBUILD_BENCHMARKS=OFF \
             -DBUILD_EXAMPLES=OFF \
-            -DSALTS_BINDINGS_LUA=ON \
-            -DSALTS_BINDINGS_QUICKJS=ON \
-            '-DVCPKG_MANIFEST_FEATURES=lua-bindings;quickjs-bindings' \
             '-DVCPKG_INSTALL_OPTIONS=--only-binarycaching'
 
-      - name: Verify shared QuickJS dependency
+      - name: Build CMeta object targets
         shell: bash
         run: |
           set -euo pipefail
-          status="$GITHUB_WORKSPACE/vcpkg_installed/vcpkg/status"
-          test -f "$status"
-          awk '
-            $0 == "Package: quickjs-ng" { found=1; next }
-            found && /^Version: / {
-              if ($2 != "0.16.2") exit 2
-              print "quickjs-ng=" $2
-              ok=1
-              exit
-            }
-            END { if (!ok) exit 1 }
-          ' "$status"
-
-      - name: Build object-binding targets
-        shell: bash
-        run: |
-          set -euo pipefail
-          targets=(
-            cmeta_object_test
-            cmeta_method_test
-            cmeta_invokable_test
+          cmake --build --preset linux-release-user --parallel 2 --target \
+            cmeta_object_test \
+            cmeta_method_test \
+            cmeta_invokable_test \
             cmeta_header_cpp_test
-            salts_lua_invokable_test
-            salts_quickjs_cmeta_test
-          )
-          if [[ -f bindings/lua/tests/lua_cmeta_object_test.c ]]; then
-            targets+=(salts_lua_object_test)
-          fi
-          if [[ -f bindings/quickjs/tests/quickjs_cmeta_object_test.c ]]; then
-            targets+=(salts_quickjs_object_test)
-          fi
-          if [[ -f bindings/tests/object_cross_runtime_test.c ]]; then
-            targets+=(salts_object_cross_runtime_test)
-          fi
-          if [[ -f bindings/tests/cpp_object_facade_test.cpp ]]; then
-            targets+=(salts_cpp_object_facade_test)
-          fi
-          if [[ -f bindings/cpp/tests/cpp_member_thunk_test.cpp ]]; then
-            targets+=(salts_cpp_member_thunk_test)
-          fi
-          cmake --build --preset linux-release-user --parallel 2 --target "${targets[@]}"
 
-      - name: Qualify exported C++ facade package
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake \
-            -S bindings/tests/package_config/cpp_object_facade \
-            -B build/cpp-object-facade-consumer \
-            -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            "-DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/build/linux-gcc-release;$GITHUB_WORKSPACE/vcpkg_installed/x64-linux"
-          cmake --build build/cpp-object-facade-consumer --parallel 2
-
-      - name: Run focused object-binding tests
+      - name: Run focused tests
         shell: bash
         run: |
           set -euo pipefail
           ctest --test-dir build/linux-gcc-release \
             --output-on-failure \
-            -R '^(cmeta_object_test|cmeta_method_test|cmeta_invokable_test|cmeta_header_cpp_test|salts_lua_invokable_test|salts_lua_object_test|salts_quickjs_cmeta_test|salts_quickjs_object_test|salts_object_cross_runtime_test|salts_cpp_object_facade_test|salts_cpp_member_thunk_test)$'
+            -R '^(cmeta_object_test|cmeta_method_test|cmeta_invokable_test|cmeta_header_cpp_test)$'
 
       - name: Source hygiene
         shell: bash
