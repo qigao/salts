@@ -142,9 +142,15 @@ static inline void salts_tstr_header_cmeta_destroy(void *object) {
         tstr_freep((tstr *)object);
 }
 
+static inline int salts_tstr_header_cmeta_compare(
+    const void *left, const void *right) {
+    return tstr_cmp(*(const tstr *)left, *(const tstr *)right);
+}
+
 static const cmeta_type_traits salts_tstr_header_cmeta_traits = {
-    CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY,
-    NULL, NULL, NULL,
+    CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY |
+        CMETA_TRAIT_COMPARE,
+    NULL, NULL, salts_tstr_header_cmeta_compare,
     salts_tstr_header_cmeta_copy_construct,
     salts_tstr_header_cmeta_move_construct,
     salts_tstr_header_cmeta_destroy
