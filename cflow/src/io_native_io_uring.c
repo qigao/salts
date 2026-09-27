@@ -36,7 +36,6 @@ typedef enum cflow_uring_record_phase {
 
 typedef enum cflow_uring_resource_kind {
     CFLOW_URING_RESOURCE_SOCKET = 0,
-    CFLOW_URING_RESOURCE_PIPE,
     CFLOW_URING_RESOURCE_FILE
 } cflow_uring_resource_kind;
 
@@ -49,7 +48,6 @@ typedef struct cflow_uring_record {
     cflow_io_actor *actor;
     cflow_uring_resource_kind resource_kind;
     cflow_io_native_operation *operation;
-    cflow_io_native_pipe_operation *pipe_operation;
     cflow_io_native_file_operation *file_operation;
     struct iovec vector;
     struct iovec vector_buffers[CFLOW_IO_NATIVE_VECTOR_MAX];
@@ -102,13 +100,6 @@ typedef struct cflow_uring_impl {
 
 enum { CFLOW_URING_CANCEL_TOKEN = 0u, CFLOW_URING_STOP_TOKEN = 1u };
 
-typedef struct cflow_uring_sigpipe_guard {
-    sigset_t blocked;
-    sigset_t previous;
-    bool active;
-    bool had_pending;
-} cflow_uring_sigpipe_guard;
-
 static uint64_t uring_make_record_token(uint32_t index,
                                         uint32_t generation) {
     return ((uint64_t)generation << 32u) | (uint64_t)index;
@@ -121,38 +112,6 @@ static uint32_t uring_next_generation(uint32_t generation) {
 static void uring_counter_increment(uint64_t *counter) {
     if (*counter != UINT64_MAX)
         ++*counter;
-}
-
-static int uring_sigpipe_guard_begin(cflow_uring_sigpipe_guard *guard) {
-    sigset_t pending;
-    int status;
-    memset(guard, 0, sizeof(*guard));
-    sigemptyset(&guard->blocked);
-    sigaddset(&guard->blocked, SIGPIPE);
-    status = pthread_sigmask(SIG_BLOCK, &guard->blocked,
-                             &guard->previous);
-    if (status != 0)
-        return -status;
-    guard->active = true;
-    if (sigpending(&pending) == 0)
-        guard->had_pending = sigismember(&pending, SIGPIPE) == 1;
-    return SALTS_OK;
-}
-
-static void uring_sigpipe_guard_end(cflow_uring_sigpipe_guard *guard) {
-    sigset_t pending;
-    if (guard == NULL || !guard->active)
-        return;
-    if (!guard->had_pending && sigpending(&pending) == 0 &&
-        sigismember(&pending, SIGPIPE) == 1) {
-        int signal_number;
-        int status;
-        do {
-            status = sigwait(&guard->blocked, &signal_number);
-        } while (status == EINTR);
-    }
-    (void)pthread_sigmask(SIG_SETMASK, &guard->previous, NULL);
-    guard->active = false;
 }
 
 static int uring_enter(cflow_uring_impl *impl, unsigned submit,
@@ -214,19 +173,6 @@ static void uring_prepare_operation(cflow_uring_record *record,
                                     struct io_uring_sqe *sqe) {
     cflow_io_native_operation *operation = record->operation;
     memset(sqe, 0, sizeof(*sqe));
-    if (record->resource_kind == CFLOW_URING_RESOURCE_PIPE) {
-        cflow_io_native_pipe_operation *pipe_operation =
-            record->pipe_operation;
-        sqe->fd = (int)pipe_operation->handle;
-        sqe->user_data = record->native_token;
-        sqe->opcode = pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_READ
-                          ? IORING_OP_READ
-                          : IORING_OP_WRITE;
-        sqe->addr = (uint64_t)(uintptr_t)pipe_operation->buffer;
-        sqe->len = (uint32_t)pipe_operation->length;
-        sqe->off = UINT64_MAX;
-        return;
-    }
     if (record->resource_kind == CFLOW_URING_RESOURCE_FILE) {
         cflow_io_native_file_operation *file_operation =
             record->file_operation;
@@ -342,7 +288,6 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     cflow_io_actor *actor;
     cflow_io_request_id request_id;
     cflow_io_native_operation *operation;
-    cflow_io_native_pipe_operation *pipe_operation;
     cflow_io_native_file_operation *file_operation;
     cflow_uring_resource_kind resource_kind;
     cflow_io_native_vector_operation_kind vector_kind;
@@ -367,7 +312,6 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     request_id = record->request_id;
     resource_kind = record->resource_kind;
     operation = record->operation;
-    pipe_operation = record->pipe_operation;
     file_operation = record->file_operation;
     vector_kind = record->vector_kind;
     vector_buffer_count = record->vector_buffer_count;
@@ -388,7 +332,6 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     record->actor = NULL;
     record->resource_kind = CFLOW_URING_RESOURCE_SOCKET;
     record->operation = NULL;
-    record->pipe_operation = NULL;
     record->file_operation = NULL;
     record->vector_buffer_count = 0u;
     record->cancel_requested = false;
@@ -428,8 +371,6 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
                 (vector_buffer_count == 0u &&
                  resource_kind == CFLOW_URING_RESOURCE_SOCKET &&
                  operation->kind == CFLOW_IO_NATIVE_TCP_RECV) ||
-                (resource_kind == CFLOW_URING_RESOURCE_PIPE &&
-                 pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_READ) ||
                 (resource_kind == CFLOW_URING_RESOURCE_FILE &&
                  file_operation->kind == CFLOW_IO_NATIVE_FILE_READ_AT)) &&
                result == 0) {
@@ -536,14 +477,9 @@ static int uring_submit_record(
     cflow_io_request_id request_id, cflow_uring_resource_kind resource_kind,
     cflow_io_native_operation *operation,
     cflow_io_native_vector_operation *vector_operation,
-    cflow_io_native_pipe_operation *pipe_operation,
     cflow_io_native_file_operation *file_operation) {
     cflow_uring_record *record;
-    cflow_uring_sigpipe_guard sigpipe_guard = {0};
     struct io_uring_sqe sqe;
-    const bool guard_sigpipe =
-        resource_kind == CFLOW_URING_RESOURCE_PIPE &&
-        pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_WRITE;
     int status;
     salts_mutex_lock(&impl->gate);
     if (!impl->admission_open) {
@@ -578,16 +514,10 @@ static int uring_submit_record(
                 vector_operation->buffers[index].length;
         }
     }
-    record->pipe_operation = pipe_operation;
     record->file_operation = file_operation;
     record->cancel_requested = false;
     uring_prepare_operation(record, &sqe);
-    status = guard_sigpipe
-                 ? uring_sigpipe_guard_begin(&sigpipe_guard)
-                 : SALTS_OK;
-    if (status == SALTS_OK)
-        status = uring_publish_sqe_locked(impl, &sqe);
-    uring_sigpipe_guard_end(&sigpipe_guard);
+    status = uring_publish_sqe_locked(impl, &sqe);
     if (status == SALTS_OK) {
         ++impl->active_requests;
         uring_counter_increment(&impl->submitted);
@@ -598,7 +528,6 @@ static int uring_submit_record(
         record->actor = NULL;
         record->resource_kind = CFLOW_URING_RESOURCE_SOCKET;
         record->operation = NULL;
-        record->pipe_operation = NULL;
         record->file_operation = NULL;
         record->vector_buffer_count = 0u;
         record->cancel_requested = false;
@@ -628,7 +557,7 @@ static int uring_submit(cflow_io_native_impl *base,
     }
     return uring_submit_record(
         impl, actor, request_id, CFLOW_URING_RESOURCE_SOCKET,
-        operation, NULL, NULL, NULL);
+        operation, NULL, NULL);
 }
 
 static int uring_submit_vector(
@@ -640,21 +569,7 @@ static int uring_submit_vector(
         return SALTS_EINVAL;
     return uring_submit_record(
         impl, actor, request_id, CFLOW_URING_RESOURCE_SOCKET,
-        NULL, operation, NULL, NULL);
-}
-
-static int uring_submit_pipe(
-    cflow_io_native_impl *base, cflow_io_actor *actor,
-    cflow_io_request_id request_id,
-    cflow_io_native_pipe_operation *operation) {
-    cflow_uring_impl *impl = (cflow_uring_impl *)base;
-    if ((operation->flags & CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE) == 0u)
-        return SALTS_ENOTSUP;
-    if (operation->handle > (uintptr_t)INT_MAX)
-        return SALTS_EINVAL;
-    return uring_submit_record(
-        impl, actor, request_id, CFLOW_URING_RESOURCE_PIPE,
-        NULL, NULL, operation, NULL);
+        NULL, operation, NULL);
 }
 
 static int uring_submit_file(
@@ -675,7 +590,7 @@ static int uring_submit_file(
         return SALTS_EINVAL;
     return uring_submit_record(
         impl, actor, request_id, CFLOW_URING_RESOURCE_FILE,
-        NULL, NULL, NULL, operation);
+        NULL, NULL, operation);
 }
 
 static int uring_cancel(cflow_io_native_impl *base,
@@ -729,11 +644,6 @@ static int uring_forget_socket(cflow_io_native_impl *base,
     }
     salts_mutex_unlock(&impl->gate);
     return SALTS_OK;
-}
-
-static int uring_forget_pipe(cflow_io_native_impl *base,
-                             uintptr_t closed_handle) {
-    return uring_forget_socket(base, closed_handle);
 }
 
 static int uring_forget_file(cflow_io_native_impl *base,
@@ -807,12 +717,10 @@ static int uring_destroy(cflow_io_native_impl *base) {
 static const cflow_io_native_impl_ops uring_ops = {
     .submit = uring_submit,
     .submit_vector = uring_submit_vector,
-    .submit_pipe = uring_submit_pipe,
     .submit_file = uring_submit_file,
     .cancel = uring_cancel,
     .get_stats = uring_get_stats,
     .forget_socket = uring_forget_socket,
-    .forget_pipe = uring_forget_pipe,
     .forget_file = uring_forget_file,
     .shutdown = uring_shutdown,
     .destroy = uring_destroy};

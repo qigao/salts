@@ -187,6 +187,12 @@ cmake_add_test(cflow_io_native_adapter_test
   LIBS Salts::CFlow Salts::NativeIO Salts::Concurrency Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
+add_test(
+  NAME cflow_pipe_data_plane_contract_test
+  COMMAND ${CMAKE_COMMAND}
+          -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cflow_pipe_data_plane_contract_test.cmake)
+
 
 cmake_add_test(cflow_io_native_sharded_adapter_test
   SOURCES cflow_io_native_sharded_adapter_test.c
