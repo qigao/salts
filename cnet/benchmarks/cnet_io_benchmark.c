@@ -1179,7 +1179,7 @@ static void io_bench_cnet_sent(void *user, cnet_connection connection, size_t si
 static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol,
                               const struct sockaddr_in *address,
                               native_io_backend_kind backend_kind, io_bench_send_mode send_mode,
-                              size_t segment_count, bool adopt_nodelay) {
+                              size_t segment_count, bool enable_nodelay) {
   const cnet_client_config config = {.backend = backend_kind,
                                      .connection_capacity = 1u,
                                      .command_capacity = 8u,
@@ -1206,13 +1206,12 @@ static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol
   fixture->status = SALTS_OK;
   status = cnet_client_init(&fixture->client, &config);
   if (status != SALTS_OK) return status;
-  if (adopt_nodelay) {
-    io_bench_socket socket_value = IO_BENCH_INVALID_SOCKET;
+  if (enable_nodelay) {
+    cnet_stream_socket_options socket_options = CNET_STREAM_SOCKET_OPTIONS_INIT;
     if (protocol != IO_BENCH_TCP) return SALTS_EINVAL;
-    status = io_bench_connect_socket(&socket_value, protocol, address);
+    socket_options.nodelay = 1;
+    status = cnet_client_set_stream_socket_options(&fixture->client, &socket_options);
     if (status != SALTS_OK) return status;
-    return cnet_client_adopt_tcp(&fixture->client, (uintptr_t)socket_value,
-                                 &observer, &fixture->connection);
   }
   (void)snprintf(uri, sizeof(uri), "%s://127.0.0.1:%u", protocol == IO_BENCH_TCP ? "tcp" : "udp",
                  (unsigned int)ntohs(address->sin_port));
@@ -1294,7 +1293,7 @@ static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol pr
                                  io_bench_driver driver, size_t payload_size,
                                  native_io_backend_kind backend_kind, io_bench_send_mode send_mode,
                                  size_t segment_count, size_t exchange_count,
-                                 bool cnet_adopt_nodelay) {
+                                 bool cnet_enable_nodelay) {
   int status;
   memset(fixture, 0, sizeof(*fixture));
   fixture->driver = driver;
@@ -1315,7 +1314,7 @@ static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol pr
           io_bench_native_init(&fixture->native, protocol, &fixture->server.address, backend_kind);
     else
       status = io_bench_cnet_init(&fixture->cnet, protocol, &fixture->server.address, backend_kind,
-                                  send_mode, segment_count, cnet_adopt_nodelay);
+                                  send_mode, segment_count, cnet_enable_nodelay);
   }
   if (status == SALTS_OK && driver == IO_BENCH_CNET)
     status = io_bench_cnet_ready(&fixture->cnet, payload_size, exchange_count);
@@ -1430,7 +1429,7 @@ static int io_bench_run_counted(io_bench_protocol protocol, io_bench_driver driv
                                 native_io_backend_kind backend_kind,
                                 io_bench_send_mode send_mode, size_t segment_count,
                                 size_t warmup_exchanges, size_t measure_exchanges,
-                                bool cnet_adopt_nodelay, io_bench_result *result) {
+                                bool cnet_enable_nodelay, io_bench_result *result) {
   io_bench_fixture fixture;
   unsigned char *sent = NULL;
   unsigned char *received = NULL;
@@ -1454,7 +1453,7 @@ static int io_bench_run_counted(io_bench_protocol protocol, io_bench_driver driv
   total_exchanges = warmup_exchanges + measure_exchanges;
   memset(result, 0, sizeof(*result));
   status = io_bench_fixture_init(&fixture, protocol, driver, payload_size, backend_kind, send_mode,
-                                 segment_count, total_exchanges, cnet_adopt_nodelay);
+                                 segment_count, total_exchanges, cnet_enable_nodelay);
   if (status != SALTS_OK) goto cleanup;
   phase = "allocate";
   sent = (unsigned char *)malloc(payload_size);
@@ -2305,7 +2304,7 @@ static int io_bench_compare_sg_windows(
   typedef struct io_bench_sg_window_method {
     const char *name;
     io_bench_send_mode mode;
-    bool adopt_nodelay;
+    bool enable_nodelay;
   } io_bench_sg_window_method;
   static const struct {
     size_t payload_size;
@@ -2322,7 +2321,7 @@ static int io_bench_compare_sg_windows(
 
   printf("\nCNet retained-SG NativeIO-window qualification: backend=%s; "
          "%d repeats, %d warmups, %d persistent TCP RTTs/run. "
-         "The nodelay control uses an adopted benchmark socket with TCP_NODELAY; "
+         "The nodelay control uses an public cnet_stream_socket_options.nodelay policy; "
          "production CNet policy is unchanged.\n",
          backend->name, WINDOW_REPLICATES, WINDOW_WARMUPS, WINDOW_EXCHANGES);
 
@@ -2356,7 +2355,7 @@ static int io_bench_compare_sg_windows(
         status = io_bench_run_counted(
             IO_BENCH_TCP, IO_BENCH_CNET, payload_size, false,
             backend->kind, methods[method].mode, segment_count,
-            WINDOW_WARMUPS, WINDOW_EXCHANGES, methods[method].adopt_nodelay, result);
+            WINDOW_WARMUPS, WINDOW_EXCHANGES, methods[method].enable_nodelay, result);
         if (status != SALTS_OK) {
           free(runs);
           return status;
@@ -2456,7 +2455,7 @@ static int io_bench_compare_sg_windows(
 
     printf("SG window delta payload=%zu segments=%zu windows=%zu: "
            "default retained-SG p50=%.3fus rate=%.2f/s; "
-           "TCP_NODELAY retained-SG p50=%.3fus rate=%.2f/s; "
+           "public TCP_NODELAY retained-SG p50=%.3fus rate=%.2f/s; "
            "nodelay vs default p50=%+.2f%% +/- %.2fpp, rate=%+.2f%% +/- %.2fpp; "
            "default SG vs flatten p50=%+.2f%% +/- %.2fpp, rate=%+.2f%% +/- %.2fpp; "
            "vector submissions/op=%.3f, spans/submission=%.3f, "
