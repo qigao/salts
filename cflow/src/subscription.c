@@ -1317,17 +1317,30 @@ cflow_status_result cflow_subscribe_subgraph_with_options(
             subgraph, (cflow_node_id)i);
         const cflow_op_schema *schema = node
             ? cflow_op_schema_get(node->op) : NULL;
-        if (schema && schema->cardinality == CMETA_CARD_REDUCE &&
-            !cflow_value_slot_init(&r->reduce_value[i],
-                                   node->output_type)) {
-            cflow_value_slot_destroy(&r->source_slot);
-            set_states_clear(r);
-            sequence_states_clear(r);
-            reducers_clear(r);
-            salts_cond_destroy(&r->task_cv);
-            salts_mutex_destroy(&r->lock);
-            free(r);
-            return (cflow_status_result){CFLOW_STATUS_ALLOCATION_FAILED};
+        if (schema && schema->cardinality == CMETA_CARD_REDUCE) {
+            if (!cflow_value_slot_init(&r->reduce_value[i],
+                                       node->output_type)) {
+                cflow_value_slot_destroy(&r->source_slot);
+                set_states_clear(r);
+                sequence_states_clear(r);
+                reducers_clear(r);
+                salts_cond_destroy(&r->task_cv);
+                salts_mutex_destroy(&r->lock);
+                free(r);
+                return (cflow_status_result){CFLOW_STATUS_ALLOCATION_FAILED};
+            }
+            if (node->param_kind == CFLOW_NODE_PARAM_REDUCE_SEED &&
+                !cflow_value_slot_copy(
+                    &r->reduce_value[i], node->params.reduce_seed.value)) {
+                cflow_value_slot_destroy(&r->source_slot);
+                set_states_clear(r);
+                sequence_states_clear(r);
+                reducers_clear(r);
+                salts_cond_destroy(&r->task_cv);
+                salts_mutex_destroy(&r->lock);
+                free(r);
+                return (cflow_status_result){CFLOW_STATUS_EXECUTION_ERROR};
+            }
         }
         if (node && node->op == CFLOW_OP_DISTINCT) {
             cflow_status state_status = r->eval_options.set_state->open(
