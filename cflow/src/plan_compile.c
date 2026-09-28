@@ -75,12 +75,12 @@ static bool inst_copy_reduce_seed(cflow_plan_inst *inst,
     cflow_value_slot *seed;
     if (!inst || !node || node->op != CFLOW_OP_REDUCE ||
         node->param_kind != CFLOW_NODE_PARAM_REDUCE_SEED ||
-        !node->params.reduce_seed.value)
+        !cflow_node_reduce_seed(node))
         return false;
     seed = (cflow_value_slot *)calloc(1u, sizeof(*seed));
     if (!seed) return false;
     if (!cflow_value_slot_init(seed, node->input_type) ||
-        !cflow_value_slot_copy(seed, node->params.reduce_seed.value)) {
+        !cflow_value_slot_copy(seed, cflow_node_reduce_seed(node))) {
         cflow_value_slot_destroy(seed);
         free(seed);
         return false;
