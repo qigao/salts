@@ -19,6 +19,7 @@ typedef struct cnet_event_entry {
   size_t size;
   size_t argument;
   mem_buffer_t *payload;
+  bool canonical_backing;
 } cnet_event_entry;
 
 typedef struct cnet_event_queue_impl {
@@ -60,14 +61,24 @@ static bool cnet_event_power_of_two(uint64_t value) {
 
 static bool cnet_event_valid(const cnet_event *event) {
   if (event == NULL || !cnet_session_handle_valid(event->session)) return false;
-  if (event->kind == CNET_EVENT_RECEIVE)
-    return event->state == CNET_EVENT_STATE_NONE && event->status == SALTS_OK &&
-           event->stage == CNET_SESSION_STAGE_NONE && (event->data != NULL || event->size == 0u);
+  if (event->kind == CNET_EVENT_RECEIVE) {
+    if (event->state != CNET_EVENT_STATE_NONE || event->status != SALTS_OK ||
+        event->stage != CNET_SESSION_STAGE_NONE ||
+        (event->data == NULL && event->size != 0u))
+      return false;
+    if (event->backing != NULL) {
+      if (event->size == 0u) return false;
+      if (event->data != mem_buffer_const_data(event->backing) ||
+          event->size > mem_buffer_used(event->backing))
+        return false;
+    }
+    return true;
+  }
   if (event->kind == CNET_EVENT_SEND)
     return event->state == CNET_EVENT_STATE_NONE && event->status == SALTS_OK &&
            event->stage == CNET_SESSION_STAGE_NONE && event->data == NULL && event->size == 0u &&
-           event->argument != 0u;
-  if (event->kind != CNET_EVENT_STATE) return false;
+           event->argument != 0u && event->backing == NULL;
+  if (event->kind != CNET_EVENT_STATE || event->backing != NULL) return false;
   if (event->state < CNET_EVENT_STATE_CONNECTED || event->state > CNET_EVENT_STATE_TLS_HANDSHAKING)
     return false;
   if (event->state == CNET_EVENT_STATE_CONNECTED) {
@@ -232,7 +243,15 @@ int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event) {
     return SALTS_ENOBUFS;
   }
   if (event->size != 0u) {
-    payload = mem_get_buffer(&impl->payload_pool, event->size);
+    if (data_event && event->backing != NULL) {
+      payload = mem_buffer_retain(event->backing);
+    } else {
+      payload = mem_get_buffer(&impl->payload_pool, event->size);
+      if (payload != NULL) {
+        memcpy(mem_buffer_data(payload), event->data, event->size);
+        mem_set_used(payload, event->size);
+      }
+    }
     if (payload == NULL) {
       atomic_fetch_sub_explicit(&impl->live_payload_bytes, event->size, memory_order_release);
       if (data_event)
@@ -240,8 +259,6 @@ int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event) {
       atomic_fetch_sub_explicit(&impl->publisher_entrants, 1u, memory_order_release);
       return SALTS_ENOMEM;
     }
-    memcpy(mem_buffer_data(payload), event->data, event->size);
-    mem_set_used(payload, event->size);
   }
   if (!disruptor_publisher_try_claim(impl->ring, &cursor)) {
     mem_buffer_release(payload);
@@ -261,6 +278,7 @@ int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event) {
   entry->size = event->size;
   entry->argument = event->argument;
   entry->payload = payload;
+  entry->canonical_backing = data_event && event->backing != NULL;
   atomic_fetch_add_explicit(&impl->live_events, 1u, memory_order_release);
   (void)disruptor_publisher_publish(impl->ring, &cursor);
   atomic_fetch_sub_explicit(&impl->publisher_entrants, 1u, memory_order_release);
@@ -281,6 +299,7 @@ static int cnet_event_queue_take_claimed(cnet_event_queue_impl *impl,
   out_view->size = entry->size;
   out_view->argument = entry->argument;
   out_view->_sequence = cursor->sequence;
+  out_view->backing = entry->canonical_backing ? entry->payload : NULL;
   atomic_store_explicit(
       &impl->borrowed_sequences[(size_t)((cursor->sequence - 1u) & (impl->borrowed_capacity - 1u))],
       cursor->sequence, memory_order_release);
@@ -353,6 +372,7 @@ int cnet_event_queue_release(cnet_event_queue *queue, cnet_event_view *view) {
     return SALTS_EINVAL;
   mem_buffer_release(entry->payload);
   entry->payload = NULL;
+  entry->canonical_backing = false;
   if (entry->size != 0u)
     atomic_fetch_sub_explicit(&impl->live_payload_bytes, entry->size, memory_order_release);
   disruptor_worker_release_entry(impl->ring, &cursor);
