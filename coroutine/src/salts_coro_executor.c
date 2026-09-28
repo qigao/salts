@@ -639,14 +639,17 @@ static int salts_coro_executor_submit_internal(salts_coro_executor_t *executor, 
     return SALTS_ENOBUFS;
   }
 
-  entry = (salts_coro_executor_task_t *)disruptor_acquire_entry(shard->queue, &cursor);
-  *entry = *task;
-  disruptor_publisher_commit_entry_blocking(shard->queue, &cursor);
-  shard->queued_depth++;
-  queued = atomic_fetch_add(&executor->queued_tasks, 1u) + 1u;
-  atomic_fetch_add(&executor->submitted_tasks, 1u);
-  salts_coro_executor_update_peak(&executor->peak_queued_tasks, queued);
-  salts_cond_signal(&shard->work_available);
+  {
+    const int signal_worker = shard->queued_depth == 0u;
+    entry = (salts_coro_executor_task_t *)disruptor_acquire_entry(shard->queue, &cursor);
+    *entry = *task;
+    disruptor_publisher_commit_entry_blocking(shard->queue, &cursor);
+    shard->queued_depth++;
+    queued = atomic_fetch_add(&executor->queued_tasks, 1u) + 1u;
+    atomic_fetch_add(&executor->submitted_tasks, 1u);
+    salts_coro_executor_update_peak(&executor->peak_queued_tasks, queued);
+    if (signal_worker) salts_cond_signal(&shard->work_available);
+  }
   salts_mutex_unlock(&shard->mutex);
   return SALTS_OK;
 }
