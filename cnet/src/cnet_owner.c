@@ -185,48 +185,71 @@ static void cnet_owner_profile_finish(cnet_owner_impl *impl, uint64_t started_ns
 }
 #endif
 
-static int cnet_owner_finish_receive_publication(cnet_owner_impl *impl,
-                                                  const cnet_event *event) {
+static int cnet_owner_validate_receive_publication(cnet_owner_impl *impl,
+                                                    const cnet_event *event) {
   cnet_owner_session *session;
-  mem_buffer_t *replacement;
-
   if (event == NULL || event->kind != CNET_EVENT_RECEIVE || event->backing == NULL)
     return SALTS_OK;
   session = cnet_owner_find_session(impl, event->session);
-  if (session == NULL || session->receive_buffer != event->backing)
-    return SALTS_EPROTO;
+  return session != NULL && session->receive_buffer == event->backing ? SALTS_OK
+                                                                      : SALTS_EPROTO;
+}
+
+static int cnet_owner_ensure_receive_buffer(cnet_owner_impl *impl,
+                                            cnet_owner_session *session) {
+  if (session->receive_buffer != NULL) return SALTS_OK;
+  session->receive_buffer = mem_get_buffer(mem_global(), impl->receive_buffer_bytes);
+  return session->receive_buffer != NULL ? SALTS_OK : SALTS_ENOMEM;
+}
+
+static void cnet_owner_finish_receive_publication(cnet_owner_impl *impl,
+                                                  const cnet_event *event) {
+  cnet_owner_session *session;
+  mem_buffer_t *published;
+  mem_buffer_t *replacement;
+
+  if (event == NULL || event->kind != CNET_EVENT_RECEIVE || event->backing == NULL)
+    return;
+  session = cnet_owner_find_session(impl, event->session);
+  if (session == NULL || session->receive_buffer != event->backing) return;
 
   /*
    * A direct borrowed callback retains nothing, so the single session-owned
    * reference can be reused. An owned callback or queued event increments the
-   * refcount; rotate before any future NativeIO/TLS write can overwrite it.
+   * refcount; detach that published backing before any future write can touch it.
+   *
+   * Rotation after a successful public event must never turn that publication
+   * into an error (which could duplicate a pending event on retry). If a fresh
+   * buffer cannot be acquired immediately, leave the session backing empty;
+   * the next receive rearm will allocate or fail before submitting new I/O.
    */
   if (mem_buffer_ref_count(session->receive_buffer) == UINT32_C(1)) {
     mem_set_used(session->receive_buffer, 0u);
-    return SALTS_OK;
+    return;
   }
 
+  published = session->receive_buffer;
   replacement = mem_get_buffer(mem_global(), impl->receive_buffer_bytes);
-  if (replacement == NULL) return SALTS_ENOMEM;
-  mem_buffer_release(session->receive_buffer);
   session->receive_buffer = replacement;
-  return SALTS_OK;
+  mem_buffer_release(published);
 }
 
 static int cnet_owner_publish_event(cnet_owner_impl *impl, const cnet_event *event) {
+  int status = cnet_owner_validate_receive_publication(impl, event);
 #if defined(CNET_INTERNAL_PROFILING)
   const uint64_t profile_started = cnet_owner_profile_start(impl);
 #endif
-  int status = impl->publish_event != NULL ? impl->publish_event(impl->event_context, event)
-                                             : cnet_event_queue_publish(impl->events, event);
+  if (status == SALTS_OK)
+    status = impl->publish_event != NULL ? impl->publish_event(impl->event_context, event)
+                                         : cnet_event_queue_publish(impl->events, event);
 #if defined(CNET_INTERNAL_PROFILING)
   cnet_owner_profile_finish(impl, profile_started, &impl->profile.event_publish_ns,
                             &impl->profile.event_publish_calls);
 #endif
   if (status != SALTS_OK) return status;
   ++impl->published_event_count;
-  status = cnet_owner_finish_receive_publication(impl, event);
-  return status;
+  cnet_owner_finish_receive_publication(impl, event);
+  return SALTS_OK;
 }
 
 static cnet_owner_session *cnet_owner_find_session(cnet_owner_impl *impl,
@@ -662,6 +685,8 @@ static int cnet_owner_arm_receive(cnet_owner_impl *impl, cnet_owner_session *ses
 
   if (session->receive_demand == 0u || session->read_active || session->close_requested)
     return SALTS_OK;
+  status = cnet_owner_ensure_receive_buffer(impl, session);
+  if (status != SALTS_OK) return status;
   if (session->peer.scheme == CNET_URI_TLS) return cnet_owner_tls_pump(impl, session);
   status = cnet_owner_receive_operation_kind(session->peer.scheme, &operation_kind);
   if (status != SALTS_OK) return status;
@@ -1094,6 +1119,8 @@ static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *sessio
   if (!session->close_requested && session->receive_demand != 0u) {
     size_t plaintext_size = 0u;
     bool peer_closed = false;
+    status = cnet_owner_ensure_receive_buffer(impl, session);
+    if (status != SALTS_OK) return status;
     status = cnet_tls_read(&session->tls, mem_buffer_data(session->receive_buffer),
                            impl->receive_buffer_bytes, &plaintext_size, &peer_closed);
     if (status != SALTS_OK) return status;
