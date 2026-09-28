@@ -49,11 +49,11 @@ static bool node_shallow_equal(const cflow_node *a, const cflow_node *b) {
         case CFLOW_NODE_PARAM_REDUCE_SEED: {
             const cmeta_type_traits *traits = a->input_type
                 ? a->input_type->traits : NULL;
-            if (!a->params.reduce_seed.value || !b->params.reduce_seed.value ||
+            if (!cflow_node_reduce_seed(a) || !cflow_node_reduce_seed(b) ||
                 !traits || (traits->flags & CMETA_TRAIT_EQUAL) == 0u ||
                 !traits->equal ||
-                !traits->equal(a->params.reduce_seed.value,
-                               b->params.reduce_seed.value))
+                !traits->equal(cflow_node_reduce_seed(a),
+                               cflow_node_reduce_seed(b)))
                 return false;
             break;
         }
