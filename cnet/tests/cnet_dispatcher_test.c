@@ -31,6 +31,7 @@ typedef struct cnet_dispatcher_test_probe {
   atomic_int order_error;
   atomic_int last_order;
   unsigned char value;
+  mem_buffer_t *receive_backing;
 } cnet_dispatcher_test_probe;
 
 static void cnet_dispatcher_test_close_socket(cnet_dispatcher_test_socket socket_value) {
@@ -72,6 +73,8 @@ static void cnet_dispatcher_test_observe(void *context, const cnet_dispatch_view
   if (view->kind == CNET_EVENT_RECEIVE) {
     next_order = 2;
     probe->value = view->size == 1u ? *(const unsigned char *)view->data : 0u;
+    if (view->backing != NULL && probe->receive_backing == NULL)
+      probe->receive_backing = mem_buffer_retain(view->backing);
     atomic_fetch_add_explicit(&probe->received, 1, memory_order_release);
   } else if (view->state == CNET_EVENT_STATE_CONNECTED) {
     next_order = 1;
@@ -169,6 +172,12 @@ spec("CNet event dispatcher") {
     check_equal(cnet_dispatcher_test_drive_until(&shards, &dispatcher, &probe.received, 1),
                 SALTS_OK);
     check_equal(probe.value, inbound);
+    check_not_null(probe.receive_backing);
+    check_true(mem_buffer_pool(probe.receive_backing) == mem_global());
+    check_equal(mem_buffer_used(probe.receive_backing), sizeof(inbound));
+    check_equal(*(const unsigned char *)mem_buffer_const_data(probe.receive_backing), inbound);
+    mem_buffer_release(probe.receive_backing);
+    probe.receive_backing = NULL;
 
     check_equal(cnet_shards_close(&shards, connection), SALTS_OK);
     check_equal(cnet_dispatcher_test_drive_until(&shards, &dispatcher, &probe.terminal, 1),
