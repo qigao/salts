@@ -412,6 +412,7 @@ bool cflow_plan_compile(cflow_plan *plan,
             inst.output_type = n->output_type;
             inst.has_size_parameter = n->has_size_parameter;
             inst.size_parameter = n->size_parameter;
+            inst.param_kind = n->param_kind;
             if (op == CMETA_PLAN_FILTER) {
                 if (!prepare_unary_call(&inst.call, n->fn) ||
                     !cmeta_type_equal(inst.call.input_type, n->input_type) ||
