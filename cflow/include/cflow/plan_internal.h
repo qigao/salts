@@ -55,6 +55,7 @@ struct cflow_plan_inst {
     size_t fn_chain_count;
     bool has_size_parameter;
     size_t size_parameter;
+    cflow_node_param_kind param_kind;
     /* Plan-owned typed copy of a REDUCE seed. The owner is a private
      * cflow_value_slot; seed remains valid until plan destruction. */
     bool has_reduce_seed;
