@@ -1007,12 +1007,19 @@ int cnet_set_receive_slice_handler(cnet_client *client,
                                    void *user) {
   cnet_client_impl *impl = cnet_client_get(client);
   cnet_client_record *record;
+  cnet_session_state state = CNET_SESSION_FREE;
+  int status;
 
   if (impl == NULL) return SALTS_EINVAL;
   if (!impl->admission_open) return SALTS_ESHUTDOWN;
   record = cnet_client_find_record(impl, connection, NULL);
   if (record == NULL) return SALTS_ENOENT;
   if (record->receive_pending != 0u) return SALTS_EBUSY;
+  status = cnet_client_record_session_state(impl, record, &state);
+  if (status != SALTS_OK) return status;
+  if (state == CNET_SESSION_DRAINING || state == CNET_SESSION_TERMINAL ||
+      state == CNET_SESSION_RETIRED)
+    return SALTS_EBUSY;
 
   record->receive_slice_handler = handler;
   record->receive_slice_user = handler != NULL ? user : NULL;
