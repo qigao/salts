@@ -1533,6 +1533,9 @@ spec("CNet public client API") {
       salts_thread_yield();
     } while (salts_monotonic_ms() < stale_deadline);
     check_equal(stale_status, SALTS_ENOENT);
+    check_equal(cnet_set_receive_slice_handler(
+                    &client, connection, cnet_api_test_owned_receive, NULL),
+                SALTS_ENOENT);
     check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(cnet_client_destroy(&client), SALTS_OK);
     cnet_api_test_close_socket(accepted);
