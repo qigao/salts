@@ -469,12 +469,21 @@ static bool step_flat_map(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
 }
 
 static bool step_reduce(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
+    size_t start_index = 0u;
     if (!i || !v || !cmeta_type_equal(v->type, i->input_type) ||
-        !cmeta_type_equal(i->input_type, i->output_type)) return false;
+        !cmeta_type_equal(i->input_type, i->output_type) ||
+        (i->has_reduce_seed && !i->reduce_seed))
+        return false;
     cflow_value_slot acc = {0};
     cflow_value_slot next = {0};
     cflow_plan_value_vec out = {0};
-    if (!v->count) { vec_destroy(v); v->type = i->output_type; return true; }
+
+    if (!v->count && !i->has_reduce_seed) {
+        vec_destroy(v);
+        v->type = i->output_type;
+        return true;
+    }
+
     if (cflow_value_storage_type_supported(v->type)) {
         unsigned char *byte_acc = (unsigned char *)malloc(v->type->size);
         unsigned char *tmp = (unsigned char *)malloc(v->type->size);
@@ -483,8 +492,14 @@ static bool step_reduce(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
             free(tmp);
             return false;
         }
-        memcpy(byte_acc, v->data, v->type->size);
-        for (size_t index = 1u; index < v->count; ++index) {
+        if (i->has_reduce_seed) {
+            memcpy(byte_acc, i->reduce_seed, v->type->size);
+            start_index = 0u;
+        } else {
+            memcpy(byte_acc, v->data, v->type->size);
+            start_index = 1u;
+        }
+        for (size_t index = start_index; index < v->count; ++index) {
             const void *args[2] = {
                 byte_acc, v->data + index * v->type->size };
             if (!i->call.invoke ||
@@ -504,12 +519,15 @@ static bool step_reduce(const cflow_plan_inst *i, cflow_plan_value_vec *v) {
         v->type = i->output_type;
         return true;
     }
+
     if (!cflow_value_slot_init(&acc, v->type) ||
-        !cflow_value_slot_copy(&acc, v->data)) {
+        !cflow_value_slot_copy(
+            &acc, i->has_reduce_seed ? i->reduce_seed : v->data)) {
         cflow_value_slot_destroy(&acc);
         return false;
     }
-    for (size_t n = 1; n < v->count; ++n) {
+    start_index = i->has_reduce_seed ? 0u : 1u;
+    for (size_t n = start_index; n < v->count; ++n) {
         const void *args[2] = {
             acc.storage, v->data + n * v->type->size };
         if (!cflow_value_slot_init(&next, v->type) || !i->call.invoke ||

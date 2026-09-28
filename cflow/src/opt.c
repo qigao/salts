@@ -132,6 +132,11 @@ static bool append_plain_node(opt_ctx *ctx, cflow_subgraph_id sgid,
         created = cflow_graph_create_sorted_node(
             ctx->dst, sgid, src->input_type,
             src->params.sorted.max_elements, out);
+    else if (op == CFLOW_OP_REDUCE &&
+             src->param_kind == CFLOW_NODE_PARAM_REDUCE_SEED)
+        created = cflow_graph_create_seeded_reduce_node(
+            ctx->dst, sgid, src->fn,
+            cflow_node_reduce_seed(src), out);
     else
         created = cflow_graph_create_node(
             ctx->dst, sgid, op, src->fn, nested, nested_count, out);

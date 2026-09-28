@@ -46,6 +46,17 @@ static bool node_shallow_equal(const cflow_node *a, const cflow_node *b) {
             if (a->params.sorted.max_elements !=
                 b->params.sorted.max_elements) return false;
             break;
+        case CFLOW_NODE_PARAM_REDUCE_SEED: {
+            const cmeta_type_traits *traits = a->input_type
+                ? a->input_type->traits : NULL;
+            if (!cflow_node_reduce_seed(a) || !cflow_node_reduce_seed(b) ||
+                !traits || (traits->flags & CMETA_TRAIT_EQUAL) == 0u ||
+                !traits->equal ||
+                !traits->equal(cflow_node_reduce_seed(a),
+                               cflow_node_reduce_seed(b)))
+                return false;
+            break;
+        }
         default:
             return false;
     }

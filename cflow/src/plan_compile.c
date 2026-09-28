@@ -59,9 +59,36 @@ static cflow_plan_impl *plan_impl(cflow_plan *p) {
 }
 
 static void inst_destroy(cflow_plan_inst *i) {
+    cflow_value_slot *seed;
     if (!i) return;
+    seed = (cflow_value_slot *)i->reduce_seed_owner;
+    if (seed) {
+        cflow_value_slot_destroy(seed);
+        free(seed);
+    }
     free(i->fn_chain);
     memset(i, 0, sizeof(*i));
+}
+
+static bool inst_copy_reduce_seed(cflow_plan_inst *inst,
+                                  const cflow_node *node) {
+    cflow_value_slot *seed;
+    if (!inst || !node || node->op != CFLOW_OP_REDUCE ||
+        node->param_kind != CFLOW_NODE_PARAM_REDUCE_SEED ||
+        !cflow_node_reduce_seed(node))
+        return false;
+    seed = (cflow_value_slot *)calloc(1u, sizeof(*seed));
+    if (!seed) return false;
+    if (!cflow_value_slot_init(seed, node->input_type) ||
+        !cflow_value_slot_copy(seed, cflow_node_reduce_seed(node))) {
+        cflow_value_slot_destroy(seed);
+        free(seed);
+        return false;
+    }
+    inst->has_reduce_seed = true;
+    inst->reduce_seed = seed->storage;
+    inst->reduce_seed_owner = seed;
+    return true;
 }
 
 void cflow_plan_destroy(cflow_plan *plan) {
@@ -162,6 +189,7 @@ static void prepare_parallel_reduce(cflow_plan_impl *impl) {
     if (!impl->count || impl->managed_values) return;
     reduce = &impl->code[impl->count - 1u];
     if (reduce->opcode != CMETA_PLAN_REDUCE ||
+        reduce->has_reduce_seed ||
         !cmeta_type_equal(reduce->input_type, reduce->output_type) ||
         !cflow_callable_declares_associative_endomap(reduce->call.fn))
         return;
@@ -384,6 +412,7 @@ bool cflow_plan_compile(cflow_plan *plan,
             inst.output_type = n->output_type;
             inst.has_size_parameter = n->has_size_parameter;
             inst.size_parameter = n->size_parameter;
+            inst.param_kind = n->param_kind;
             if (op == CMETA_PLAN_FILTER) {
                 if (!prepare_unary_call(&inst.call, n->fn) ||
                     !cmeta_type_equal(inst.call.input_type, n->input_type) ||
@@ -418,6 +447,13 @@ bool cflow_plan_compile(cflow_plan *plan,
             } else {
                 inst.call.fn = n->fn;
                 inst.call.invoke = n->fn.invoke;
+                if (op == CMETA_PLAN_REDUCE &&
+                    n->param_kind == CFLOW_NODE_PARAM_REDUCE_SEED &&
+                    !inst_copy_reduce_seed(&inst, n)) {
+                    inst_destroy(&inst);
+                    return plan_compile_fail(
+                        plan, &index, "seeded reduce copy failed");
+                }
             }
             if (impl->count >= instruction_count) {
                 inst_destroy(&inst);
