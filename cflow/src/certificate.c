@@ -86,6 +86,63 @@ fail:
     return false;
 }
 
+static bool plan_parameters_match_graph(const cflow_graph *graph,
+                                        const cflow_plan_impl *impl) {
+    const cflow_subgraph *subgraph;
+    cflow_dense_successor_index index = {0};
+    cflow_node_id id;
+    size_t pc = 0u;
+    size_t visited = 0u;
+    bool ok = false;
+
+    if (!graph || !impl || graph->root >= graph->subgraph_count)
+        return false;
+    subgraph = &graph->subgraphs[graph->root];
+    if (!subgraph->node_count || subgraph->entry >= subgraph->node_count ||
+        cflow_dense_successor_index_build(&index, subgraph) !=
+            CFLOW_DENSE_SUCCESSOR_INDEX_OK || index.has_fanout)
+        goto done;
+
+    id = subgraph->entry;
+    for (;;) {
+        const cflow_node *node;
+        const cflow_plan_inst *inst;
+        cflow_node_id successor;
+
+        if (++visited > subgraph->node_count) goto done;
+        node = cflow_subgraph_node(subgraph, id);
+        if (!node) goto done;
+        if (node->op != CFLOW_OP_INPUT) {
+            const void *graph_seed;
+            const cmeta_type_traits *traits;
+            if (pc >= impl->count) goto done;
+            inst = &impl->code[pc++];
+            if (inst->param_kind != node->param_kind) goto done;
+
+            graph_seed = cflow_node_reduce_seed(node);
+            if (node->param_kind == CFLOW_NODE_PARAM_REDUCE_SEED) {
+                traits = node->input_type ? node->input_type->traits : NULL;
+                if (!graph_seed || !inst->has_reduce_seed ||
+                    !inst->reduce_seed || !traits ||
+                    (traits->flags & CMETA_TRAIT_EQUAL) == 0u ||
+                    !traits->equal ||
+                    !traits->equal(graph_seed, inst->reduce_seed))
+                    goto done;
+            } else if (inst->has_reduce_seed || inst->reduce_seed) {
+                goto done;
+            }
+        }
+        if (!cflow_dense_successor_index_successor(&index, id, &successor))
+            break;
+        id = successor;
+    }
+    ok = pc == impl->count;
+
+done:
+    cflow_dense_successor_index_destroy(&index);
+    return ok;
+}
+
 void cflow_plan_certificate_destroy(cflow_plan_certificate *certificate) {
     if (!certificate) return;
     free(certificate->rows);
@@ -120,6 +177,7 @@ bool cflow_plan_certificate_build(cflow_plan_certificate *certificate,
          path != CFLOW_CERTIFIED_PATH_ORDERED_PARALLEL_REDUCE) ||
         (path == CFLOW_CERTIFIED_PATH_ORDERED_PARALLEL_REDUCE &&
          !cflow_plan_parallel_reduce_supported(plan)) ||
+        !plan_parameters_match_graph(normalized_graph, impl) ||
         !count_rows(impl, &row_count) ||
         row_count > SIZE_MAX / sizeof(*built.rows) ||
         impl->count > UINT32_MAX || !graph_fingerprint(
