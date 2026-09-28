@@ -5,6 +5,7 @@ on:
     paths:
       - "native-io/**"
       - "cnet/**"
+      - "coroutine/**"
       - "cflow/include/cflow/io_cnet_adapter.h"
       - "cflow/cnet-adapter/**"
       - "CMakeLists.txt"
@@ -33,6 +34,7 @@ on:
     paths:
       - "native-io/**"
       - "cnet/**"
+      - "coroutine/**"
       - "cflow/include/cflow/io_cnet_adapter.h"
       - "cflow/cnet-adapter/**"
       - "CMakeLists.txt"
