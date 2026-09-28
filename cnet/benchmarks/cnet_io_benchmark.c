@@ -109,6 +109,7 @@ typedef struct io_bench_result {
   uint64_t native_observe_ns;
   size_t native_start_calls;
   size_t native_observe_calls;
+  size_t cnet_send_terminal_calls;
   cnet_client_poll_profile cnet_profile;
 } io_bench_result;
 
@@ -194,9 +195,9 @@ typedef struct io_bench_cnet {
   io_bench_send_mode send_mode;
   size_t segment_count;
   mem_buffer_t *send_buffer;
-  cnet_const_buffer send_segments[NATIVE_IO_VECTOR_MAX];
+  cnet_const_buffer send_segments[CNET_RETAINED_VECTOR_MAX];
   size_t send_segment_count;
-  mem_slice_t send_slices[NATIVE_IO_VECTOR_MAX];
+  mem_slice_t send_slices[CNET_RETAINED_VECTOR_MAX];
   size_t send_slice_count;
   int send_done;
   size_t send_completions;
@@ -387,14 +388,14 @@ static void io_bench_server_entry(void *argument) {
 }
 
 static int io_bench_server_init(io_bench_server *server, io_bench_protocol protocol,
-                                size_t payload_size) {
+                                size_t payload_size, size_t exchange_count) {
   const int type = protocol == IO_BENCH_TCP ? SOCK_STREAM : SOCK_DGRAM;
   const int socket_protocol = protocol == IO_BENCH_TCP ? IPPROTO_TCP : IPPROTO_UDP;
   int status;
   memset(server, 0, sizeof(*server));
   server->protocol = protocol;
   server->payload_size = payload_size;
-  server->exchange_count = IO_BENCH_ALL_EXCHANGES;
+  server->exchange_count = exchange_count;
   server->socket_value = socket(AF_INET, type, socket_protocol);
   if (!io_bench_socket_valid(server->socket_value)) return io_bench_socket_error();
   status = io_bench_bind_loopback(server->socket_value, &server->address);
@@ -556,9 +557,9 @@ static size_t io_bench_native_segments(const unsigned char *data, size_t length,
 
 static size_t io_bench_cnet_segments(const unsigned char *data, size_t length,
                                      size_t segment_count,
-                                     cnet_const_buffer segments[NATIVE_IO_VECTOR_MAX]) {
+                                     cnet_const_buffer segments[CNET_RETAINED_VECTOR_MAX]) {
   size_t start = 0u;
-  if (data == NULL || segment_count == 0u || segment_count > NATIVE_IO_VECTOR_MAX ||
+  if (data == NULL || segment_count == 0u || segment_count > CNET_RETAINED_VECTOR_MAX ||
       length < segment_count)
     return 0u;
   for (size_t index = 0u; index < segment_count; ++index) {
@@ -634,7 +635,7 @@ static int io_bench_native_flatten_exchange(io_bench_native *fixture,
                                             unsigned char *received, size_t length,
                                             size_t segment_count,
                                             unsigned char *flatten_buffer) {
-  cnet_const_buffer segments[NATIVE_IO_VECTOR_MAX];
+  cnet_const_buffer segments[CNET_RETAINED_VECTOR_MAX];
   size_t offset = 0u;
   const size_t count = io_bench_cnet_segments(sent, length, segment_count, segments);
   if (flatten_buffer == NULL || count == 0u) return SALTS_EINVAL;
@@ -1178,7 +1179,7 @@ static void io_bench_cnet_sent(void *user, cnet_connection connection, size_t si
 static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol,
                               const struct sockaddr_in *address,
                               native_io_backend_kind backend_kind, io_bench_send_mode send_mode,
-                              size_t segment_count) {
+                              size_t segment_count, bool enable_nodelay) {
   const cnet_client_config config = {.backend = backend_kind,
                                      .connection_capacity = 1u,
                                      .command_capacity = 8u,
@@ -1191,6 +1192,11 @@ static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol
                                      .read_timeout_ms = 0u,
                                      .write_timeout_ms = 0u};
   cnet_connect_options options;
+  const cnet_observer observer = {.on_state = io_bench_cnet_state,
+                                  .on_receive = io_bench_cnet_receive,
+                                  .on_send = send_mode == IO_BENCH_SEND_BASELINE
+                                                 ? NULL : io_bench_cnet_sent,
+                                  .user = fixture};
   char uri[64];
   int status;
   memset(fixture, 0, sizeof(*fixture));
@@ -1200,27 +1206,30 @@ static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol
   fixture->status = SALTS_OK;
   status = cnet_client_init(&fixture->client, &config);
   if (status != SALTS_OK) return status;
+  if (enable_nodelay) {
+    cnet_stream_socket_options socket_options = CNET_STREAM_SOCKET_OPTIONS_INIT;
+    if (protocol != IO_BENCH_TCP) return SALTS_EINVAL;
+    socket_options.nodelay = 1;
+    status = cnet_client_set_stream_socket_options(&fixture->client, &socket_options);
+    if (status != SALTS_OK) return status;
+  }
   (void)snprintf(uri, sizeof(uri), "%s://127.0.0.1:%u", protocol == IO_BENCH_TCP ? "tcp" : "udp",
                  (unsigned int)ntohs(address->sin_port));
-  options = (cnet_connect_options){.uri = uri,
-                                   .observer = {.on_state = io_bench_cnet_state,
-                                                .on_receive = io_bench_cnet_receive,
-                                                .on_send = send_mode == IO_BENCH_SEND_BASELINE
-                                                               ? NULL : io_bench_cnet_sent,
-                                                .user = fixture}};
+  options = (cnet_connect_options){.uri = uri, .observer = observer};
   return cnet_connect(&fixture->client, &options, &fixture->connection);
 }
 
-static int io_bench_cnet_ready(io_bench_cnet *fixture, size_t payload_size) {
+static int io_bench_cnet_ready(io_bench_cnet *fixture, size_t payload_size,
+                               size_t exchange_count) {
   size_t receive_demand;
   int status = io_bench_wait_cnet(fixture, &fixture->connected, 1);
   if (status == SALTS_OK) status = fixture->status;
   if (status != SALTS_OK) return status;
   if (fixture->protocol == IO_BENCH_TCP) {
-    if (payload_size > SIZE_MAX / IO_BENCH_ALL_EXCHANGES) return SALTS_ERANGE;
-    receive_demand = payload_size * IO_BENCH_ALL_EXCHANGES;
+    if (exchange_count == 0u || payload_size > SIZE_MAX / exchange_count) return SALTS_ERANGE;
+    receive_demand = payload_size * exchange_count;
   } else {
-    receive_demand = IO_BENCH_ALL_EXCHANGES;
+    receive_demand = exchange_count;
   }
   status = cnet_receive(&fixture->client, fixture->connection, receive_demand);
   return status;
@@ -1283,7 +1292,8 @@ static int io_bench_cnet_destroy(io_bench_cnet *fixture) {
 static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol protocol,
                                  io_bench_driver driver, size_t payload_size,
                                  native_io_backend_kind backend_kind, io_bench_send_mode send_mode,
-                                 size_t segment_count) {
+                                 size_t segment_count, size_t exchange_count,
+                                 bool cnet_enable_nodelay) {
   int status;
   memset(fixture, 0, sizeof(*fixture));
   fixture->driver = driver;
@@ -1293,7 +1303,8 @@ static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol pr
   fixture->server.socket_value = IO_BENCH_INVALID_SOCKET;
   fixture->native.socket_value = IO_BENCH_INVALID_SOCKET;
   status = io_bench_network_start(fixture);
-  if (status == SALTS_OK) status = io_bench_server_init(&fixture->server, protocol, payload_size);
+  if (status == SALTS_OK)
+    status = io_bench_server_init(&fixture->server, protocol, payload_size, exchange_count);
   if (status == SALTS_OK) status = io_bench_server_start(&fixture->server);
   if (status == SALTS_OK) {
     if (driver == IO_BENCH_LIBUV)
@@ -1303,10 +1314,10 @@ static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol pr
           io_bench_native_init(&fixture->native, protocol, &fixture->server.address, backend_kind);
     else
       status = io_bench_cnet_init(&fixture->cnet, protocol, &fixture->server.address, backend_kind,
-                                  send_mode, segment_count);
+                                  send_mode, segment_count, cnet_enable_nodelay);
   }
   if (status == SALTS_OK && driver == IO_BENCH_CNET)
-    status = io_bench_cnet_ready(&fixture->cnet, payload_size);
+    status = io_bench_cnet_ready(&fixture->cnet, payload_size, exchange_count);
   return status;
 }
 
@@ -1413,10 +1424,12 @@ static void io_bench_free_payload(void *data, void *user) {
   free(data);
 }
 
-static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size_t payload_size,
-                        bool profile_stages, native_io_backend_kind backend_kind,
-                        io_bench_send_mode send_mode, size_t segment_count,
-                        io_bench_result *result) {
+static int io_bench_run_counted(io_bench_protocol protocol, io_bench_driver driver,
+                                size_t payload_size, bool profile_stages,
+                                native_io_backend_kind backend_kind,
+                                io_bench_send_mode send_mode, size_t segment_count,
+                                size_t warmup_exchanges, size_t measure_exchanges,
+                                bool cnet_enable_nodelay, io_bench_result *result) {
   io_bench_fixture fixture;
   unsigned char *sent = NULL;
   unsigned char *received = NULL;
@@ -1424,6 +1437,8 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
   mem_buffer_t *send_buffer = NULL;
   uint64_t wall_started = 0u;
   size_t latency_count = 0u;
+  size_t send_completions_before_measure = 0u;
+  size_t total_exchanges = 0u;
   uv_rusage_t usage_before = {0};
   uv_rusage_t usage_after = {0};
 #ifdef _WIN32
@@ -1431,14 +1446,19 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
 #endif
   const char *phase = "init";
   int status;
+  if (result == NULL || measure_exchanges == 0u ||
+      measure_exchanges > IO_BENCH_TOTAL_EXCHANGES ||
+      warmup_exchanges > SIZE_MAX - measure_exchanges)
+    return SALTS_EINVAL;
+  total_exchanges = warmup_exchanges + measure_exchanges;
   memset(result, 0, sizeof(*result));
   status = io_bench_fixture_init(&fixture, protocol, driver, payload_size, backend_kind, send_mode,
-                                 segment_count);
+                                 segment_count, total_exchanges, cnet_enable_nodelay);
   if (status != SALTS_OK) goto cleanup;
   phase = "allocate";
   sent = (unsigned char *)malloc(payload_size);
   received = (unsigned char *)malloc(payload_size);
-  latencies = (uint64_t *)malloc(sizeof(*latencies) * IO_BENCH_TOTAL_EXCHANGES);
+  latencies = (uint64_t *)malloc(sizeof(*latencies) * measure_exchanges);
   if (sent == NULL || received == NULL || latencies == NULL) {
     status = SALTS_ENOMEM;
     goto cleanup;
@@ -1469,7 +1489,7 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
     }
     if (send_mode == IO_BENCH_SEND_RETAINED_VECTOR) {
       size_t offset = 0u;
-      if (segment_count == 0u || segment_count > NATIVE_IO_VECTOR_MAX ||
+      if (segment_count == 0u || segment_count > CNET_RETAINED_VECTOR_MAX ||
           payload_size < segment_count) {
         status = SALTS_EINVAL;
         goto cleanup;
@@ -1490,17 +1510,19 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
     }
   }
   phase = "warmup";
-  for (size_t index = 0u; index < IO_BENCH_WARMUP_EXCHANGES; ++index) {
+  for (size_t index = 0u; index < warmup_exchanges; ++index) {
     status = io_bench_exchange(&fixture, sent, received, payload_size);
     if (status != SALTS_OK) goto cleanup;
   }
+  if (driver == IO_BENCH_CNET)
+    send_completions_before_measure = fixture.cnet.send_completions;
   if (driver == IO_BENCH_CNET && profile_stages) {
     status = io_bench_cnet_begin_measurement(&fixture.cnet);
     if (status != SALTS_OK) goto cleanup;
   }
   phase = "measure";
   if (io_bench_trace_enabled) {
-    fprintf(stderr, "IO_BENCH_MEASURE_BEGIN rounds=%d\n", IO_BENCH_TOTAL_EXCHANGES);
+    fprintf(stderr, "IO_BENCH_MEASURE_BEGIN rounds=%zu\n", measure_exchanges);
     fflush(stderr);
   }
   status = uv_getrusage_thread(&usage_before);
@@ -1512,7 +1534,7 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
   }
 #endif
   wall_started = salts_hrtime();
-  for (size_t exchange = 0u; exchange < IO_BENCH_EXCHANGES_PER_REPLICATE; ++exchange) {
+  for (size_t exchange = 0u; exchange < measure_exchanges; ++exchange) {
     const io_bench_sample before = profile_stages ? io_bench_snapshot(&fixture, result)
                                                    : (io_bench_sample){0};
     const uint64_t started = salts_hrtime();
@@ -1550,7 +1572,7 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
   status = uv_getrusage_thread(&usage_after);
   if (status != 0) goto cleanup;
   if (io_bench_trace_enabled) {
-    fprintf(stderr, "IO_BENCH_MEASURE_END rounds=%d\n", IO_BENCH_TOTAL_EXCHANGES);
+    fprintf(stderr, "IO_BENCH_MEASURE_END rounds=%zu\n", measure_exchanges);
     fflush(stderr);
   }
   if (io_bench_cpu_ns(&usage_after) < io_bench_cpu_ns(&usage_before)) {
@@ -1560,10 +1582,14 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
   result->cpu_ns = io_bench_cpu_ns(&usage_after) - io_bench_cpu_ns(&usage_before);
   result->voluntary_switches = usage_after.ru_nvcsw - usage_before.ru_nvcsw;
   result->involuntary_switches = usage_after.ru_nivcsw - usage_before.ru_nivcsw;
-  if (driver == IO_BENCH_CNET && send_mode != IO_BENCH_SEND_BASELINE &&
-      fixture.cnet.send_completions != IO_BENCH_ALL_EXCHANGES) {
-    status = SALTS_EIO;
-    goto cleanup;
+  if (driver == IO_BENCH_CNET && send_mode != IO_BENCH_SEND_BASELINE) {
+    if (fixture.cnet.send_completions != total_exchanges ||
+        fixture.cnet.send_completions < send_completions_before_measure) {
+      status = SALTS_EIO;
+      goto cleanup;
+    }
+    result->cnet_send_terminal_calls =
+        fixture.cnet.send_completions - send_completions_before_measure;
   }
   qsort(latencies, latency_count, sizeof(latencies[0]), io_bench_u64_compare);
   result->p50_ns = latencies[(latency_count - 1u) * 50u / 100u];
@@ -1605,6 +1631,17 @@ cleanup:
             io_bench_driver_name(driver), protocol == IO_BENCH_TCP ? "TCP" : "UDP", payload_size,
             (int)send_mode, phase, status);
   return status;
+}
+
+static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver,
+                        size_t payload_size, bool profile_stages,
+                        native_io_backend_kind backend_kind,
+                        io_bench_send_mode send_mode, size_t segment_count,
+                        io_bench_result *result) {
+  return io_bench_run_counted(protocol, driver, payload_size, profile_stages,
+                              backend_kind, send_mode, segment_count,
+                              IO_BENCH_WARMUP_EXCHANGES,
+                              IO_BENCH_EXCHANGES_PER_REPLICATE, false, result);
 }
 
 static double io_bench_rate(const io_bench_result *result) {
@@ -1872,10 +1909,12 @@ static int io_bench_print_diagnostics(const char *protocol, const io_bench_serie
   printf("\n%s CNet diagnostic internal evidence (mean us/RT)\n", protocol);
   printf("Within CNet only, not an explanation of the libuv gap. "
          "Observe still includes waiting. Payload copy is the admitted send copy only.\n");
-  printf("| payload | fixed control | payload copy | NativeIO prepare/reprepare | observe + flush | starts/RT | completions/RT |\n");
-  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+  printf("| payload | fixed control | payload copy | NativeIO prepare/reprepare | observe + flush | command publishes/RT | dispatcher callbacks/RT | starts/RT | completions/RT |\n");
+  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
-    double fixed = 0.0, copy = 0.0, submit = 0.0, observe = 0.0, starts = 0.0, completions = 0.0;
+    double fixed = 0.0, copy = 0.0, submit = 0.0, observe = 0.0;
+    double command_publishes = 0.0, dispatcher_callbacks = 0.0;
+    double starts = 0.0, completions = 0.0;
     for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
       const io_bench_result *result = &cnet[index].stage_profile_runs[repeat];
       cnet_benchmark_fixed_control_attribution attribution;
@@ -1886,14 +1925,22 @@ static int io_bench_print_diagnostics(const char *protocol, const io_bench_serie
       submit += (attribution.native_request_start_ns + attribution.native_request_resubmit_ns) /
                 IO_BENCH_REPLICATES;
       observe += attribution.native_observe_ns / IO_BENCH_REPLICATES;
+      command_publishes +=
+          io_bench_mean(result->cnet_profile.owner.command_queue_publish_calls +
+                            result->cnet_profile.owner.command_queue_payload_publish_calls,
+                        result->round_trips) /
+          IO_BENCH_REPLICATES;
+      dispatcher_callbacks +=
+          io_bench_mean(result->cnet_profile.dispatcher_observer_calls, result->round_trips) /
+          IO_BENCH_REPLICATES;
       starts += io_bench_mean(result->cnet_profile.owner.request_start_calls, result->round_trips) /
                 IO_BENCH_REPLICATES;
       completions += io_bench_mean(result->cnet_profile.owner.request_completion_calls,
                                    result->round_trips) / IO_BENCH_REPLICATES;
     }
-    printf("| %zu KiB | %.3f | %.3f | %.3f | %.3f | %.2f | %.2f |\n",
+    printf("| %zu KiB | %.3f | %.3f | %.3f | %.3f | %.2f | %.2f | %.2f | %.2f |\n",
            cnet[index].payload_size / 1024u, fixed / 1000.0, copy / 1000.0, submit / 1000.0,
-           observe / 1000.0, starts, completions);
+           observe / 1000.0, command_publishes, dispatcher_callbacks, starts, completions);
   }
   return SALTS_OK;
 }
@@ -2165,6 +2212,283 @@ static int io_bench_sg_write_csv(const char *prefix, const char *backend,
   return status;
 }
 
+
+typedef struct io_bench_sg_window_summary {
+  size_t payload_size;
+  size_t segment_count;
+  size_t expected_windows;
+  double flatten_p50_us;
+  double sg_p50_us;
+  double retained_p50_us;
+  double nodelay_sg_p50_us;
+  double flatten_rate_per_second;
+  double sg_rate_per_second;
+  double retained_rate_per_second;
+  double nodelay_sg_rate_per_second;
+  double p50_delta_vs_flatten;
+  double p50_delta_vs_flatten_mad;
+  double rate_delta_vs_flatten;
+  double rate_delta_vs_flatten_mad;
+  double p50_delta_vs_retained;
+  double p50_delta_vs_retained_mad;
+  double rate_delta_vs_retained;
+  double rate_delta_vs_retained_mad;
+  double nodelay_p50_delta_vs_default;
+  double nodelay_p50_delta_vs_default_mad;
+  double nodelay_rate_delta_vs_default;
+  double nodelay_rate_delta_vs_default_mad;
+  double vector_submissions_per_op;
+  double vector_spans_per_submission;
+  double profiled_vector_bytes_per_op;
+  double terminal_callbacks_per_op;
+} io_bench_sg_window_summary;
+
+static int io_bench_sg_window_write_csv(
+    const char *prefix, const char *backend,
+    const io_bench_sg_window_summary *rows, size_t count) {
+  char path[IO_BENCH_CSV_LINE_CAPACITY];
+  salts_file_t file;
+  int length;
+  int status;
+  if (prefix == NULL || rows == NULL) return SALTS_OK;
+  if (*prefix == '\0') return SALTS_EINVAL;
+  length = snprintf(path, sizeof(path), "%s.sg-window.csv", prefix);
+  if (length < 0 || (size_t)length >= sizeof(path)) return SALTS_ERANGE;
+  file = salts_fs_open(path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
+                       SALTS_FS_DEFAULT_MODE);
+  if (file == SALTS_INVALID_FILE) return SALTS_EIO;
+  status = io_bench_csv_line(
+      file,
+      "backend,payload_bytes,segments,expected_windows,"
+      "flatten_p50_us,sg_p50_us,retained_p50_us,nodelay_sg_p50_us,"
+      "flatten_rate_per_second,sg_rate_per_second,retained_rate_per_second,"
+      "nodelay_sg_rate_per_second,"
+      "p50_delta_vs_flatten_pct,p50_delta_vs_flatten_mad_pp,"
+      "rate_delta_vs_flatten_pct,rate_delta_vs_flatten_mad_pp,"
+      "p50_delta_vs_retained_pct,p50_delta_vs_retained_mad_pp,"
+      "rate_delta_vs_retained_pct,rate_delta_vs_retained_mad_pp,"
+      "nodelay_p50_delta_vs_default_pct,nodelay_p50_delta_vs_default_mad_pp,"
+      "nodelay_rate_delta_vs_default_pct,nodelay_rate_delta_vs_default_mad_pp,"
+      "vector_submissions_per_op,vector_spans_per_submission,"
+      "profiled_vector_bytes_per_op,terminal_callbacks_per_op\n");
+  for (size_t index = 0u; status == SALTS_OK && index < count; ++index) {
+    const io_bench_sg_window_summary *row = &rows[index];
+    status = io_bench_csv_line(
+        file,
+        "%s,%zu,%zu,%zu,%.6f,%.6f,%.6f,%.6f,"
+        "%.6f,%.6f,%.6f,%.6f,"
+        "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,"
+        "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+        backend, row->payload_size, row->segment_count, row->expected_windows,
+        row->flatten_p50_us, row->sg_p50_us, row->retained_p50_us,
+        row->nodelay_sg_p50_us,
+        row->flatten_rate_per_second, row->sg_rate_per_second,
+        row->retained_rate_per_second, row->nodelay_sg_rate_per_second,
+        row->p50_delta_vs_flatten, row->p50_delta_vs_flatten_mad,
+        row->rate_delta_vs_flatten, row->rate_delta_vs_flatten_mad,
+        row->p50_delta_vs_retained, row->p50_delta_vs_retained_mad,
+        row->rate_delta_vs_retained, row->rate_delta_vs_retained_mad,
+        row->nodelay_p50_delta_vs_default, row->nodelay_p50_delta_vs_default_mad,
+        row->nodelay_rate_delta_vs_default, row->nodelay_rate_delta_vs_default_mad,
+        row->vector_submissions_per_op, row->vector_spans_per_submission,
+        row->profiled_vector_bytes_per_op, row->terminal_callbacks_per_op);
+  }
+  {
+    const int close_status = salts_fs_close(file);
+    if (status == SALTS_OK) status = close_status;
+  }
+  return status;
+}
+
+static int io_bench_compare_sg_windows(
+    const cnet_io_benchmark_backend *backend, const char *prefix) {
+  enum {
+    WINDOW_METHODS = 4,
+    WINDOW_REPLICATES = 4,
+    WINDOW_CASES = 6,
+    WINDOW_WARMUPS = 8,
+    WINDOW_EXCHANGES = 32,
+    WINDOW_PROFILE_WARMUPS = 4,
+    WINDOW_PROFILE_EXCHANGES = 16
+  };
+  typedef struct io_bench_sg_window_method {
+    const char *name;
+    io_bench_send_mode mode;
+    bool enable_nodelay;
+  } io_bench_sg_window_method;
+  static const struct {
+    size_t payload_size;
+    size_t segment_count;
+  } cases[WINDOW_CASES] = {
+      {65536u, 16u}, {65536u, 17u}, {65536u, 32u},
+      {1024u * 1024u, 16u}, {1024u * 1024u, 17u}, {1024u * 1024u, 32u}};
+  static const io_bench_sg_window_method methods[WINDOW_METHODS] = {
+      {"cnet_sendv_flatten", IO_BENCH_SEND_VECTOR_COPY, false},
+      {"cnet_retained_sg", IO_BENCH_SEND_RETAINED_VECTOR, false},
+      {"cnet_retained", IO_BENCH_SEND_RETAINED, false},
+      {"cnet_retained_sg_nodelay", IO_BENCH_SEND_RETAINED_VECTOR, true}};
+  io_bench_sg_window_summary summaries[WINDOW_CASES] = {{0}};
+
+  printf("\nCNet retained-SG NativeIO-window qualification: backend=%s; "
+         "%d repeats, %d warmups, %d persistent TCP RTTs/run. "
+         "The nodelay control uses an public cnet_stream_socket_options.nodelay policy; "
+         "production CNet policy is unchanged.\n",
+         backend->name, WINDOW_REPLICATES, WINDOW_WARMUPS, WINDOW_EXCHANGES);
+
+  for (size_t case_index = 0u; case_index < WINDOW_CASES; ++case_index) {
+    io_bench_result *runs =
+        (io_bench_result *)calloc(WINDOW_METHODS * WINDOW_REPLICATES, sizeof(*runs));
+    io_bench_result diagnostic = {0};
+    double p50[WINDOW_METHODS][WINDOW_REPLICATES];
+    double rate[WINDOW_METHODS][WINDOW_REPLICATES];
+    cnet_benchmark_summary p50_summary[WINDOW_METHODS] = {{0}};
+    cnet_benchmark_summary rate_summary[WINDOW_METHODS] = {{0}};
+    cnet_benchmark_summary p50_vs_flatten = {0};
+    cnet_benchmark_summary rate_vs_flatten = {0};
+    cnet_benchmark_summary p50_vs_retained = {0};
+    cnet_benchmark_summary rate_vs_retained = {0};
+    cnet_benchmark_summary nodelay_p50_vs_default = {0};
+    cnet_benchmark_summary nodelay_rate_vs_default = {0};
+    const size_t payload_size = cases[case_index].payload_size;
+    const size_t segment_count = cases[case_index].segment_count;
+    const size_t expected_windows =
+        (segment_count + NATIVE_IO_VECTOR_MAX - 1u) / NATIVE_IO_VECTOR_MAX;
+    int status = SALTS_OK;
+
+    if (runs == NULL) return SALTS_ENOMEM;
+    for (size_t repeat = 0u; repeat < WINDOW_REPLICATES; ++repeat) {
+      static const size_t balanced_order[WINDOW_METHODS] = {0u, 2u, 3u, 1u};
+      for (size_t order = 0u; order < WINDOW_METHODS; ++order) {
+        const size_t method =
+            (balanced_order[order] + case_index + repeat) % WINDOW_METHODS;
+        io_bench_result *result = &runs[method * WINDOW_REPLICATES + repeat];
+        status = io_bench_run_counted(
+            IO_BENCH_TCP, IO_BENCH_CNET, payload_size, false,
+            backend->kind, methods[method].mode, segment_count,
+            WINDOW_WARMUPS, WINDOW_EXCHANGES, methods[method].enable_nodelay, result);
+        if (status != SALTS_OK) {
+          free(runs);
+          return status;
+        }
+      }
+    }
+
+    for (size_t method = 0u; method < WINDOW_METHODS; ++method) {
+      for (size_t repeat = 0u; repeat < WINDOW_REPLICATES; ++repeat) {
+        const io_bench_result *result = &runs[method * WINDOW_REPLICATES + repeat];
+        p50[method][repeat] = (double)result->p50_ns;
+        rate[method][repeat] = io_bench_rate(result);
+      }
+      status = cnet_benchmark_summarize(
+          p50[method], WINDOW_REPLICATES, &p50_summary[method]);
+      if (status == SALTS_OK)
+        status = cnet_benchmark_summarize(
+            rate[method], WINDOW_REPLICATES, &rate_summary[method]);
+      if (status != SALTS_OK) {
+        free(runs);
+        return status;
+      }
+    }
+
+    status = cnet_benchmark_summarize_paired_delta(
+        p50[0], p50[1], WINDOW_REPLICATES, &p50_vs_flatten);
+    if (status == SALTS_OK)
+      status = cnet_benchmark_summarize_paired_delta(
+          rate[0], rate[1], WINDOW_REPLICATES, &rate_vs_flatten);
+    if (status == SALTS_OK)
+      status = cnet_benchmark_summarize_paired_delta(
+          p50[2], p50[1], WINDOW_REPLICATES, &p50_vs_retained);
+    if (status == SALTS_OK)
+      status = cnet_benchmark_summarize_paired_delta(
+          rate[2], rate[1], WINDOW_REPLICATES, &rate_vs_retained);
+    if (status == SALTS_OK)
+      status = cnet_benchmark_summarize_paired_delta(
+          p50[1], p50[3], WINDOW_REPLICATES, &nodelay_p50_vs_default);
+    if (status == SALTS_OK)
+      status = cnet_benchmark_summarize_paired_delta(
+          rate[1], rate[3], WINDOW_REPLICATES, &nodelay_rate_vs_default);
+    if (status != SALTS_OK) {
+      free(runs);
+      return status;
+    }
+
+    status = io_bench_run_counted(
+        IO_BENCH_TCP, IO_BENCH_CNET, payload_size, true, backend->kind,
+        IO_BENCH_SEND_RETAINED_VECTOR, segment_count,
+        WINDOW_PROFILE_WARMUPS, WINDOW_PROFILE_EXCHANGES, false, &diagnostic);
+    if (status != SALTS_OK) {
+      free(runs);
+      return status;
+    }
+    if (diagnostic.round_trips == 0u ||
+        diagnostic.cnet_profile.owner.vector_submit_calls <
+            (uint64_t)(expected_windows * diagnostic.round_trips) ||
+        diagnostic.cnet_send_terminal_calls != diagnostic.round_trips) {
+      free(runs);
+      return SALTS_EPROTO;
+    }
+
+    summaries[case_index] = (io_bench_sg_window_summary){
+        payload_size,
+        segment_count,
+        expected_windows,
+        p50_summary[0].median / 1000.0,
+        p50_summary[1].median / 1000.0,
+        p50_summary[2].median / 1000.0,
+        p50_summary[3].median / 1000.0,
+        rate_summary[0].median,
+        rate_summary[1].median,
+        rate_summary[2].median,
+        rate_summary[3].median,
+        p50_vs_flatten.median,
+        p50_vs_flatten.mad,
+        rate_vs_flatten.median,
+        rate_vs_flatten.mad,
+        p50_vs_retained.median,
+        p50_vs_retained.mad,
+        rate_vs_retained.median,
+        rate_vs_retained.mad,
+        nodelay_p50_vs_default.median,
+        nodelay_p50_vs_default.mad,
+        nodelay_rate_vs_default.median,
+        nodelay_rate_vs_default.mad,
+        (double)diagnostic.cnet_profile.owner.vector_submit_calls /
+            (double)diagnostic.round_trips,
+        diagnostic.cnet_profile.owner.vector_submit_calls == 0u
+            ? 0.0
+            : (double)diagnostic.cnet_profile.owner.vector_submit_spans /
+                  (double)diagnostic.cnet_profile.owner.vector_submit_calls,
+        (double)diagnostic.cnet_profile.owner.vector_submit_bytes /
+            (double)diagnostic.round_trips,
+        (double)diagnostic.cnet_send_terminal_calls /
+            (double)diagnostic.round_trips};
+
+    printf("SG window delta payload=%zu segments=%zu windows=%zu: "
+           "default retained-SG p50=%.3fus rate=%.2f/s; "
+           "public TCP_NODELAY retained-SG p50=%.3fus rate=%.2f/s; "
+           "nodelay vs default p50=%+.2f%% +/- %.2fpp, rate=%+.2f%% +/- %.2fpp; "
+           "default SG vs flatten p50=%+.2f%% +/- %.2fpp, rate=%+.2f%% +/- %.2fpp; "
+           "vector submissions/op=%.3f, spans/submission=%.3f, "
+           "profiled vector bytes/op=%.1f, terminals/op=%.3f\n",
+           payload_size, segment_count, expected_windows,
+           summaries[case_index].sg_p50_us,
+           summaries[case_index].sg_rate_per_second,
+           summaries[case_index].nodelay_sg_p50_us,
+           summaries[case_index].nodelay_sg_rate_per_second,
+           nodelay_p50_vs_default.median, nodelay_p50_vs_default.mad,
+           nodelay_rate_vs_default.median, nodelay_rate_vs_default.mad,
+           p50_vs_flatten.median, p50_vs_flatten.mad,
+           rate_vs_flatten.median, rate_vs_flatten.mad,
+           summaries[case_index].vector_submissions_per_op,
+           summaries[case_index].vector_spans_per_submission,
+           summaries[case_index].profiled_vector_bytes_per_op,
+           summaries[case_index].terminal_callbacks_per_op);
+    free(runs);
+  }
+
+  return io_bench_sg_window_write_csv(prefix, backend->name, summaries, WINDOW_CASES);
+}
+
 static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const char *prefix) {
   enum { SG_METHODS = 6, SG_REPLICATES = 6, SG_PAYLOADS = 4, SG_SEGMENTS = 4 };
   static const size_t payloads[SG_PAYLOADS] = {1024u, 8192u, 32768u, 65536u};
@@ -2321,7 +2645,9 @@ static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const c
            row->p50_ns / 1000.0, row->p95_ns / 1000.0, mib_per_second,
            row->cpu_cost, row->copied_bytes_per_op, row->payload_buffer_acquires_per_op);
   }
-  return io_bench_sg_write_csv(prefix, backend->name, summaries, summary_count);
+  status = io_bench_sg_write_csv(prefix, backend->name, summaries, summary_count);
+  if (status != SALTS_OK) return status;
+  return io_bench_compare_sg_windows(backend, prefix);
 }
 
 spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchmark") {

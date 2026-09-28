@@ -58,13 +58,17 @@ network authority, so its bounded name after `pipe://` is preserved byte-for-byt
 outgoing TCP/TLS connections and adopted listener sockets. Set it on a stopped
 `cnet_client` with `cnet_client_set_stream_socket_options()`; listener owners use
 `cnet_listener_init_ex()` with versioned `cnet_listener_options`. The policy
-exposes OS receive/send buffers, keepalive enable plus idle/interval/probe count,
-and linger. `cnet_datagram_config.reuse_port` exposes the same listener-port
+exposes OS receive/send buffers, explicit `TCP_NODELAY` via `nodelay`,
+keepalive enable plus idle/interval/probe count, and linger.
+`cnet_datagram_config.reuse_port` exposes the same listener-port
 sharing decision for UDP and the unified UDP/KCP packet endpoint.
 
-Zero-valued buffer and timing fields preserve platform defaults. Keepalive
-detail without `keepalive` is invalid; enabled linger with zero milliseconds is
-an abortive close. CNet copies every policy into its owner command, so no caller
+Zero-valued buffer and timing fields preserve platform defaults. `nodelay=0`
+keeps the platform's Nagle policy; `nodelay=1` requests `TCP_NODELAY` and is
+appropriate for latency-sensitive protocols that may emit one logical frame
+through multiple native write windows. Keepalive detail without `keepalive`
+is invalid; enabled linger with zero milliseconds is an abortive close. CNet
+copies every policy into its owner command, so no caller
 pointer is retained. Unsupported platform options return `SALTS_ENOTSUP` before
 the socket is published, and invalid sizes or combinations fail without a
 silent fallback.
@@ -90,11 +94,22 @@ payload pointers are borrowed only for the synchronous call. Zero-copy vectored
 stream sends use the explicit retained `cnet_send_slicev()` contract instead.
 `cnet_send_slicev_and_close()` uses the same retained scatter/gather ownership
 for the final logical write and closes only after that vector settles:
-CNet validates 1..16 canonical `mem_slice_t` ranges, retains each unique
-backing buffer once, copies only fixed range descriptors into the owner-local
-write slot, and preserves those ranges into NativeIO scatter/gather until the
-single logical terminal completion. Unsupported/TLS paths return
-`SALTS_ENOTSUP`; there is no hidden flatten fallback.
+CNet validates 1..`CNET_RETAINED_VECTOR_MAX` canonical `mem_slice_t`
+ranges (currently 32), retains each unique backing buffer once, copies only
+fixed range descriptors into the owner-local write slot, and preserves those
+ranges until the single logical terminal completion. One NativeIO submission
+still exposes at most `NATIVE_IO_VECTOR_MAX` spans (currently 16); a larger
+CNet logical vector advances through successive native span windows without
+flattening or publishing an intermediate CNet send terminal. Unsupported/TLS
+paths return `SALTS_ENOTSUP`; there is no hidden flatten fallback.
+
+The larger logical range bound remains fixed-memory. On a 64-bit build, raising
+the retained range/owner arrays from 16 to 32 adds approximately 512 bytes per
+owner-local write slot. Write slots are preallocated at
+`write_capacity_per_shard` (derived from the client command capacity), so the
+incremental metadata is approximately
+`512 * command_capacity * shard_count` bytes and does not grow with payload
+size or runtime duration. For a 16-slot shard this is about 8 KiB.
 
 ## Canonical session-state authority
 
@@ -584,3 +599,33 @@ terminal success. The next TLS logical head starts on a later owner drive.
 A final TLS write carries the same close-after-send marker. Further public
 admission closes immediately, while `close_notify` starts only after the final
 plaintext has been accepted and all of its ciphertext has flushed.
+
+
+## Coroutine ownership boundary
+
+CNet remains a caller-driven, single-owner session/request state machine above NativeIO. It does
+not create a private coroutine executor, I/O thread pool, or second await/result registry.
+
+The dependency boundary is intentional:
+
+```text
+CNet session state
+      |
+      v
+NativeIO request/completion authority
+      |
+      +-> Direct / Coroutine / Sharded execution style
+```
+
+NativeIO coroutine frames are an optional execution-position mechanism owned by NativeIO. They do
+not replace CNet's session lifecycle, write FIFO, TLS state, or terminal callback contract.
+Application code that wants coroutine orchestration may use the generic Coroutine Executor above
+CNet, but the executor must return to the connection owner before mutating CNet session state.
+
+Current owner tests require that ordinary CNet NativeIO requests do not retain NativeIO coroutine
+frames. This is deliberate: adding a coroutine frame around the existing CNet owner state machine
+would duplicate execution state without removing an I/O hop. A future CNet coroutine-facing adapter
+requires a concrete consumer and paired evidence before it can change this boundary.
+
+Cross-owner work remains explicit and bounded. CNet never hides live connection migration,
+work-stealing, or an implicit worker-pool hop behind its public send/receive APIs.

@@ -18,7 +18,10 @@ typedef enum io_bench_driver {
   IO_BENCH_DRIVER_COUNT
 } io_bench_driver;
 
-enum { CNET_IO_BENCHMARK_MAX_PAYLOAD = 65536, CNET_IO_BENCHMARK_MAX_DATAGRAM = 8192 };
+enum {
+  CNET_IO_BENCHMARK_MAX_PAYLOAD = 1024 * 1024,
+  CNET_IO_BENCHMARK_MAX_DATAGRAM = 8192
+};
 
 typedef struct cnet_io_benchmark_trace {
   bool enabled;

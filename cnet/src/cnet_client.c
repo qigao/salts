@@ -896,7 +896,7 @@ int cnet_send_slicev(cnet_client *client, cnet_connection connection,
   cnet_client_send_input input = {
       .retained_slices = segments, .segment_count = segment_count};
   if (impl == NULL || segments == NULL || segment_count == 0u ||
-      segment_count > NATIVE_IO_VECTOR_MAX)
+      segment_count > CNET_RETAINED_VECTOR_MAX)
     return SALTS_EINVAL;
   for (size_t index = 0u; index < segment_count; ++index) {
     if (!cnet_client_slice_canonical(&segments[index])) return SALTS_EINVAL;
@@ -914,7 +914,7 @@ int cnet_send_slicev_and_close(cnet_client *client, cnet_connection connection,
       .segment_count = segment_count,
       .close_after_send = true};
   if (impl == NULL || segments == NULL || segment_count == 0u ||
-      segment_count > NATIVE_IO_VECTOR_MAX)
+      segment_count > CNET_RETAINED_VECTOR_MAX)
     return SALTS_EINVAL;
   for (size_t index = 0u; index < segment_count; ++index) {
     if (!cnet_client_slice_canonical(&segments[index])) return SALTS_EINVAL;

@@ -27,8 +27,14 @@ static_assert(std::is_standard_layout<cnet_tls_client>::value,
               "TLS client must be a C value wrapper");
 static_assert(std::is_standard_layout<cnet_const_buffer>::value,
               "send segments must remain C value descriptors");
+static_assert(CNET_RETAINED_VECTOR_MAX >= 32u,
+              "retained logical vector capacity must cover 32 ranges");
+static_assert(CNET_RETAINED_VECTOR_MAX >= NATIVE_IO_VECTOR_MAX,
+              "CNet logical vector capacity must cover one NativeIO window");
 static_assert(std::is_standard_layout<cnet_stream_socket_options>::value,
               "stream socket policy must remain C ABI data");
+static_assert(std::is_same<decltype(cnet_stream_socket_options::nodelay), int>::value,
+              "TCP_NODELAY policy must remain a C int flag");
 static_assert(std::is_standard_layout<cnet_listener_options>::value,
               "listener socket policy must remain C ABI data");
 static_assert(std::is_standard_layout<cnet_vsock_peer>::value,

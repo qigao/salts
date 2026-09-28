@@ -26,4 +26,9 @@ require_marker("cnet_write_queue_peek(&impl->writes, session->handle, &session->
 require_marker("cnet_tls_write(&session->tls, session->tls_send_write.data")
 require_marker("cnet_owner_queue_session_work(impl, session->handle)")
 
+require_marker("int cnet_owner_send_slicev_direct")
+require_marker("int cnet_owner_send_slicev_close_direct")
+require_marker("if (session->peer.scheme == CNET_URI_TLS || session->peer.scheme == CNET_URI_UDP)")
+require_marker("return SALTS_ENOTSUP;")
+
 message(STATUS "CNet TLS logical write ownership contract passed")

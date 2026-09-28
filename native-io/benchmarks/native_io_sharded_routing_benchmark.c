@@ -32,6 +32,8 @@ typedef struct sharded_bench_same_driver {
 
 typedef struct sharded_bench_sample {
   uint64_t wall_ns;
+  uint64_t submit_ns;
+  uint64_t wait_ns;
   double ns_per_op;
   double ops_per_second;
   uint64_t same_shard_direct;
@@ -42,11 +44,14 @@ typedef struct sharded_bench_sample {
 
 typedef struct sharded_bench_summary {
   const char *style;
+  size_t window;
   size_t iterations;
   size_t replicates;
   double p50_ns_per_op;
   double p95_ns_per_op;
   double median_ops_per_second;
+  double median_submit_ns_per_op;
+  double median_wait_ns_per_op;
   uint64_t total_same_shard_direct;
   uint64_t total_queued_dispatches;
   uint64_t total_rejected_tasks;
@@ -165,6 +170,8 @@ static int sharded_bench_same_sample(native_io_sharded *runtime, size_t iteratio
   if (!native_io_sharded_get_stats(runtime, &after)) return SALTS_EIO;
 
   out->wall_ns = driver.wall_ns;
+  out->submit_ns = driver.wall_ns;
+  out->wait_ns = 0u;
   out->ns_per_op = iterations == 0u ? 0.0 : (double)driver.wall_ns / (double)iterations;
   out->ops_per_second =
       driver.wall_ns == 0u ? 0.0 : (double)iterations * 1.0e9 / (double)driver.wall_ns;
@@ -182,12 +189,14 @@ static int sharded_bench_same_sample(native_io_sharded *runtime, size_t iteratio
 }
 
 static int sharded_bench_cross_sample(native_io_sharded *runtime, size_t iterations,
-                                      sharded_bench_sample *out) {
+                                      size_t window, sharded_bench_sample *out) {
   sharded_bench_task_state state;
   native_io_sharded_task task;
   native_io_sharded_stats before = NATIVE_IO_SHARDED_STATS_V1_INITIALIZER;
   native_io_sharded_stats after = NATIVE_IO_SHARDED_STATS_V1_INITIALIZER;
   uint64_t started;
+  uint64_t submit_ns = 0u;
+  uint64_t wait_ns = 0u;
   int status = SALTS_OK;
 
   atomic_init(&state.runs, 0u);
@@ -196,13 +205,25 @@ static int sharded_bench_cross_sample(native_io_sharded *runtime, size_t iterati
       sharded_bench_task_run, NULL, sharded_bench_task_finalize, &state};
 
   if (!native_io_sharded_get_stats(runtime, &before)) return SALTS_EIO;
+  if (window == 0u) return SALTS_EINVAL;
   started = salts_hrtime();
-  for (size_t index = 0u; index < iterations; ++index) {
-    status = native_io_sharded_submit_to(runtime, 1u, &task);
-    if (status != SALTS_OK) break;
+  for (size_t base = 0u; base < iterations && status == SALTS_OK; base += window) {
+    const size_t end = base + window < iterations ? base + window : iterations;
+    uint64_t phase_started = salts_hrtime();
+    for (size_t index = base; index < end; ++index) {
+      status = native_io_sharded_submit_to(runtime, 1u, &task);
+      if (status != SALTS_OK) break;
+    }
+    submit_ns += salts_hrtime() - phase_started;
+    if (status == SALTS_OK) {
+      phase_started = salts_hrtime();
+      status = native_io_sharded_wait(runtime);
+      wait_ns += salts_hrtime() - phase_started;
+    }
   }
-  if (status == SALTS_OK) status = native_io_sharded_wait(runtime);
   out->wall_ns = salts_hrtime() - started;
+  out->submit_ns = submit_ns;
+  out->wait_ns = wait_ns;
   if (status != SALTS_OK) return status;
   if (atomic_load_explicit(&state.runs, memory_order_acquire) != iterations ||
       atomic_load_explicit(&state.finalizes, memory_order_acquire) != iterations)
@@ -239,12 +260,14 @@ static double sharded_bench_percentile(double *values, size_t count, unsigned pe
 
 static int sharded_bench_run_style(native_io_backend_kind kind, const char *style,
                                    size_t warmup, size_t iterations, bool same_owner,
-                                   sharded_bench_summary *out) {
+                                   size_t window, sharded_bench_summary *out) {
   native_io_sharded *runtime = NULL;
   sharded_bench_sample warmup_sample = {0};
   sharded_bench_sample samples[SHARDED_BENCH_REPLICATES];
   double latency[SHARDED_BENCH_REPLICATES];
   double rate[SHARDED_BENCH_REPLICATES];
+  double submit_cost[SHARDED_BENCH_REPLICATES];
+  double wait_cost[SHARDED_BENCH_REPLICATES];
   uint64_t total_same = 0u;
   uint64_t total_queued = 0u;
   uint64_t total_rejected = 0u;
@@ -254,16 +277,20 @@ static int sharded_bench_run_style(native_io_backend_kind kind, const char *styl
   if (status != SALTS_OK) return status;
   status = same_owner
                ? sharded_bench_same_sample(runtime, warmup, &warmup_sample)
-               : sharded_bench_cross_sample(runtime, warmup, &warmup_sample);
+               : sharded_bench_cross_sample(runtime, warmup, window, &warmup_sample);
   if (status != SALTS_OK) goto cleanup;
 
   for (size_t replicate = 0u; replicate < SHARDED_BENCH_REPLICATES; ++replicate) {
     status = same_owner
                  ? sharded_bench_same_sample(runtime, iterations, &samples[replicate])
-                 : sharded_bench_cross_sample(runtime, iterations, &samples[replicate]);
+                 : sharded_bench_cross_sample(runtime, iterations, window, &samples[replicate]);
     if (status != SALTS_OK) goto cleanup;
     latency[replicate] = samples[replicate].ns_per_op;
     rate[replicate] = samples[replicate].ops_per_second;
+    submit_cost[replicate] =
+        iterations == 0u ? 0.0 : (double)samples[replicate].submit_ns / (double)iterations;
+    wait_cost[replicate] =
+        iterations == 0u ? 0.0 : (double)samples[replicate].wait_ns / (double)iterations;
     total_same += samples[replicate].same_shard_direct;
     total_queued += samples[replicate].queued_dispatches;
     total_rejected += samples[replicate].rejected_tasks;
@@ -272,6 +299,7 @@ static int sharded_bench_run_style(native_io_backend_kind kind, const char *styl
   }
 
   out->style = style;
+  out->window = same_owner ? 0u : window;
   out->iterations = iterations;
   out->replicates = SHARDED_BENCH_REPLICATES;
   out->p50_ns_per_op =
@@ -280,6 +308,10 @@ static int sharded_bench_run_style(native_io_backend_kind kind, const char *styl
       sharded_bench_percentile(latency, SHARDED_BENCH_REPLICATES, 95u);
   out->median_ops_per_second =
       sharded_bench_percentile(rate, SHARDED_BENCH_REPLICATES, 50u);
+  out->median_submit_ns_per_op =
+      sharded_bench_percentile(submit_cost, SHARDED_BENCH_REPLICATES, 50u);
+  out->median_wait_ns_per_op =
+      sharded_bench_percentile(wait_cost, SHARDED_BENCH_REPLICATES, 50u);
   out->total_same_shard_direct = total_same;
   out->total_queued_dispatches = total_queued;
   out->total_rejected_tasks = total_rejected;
@@ -306,11 +338,12 @@ static void sharded_bench_print_row(FILE *stream, const char *backend,
                                     const sharded_bench_summary *summary) {
   const uint64_t total_ops = (uint64_t)summary->iterations * (uint64_t)summary->replicates;
   fprintf(stream,
-          "%s,%s,%zu,%zu,%.6f,%.6f,%.6f,%u,%" PRIu64 ",%" PRIu64
+          "%s,%s,%zu,%zu,%zu,%.6f,%.6f,%.6f,%.6f,%.6f,%u,%" PRIu64 ",%" PRIu64
           ",%" PRIu64 ",%" PRIu64 "\n",
-          backend, summary->style, summary->iterations, summary->replicates,
+          backend, summary->style, summary->window, summary->iterations, summary->replicates,
           summary->p50_ns_per_op, summary->p95_ns_per_op,
-          summary->median_ops_per_second, summary->message_hops_per_op,
+          summary->median_ops_per_second, summary->median_submit_ns_per_op,
+          summary->median_wait_ns_per_op, summary->message_hops_per_op,
           summary->total_same_shard_direct, summary->total_queued_dispatches,
           summary->total_rejected_tasks, summary->peak_command_slots);
   (void)total_ops;
@@ -325,8 +358,9 @@ int main(void) {
   const size_t iterations =
       sharded_bench_env_count("NATIVE_IO_SHARDED_BENCH_ITERATIONS",
                               SHARDED_BENCH_DEFAULT_ITERATIONS);
+  static const size_t windows[] = {1u, 4u, 8u, 16u, 32u, 64u};
   sharded_bench_summary same = {0};
-  sharded_bench_summary cross = {0};
+  sharded_bench_summary cross[sizeof(windows) / sizeof(windows[0])] = {{0}};
   FILE *csv;
   int status;
 
@@ -335,41 +369,52 @@ int main(void) {
     return 2;
   }
 
-  status = sharded_bench_run_style(kind, "same_owner", warmup, iterations, true, &same);
+  status = sharded_bench_run_style(kind, "same_owner", warmup, iterations, true, 0u, &same);
   if (status != SALTS_OK) {
     fprintf(stderr, "same-owner benchmark failed: %d\n", status);
     return 1;
   }
-  status = sharded_bench_run_style(kind, "cross_owner", warmup, iterations, false, &cross);
-  if (status != SALTS_OK) {
-    fprintf(stderr, "cross-owner benchmark failed: %d\n", status);
-    return 1;
+  for (size_t index = 0u; index < sizeof(windows) / sizeof(windows[0]); ++index) {
+    status = sharded_bench_run_style(kind, "cross_owner", warmup, iterations, false,
+                                     windows[index], &cross[index]);
+    if (status != SALTS_OK) {
+      fprintf(stderr, "cross-owner benchmark failed: window=%zu status=%d\n",
+              windows[index], status);
+      return 1;
+    }
   }
 
   printf("# NativeIO Sharded routing benchmark\n\n");
   printf("Backend: %s\n\n", backend);
   printf("p50/p95 are distributions of replicate batch-average ns/op, not individual-operation latency percentiles.\n\n");
-  printf("| style | iterations/replicate | replicates | p50 ns/op | p95 ns/op | median ops/s | message hops/op | same-owner direct tasks | queued dispatches | rejected | peak command slots |\n");
-  printf("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
-  printf("| %s | %zu | %zu | %.3f | %.3f | %.0f | %u | %" PRIu64 " | %" PRIu64 " | %" PRIu64 " | %" PRIu64 " |\n",
-         same.style, same.iterations, same.replicates, same.p50_ns_per_op,
-         same.p95_ns_per_op, same.median_ops_per_second, same.message_hops_per_op,
+  printf("| style | window | iterations/replicate | replicates | p50 ns/op | p95 ns/op | median ops/s | submit ns/op | wait/drain ns/op | message hops/op | same-owner direct tasks | queued dispatches | rejected | peak command slots |\n");
+  printf("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+  printf("| %s | %zu | %zu | %zu | %.3f | %.3f | %.0f | %.3f | %.3f | %u | %" PRIu64 " | %" PRIu64 " | %" PRIu64 " | %" PRIu64 " |\n",
+         same.style, same.window, same.iterations, same.replicates, same.p50_ns_per_op,
+         same.p95_ns_per_op, same.median_ops_per_second, same.median_submit_ns_per_op,
+         same.median_wait_ns_per_op, same.message_hops_per_op,
          same.total_same_shard_direct, same.total_queued_dispatches,
          same.total_rejected_tasks, same.peak_command_slots);
-  printf("| %s | %zu | %zu | %.3f | %.3f | %.0f | %u | %" PRIu64 " | %" PRIu64 " | %" PRIu64 " | %" PRIu64 " |\n",
-         cross.style, cross.iterations, cross.replicates, cross.p50_ns_per_op,
-         cross.p95_ns_per_op, cross.median_ops_per_second, cross.message_hops_per_op,
-         cross.total_same_shard_direct, cross.total_queued_dispatches,
-         cross.total_rejected_tasks, cross.peak_command_slots);
+  for (size_t index = 0u; index < sizeof(windows) / sizeof(windows[0]); ++index) {
+    const sharded_bench_summary *row = &cross[index];
+    printf("| %s | %zu | %zu | %zu | %.3f | %.3f | %.0f | %.3f | %.3f | %u | %" PRIu64 " | %" PRIu64 " | %" PRIu64 " | %" PRIu64 " |\n",
+           row->style, row->window, row->iterations, row->replicates, row->p50_ns_per_op,
+           row->p95_ns_per_op, row->median_ops_per_second, row->median_submit_ns_per_op,
+           row->median_wait_ns_per_op, row->message_hops_per_op,
+           row->total_same_shard_direct, row->total_queued_dispatches,
+           row->total_rejected_tasks, row->peak_command_slots);
+  }
 
   csv = sharded_bench_open_csv();
   if (csv != NULL) {
     fprintf(csv,
-            "backend,style,iterations_per_replicate,replicates,p50_batch_ns_per_op,"
-            "p95_batch_ns_per_op,median_ops_per_second,message_hops_per_op,"
-            "same_shard_direct_tasks,queued_dispatches,rejected_tasks,peak_command_slots\n");
+            "backend,style,window,iterations_per_replicate,replicates,p50_batch_ns_per_op,"
+            "p95_batch_ns_per_op,median_ops_per_second,median_submit_ns_per_op,"
+            "median_wait_ns_per_op,message_hops_per_op,same_shard_direct_tasks,"
+            "queued_dispatches,rejected_tasks,peak_command_slots\n");
     sharded_bench_print_row(csv, backend, &same);
-    sharded_bench_print_row(csv, backend, &cross);
+    for (size_t index = 0u; index < sizeof(windows) / sizeof(windows[0]); ++index)
+      sharded_bench_print_row(csv, backend, &cross[index]);
     fclose(csv);
   }
 
