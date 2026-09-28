@@ -38,7 +38,8 @@ static size_t graph_node_count(const cflow_graph *g) {
 }
 
 static bool maplike(const cflow_node *n) {
-    return n && (n->op == CFLOW_OP_MAP || n->op == CFLOW_OP_TRANSFORM);
+    return n && !n->explicit_callable_types &&
+           (n->op == CFLOW_OP_MAP || n->op == CFLOW_OP_TRANSFORM);
 }
 
 static bool node_is_pure(const opt_ctx *ctx, const cflow_node *n) {
@@ -132,6 +133,10 @@ static bool append_plain_node(opt_ctx *ctx, cflow_subgraph_id sgid,
         created = cflow_graph_create_sorted_node(
             ctx->dst, sgid, src->input_type,
             src->params.sorted.max_elements, out);
+    else if (src->explicit_callable_types)
+        created = cflow_graph_create_explicit_adapter_map_node(
+            ctx->dst, sgid, src->fn,
+            src->input_type, src->output_type, out);
     else
         created = cflow_graph_create_node(
             ctx->dst, sgid, op, src->fn, nested, nested_count, out);
