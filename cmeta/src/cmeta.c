@@ -590,6 +590,18 @@ bool cmeta_callable_can_dispatch_canonical_raw(cmeta_callable fn) {
 
 bool cmeta_callable_same(cmeta_callable a, cmeta_callable b) {
     cmeta_callable ba, bb;
+    const bool a_explicit = cmeta_callable_explicit_adapter_valid(a);
+    const bool b_explicit = cmeta_callable_explicit_adapter_valid(b);
+    if (a_explicit || b_explicit) {
+        if (!a_explicit || !b_explicit ||
+            a.meta.effects != b.meta.effects ||
+            a.meta.properties != b.meta.properties ||
+            a.invoke != b.invoke ||
+            a.capture_size != b.capture_size)
+            return false;
+        return a.capture_size == 0u ||
+               memcmp(a.capture.bytes, b.capture.bytes, a.capture_size) == 0;
+    }
     if (!cmeta_callable_bind(a, &ba) || !cmeta_callable_bind(b, &bb)) return false;
     if (ba.meta.sig != bb.meta.sig || ba.meta.effects != bb.meta.effects ||
         ba.meta.properties != bb.meta.properties || ba.dispatch != bb.dispatch ||
