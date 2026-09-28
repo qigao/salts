@@ -25,6 +25,8 @@ $required = @(
   "p50_batch_ns_per_op",
   "p95_batch_ns_per_op",
   "median_ops_per_second",
+  "median_submit_ns_per_op",
+  "median_wait_ns_per_op",
   "message_hops_per_op",
   "same_shard_direct_tasks",
   "queued_dispatches",
@@ -78,11 +80,16 @@ foreach ($row in $rows) {
   $p50 = Parse-Double $row.p50_batch_ns_per_op "p50_batch_ns_per_op"
   $p95 = Parse-Double $row.p95_batch_ns_per_op "p95_batch_ns_per_op"
   $rate = Parse-Double $row.median_ops_per_second "median_ops_per_second"
+  $submit = Parse-Double $row.median_submit_ns_per_op "median_submit_ns_per_op"
+  $wait = Parse-Double $row.median_wait_ns_per_op "median_wait_ns_per_op"
   if ($iterations -eq 0 -or $replicates -eq 0) {
     throw "iterations/replicates must be positive for $($row.style)"
   }
-  if ($p50 -le 0.0 -or $p95 -le 0.0 -or $rate -le 0.0) {
-    throw "timing/rate must be positive for $($row.style)"
+  if ($p50 -le 0.0 -or $p95 -le 0.0 -or $rate -le 0.0 -or $submit -lt 0.0 -or $wait -lt 0.0) {
+    throw "timing/rate attribution must be non-negative and wall metrics positive for $($row.style)"
+  }
+  if ($row.style -eq "cross_owner" -and ($submit -le 0.0 -or $wait -le 0.0)) {
+    throw "cross-owner submit and wait attribution must both be positive: window=$($row.window)"
   }
   if ($p95 -lt $p50) {
     throw "p95 must be >= p50 for $($row.style)"
