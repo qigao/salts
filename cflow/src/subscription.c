@@ -1331,7 +1331,7 @@ cflow_status_result cflow_subscribe_subgraph_with_options(
             }
             if (node->param_kind == CFLOW_NODE_PARAM_REDUCE_SEED &&
                 !cflow_value_slot_copy(
-                    &r->reduce_value[i], node->params.reduce_seed.value)) {
+                    &r->reduce_value[i], cflow_node_reduce_seed(node))) {
                 cflow_value_slot_destroy(&r->source_slot);
                 set_states_clear(r);
                 sequence_states_clear(r);
