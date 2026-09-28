@@ -49,12 +49,10 @@ typedef union cflow_node_params {
     struct { size_t max_unique; } distinct;
     struct { size_t max_elements; } sorted;
     struct {
-        /* Read-only Graph-owned seed value. Its type is the REDUCE node
-         * input/output type. The pointer remains valid until Graph mutation or
-         * destruction. */
-        const void *value;
-        /* Opaque ownership carrier. Callers must never dereference, copy or
-         * assign it; Graph clone/normalize/optimize rebuild it. */
+        /* Opaque ownership carrier for an aligned typed seed copy. Callers
+         * must never dereference, copy or assign it; use
+         * cflow_node_reduce_seed() for read-only introspection. Keeping one
+         * machine word preserves the existing parameter-union footprint. */
         void *owner;
     } reduce_seed;
 } cflow_node_params;
