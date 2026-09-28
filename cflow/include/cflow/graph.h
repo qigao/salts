@@ -39,7 +39,8 @@ typedef enum cflow_node_param_kind {
     CFLOW_NODE_PARAM_TAKE,
     CFLOW_NODE_PARAM_SKIP,
     CFLOW_NODE_PARAM_DISTINCT,
-    CFLOW_NODE_PARAM_SORTED
+    CFLOW_NODE_PARAM_SORTED,
+    CFLOW_NODE_PARAM_REDUCE_SEED
 } cflow_node_param_kind;
 
 typedef union cflow_node_params {
@@ -47,6 +48,15 @@ typedef union cflow_node_params {
     struct { size_t count; } skip;
     struct { size_t max_unique; } distinct;
     struct { size_t max_elements; } sorted;
+    struct {
+        /* Read-only Graph-owned seed value. Its type is the REDUCE node
+         * input/output type. The pointer remains valid until Graph mutation or
+         * destruction. */
+        const void *value;
+        /* Opaque ownership carrier. Callers must never dereference, copy or
+         * assign it; Graph clone/normalize/optimize rebuild it. */
+        void *owner;
+    } reduce_seed;
 } cflow_node_params;
 
 Enum(cflow_param_rule,
@@ -236,6 +246,14 @@ bool cflow_graph_create_sorted_node(cflow_graph *g,
                                     const cmeta_type_desc *input_type,
                                     size_t max_elements,
                                     cflow_node_id *out_node);
+/* Create a detached REDUCE node whose accumulator starts from an owned
+ * typed copy of seed. The seed type is the homogeneous reducer type. */
+bool cflow_graph_create_seeded_reduce_node(
+    cflow_graph *g,
+    cflow_subgraph_id subgraph,
+    cmeta_callable reducer,
+    const void *seed,
+    cflow_node_id *out_node);
 bool cflow_graph_create_relation_node(cflow_graph *g,
                                       cflow_subgraph_id subgraph,
                                       const cmeta_type_desc *input_type,
@@ -267,6 +285,17 @@ bool cflow_graph_distinct(cflow_graph *g, size_t max_unique);
  * nonzero hard materialization bound; overflow fails before any buffered
  * value is emitted. */
 bool cflow_graph_sorted(cflow_graph *g, size_t max_elements);
+/* Ordered seeded fold:
+ *   acc = seed; for value in input: acc = reducer(acc, value)
+ * Empty input produces one result equal to seed. The Graph owns a typed copy
+ * of seed; reducer must satisfy the canonical REDUCE T(T,T)->T contract. */
+bool cflow_graph_reduce_seeded(
+    cflow_graph *g,
+    cmeta_callable reducer,
+    const void *seed);
+
+/* Read-only seed introspection. Returns NULL for non-seeded nodes. */
+const void *cflow_node_reduce_seed(const cflow_node *node);
 
 /* Data-driven structured relation. Every branch is snapshot-imported as a
  * Subgraph and receives the current value at the relation node. The relation
