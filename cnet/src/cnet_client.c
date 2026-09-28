@@ -179,6 +179,19 @@ static int cnet_client_materialize_receive(const cnet_dispatch_view *view,
   memset(out_slice, 0, sizeof(*out_slice));
   if (view->size == 0u) return SALTS_OK;
 
+  if (view->backing != NULL) {
+    if (view->data != mem_buffer_const_data(view->backing) ||
+        view->size > mem_buffer_used(view->backing))
+      return SALTS_EPROTO;
+    *out_slice = mem_slice(view->backing, 0u, view->size);
+    return out_slice->buffer != NULL ? SALTS_OK : SALTS_ENOMEM;
+  }
+
+  /*
+   * Compatibility path for internal/legacy receive events that do not carry
+   * canonical ownership. Producer-owned CNet receive events should never need
+   * this materialization after #595.
+   */
   buffer = mem_get_buffer(mem_global(), view->size);
   if (buffer == NULL) return SALTS_ENOMEM;
   memcpy(mem_buffer_data(buffer), view->data, view->size);
