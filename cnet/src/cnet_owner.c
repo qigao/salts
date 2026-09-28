@@ -41,6 +41,8 @@ typedef struct cnet_owner_session {
   cnet_session_stage pending_stage;
   cnet_session_stage session_deadline_stage;
   mem_buffer_t *receive_buffer;
+  /** Lazy single spare for the common one-outstanding-owned-slice case. */
+  mem_buffer_t *receive_spare;
   size_t receive_demand;
   bool occupied;
   bool close_requested;
@@ -198,6 +200,22 @@ static int cnet_owner_validate_receive_publication(cnet_owner_impl *impl,
 static int cnet_owner_ensure_receive_buffer(cnet_owner_impl *impl,
                                             cnet_owner_session *session) {
   if (session->receive_buffer != NULL) return SALTS_OK;
+
+  if (session->receive_spare != NULL) {
+    if (mem_buffer_ref_count(session->receive_spare) == UINT32_C(1)) {
+      session->receive_buffer = session->receive_spare;
+      session->receive_spare = NULL;
+      mem_set_used(session->receive_buffer, 0u);
+      return SALTS_OK;
+    }
+    /*
+     * The application still owns the prior slice. Drop only the session's
+     * spare reference; the handed-off owner remains valid independently.
+     */
+    mem_buffer_release(session->receive_spare);
+    session->receive_spare = NULL;
+  }
+
   session->receive_buffer = mem_get_buffer(mem_global(), impl->receive_buffer_bytes);
   return session->receive_buffer != NULL ? SALTS_OK : SALTS_ENOMEM;
 }
@@ -206,7 +224,7 @@ static void cnet_owner_finish_receive_publication(cnet_owner_impl *impl,
                                                   const cnet_event *event) {
   cnet_owner_session *session;
   mem_buffer_t *published;
-  mem_buffer_t *replacement;
+  mem_buffer_t *replacement = NULL;
 
   if (event == NULL || event->kind != CNET_EVENT_RECEIVE || event->backing == NULL)
     return;
@@ -214,14 +232,14 @@ static void cnet_owner_finish_receive_publication(cnet_owner_impl *impl,
   if (session == NULL || session->receive_buffer != event->backing) return;
 
   /*
-   * A direct borrowed callback retains nothing, so the single session-owned
-   * reference can be reused. An owned callback or queued event increments the
-   * refcount; detach that published backing before any future write can touch it.
+   * Borrowed delivery retains nothing: reuse the active backing directly.
    *
-   * Rotation after a successful public event must never turn that publication
-   * into an error (which could duplicate a pending event on retry). If a fresh
-   * buffer cannot be acquired immediately, leave the session backing empty;
-   * the next receive rearm will allocate or fail before submitting new I/O.
+   * Retained delivery moves the current session reference into one lazy spare.
+   * If the previous spare has already returned to refcount==1, promote it as
+   * the next active receive buffer and ping-pong without allocating. If the
+   * application still owns that previous spare, release only the session's
+   * cache reference and allocate a new active backing; arbitrary user lifetime
+   * remains supported while CNet itself caches at most one spare per session.
    */
   if (mem_buffer_ref_count(session->receive_buffer) == UINT32_C(1)) {
     mem_set_used(session->receive_buffer, 0u);
@@ -229,9 +247,26 @@ static void cnet_owner_finish_receive_publication(cnet_owner_impl *impl,
   }
 
   published = session->receive_buffer;
-  replacement = mem_get_buffer(mem_global(), impl->receive_buffer_bytes);
+  if (session->receive_spare != NULL) {
+    if (mem_buffer_ref_count(session->receive_spare) == UINT32_C(1)) {
+      replacement = session->receive_spare;
+      mem_set_used(replacement, 0u);
+    } else {
+      mem_buffer_release(session->receive_spare);
+    }
+    session->receive_spare = NULL;
+  }
+  if (replacement == NULL)
+    replacement = mem_get_buffer(mem_global(), impl->receive_buffer_bytes);
+
+  /*
+   * Move, rather than release, the session's reference to the published buffer
+   * into the spare slot. If replacement allocation failed, the next rearm can
+   * promote this spare once the application releases its slice, or drop the
+   * spare reference and retry allocation while the slice is still live.
+   */
   session->receive_buffer = replacement;
-  mem_buffer_release(published);
+  session->receive_spare = published;
 }
 
 static int cnet_owner_publish_event(cnet_owner_impl *impl, const cnet_event *event) {
@@ -2661,6 +2696,7 @@ int cnet_owner_release_session(cnet_owner *owner, cnet_session_handle session_ha
   status = cnet_owner_cancel_session_work(impl, session);
   if (status != SALTS_OK) return status;
   mem_buffer_release(session->receive_buffer);
+  mem_buffer_release(session->receive_spare);
   memset(session, 0, sizeof(*session));
   --impl->occupied_sessions;
   return SALTS_OK;
