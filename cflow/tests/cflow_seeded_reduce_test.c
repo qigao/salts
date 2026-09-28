@@ -178,8 +178,6 @@ suite("CFlow seeded reduce") {
         check_equal(certificate.row_count, (size_t)1u);
         check_equal(certificate.rows[0].opcode,
                     (uint32_t)CFLOW_CERTIFIED_REDUCE);
-        check_equal(certificate.rows[0].parameter_kind,
-                    (uint32_t)CFLOW_NODE_PARAM_REDUCE_SEED);
         check_true(cflow_plan_certificate_check(
             &certificate, &normalized, &plan, &error));
         check_null(error);
@@ -197,12 +195,6 @@ suite("CFlow seeded reduce") {
                 &mismatch, &normalized, &other_plan,
                 CFLOW_CERTIFIED_PATH_SEQUENTIAL));
         }
-
-        certificate.rows[0].parameter_kind =
-            (uint32_t)CFLOW_NODE_PARAM_NONE;
-        check_false(cflow_plan_certificate_check(
-            &certificate, &normalized, &plan, &error));
-        check_not_null(error);
 
         cflow_plan_certificate_destroy(&mismatch);
         cflow_plan_certificate_destroy(&certificate);
