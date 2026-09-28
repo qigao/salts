@@ -711,7 +711,7 @@ jobs:
             throw "Expected 3 receive ownership evidence rows, got $($evidence.Count)"
           }
           foreach ($payload in @(64, 65536, 1048576)) {
-            if (-not ($evidence | Where-Object { $_ -match "^RECEIVE delta payload=$payload:" })) {
+            if (-not ($evidence | Where-Object { $_ -match "^RECEIVE delta payload=${payload}:" })) {
               throw "Missing receive ownership evidence for payload=$payload"
             }
           }
