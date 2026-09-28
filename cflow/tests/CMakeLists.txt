@@ -240,6 +240,11 @@ cmake_add_test(cflow_parallel_reduce_test
   LIBS Salts::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_seeded_reduce_test
+  SOURCES cflow_seeded_reduce_test.c
+  LIBS Salts::CFlow Salts::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_certificate_test
   SOURCES cflow_certificate_test.c
   LIBS Salts::CFlow Salts::TinyTest
@@ -305,6 +310,7 @@ set_target_properties(
   cflow_calculus_conformance_test
   cflow_direct_test
   cflow_parallel_reduce_test
+  cflow_seeded_reduce_test
   cflow_certificate_test
   cflow_execution_test
   cflow_scheduler_compat_test
