@@ -147,6 +147,9 @@ typedef struct cflow_node {
     cflow_op op;
     cmeta_callable fn;
     bool has_fn;
+    /* True only for adapter-dispatch MAP nodes whose canonical value types are
+     * carried explicitly by input_type/output_type rather than cmeta_sig. */
+    bool explicit_callable_types;
     /* Optimizer-owned fused map chain. Empty on ordinary input/surface IR. */
     cmeta_callable *fn_chain;
     size_t fn_chain_count;
