@@ -7,6 +7,9 @@ file(READ "${PROJECT_SOURCE_DIR}/cnet/src/cnet_client.c" _client)
 
 foreach(_required IN ITEMS
     "mem_buffer_t *receive_buffer;"
+    "mem_buffer_t *receive_spare;"
+    "mem_buffer_ref_count(session->receive_spare) == UINT32_C(1)"
+    "session->receive_spare = published;"
     ".buffer = mem_buffer_data(session->receive_buffer)"
     "mem_set_used(session->receive_buffer, completion->bytes);"
     "completion->bytes != 0u ? session->receive_buffer : NULL"
