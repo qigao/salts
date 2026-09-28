@@ -954,6 +954,48 @@ static int cnet_owner_tls_publish_send(cnet_owner_impl *impl, cnet_owner_session
   return status;
 }
 
+static int cnet_owner_tls_accept_write(cnet_owner_impl *impl,
+                                       cnet_owner_session *session,
+                                       bool *out_complete) {
+  cnet_write_view *write;
+  int status;
+
+  if (impl == NULL || session == NULL || out_complete == NULL) return SALTS_EINVAL;
+  *out_complete = false;
+  write = &session->tls_send_write;
+  if (!cnet_write_handle_valid(write->handle) || write->remaining == 0u) return SALTS_EPROTO;
+
+  if (!write->vector_write)
+    return cnet_tls_write(&session->tls, write->data, write->remaining, out_complete);
+
+  while (write->remaining != 0u) {
+    native_io_buffer_span spans[NATIVE_IO_VECTOR_MAX];
+    size_t span_count = 0u;
+    size_t span_bytes = 0u;
+
+    status = cnet_write_queue_build_vector(&impl->writes, write, (size_t)INT_MAX,
+                                           spans, &span_count, &span_bytes);
+    if (status != SALTS_OK) return status;
+    if (span_count == 0u || span_bytes == 0u) return SALTS_EPROTO;
+
+    for (size_t index = 0u; index < span_count; ++index) {
+      bool span_complete = false;
+      if (spans[index].data == NULL || spans[index].length == 0u ||
+          spans[index].length > (size_t)INT_MAX)
+        return SALTS_EPROTO;
+      status = cnet_tls_write(&session->tls, spans[index].data, spans[index].length,
+                              &span_complete);
+      if (status != SALTS_OK) return status;
+      if (!span_complete) return SALTS_OK;
+      status = cnet_write_queue_advance(&impl->writes, write, spans[index].length);
+      if (status != SALTS_OK) return status;
+    }
+  }
+
+  *out_complete = true;
+  return SALTS_OK;
+}
+
 static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *session) {
   bool started = false;
   int status;
@@ -983,8 +1025,7 @@ static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *sessio
 
   if (cnet_write_handle_valid(session->tls_send_write.handle) && !session->tls_send_accepted) {
     bool complete = false;
-    status = cnet_tls_write(&session->tls, session->tls_send_write.data,
-                            session->tls_send_write.remaining, &complete);
+    status = cnet_owner_tls_accept_write(impl, session, &complete);
     if (status != SALTS_OK) return status;
     session->tls_send_accepted = complete;
   }
@@ -2277,8 +2318,7 @@ int cnet_owner_send_slicev_direct(cnet_owner *owner,
   native_io_endpoint endpoint;
   int status = cnet_owner_send_direct_ready(impl, session_handle, &session);
   if (status != SALTS_OK) return status;
-  if (session->peer.scheme == CNET_URI_TLS || session->peer.scheme == CNET_URI_UDP)
-    return SALTS_ENOTSUP;
+  if (session->peer.scheme == CNET_URI_UDP) return SALTS_ENOTSUP;
   endpoint = cnet_transport_write_endpoint(&session->transport);
   if (!native_io_backend_endpoint_supports_vector_write(&impl->backend, endpoint))
     return SALTS_ENOTSUP;
@@ -2297,8 +2337,7 @@ int cnet_owner_send_slicev_close_direct(cnet_owner *owner,
   native_io_endpoint endpoint;
   int status = cnet_owner_send_direct_ready(impl, session_handle, &session);
   if (status != SALTS_OK) return status;
-  if (session->peer.scheme == CNET_URI_TLS || session->peer.scheme == CNET_URI_UDP)
-    return SALTS_ENOTSUP;
+  if (session->peer.scheme == CNET_URI_UDP) return SALTS_ENOTSUP;
   endpoint = cnet_transport_write_endpoint(&session->transport);
   if (!native_io_backend_endpoint_supports_vector_write(&impl->backend, endpoint))
     return SALTS_ENOTSUP;

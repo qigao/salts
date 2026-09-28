@@ -429,11 +429,9 @@ spec("CNet bounded TLS engine") {
     static const char combined_requests[] = "pingmore";
     static const char *server_alpn[] = {"h2", "http/1.1"};
     static const char *client_alpn[] = {"http/1.1", "h2"};
-    char request_first[] = "pi";
-    char request_second[] = "ng";
-    cnet_const_buffer request_segments[] = {
-        {request_first, sizeof(request_first) - 1u},
-        {request_second, sizeof(request_second) - 1u}};
+    mem_buffer_t *request_first = NULL;
+    mem_buffer_t *request_second = NULL;
+    mem_slice_t request_segments[2] = {{0}};
     cnet_client client = {0};
     cnet_client server = {0};
     cnet_listener listener = {0};
@@ -536,12 +534,37 @@ spec("CNet bounded TLS engine") {
                        CNET_TLS_CHANNEL_BINDING_BYTES),
                 0);
 
-    check_equal(cnet_receive(&server, server_probe.connection, 2u), SALTS_OK);
-    check_equal(cnet_sendv(&client, client_connection, request_segments, 2u), SALTS_OK);
+    /* TLS records and receive callbacks are not aligned with one logical slicev send.
+     * Retained vectors feed plaintext spans independently, so request enough bounded
+     * receive demand for the complete byte stream without depending on record grouping. */
+    check_equal(cnet_receive(&server, server_probe.connection, 4u), SALTS_OK);
+    request_first = mem_get_buffer(mem_global(), 2u);
+    request_second = mem_get_buffer(mem_global(), 2u);
+    check_not_null(request_first);
+    check_not_null(request_second);
+    memcpy(mem_buffer_data(request_first), "pi", 2u);
+    memcpy(mem_buffer_data(request_second), "ng", 2u);
+    mem_set_used(request_first, 2u);
+    mem_set_used(request_second, 2u);
+    request_segments[0] = mem_slice(request_first, 0u, 2u);
+    request_segments[1] = mem_slice(request_second, 0u, 2u);
+    check_not_null(request_segments[0].buffer);
+    check_not_null(request_segments[1].buffer);
+    check_equal(mem_buffer_ref_count(request_first), UINT32_C(2));
+    check_equal(mem_buffer_ref_count(request_second), UINT32_C(2));
+    check_equal(cnet_send_slicev(&client, client_connection, request_segments, 2u), SALTS_OK);
+    check_equal(mem_buffer_ref_count(request_first), UINT32_C(3));
+    check_equal(mem_buffer_ref_count(request_second), UINT32_C(3));
+    mem_slice_release(&request_segments[0]);
+    mem_slice_release(&request_segments[1]);
+    check_equal(mem_buffer_ref_count(request_first), UINT32_C(2));
+    check_equal(mem_buffer_ref_count(request_second), UINT32_C(2));
+    mem_buffer_release(request_first);
+    mem_buffer_release(request_second);
+    request_first = NULL;
+    request_second = NULL;
     check_equal(cnet_send(&client, client_connection, second_request, sizeof(second_request) - 1u),
                 SALTS_OK);
-    memset(request_first, 'x', sizeof(request_first) - 1u);
-    memset(request_second, 'x', sizeof(request_second) - 1u);
     deadline = salts_monotonic_ms() + 5000u;
     while ((server_probe.received_size < sizeof(combined_requests) - 1u || client_probe.sent < 2) &&
            salts_monotonic_ms() < deadline)

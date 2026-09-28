@@ -308,7 +308,7 @@ jobs:
             -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
           cmake --build --preset "${{ matrix.build_preset }}" \
             --target native_io_test native_io_sharded_test native_io_header_cpp_test \
-              native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark \
+              native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark \
               cnet_websocket_parser_test cnet_websocket_test \
               cnet_session_test cnet_command_test cnet_uri_test \
               cnet_transport_test cnet_owner_test cnet_owner_profile_test \
@@ -340,7 +340,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_sharded_test native_io_header_cpp_test native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_websocket_parser_test cnet_websocket_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_owner_profile_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_api_profile_test cnet_header_cpp_test cnet_tls_test cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test cnet_packet_endpoint_test cnet_stop_contract_test cnet_benchmark_stats_test cnet_io_benchmark_config_test concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
+          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_sharded_test native_io_header_cpp_test native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark cnet_websocket_parser_test cnet_websocket_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_owner_profile_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_api_profile_test cnet_header_cpp_test cnet_tls_test cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test cnet_packet_endpoint_test cnet_stop_contract_test cnet_benchmark_stats_test cnet_io_benchmark_config_test concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
 
       - name: Configure and build macOS Release
         if: matrix.family == 'mac'
@@ -351,7 +351,7 @@ jobs:
             -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
           cmake --build --preset "${{ matrix.build_preset }}" \
             --target native_io_test native_io_sharded_test native_io_header_cpp_test \
-              native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark \
+              native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark \
               cnet_websocket_parser_test cnet_websocket_test \
               cnet_session_test cnet_command_test cnet_uri_test \
               cnet_transport_test cnet_owner_test cnet_owner_profile_test \
@@ -658,6 +658,34 @@ jobs:
             Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
             $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
           }
+
+      - name: Run retained TLS contiguous versus slicev benchmark
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          CNET_TLS_SG_BENCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_tls_sg_benchmark
+          CNET_TLS_SG_BENCH_BACKEND: ${{ matrix.backend }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:CNET_TLS_SG_BENCH_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "CNet TLS SG benchmark executable not found: $benchmark"
+          }
+          $env:CNET_TLS_SG_BENCH_OUTPUT = Join-Path $resultDir "cnet-tls-sg"
+          $output = & $benchmark 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "cnet-tls-sg.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./cnet/benchmarks/verify_tls_sg_benchmark.ps1 `
+            -Path "$env:CNET_TLS_SG_BENCH_OUTPUT.csv" `
+            -Backend $env:CNET_TLS_SG_BENCH_BACKEND
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CNet retained TLS contiguous versus slicev: $env:CNET_TLS_SG_BENCH_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run flatten versus NativeIO SG merge-gate comparison
         if: steps.scope.outputs.adapted == 'true'

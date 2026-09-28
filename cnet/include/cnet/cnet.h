@@ -720,34 +720,44 @@ int cnet_send_slice(cnet_client *client, cnet_connection connection, const mem_s
 
 /**
  * Retains 1..CNET_RETAINED_VECTOR_MAX canonical slice ranges on successful
- * admission and preserves their order into NativeIO scatter/gather without
- * copying payload bytes. Distinct backing buffers are retained once per
- * logical write. The slice descriptor array is borrowed only for this call;
- * after SALTS_OK the caller may immediately release every slice and other
- * caller references, but admitted backing bytes and buffer data/used/capacity
- * must remain immutable until terminal send settlement.
+ * admission without copying plaintext payload bytes into CNet storage.
+ * Distinct backing buffers are retained once per logical write. The slice
+ * descriptor array is borrowed only for this call; after SALTS_OK the caller
+ * may immediately release every slice and other caller references, but admitted
+ * backing bytes and buffer data/used/capacity must remain immutable until
+ * terminal send settlement.
  *
- * One NativeIO submission contains at most NATIVE_IO_VECTOR_MAX spans. Larger
- * admitted vectors continue across multiple bounded native submissions under
- * the same CNet logical write and publish exactly one ordinary send terminal.
+ * Plain stream transports preserve the ranges into bounded NativeIO
+ * scatter/gather. One native submission contains at most NATIVE_IO_VECTOR_MAX
+ * spans; larger admitted vectors continue across multiple bounded native
+ * submissions under the same CNet logical write.
  *
- * TLS and endpoint/backend combinations without NativeIO vector-write
- * capability return SALTS_ENOTSUP without retaining or flattening. Invalid,
- * empty, forged, out-of-range, or over-limit vectors are rejected without
- * lasting ownership.
+ * TLS preserves the same retained-vector ownership but cannot pass plaintext
+ * scatter/gather directly to the socket because the TLS engine must transform
+ * it first. CNet feeds the retained plaintext ranges to the TLS engine in order,
+ * advances only accepted ranges, sends generated ciphertext through NativeIO,
+ * and still publishes exactly one ordinary send terminal for the logical write.
+ * No plaintext flatten fallback is introduced. TLS record/callback boundaries
+ * are not part of the slicev API contract, and excessive small-range
+ * fragmentation can increase TLS write/record overhead.
+ *
+ * Unsupported datagram/vector transports return SALTS_ENOTSUP without
+ * retaining or silently copying. Invalid, empty, forged, out-of-range, or
+ * over-limit vectors are rejected without lasting ownership.
  */
 int cnet_send_slicev(cnet_client *client, cnet_connection connection,
                      const mem_slice_t *segments, size_t segment_count);
 
 /**
- * Retained scatter/gather final send.
+ * Retained vectored final send.
  *
  * Admission matches cnet_send_slicev(), but the accepted vector is the final
  * logical write for the connection. CNet retains the canonical backing buffers,
- * preserves vector boundaries through NativeIO, publishes the ordinary send
- * terminal, and closes only after the final bytes settle. No payload flattening
- * or copied-byte storage is introduced. Unsupported vector transports return
- * SALTS_ENOTSUP without retaining or silently copying.
+ * preserves plain-stream scatter/gather or TLS span-wise plaintext ownership,
+ * publishes one ordinary send terminal, and closes only after the final bytes
+ * settle. No plaintext flattening or copied-byte storage is introduced.
+ * Unsupported transports return SALTS_ENOTSUP without retaining or silently
+ * copying.
  */
 int cnet_send_slicev_and_close(cnet_client *client, cnet_connection connection,
                                const mem_slice_t *segments, size_t segment_count);
