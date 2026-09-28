@@ -21,6 +21,7 @@ typedef struct cnet_dispatch_view {
   const void *data;
   size_t size;
   size_t argument;
+  mem_buffer_t *backing;
 } cnet_dispatch_view;
 
 typedef void (*cnet_dispatch_fn)(void *context, const cnet_dispatch_view *view);
