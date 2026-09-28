@@ -50,21 +50,39 @@ installed, owned delivery takes precedence over the borrowed callback; changing
 the handler while receive demand is outstanding returns `SALTS_EBUSY`, so one
 admitted demand cannot change lifetime contracts in flight.
 
-For each non-empty owned delivery, CNet materializes the callback bytes into a
-canonical `mem_global()` buffer and transfers one `mem_slice_t` reference to
-the callback. The application releases it with `mem_slice_release()`. Because
-that backing belongs to the process-global Salts pool rather than the client,
-an already delivered slice remains valid across later poll calls, connection
-close, `cnet_client_stop()`, and `cnet_client_destroy()`. An empty UDP
-datagram is represented by an empty slice with no backing reference.
+For each connection CNet now keeps the receive scratch itself as a canonical
+`mem_buffer_t` from `mem_global()`. Plaintext NativeIO reads and TLS plaintext
+reads write directly into `mem_buffer_data()`; a RECEIVE event carries that same
+backing through the dispatcher. The borrowed callback still sees only a
+callback-scoped byte view. The owned handler creates a `mem_slice_t` over the
+same backing, so there is no additional CNet payload memcpy between the producer
+receive scratch and the public owned callback.
 
-This first owned surface is a **lifetime/ownership contract, not a kernel
-zero-copy claim**. The inline dispatcher currently receives borrowed owner
-scratch directly, while the fallback event queue copies into its own private
-payload pool. Normalizing the public owned lifetime therefore performs an
-explicit materialization copy today. A later internal optimization may move the
-canonical backing earlier in owner/event publication without changing this
-public API.
+After successful publication, CNet reuses the same receive backing when nobody
+retained it. If an owned callback or fallback event queue retains the backing,
+the session moves that reference into one lazy spare slot and rearms on another
+buffer, so future network progress cannot overwrite application-owned bytes.
+For the common case where at most one slice remains live across callback return,
+the two buffers then ping-pong: once the application releases the previous slice,
+its spare refcount returns to one and CNet promotes it as the next active backing
+without allocation. If multiple slices remain live concurrently, CNet drops only
+its old spare reference and allocates another active buffer; user-owned slices
+stay valid. Thus CNet itself caches at most one spare per session.
+
+The fallback event queue retains canonical DATA backing rather than copying it
+into its private payload pool, while non-DATA payloads such as ALPN keep the
+existing copied path.
+
+The application releases owned slices with `mem_slice_release()`. Because the
+canonical backing belongs to the process-global Salts pool rather than the
+client, an already delivered slice remains valid across later poll calls,
+connection close, `cnet_client_stop()`, and `cnet_client_destroy()`. An empty
+UDP datagram is represented by an empty slice with no backing reference.
+
+This is a **CNet producer-to-callback zero-copy ownership path, not kernel
+zero-copy**. The operating system still writes into user memory, and TLS still
+performs the required ciphertext-to-plaintext transform before the canonical
+plaintext backing is published.
 
 TLS delivers verified encrypted byte streams through the same send/receive
 contract. The same header also exposes bound UDP, the KCP session engine, and
@@ -522,9 +540,13 @@ records, handshake timeout/cancel, accepted sockets, and clean close.
 
 设置 `CNET_IO_BENCHMARK_RECEIVE_COMPARE=1` 会运行独立的 receive ownership
 comparison，使用同一 CNet TCP echo harness 比较 `borrowed callback + consumer
-memcpy` 与 `owned slice materialization + release`，覆盖 64 B、64 KiB、1 MiB。
-该实验用于量化 callback-lifetime ownership 的成本/收益，不把 materialization
-描述成 zero-copy，也不混入主 libuv/NativeIO 排名表。
+memcpy` 与 `producer-owned slice retain + bounded backing rotation`，覆盖 64 B、64 KiB、
+1 MiB。owned benchmark 会让 slice 跨 callback return 存活，直到下一 receive callback
+或本次 poll 返回后才 release，因此实际覆盖 retained owner 触发的 receive-buffer rotation，
+而不是只测 callback 内立即释放。该实验用于量化 producer-owned receive 的成本/收益；
+这里的 zero-copy 只指
+CNet receive backing → public owned callback 之间不再 payload memcpy，不代表
+kernel/TLS transform zero-copy，也不混入主 libuv/NativeIO 排名表。
 
 `cnet_io_benchmark` 比较 libuv、NativeIO direct、NativeIO coroutine 和 CNet
 public byte API。每个客户端使用独立 blocking loopback echo peer；每个 payload

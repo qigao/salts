@@ -6,7 +6,7 @@ file(READ "${PROJECT_SOURCE_DIR}/cnet/src/cnet_client.c" _client)
 foreach(_required IN ITEMS
     "typedef void (*cnet_receive_slice_fn)"
     "int cnet_set_receive_slice_handler("
-    "mem_get_buffer(mem_global(), view->size)"
+    "mem_slice(view->backing, 0u, view->size)"
     "record->receive_slice_handler(record->receive_slice_user"
     "record->observer.on_receive == NULL && record->receive_slice_handler == NULL"
     "record->receive_slice_handler = NULL;"
@@ -29,4 +29,4 @@ if(NOT _observer_owned_index EQUAL -1)
 endif()
 
 message(STATUS
-  "CNet owned receive contract verified: borrowed ABI unchanged, explicit global-pool owner materialization")
+  "CNet owned receive contract verified: borrowed ABI unchanged, explicit canonical owned receive surface")

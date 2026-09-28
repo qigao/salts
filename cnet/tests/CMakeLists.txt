@@ -527,6 +527,13 @@ add_test(
 
 
 add_test(
+  NAME cnet_receive_backing_contract_test
+  COMMAND ${CMAKE_COMMAND}
+          -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cnet_receive_backing_contract_test.cmake)
+
+
+add_test(
   NAME cnet_performance_ci_contract_test
   COMMAND ${CMAKE_COMMAND}
           -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}

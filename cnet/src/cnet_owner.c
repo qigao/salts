@@ -40,7 +40,9 @@ typedef struct cnet_owner_session {
   int pending_status;
   cnet_session_stage pending_stage;
   cnet_session_stage session_deadline_stage;
-  unsigned char *receive_buffer;
+  mem_buffer_t *receive_buffer;
+  /** Lazy single spare for the common one-outstanding-owned-slice case. */
+  mem_buffer_t *receive_spare;
   size_t receive_demand;
   bool occupied;
   bool close_requested;
@@ -167,6 +169,9 @@ static cnet_owner_impl *cnet_owner_get(cnet_owner *owner) {
   return owner != NULL ? (cnet_owner_impl *)owner->impl : NULL;
 }
 
+static cnet_owner_session *cnet_owner_find_session(cnet_owner_impl *impl,
+                                                   cnet_session_handle handle);
+
 #if defined(CNET_INTERNAL_PROFILING)
 static uint64_t cnet_owner_profile_start(const cnet_owner_impl *impl) {
   return impl->profile_active ? salts_hrtime() : 0u;
@@ -182,18 +187,104 @@ static void cnet_owner_profile_finish(cnet_owner_impl *impl, uint64_t started_ns
 }
 #endif
 
+static int cnet_owner_validate_receive_publication(cnet_owner_impl *impl,
+                                                    const cnet_event *event) {
+  cnet_owner_session *session;
+  if (event == NULL || event->kind != CNET_EVENT_RECEIVE || event->backing == NULL)
+    return SALTS_OK;
+  session = cnet_owner_find_session(impl, event->session);
+  return session != NULL && session->receive_buffer == event->backing ? SALTS_OK
+                                                                      : SALTS_EPROTO;
+}
+
+static int cnet_owner_ensure_receive_buffer(cnet_owner_impl *impl,
+                                            cnet_owner_session *session) {
+  if (session->receive_buffer != NULL) return SALTS_OK;
+
+  if (session->receive_spare != NULL) {
+    if (mem_buffer_ref_count(session->receive_spare) == UINT32_C(1)) {
+      session->receive_buffer = session->receive_spare;
+      session->receive_spare = NULL;
+      mem_set_used(session->receive_buffer, 0u);
+      return SALTS_OK;
+    }
+    /*
+     * The application still owns the prior slice. Drop only the session's
+     * spare reference; the handed-off owner remains valid independently.
+     */
+    mem_buffer_release(session->receive_spare);
+    session->receive_spare = NULL;
+  }
+
+  session->receive_buffer = mem_get_buffer(mem_global(), impl->receive_buffer_bytes);
+  return session->receive_buffer != NULL ? SALTS_OK : SALTS_ENOMEM;
+}
+
+static void cnet_owner_finish_receive_publication(cnet_owner_impl *impl,
+                                                  const cnet_event *event) {
+  cnet_owner_session *session;
+  mem_buffer_t *published;
+  mem_buffer_t *replacement = NULL;
+
+  if (event == NULL || event->kind != CNET_EVENT_RECEIVE || event->backing == NULL)
+    return;
+  session = cnet_owner_find_session(impl, event->session);
+  if (session == NULL || session->receive_buffer != event->backing) return;
+
+  /*
+   * Borrowed delivery retains nothing: reuse the active backing directly.
+   *
+   * Retained delivery moves the current session reference into one lazy spare.
+   * If the previous spare has already returned to refcount==1, promote it as
+   * the next active receive buffer and ping-pong without allocating. If the
+   * application still owns that previous spare, release only the session's
+   * cache reference and allocate a new active backing; arbitrary user lifetime
+   * remains supported while CNet itself caches at most one spare per session.
+   */
+  if (mem_buffer_ref_count(session->receive_buffer) == UINT32_C(1)) {
+    mem_set_used(session->receive_buffer, 0u);
+    return;
+  }
+
+  published = session->receive_buffer;
+  if (session->receive_spare != NULL) {
+    if (mem_buffer_ref_count(session->receive_spare) == UINT32_C(1)) {
+      replacement = session->receive_spare;
+      mem_set_used(replacement, 0u);
+    } else {
+      mem_buffer_release(session->receive_spare);
+    }
+    session->receive_spare = NULL;
+  }
+  if (replacement == NULL)
+    replacement = mem_get_buffer(mem_global(), impl->receive_buffer_bytes);
+
+  /*
+   * Move, rather than release, the session's reference to the published buffer
+   * into the spare slot. If replacement allocation failed, the next rearm can
+   * promote this spare once the application releases its slice, or drop the
+   * spare reference and retry allocation while the slice is still live.
+   */
+  session->receive_buffer = replacement;
+  session->receive_spare = published;
+}
+
 static int cnet_owner_publish_event(cnet_owner_impl *impl, const cnet_event *event) {
+  int status = cnet_owner_validate_receive_publication(impl, event);
 #if defined(CNET_INTERNAL_PROFILING)
   const uint64_t profile_started = cnet_owner_profile_start(impl);
 #endif
-  const int status = impl->publish_event != NULL ? impl->publish_event(impl->event_context, event)
-                                                 : cnet_event_queue_publish(impl->events, event);
+  if (status == SALTS_OK)
+    status = impl->publish_event != NULL ? impl->publish_event(impl->event_context, event)
+                                         : cnet_event_queue_publish(impl->events, event);
 #if defined(CNET_INTERNAL_PROFILING)
   cnet_owner_profile_finish(impl, profile_started, &impl->profile.event_publish_ns,
                             &impl->profile.event_publish_calls);
 #endif
-  if (status == SALTS_OK) ++impl->published_event_count;
-  return status;
+  if (status != SALTS_OK) return status;
+  ++impl->published_event_count;
+  cnet_owner_finish_receive_publication(impl, event);
+  return SALTS_OK;
 }
 
 static cnet_owner_session *cnet_owner_find_session(cnet_owner_impl *impl,
@@ -629,12 +720,14 @@ static int cnet_owner_arm_receive(cnet_owner_impl *impl, cnet_owner_session *ses
 
   if (session->receive_demand == 0u || session->read_active || session->close_requested)
     return SALTS_OK;
+  status = cnet_owner_ensure_receive_buffer(impl, session);
+  if (status != SALTS_OK) return status;
   if (session->peer.scheme == CNET_URI_TLS) return cnet_owner_tls_pump(impl, session);
   status = cnet_owner_receive_operation_kind(session->peer.scheme, &operation_kind);
   if (status != SALTS_OK) return status;
   operation = (native_io_operation){.kind = operation_kind,
                                     .endpoint = cnet_transport_read_endpoint(&session->transport),
-                                    .buffer = session->receive_buffer,
+                                    .buffer = mem_buffer_data(session->receive_buffer),
                                     .length = impl->receive_buffer_bytes};
   status =
       cnet_owner_start_request(impl, session, NULL, NULL, CNET_OWNER_REQUEST_RECEIVE, &operation,
@@ -1061,15 +1154,25 @@ static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *sessio
   if (!session->close_requested && session->receive_demand != 0u) {
     size_t plaintext_size = 0u;
     bool peer_closed = false;
-    status = cnet_tls_read(&session->tls, session->receive_buffer, impl->receive_buffer_bytes,
-                           &plaintext_size, &peer_closed);
+    status = cnet_owner_ensure_receive_buffer(impl, session);
+    if (status != SALTS_OK) return status;
+    status = cnet_tls_read(&session->tls, mem_buffer_data(session->receive_buffer),
+                           impl->receive_buffer_bytes, &plaintext_size, &peer_closed);
     if (status != SALTS_OK) return status;
     status = cnet_owner_tls_start_write(impl, session, &started);
     if (status != SALTS_OK) return status;
     if (plaintext_size != 0u) {
-      const cnet_event event = {
-          CNET_EVENT_RECEIVE,      session->handle,         CNET_EVENT_STATE_NONE, SALTS_OK,
-          CNET_SESSION_STAGE_NONE, session->receive_buffer, plaintext_size,        0u};
+      cnet_event event;
+      mem_set_used(session->receive_buffer, plaintext_size);
+      event = (cnet_event){CNET_EVENT_RECEIVE,
+                           session->handle,
+                           CNET_EVENT_STATE_NONE,
+                           SALTS_OK,
+                           CNET_SESSION_STAGE_NONE,
+                           mem_buffer_const_data(session->receive_buffer),
+                           plaintext_size,
+                           0u,
+                           session->receive_buffer};
       --session->receive_demand;
       if (session->receive_demand != 0u) {
         status = cnet_owner_queue_session_work(impl, session->handle);
@@ -1301,7 +1404,7 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
   if (session->peer.socket_options.size == 0u)
     session->peer.socket_options =
         (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
-  session->receive_buffer = (unsigned char *)malloc(impl->receive_buffer_bytes);
+  session->receive_buffer = mem_get_buffer(mem_global(), impl->receive_buffer_bytes);
   session->transport.native_handle = UINTPTR_MAX;
   session->occupied = true;
   ++impl->occupied_sessions;
@@ -1706,9 +1809,21 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
   if (role == CNET_OWNER_REQUEST_RECEIVE) {
     if (session->close_requested) return cnet_owner_finalize_session(impl, session);
     if (completion->kind == NATIVE_IO_COMPLETION_OK) {
-      const cnet_event event = {
-          CNET_EVENT_RECEIVE,      session->handle,         CNET_EVENT_STATE_NONE, SALTS_OK,
-          CNET_SESSION_STAGE_NONE, session->receive_buffer, completion->bytes};
+      cnet_event event;
+      if (completion->bytes > mem_buffer_capacity(session->receive_buffer))
+        return SALTS_EPROTO;
+      mem_set_used(session->receive_buffer, completion->bytes);
+      event = (cnet_event){CNET_EVENT_RECEIVE,
+                           session->handle,
+                           CNET_EVENT_STATE_NONE,
+                           SALTS_OK,
+                           CNET_SESSION_STAGE_NONE,
+                           completion->bytes != 0u
+                               ? mem_buffer_const_data(session->receive_buffer)
+                               : NULL,
+                           completion->bytes,
+                           0u,
+                           completion->bytes != 0u ? session->receive_buffer : NULL};
       if (session->receive_demand != 0u) {
         status = cnet_owner_queue_session_work(impl, session->handle);
         if (status != SALTS_OK) return status;
@@ -2580,7 +2695,8 @@ int cnet_owner_release_session(cnet_owner *owner, cnet_session_handle session_ha
   if (status != SALTS_ENOENT) return SALTS_EBUSY;
   status = cnet_owner_cancel_session_work(impl, session);
   if (status != SALTS_OK) return status;
-  free(session->receive_buffer);
+  mem_buffer_release(session->receive_buffer);
+  mem_buffer_release(session->receive_spare);
   memset(session, 0, sizeof(*session));
   --impl->occupied_sessions;
   return SALTS_OK;

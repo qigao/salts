@@ -3,6 +3,8 @@
 
 #include "cnet_session.h"
 
+#include <salts_buffer.h>
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -42,8 +44,10 @@ typedef enum cnet_event_state {
 } cnet_event_state;
 
 /**
- * One owner-produced callback event. `data` is borrowed only during publish;
- * successful publication copies `size` bytes into bounded queue storage.
+ * One owner-produced callback event. `data` is borrowed only during publish.
+ * RECEIVE may additionally name a canonical retained `backing`; queue
+ * publication retains that backing instead of copying DATA bytes. Events
+ * without a backing preserve the bounded copied-payload path.
  */
 typedef struct cnet_event {
   cnet_event_kind kind;
@@ -54,6 +58,7 @@ typedef struct cnet_event {
   const void *data;
   size_t size;
   size_t argument;
+  mem_buffer_t *backing;
 } cnet_event;
 
 /** Single-consumer borrowed view; release invalidates `data`. */
@@ -67,6 +72,8 @@ typedef struct cnet_event_view {
   size_t size;
   size_t argument;
   uint64_t _sequence;
+  /** Canonical retained backing when publication supplied one; otherwise NULL. */
+  mem_buffer_t *backing;
 } cnet_event_view;
 
 typedef int (*cnet_event_keep_waiting_fn)(void *context);
