@@ -2577,6 +2577,86 @@ static int io_bench_compare_sg_windows(
   return io_bench_sg_window_write_csv(prefix, backend->name, summaries, WINDOW_CASES);
 }
 
+static int io_bench_compare_receive_ownership(
+    const cnet_io_benchmark_backend *backend) {
+  enum { RECEIVE_METHODS = 2, RECEIVE_REPLICATES = 5, RECEIVE_PAYLOADS = 3 };
+  static const size_t payloads[RECEIVE_PAYLOADS] = {64u, 64u * 1024u, 1024u * 1024u};
+  static const size_t warmups[RECEIVE_PAYLOADS] = {32u, 16u, 4u};
+  static const size_t exchanges[RECEIVE_PAYLOADS] = {256u, 128u, 32u};
+  static const io_bench_receive_mode modes[RECEIVE_METHODS] = {
+      IO_BENCH_RECEIVE_BORROWED_COPY, IO_BENCH_RECEIVE_OWNED};
+  int status = io_bench_print_host();
+  if (status != SALTS_OK) return status;
+
+  printf("\nCNet receive ownership comparison: backend=%s. "
+         "borrowed_copy performs one consumer memcpy; owned_receive performs "
+         "one CNet mem_global() materialization and transfers a mem_slice_t owner. "
+         "Neither row is a kernel zero-copy claim.\n",
+         backend->name);
+  printf("| payload | borrowed+consumer-copy p50 us | owned receive p50 us | "
+         "borrowed MiB/s | owned MiB/s | owned p50 delta | owned rate delta |\n");
+  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+
+  for (size_t payload_index = 0u; payload_index < RECEIVE_PAYLOADS; ++payload_index) {
+    io_bench_result runs[RECEIVE_METHODS][RECEIVE_REPLICATES];
+    double p50[RECEIVE_METHODS][RECEIVE_REPLICATES];
+    double rate[RECEIVE_METHODS][RECEIVE_REPLICATES];
+    cnet_benchmark_summary p50_summary[RECEIVE_METHODS] = {{0}};
+    cnet_benchmark_summary rate_summary[RECEIVE_METHODS] = {{0}};
+    cnet_benchmark_summary p50_delta = {0};
+    cnet_benchmark_summary rate_delta = {0};
+
+    memset(runs, 0, sizeof(runs));
+    for (size_t repeat = 0u; repeat < RECEIVE_REPLICATES; ++repeat) {
+      const size_t first = repeat & 1u;
+      for (size_t order = 0u; order < RECEIVE_METHODS; ++order) {
+        const size_t method = (first + order) % RECEIVE_METHODS;
+        status = io_bench_run_counted(
+            IO_BENCH_TCP, IO_BENCH_CNET, payloads[payload_index], false,
+            backend->kind, IO_BENCH_SEND_BASELINE, 0u,
+            warmups[payload_index], exchanges[payload_index], true,
+            modes[method], &runs[method][repeat]);
+        if (status != SALTS_OK) return status;
+      }
+    }
+
+    for (size_t method = 0u; method < RECEIVE_METHODS; ++method) {
+      for (size_t repeat = 0u; repeat < RECEIVE_REPLICATES; ++repeat) {
+        p50[method][repeat] = (double)runs[method][repeat].p50_ns;
+        rate[method][repeat] = io_bench_rate(&runs[method][repeat]);
+      }
+      status = cnet_benchmark_summarize(
+          p50[method], RECEIVE_REPLICATES, &p50_summary[method]);
+      if (status == SALTS_OK)
+        status = cnet_benchmark_summarize(
+            rate[method], RECEIVE_REPLICATES, &rate_summary[method]);
+      if (status != SALTS_OK) return status;
+    }
+
+    status = cnet_benchmark_summarize_paired_delta(
+        p50[0], p50[1], RECEIVE_REPLICATES, &p50_delta);
+    if (status == SALTS_OK)
+      status = cnet_benchmark_summarize_paired_delta(
+          rate[0], rate[1], RECEIVE_REPLICATES, &rate_delta);
+    if (status != SALTS_OK) return status;
+
+    printf("| %zu | %.3f | %.3f | %.2f | %.2f | %+.2f%% | %+.2f%% |\n",
+           payloads[payload_index],
+           p50_summary[0].median / 1000.0,
+           p50_summary[1].median / 1000.0,
+           rate_summary[0].median * (double)payloads[payload_index] /
+               (1024.0 * 1024.0),
+           rate_summary[1].median * (double)payloads[payload_index] /
+               (1024.0 * 1024.0),
+           p50_delta.median, rate_delta.median);
+    printf("RECEIVE delta payload=%zu: owned vs borrowed+consumer-copy "
+           "p50=%+.2f%% +/- %.2fpp, rate=%+.2f%% +/- %.2fpp\n",
+           payloads[payload_index], p50_delta.median, p50_delta.mad,
+           rate_delta.median, rate_delta.mad);
+  }
+  return SALTS_OK;
+}
+
 static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const char *prefix) {
   enum { SG_METHODS = 6, SG_REPLICATES = 6, SG_PAYLOADS = 4, SG_SEGMENTS = 4 };
   static const size_t payloads[SG_PAYLOADS] = {1024u, 8192u, 32768u, 65536u};
@@ -2747,8 +2827,11 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
     const char *output_prefix = getenv("CNET_IO_BENCHMARK_OUTPUT");
     const char *requested_send_comparison = getenv("CNET_IO_BENCHMARK_SEND_COMPARE");
     const char *requested_sg_comparison = getenv("CNET_IO_BENCHMARK_SG_COMPARE");
+    const char *requested_receive_comparison =
+        getenv("CNET_IO_BENCHMARK_RECEIVE_COMPARE");
     bool send_comparison = false;
     bool sg_comparison = false;
+    bool receive_comparison = false;
     int status = cnet_io_benchmark_select_backend(requested_backend, &backend);
     if (status != SALTS_OK)
       fprintf(stderr, "CNET_IO_BENCHMARK_BACKEND selection failed: value='%s', status=%d\n",
@@ -2775,6 +2858,21 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
         return;
       }
       sg_comparison = true;
+    }
+    if (requested_receive_comparison != NULL) {
+      if (strcmp(requested_receive_comparison, "1") != 0 || trace.enabled ||
+          send_comparison || sg_comparison) {
+        fprintf(stderr,
+                "CNET_IO_BENCHMARK_RECEIVE_COMPARE must be unset or 1, and cannot combine "
+                "with TRACE, SEND_COMPARE, or SG_COMPARE\n");
+        check_equal(SALTS_EINVAL, SALTS_OK);
+        return;
+      }
+      receive_comparison = true;
+    }
+    if (receive_comparison) {
+      check_equal(io_bench_compare_receive_ownership(&backend), SALTS_OK);
+      return;
     }
     if (send_comparison) {
       check_equal(io_bench_compare_sends(&backend, output_prefix), SALTS_OK);
