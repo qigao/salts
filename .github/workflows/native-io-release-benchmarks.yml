@@ -465,8 +465,16 @@ jobs:
             -Path "$env:NATIVE_IO_SHARDED_BENCH_OUTPUT.csv" `
             -Backend $env:NATIVE_IO_SHARDED_BENCH_BACKEND
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $chartSummary = Join-Path $resultDir "native-io-sharded-routing-charts.md"
+          & ./native-io/benchmarks/write_sharded_routing_summary_charts.ps1 `
+            -Path "$env:NATIVE_IO_SHARDED_BENCH_OUTPUT.csv" `
+            -OutputPath $chartSummary `
+            -Backend $env:NATIVE_IO_SHARDED_BENCH_BACKEND
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO Sharded routing: $env:NATIVE_IO_SHARDED_BENCH_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Get-Content -LiteralPath $chartSummary | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
