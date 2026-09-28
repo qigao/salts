@@ -267,6 +267,23 @@ typedef void (*cnet_state_fn)(void *user, cnet_connection connection, cnet_conne
                               const cnet_error *error);
 typedef void (*cnet_receive_fn)(void *user, cnet_connection connection,
                                 const cnet_receive_view *view);
+
+/**
+ * Owned receive callback.
+ *
+ * On entry, `slice` owns exactly one canonical Salts Core buffer reference.
+ * The callback may keep the descriptor after return and must eventually release
+ * that reference with mem_slice_release(). The backing is allocated from the
+ * process-global Salts pool, so an already delivered slice remains valid across
+ * later cnet_client_poll(), connection close, cnet_client_stop(), and
+ * cnet_client_destroy().
+ *
+ * This is an explicit ownership/materialization surface, not a kernel
+ * zero-copy guarantee. Existing borrowed on_receive semantics are unchanged.
+ */
+typedef void (*cnet_receive_slice_fn)(void *user, cnet_connection connection,
+                                      mem_slice_t slice, cnet_message_kind kind);
+
 /** Reports one successfully completed ordered write. */
 typedef void (*cnet_send_fn)(void *user, cnet_connection connection, size_t size);
 
@@ -800,7 +817,24 @@ int cnet_send_buffer_and_close(cnet_client *client, cnet_connection connection,
                                mem_buffer_t *buffer);
 
 /**
- * Requests exactly `demand` future receive values. `on_receive` is required.
+ * Installs or clears the explicit owned-receive handler for one live
+ * connection. Passing NULL clears it and restores ordinary borrowed
+ * `observer.on_receive` delivery. While installed, owned delivery takes
+ * precedence and borrowed `on_receive` is not invoked for receive values.
+ *
+ * The handler may be changed only when no receive demand is outstanding;
+ * otherwise SALTS_EBUSY is returned so already-admitted demand cannot switch
+ * lifetime contracts in flight.
+ */
+int cnet_set_receive_slice_handler(cnet_client *client,
+                                   cnet_connection connection,
+                                   cnet_receive_slice_fn handler,
+                                   void *user);
+
+/**
+ * Requests exactly `demand` future receive values. Either borrowed
+ * `observer.on_receive` or an installed owned receive-slice handler is
+ * required. Receive demand accounting is identical for both surfaces.
  * @return The same handle/state/queue errors as `cnet_send`; zero demand is
  * `SALTS_EINVAL`.
  */
