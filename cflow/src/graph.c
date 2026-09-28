@@ -570,6 +570,43 @@ bool cflow_graph_create_node(cflow_graph *g,
     return true;
 }
 
+bool cflow_graph_create_explicit_adapter_map_node(
+    cflow_graph *g, cflow_subgraph_id subgraph,
+    cmeta_callable adapter,
+    const cmeta_type_desc *input_type,
+    const cmeta_type_desc *output_type,
+    cflow_node_id *out_node) {
+    uint64_t version;
+    cflow_subgraph *sg =
+        g && subgraph < g->subgraph_count ? &g->subgraphs[subgraph] : NULL;
+    cflow_node node = {0};
+    cflow_node_id id;
+
+    if (!sg || !out_node ||
+        !cmeta_type_desc_valid(input_type) || input_type->size == 0u ||
+        !cmeta_type_desc_valid(output_type) || output_type->size == 0u ||
+        !cmeta_callable_explicit_adapter_valid(adapter))
+        return fail(g, "invalid explicit adapter MAP node");
+
+    if (!cflow_graph_version_acquire(&version))
+        return fail(g, "graph version space exhausted");
+
+    node.op = CFLOW_OP_MAP;
+    node.fn = adapter;
+    node.has_fn = true;
+    node.explicit_callable_types = true;
+    node.input_type = input_type;
+    node.output_type = output_type;
+    id = subgraph_append_node(sg, node);
+    if (id == CMETA_INVALID_ID)
+        return fail(g, "explicit adapter node allocation failed");
+
+    g->version = version;
+    g->error = NULL;
+    *out_node = id;
+    return true;
+}
+
 bool cflow_graph_create_slice_node(cflow_graph *g,
                                    cflow_subgraph_id subgraph,
                                    cflow_op op,
@@ -880,6 +917,53 @@ bool cflow_graph_add(cflow_graph *g, cflow_op op,
         root->output_type = old_tail < root->node_count ? root->nodes[old_tail].output_type : root->input_type;
         truncate_subgraphs(g, subgraph_mark);
         return fail(g, "edge allocation failed");
+    }
+    g->version = version;
+    g->error = NULL;
+    return true;
+}
+
+bool cflow_graph_add_explicit_adapter_map(
+    cflow_graph *g, cmeta_callable adapter,
+    const cmeta_type_desc *input_type,
+    const cmeta_type_desc *output_type) {
+    uint64_t version;
+    cflow_subgraph *root;
+    cflow_node node = {0};
+    cflow_node_id old_tail;
+    cflow_node_id id;
+
+    if (!g || g->root >= g->subgraph_count)
+        return fail(g, "graph is not initialized");
+    root = &g->subgraphs[g->root];
+    if (!cmeta_type_equal(root->output_type, input_type))
+        return fail(g, "explicit adapter input type mismatch");
+    if (!cmeta_type_desc_valid(output_type) || output_type->size == 0u ||
+        !cmeta_callable_explicit_adapter_valid(adapter))
+        return fail(g, "invalid explicit adapter MAP contract");
+    if (!cflow_graph_version_acquire(&version))
+        return fail(g, "graph version space exhausted");
+
+    node.op = CFLOW_OP_MAP;
+    node.fn = adapter;
+    node.has_fn = true;
+    node.explicit_callable_types = true;
+    node.input_type = input_type;
+    node.output_type = output_type;
+    old_tail = root->tail;
+    id = subgraph_append_node(root, node);
+    if (id == CMETA_INVALID_ID)
+        return fail(g, "explicit adapter node allocation failed");
+    if (old_tail != CMETA_INVALID_ID &&
+        !subgraph_add_edge(root, old_tail, id)) {
+        node_destroy(&root->nodes[id]);
+        --root->node_count;
+        root->tail = old_tail;
+        root->output_type =
+            old_tail < root->node_count
+                ? root->nodes[old_tail].output_type
+                : root->input_type;
+        return fail(g, "explicit adapter edge allocation failed");
     }
     g->version = version;
     g->error = NULL;
@@ -1258,7 +1342,21 @@ static bool validate_subgraph_nodes(const cflow_graph *g,
             if (error) *error = "operator carries an unexpected typed parameter";
             return false;
         }
-        if (node->has_fn && !cmeta_callable_contract_valid(node->fn)) {
+        if (node->explicit_callable_types) {
+            if (node->op != CFLOW_OP_MAP || !node->has_fn ||
+                node->fn_chain_count != 0u || node->has_relation ||
+                node->subgraph_count != 0u || node->has_size_parameter ||
+                node->param_kind != CFLOW_NODE_PARAM_NONE ||
+                !cmeta_callable_explicit_adapter_valid(node->fn) ||
+                !cmeta_type_desc_valid(node->input_type) ||
+                node->input_type->size == 0u ||
+                !cmeta_type_desc_valid(node->output_type) ||
+                node->output_type->size == 0u) {
+                if (error) *error =
+                    "explicit adapter MAP metadata is inconsistent";
+                return false;
+            }
+        } else if (node->has_fn && !cmeta_callable_contract_valid(node->fn)) {
             if (error) *error = "callable effect/property contract is invalid";
             return false;
         }
