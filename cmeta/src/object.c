@@ -1,5 +1,19 @@
 #include <cmeta/object.h>
 
+#define CMETA_OBJECT_FIELD_END(type_, member_) \
+    (offsetof(type_, member_) + sizeof(((type_ *)0)->member_))
+#define CMETA_OBJECT_FIELD_PROVIDER_ASSIGN_SIZE \
+    CMETA_OBJECT_FIELD_END(cmeta_object_field_provider, assign)
+#define CMETA_OBJECT_FIELD_PROVIDER_READ_SIZE \
+    CMETA_OBJECT_FIELD_END(cmeta_object_field_provider, read)
+
+static bool cmeta_object_field_provider_has_read(
+    const cmeta_object_field_provider *provider) {
+    return provider != NULL &&
+           provider->size >= CMETA_OBJECT_FIELD_PROVIDER_READ_SIZE &&
+           provider->read != NULL;
+}
+
 static void cmeta_object_clear(cmeta_object_ref *ref) {
     if (ref != NULL)
         *ref = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
@@ -26,11 +40,17 @@ bool cmeta_object_method_provider_valid(
 
 bool cmeta_object_field_provider_valid(
     const cmeta_object_field_provider *provider) {
-    return provider != NULL && provider->size >= sizeof(*provider) &&
-           cmeta_data_desc_valid(provider->data) &&
-           provider->data->kind == CMETA_DATA_STRUCT &&
-           provider->data->shape != NULL &&
-           provider->assign != NULL;
+    bool has_read;
+
+    if (provider == NULL ||
+        provider->size < CMETA_OBJECT_FIELD_PROVIDER_ASSIGN_SIZE ||
+        !cmeta_data_desc_valid(provider->data) ||
+        provider->data->kind != CMETA_DATA_STRUCT ||
+        provider->data->shape == NULL)
+        return false;
+
+    has_read = cmeta_object_field_provider_has_read(provider);
+    return provider->assign != NULL || has_read;
 }
 
 static cmeta_status cmeta_object_contract_status(
@@ -225,18 +245,14 @@ void cmeta_object_release(cmeta_object_ref *ref) {
 }
 
 
-static cmeta_status cmeta_object_field_status(
+static cmeta_status cmeta_object_field_resolve(
     const cmeta_object_ref *ref, const char *name,
-    const cmeta_data_field_desc **out_field, const void **out_value) {
+    const cmeta_data_field_desc **out_field) {
     const cmeta_data_struct_shape *shape;
     const cmeta_data_field_desc *field;
-    const cmeta_data_desc *value;
-    size_t owner_size;
 
     if (out_field != NULL)
         *out_field = NULL;
-    if (out_value != NULL)
-        *out_value = NULL;
 
     if (!cmeta_object_ref_valid(ref) || name == NULL || name[0] == '\0')
         return CMETA_INVALID_ARGUMENT;
@@ -247,11 +263,29 @@ static cmeta_status cmeta_object_field_status(
     field = cmeta_data_struct_find_field(shape, name);
     if (field == NULL)
         return CMETA_INVALID_ARGUMENT;
-
-    value = field->value;
-    if (!cmeta_data_desc_valid(value) || value->storage_type == NULL)
+    if (!cmeta_data_desc_valid(field->value) ||
+        field->value->storage_type == NULL)
         return CMETA_INVALID_ARGUMENT;
 
+    if (out_field != NULL)
+        *out_field = field;
+    return CMETA_OK;
+}
+
+static cmeta_status cmeta_object_field_fixed_read(
+    const cmeta_object_ref *ref, const cmeta_data_field_desc *field,
+    const void **out_value) {
+    const cmeta_data_desc *value;
+    size_t owner_size;
+
+    if (out_value == NULL || ref == NULL || field == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    *out_value = NULL;
+
+    if (field->offset == CMETA_FIELD_DYNAMIC_OFFSET)
+        return CMETA_TRAIT_MISSING;
+
+    value = field->value;
     owner_size = ref->data->storage_type->size;
     if (field->offset > owner_size ||
         value->storage_type->size > owner_size - field->offset ||
@@ -259,10 +293,7 @@ static cmeta_status cmeta_object_field_status(
          (field->offset % value->storage_type->align) != 0u))
         return CMETA_INVALID_ARGUMENT;
 
-    if (out_field != NULL)
-        *out_field = field;
-    if (out_value != NULL)
-        *out_value = (const unsigned char *)ref->object + field->offset;
+    *out_value = (const unsigned char *)ref->object + field->offset;
     return CMETA_OK;
 }
 
@@ -278,9 +309,22 @@ cmeta_status cmeta_object_field_read(
     *out_data = NULL;
     *out_value = NULL;
 
-    status = cmeta_object_field_status(ref, name, &field, &value);
+    status = cmeta_object_field_resolve(ref, name, &field);
     if (status != CMETA_OK)
         return status;
+
+    if (cmeta_object_field_provider_has_read(ref->field_provider)) {
+        status = ref->field_provider->read(
+            ref->field_provider->context, ref->object, field, &value);
+        if (status != CMETA_OK)
+            return status;
+        if (value == NULL)
+            return CMETA_CALLBACK_ERROR;
+    } else {
+        status = cmeta_object_field_fixed_read(ref, field, &value);
+        if (status != CMETA_OK)
+            return status;
+    }
 
     *out_data = field->value;
     *out_value = value;
@@ -295,13 +339,14 @@ cmeta_status cmeta_object_field_assign(
 
     if (value == NULL || !cmeta_data_desc_valid(value_data))
         return CMETA_INVALID_ARGUMENT;
-    status = cmeta_object_field_status(ref, name, &field, NULL);
+    status = cmeta_object_field_resolve(ref, name, &field);
     if (status != CMETA_OK)
         return status;
     if (!cmeta_data_desc_equal(field->value, value_data))
         return CMETA_TYPE_MISMATCH;
     if (!cmeta_object_field_provider_valid(ref->field_provider) ||
-        ref->field_provider->data != ref->data)
+        ref->field_provider->data != ref->data ||
+        ref->field_provider->assign == NULL)
         return CMETA_TRAIT_MISSING;
 
     return ref->field_provider->assign(
