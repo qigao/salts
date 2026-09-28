@@ -19,7 +19,7 @@ Salts is built around a small set of shared semantics instead of independent fra
 - **CFlow** lifts the same type model into Graph, Stream, Reactive, Actor, Machine, and Statechart execution.
 - **NativeIO / Coroutine / Concurrency** provide bounded asynchronous execution over native platform facilities.
 - **CNet** provides transport/session primitives while keeping progress, ownership, and shutdown explicit.
-- **CSerde / CBind** provide format-neutral token and native binding primitives.
+- **CSerde** provides the canonical format-neutral token protocol; native binding is owned by SaltsUtils DataBind.
 
 The result is a modern programming model without replacing C's underlying execution model.
 
@@ -32,7 +32,7 @@ flowchart TB
     A["Frameworks & Applications<br/>TurboFlow · RulesForge · Flowie · TurboSCXML · Praktor"]
     D["Domain Infrastructure<br/>CHTTP · TurboDB · TinyTest"]
     E["Extensions<br/>salts-utils (including DataBind) · salts-net"]
-    S["Salts Foundation<br/>CMeta · CFlow · CSTL · CSerde/CBind<br/>NativeIO · Coroutine · Concurrency · CNet · Platform · Core"]
+    S["Salts Foundation<br/>CMeta · CSerde · CFlow · CSTL · Plugin<br/>NativeIO · Coroutine · Concurrency · CNet · Platform · Core"]
     P["Design Principles<br/>C11 generics · typed macros · CMeta semantics<br/>explicit ownership · bounded execution · no hidden managed runtime"]
 
     P --> S
@@ -48,7 +48,7 @@ flowchart TB
 | [CMeta](cmeta/README.md) | `Salts::CMeta` | Type identity, Enum/Struct metadata, traits, typed callables, interfaces, contracts, ranges, and finite compile-time specialization |
 | [CFlow](cflow/README.md) | `Salts::CFlow` | Typed Graph, Stream, Reactive, Actor, Machine, Statechart, interpretation, and compiled execution |
 | [CSTL](cstl/README.md) | `Salts::CSTL` / `Salts::CSTLStream` | Typed C11 containers, algorithms, ranges, and Stream facade |
-| CSerde / [CBind](cbind/README.md) | `Salts::CSerde` / `Salts::CBind` | Format-neutral token contracts and native C binding primitives |
+| CSerde | `Salts::CSerde` | Canonical format-neutral token reader/writer contract |\n| Plugin | `Salts::PluginABI` / `Salts::Plugin` | Dynamic module publication, loading, registry, lease, and quiescent unload |
 | Platform / Concurrency | `Salts::Platform` / `Salts::Concurrency` | Cross-platform primitives, executors, thread pools, synchronization, and scheduling foundations |
 | [Coroutine](coroutine/README.md) / [NativeIO](native-io/README.md) | `Salts::Coroutine` / `Salts::NativeIO` | Bounded coroutine execution and native asynchronous I/O |
 | [CNet](cnet/README.md) | `Salts::CNet` | Transport, TLS, WebSocket/session primitives, explicit progress and shutdown |

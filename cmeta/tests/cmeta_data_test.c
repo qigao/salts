@@ -1225,6 +1225,38 @@ spec("CMeta semantic data descriptors") {
     check_false(cmeta_data_desc_valid(&duplicate_desc));
   }
 
+  it("rejects Variant tags and native members outside the canonical storage contract") {
+    cmeta_data_variant_case cases[2] = {
+        cmeta_data_test_variant_cases[0],
+        cmeta_data_test_variant_cases[1]
+    };
+    cmeta_data_variant_shape shape = cmeta_data_test_variant_shape;
+    cmeta_data_desc desc = cmeta_data_test_variant_desc;
+
+    cases[0].offset = sizeof(cmeta_data_test_variant_storage);
+    shape.cases = cases;
+    desc.shape = &shape;
+    check_false(cmeta_data_desc_valid(&desc));
+
+    cases[0] = cmeta_data_test_variant_cases[0];
+    shape.tag_offset = 1u;
+    check_false(cmeta_data_desc_valid(&desc));
+
+    shape = cmeta_data_test_variant_shape;
+    cases[0] = cmeta_data_test_variant_cases[0];
+    cases[0].offset = shape.tag_offset;
+    shape.cases = cases;
+    desc.shape = &shape;
+    check_false(cmeta_data_desc_valid(&desc));
+
+    shape = cmeta_data_test_variant_shape;
+    cases[0] = cmeta_data_test_variant_cases[0];
+    cases[0].tag = INT64_MAX;
+    shape.cases = cases;
+    desc.shape = &shape;
+    check_false(cmeta_data_desc_valid(&desc));
+  }
+
   it("checks variant lifecycle adapters and enforces select postconditions") {
     cmeta_data_test_variant_storage object = {0};
     cmeta_data_variant_ops ops = cmeta_data_test_variant_ops;
@@ -1276,6 +1308,46 @@ spec("CMeta semantic data descriptors") {
     check_null(cmeta_data_variant_ops_of(&desc));
     check_equal(cmeta_data_variant_active_tag(&desc, &object, &tag),
                 CMETA_TYPE_MISMATCH);
+  }
+
+  it("moves active variants through the canonical value lifecycle") {
+    cmeta_data_test_variant_storage source = {0};
+    cmeta_data_test_variant_storage destination = {0};
+    bool zero = false;
+    int64_t tag = 0;
+
+    cmeta_data_test_variant_mode = CMETA_DATA_TEST_VARIANT_SELECT_OK;
+    check_null(cmeta_data_test_variant_desc.construct_ops);
+    check_true(cmeta_data_value_move_supported(
+        &cmeta_data_test_variant_desc));
+
+    check_equal(cmeta_data_variant_select(
+                    &cmeta_data_test_variant_desc, &source, INT64_C(1)),
+                CMETA_OK);
+    source.value.number = 42;
+
+    check_equal(cmeta_data_value_move(
+                    &cmeta_data_test_variant_desc,
+                    &destination, &source),
+                CMETA_OK);
+
+    check_equal(cmeta_data_variant_is_zero(
+                    &cmeta_data_test_variant_desc, &source, &zero),
+                CMETA_OK);
+    check_true(zero);
+    check_equal(cmeta_data_variant_active_tag(
+                    &cmeta_data_test_variant_desc, &destination, &tag),
+                CMETA_OK);
+    check_equal(tag, INT64_C(1));
+    check_equal(destination.value.number, 42);
+
+    check_equal(cmeta_data_variant_restore_zero(
+                    &cmeta_data_test_variant_desc, &destination),
+                CMETA_OK);
+    check_equal(cmeta_data_variant_is_zero(
+                    &cmeta_data_test_variant_desc, &destination, &zero),
+                CMETA_OK);
+    check_true(zero);
   }
 
   it("rejects an invalid or non-integral variant tag descriptor") {

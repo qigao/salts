@@ -1,7 +1,7 @@
 # Salts Canonical Architecture
 
 **Status:** canonical repository and ecosystem architecture  
-**Updated:** 2026-09-18
+**Updated:** 2026-09-27
 
 This document defines Salts module ownership, public target boundaries,
 dependency direction, and the relationship between the Salts foundation and
@@ -24,7 +24,7 @@ Extension layer
   salts-utils (including DataBind) · salts-net
                          ↑
 Salts foundation
-  CMeta · CFlow · CSTL · CSerde/CBind
+  CMeta · CSerde · CFlow · CSTL · Plugin
   NativeIO · Coroutine · Concurrency · CNet · Platform · Core
 ```
 
@@ -38,7 +38,7 @@ Salts owns the common systems semantics:
 - CMeta type identity, metadata, traits, interfaces, contracts, and finite generic specialization;
 - CFlow Graph/Stream/Reactive/Actor/Machine/Statechart execution;
 - CSTL typed containers, algorithms, and ranges;
-- CSerde/CBind format-neutral token/native-binding primitives;
+- CSerde canonical token primitives;\n- Plugin publication/loading/lease/lifecycle primitives;
 - NativeIO, Coroutine, Concurrency, CNet, Platform, and Core;
 
 NativeIO execution topology is orthogonal to higher semantic models. Its canonical contract defines Direct and Coroutine as current styles and Sharded/SMP as the planned shared-nothing style; CNet, CFlow Reactive, and CFlow Actor remain optional semantic consumers rather than mandatory layers. See [native-io/ARCHITECTURE.md](native-io/ARCHITECTURE.md).
@@ -172,7 +172,7 @@ flowchart TB
             METRICS["<b>Metrics & Monitoring</b>"]
             CONFIG["<b>Configuration</b>"]
             CSERDE["<b>CSerde</b><br/>Canonical Token Protocol"]
-            CBIND["<b>CBind</b><br/>Native Data Binding"]
+            PLUGIN["<b>Plugin</b><br/>Module ABI / Loader / Lease"]
             TESTING["<b>Testing & Simulation</b>"]
         end
     end
@@ -207,9 +207,7 @@ flowchart TB
 
     %% Cross-cutting ownership does not change target dependencies.
     CSERDE -. "canonical token transport" .-> SOURCE
-    CBIND -->|"semantic types / reflection"| REFLECT
-    CBIND -->|"depends on"| CSERDE
-    CBIND -. "native values" .-> STREAM
+    PLUGIN -. "publishes CMeta capabilities" .-> INTERFACE
 
     LOG -.-> RUN
     METRICS -.-> KTRACE
@@ -230,7 +228,7 @@ flowchart TB
     class TYPE,TRAIT,INTERFACE,CALLABLE,REFLECT,CODEGEN meta;
     class THREAD,EVENT,POLLER,TIMER,IO platformStyle;
     class LOG,METRICS,CONFIG,TESTING cross;
-    class CSERDE,CBIND binding;
+    class CSERDE,PLUGIN binding;
 
     style L4 fill:#fcfaff,stroke:#b7a2ef,stroke-width:1px,color:#38137a
     style L3 fill:#f4f9ff,stroke:#72aef5,stroke-width:1px,color:#124694
@@ -247,10 +245,9 @@ IO/Reactive 是可在同一 Kernel 上构建的后续 façade/model，不表示�
 runtime target。Layer 2/3 共同属于 CFlow；Layer 1 是 CMeta 语义工具层；Platform/OS 提供
 底层执行原语。
 
-`CSerde` 与 `CBind` 在客户视角中属于 `Cross-Cutting Capabilities`：它们横跨 parser、native
-value、Stream/Graph 等使用场景，但这不改变模块依赖事实。当前 target 仍然是
-`CBind -> CMeta + CSerde`，`CSerde` 不依赖 CFlow/CMeta，CBind 也不依赖 CFlow、CSTL、
-Core 或 SaltsUtils。
+CSerde 是 Salts 的 format-neutral token foundation。Native binding 位于
+SaltsUtils DataBind，并通过 installed CMeta/CSerde 单向依赖 Salts。
+Plugin 是独立的 module-lifecycle primitive，与 CFlow 无直接依赖。
 
 `tinytest/`、vendor、build tools 与 Lean/formal generation 属于测试、构建或验证平面，
 不进入上面的 runtime ownership 图。设备采集、串口、QueryVM 与格式/协议 parser 由
@@ -279,14 +276,30 @@ parser。
 具体格式由 parser/codec adapter 将 native syntax/events 投影为 CSerde，而不是在 CSerde
 内部建立第二套 parser。
 
-### CBind — native binding truth
+### Binding boundary — SaltsUtils DataBind
 
-`Salts::CBind` 只依赖 `Salts::CMeta + Salts::CSerde`。它负责依据 CMeta
-semantic shape 在 canonical CSerde values 与 native C storage 之间绑定。
+Salts 1.8 does not own a public native-binding engine. Salts owns the
+foundation facts consumed by binding:
 
-因此 CBind 是 parser-independent kernel：数据库、IPC、自定义 binary source 或测试
-provider 只要实现 CSerde contract，也可以直接复用 CBind。CBind 不直接依赖
-SaltsUtils、CSTL、CFlow 或 Core。
+```text
+CMeta  = native C semantic/storage truth
+CSerde = canonical token protocol truth
+```
+
+The single logical/native binding engine is SaltsUtils `Salts::DataBind`.
+Reusable scalar/struct/buffer/variant/container lifecycle mechanisms are
+converged there. Salts does not export `Salts::CBind`, forwarding headers,
+source copies, or compatibility aliases.
+
+```text
+SaltsUtils DataBind -> installed Salts::CMeta + Salts::CSerde
+Salts -/-> SaltsUtils
+```
+
+Legacy CBind-only paths are deliberately not retained as fallback:
+borrowed parser-source output is outside DataBind publication ownership, legacy
+enum storage is superseded by canonical enum-bits metadata, and legacy
+container layout recovery is superseded by CMeta collection/map providers.
 
 ### CFlow — execution truth
 
@@ -295,7 +308,7 @@ SaltsUtils、CSTL、CFlow 或 Core。
 private execution substrate。
 
 CFlow 不拥有容器算法、不解析 serialization format，也不把 raw `cserde_token` 当作可
-任意 `filter/map` 的业务 `Stream<T>`。Parser/CBind/CFlow 的组合边界位于完整
+任意 `filter/map` 的业务 `Stream<T>`。Parser/DataBind/CFlow 的组合边界位于完整
 semantic/native value 上。
 
 ### CSTL — container truth
@@ -394,23 +407,23 @@ native format syntax
         ↓
 SaltsUtils parser/event model
         ↓ format projection
-CSerde canonical values
+CSerde canonical values + CMeta semantic shape
         ↓
-CBind + CMeta semantic shape
+SaltsUtils DataBind
         ↓
 native C value
         ↓ optional composition
 CFlow Stream<T> / Graph / Machine
 ```
 
-反方向写出遵守同一分层：native value 由 CBind/CMeta 映射到 canonical writer contract，
-具体 serializer 再把 canonical events 转成目标 syntax/wire。
+反方向写出遵守同一分层：SaltsUtils DataBind 根据 CMeta 将 native value
+映射到 CSerde writer contract，具体 serializer 再把 canonical events 转成目标 syntax/wire。
 
 关键禁止项：
 
-- `CBind -> SaltsUtils`；
-- `CBind -> CSTL`；
-- `CBind -> CFlow`；
+- `Salts -> SaltsUtils`；
+- `Plugin -> CFlow`；
+- `CFlow -> Plugin`；
 - `CFlow -> CSTL`；
 - `CSerde -> concrete parser`；
 - 把 `Stream<cserde_token>` 暴露为可任意 `filter/map` 的业务 stream；
@@ -428,7 +441,8 @@ CSerde 的组合只能位于显式 adapter target；例如 `Salts::JsonCSerdeAda
 | --- | --- | --- | --- |
 | `Salts::CMeta` | none | none | type / semantic metadata |
 | `Salts::CSerde` | none | none | canonical token protocol |
-| `Salts::CBind` | `CMeta`, `CSerde` | none | native data binding |
+| `Salts::PluginABI` | `CMeta` | none | plugin publication ABI |
+| `Salts::Plugin` | `PluginABI` | `Core`, `Platform`, system loader | module loading / lease / lifecycle |
 | `Salts::Platform` | `Threads::Threads` | platform implementation | platform abstraction |
 | `Salts::Concurrency` | `Platform` | none | concurrency substrate |
 | `Salts::CFlow` | `CMeta`, `Platform` | `Concurrency` | graph/dataflow execution |
@@ -442,15 +456,16 @@ CSerde 的组合只能位于显式 adapter target；例如 `Salts::JsonCSerdeAda
 
 ## 6. Architectural invariants
 
-1. **依赖只向基础事实源收敛。** CMeta/CSerde 不因上层使用场景反向依赖 CBind、CFlow、
-   CSTL 或 SaltsUtils。
-2. **同一语义只保留一个 truth。** 类型与 semantic shape 属于 CMeta；canonical events
-   属于 CSerde；native binding 属于 CBind；execution 属于 CFlow；container algorithms
-   属于 CSTL。
-3. **repo ownership 与 link dependency 分离。** CBind/CSerde/UriParser 属于 Salts；SaltsUtils
-   通过 installed Salts targets 消费它们，具体格式组合通过独立 adapter target 显式表达。
-4. **组合能力位于 adapter/composition layer。** Parser + CBind、CBind + CFlow、CSTL + CFlow
-   不通过反向依赖污染底层 kernel。
+1. **依赖只向基础事实源收敛。** CMeta/CSerde 不因上层使用场景反向依赖
+   DataBind、CFlow、CSTL 或 SaltsUtils；Salts 不依赖 SaltsUtils。
+2. **同一语义只保留一个 truth。** 类型与 semantic shape 属于 CMeta；
+   canonical events 属于 CSerde；native binding 属于 SaltsUtils DataBind；
+   execution 属于 CFlow；module lifecycle 属于 Plugin；container algorithms 属于 CSTL。
+3. **repo ownership 与 link dependency 分离。** CSerde/UriParser/Plugin 属于 Salts；
+   DataBind 与 language bindings 属于 SaltsUtils，并通过 installed Salts targets
+   消费 foundation capabilities。
+4. **组合能力位于 adapter/composition layer。** Parser + DataBind、Plugin + CFlow、
+   CSTL + CFlow 不通过反向依赖污染底层 kernel。
 5. **raw structural transport 不是业务 stream。** CSerde token grammar 必须完整保留；CFlow
    pipeline 从完整 semantic/native value 边界开始。
 6. **PUBLIC 与 PRIVATE dependency 不混淆。** 公开头若暴露 Platform 类型，则 Platform 必须是

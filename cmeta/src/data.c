@@ -168,19 +168,92 @@ static bool cmeta_data_variant_tag_kind_valid(const cmeta_data_desc *tag) {
     return cmeta_data_desc_valid(tag);
 }
 
+static bool cmeta_data_variant_tag_value_valid(
+    const cmeta_data_desc *tag, int64_t value) {
+    if (tag == NULL) return false;
+
+    if (tag->kind == CMETA_DATA_SINT) {
+        const cmeta_data_integer_shape *shape =
+            (const cmeta_data_integer_shape *)tag->shape;
+        if (shape == NULL) return false;
+        if (shape->bits == 64u) return true;
+        {
+            const int64_t limit = INT64_C(1) << (shape->bits - 1u);
+            return value >= -limit && value < limit;
+        }
+    }
+
+    if (tag->kind == CMETA_DATA_UINT) {
+        const cmeta_data_integer_shape *shape =
+            (const cmeta_data_integer_shape *)tag->shape;
+        uint64_t max_value;
+        if (shape == NULL || value < 0) return false;
+        max_value = shape->bits == 64u
+                        ? UINT64_MAX
+                        : (UINT64_C(1) << shape->bits) - UINT64_C(1);
+        return (uint64_t)value <= max_value;
+    }
+
+    if (tag->kind == CMETA_DATA_ENUM) {
+        const cmeta_data_enum_shape *shape =
+            (const cmeta_data_enum_shape *)tag->shape;
+        return shape != NULL && shape->meta != NULL &&
+               cmeta_enum_item_by_value(shape->meta, value) != NULL;
+    }
+
+    return false;
+}
+
+static bool cmeta_data_variant_member_fits(
+    const cmeta_data_desc *owner, size_t offset,
+    const cmeta_data_desc *member) {
+    size_t extent;
+    if (owner == NULL || owner->storage_type == NULL ||
+        member == NULL || member->storage_type == NULL ||
+        !cmeta_type_desc_valid(member->storage_type) ||
+        member->storage_type->align == 0u ||
+        offset % member->storage_type->align != 0u ||
+        offset > owner->storage_type->size)
+        return false;
+    extent = owner->storage_type->size - offset;
+    return member->storage_type->size <= extent;
+}
+
+static bool cmeta_data_variant_members_overlap(
+    size_t left_offset, const cmeta_data_desc *left,
+    size_t right_offset, const cmeta_data_desc *right) {
+    size_t left_end;
+    size_t right_end;
+    if (left == NULL || left->storage_type == NULL ||
+        right == NULL || right->storage_type == NULL ||
+        left_offset > SIZE_MAX - left->storage_type->size ||
+        right_offset > SIZE_MAX - right->storage_type->size)
+        return true;
+    left_end = left_offset + left->storage_type->size;
+    right_end = right_offset + right->storage_type->size;
+    return left_offset < right_end && right_offset < left_end;
+}
+
 static bool cmeta_data_variant_shape_valid(
+    const cmeta_data_desc *owner,
     const cmeta_data_variant_shape *shape) {
     size_t i;
     size_t j;
 
-    if (shape == NULL || !cmeta_data_variant_tag_kind_valid(shape->tag) ||
+    if (owner == NULL || owner->storage_type == NULL ||
+        shape == NULL || !cmeta_data_variant_tag_kind_valid(shape->tag) ||
+        !cmeta_data_variant_member_fits(owner, shape->tag_offset, shape->tag) ||
         (shape->case_count != 0u && shape->cases == NULL))
         return false;
 
     for (i = 0u; i < shape->case_count; ++i) {
         const cmeta_data_variant_case *item = &shape->cases[i];
         if (!cmeta_data_nonempty(item->stable_id) ||
-            !cmeta_data_nonempty(item->name) || item->value == NULL)
+            !cmeta_data_nonempty(item->name) || item->value == NULL ||
+            !cmeta_data_variant_tag_value_valid(shape->tag, item->tag) ||
+            !cmeta_data_variant_member_fits(owner, item->offset, item->value) ||
+            cmeta_data_variant_members_overlap(
+                shape->tag_offset, shape->tag, item->offset, item->value))
             return false;
         for (j = i + 1u; j < shape->case_count; ++j)
             if (shape->cases[j].tag == item->tag)
@@ -251,7 +324,7 @@ bool cmeta_data_desc_valid(const cmeta_data_desc *desc) {
                 (const cmeta_data_struct_shape *)desc->shape);
         case CMETA_DATA_VARIANT:
             return cmeta_data_variant_shape_valid(
-                (const cmeta_data_variant_shape *)desc->shape);
+                desc, (const cmeta_data_variant_shape *)desc->shape);
         case CMETA_DATA_CUSTOM:
             return desc->shape != NULL;
         case CMETA_DATA_SEQUENCE:
