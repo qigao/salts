@@ -373,7 +373,7 @@ jobs:
       - name: Run CFlow contract tests
         shell: pwsh
         run: |
-          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cflow_seeded_reduce_test|cflow_io_native_test|cflow_io_native(_sharded)?_adapter_test|cflow_io_cnet_adapter_test|cflow_header_cpp_test|cflow_cnet_header_cpp_test|cflow_cnet_dependency_contract_test|cflow_pipe_data_plane_contract_test)
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cflow_seeded_reduce_test|cflow_io_native_test|cflow_io_native(_sharded)?_adapter_test|cflow_io_cnet_adapter_test|cflow_header_cpp_test|cflow_cnet_header_cpp_test|cflow_cnet_dependency_contract_test|cflow_pipe_data_plane_contract_test)$' --timeout 60 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run CNet contract tests
