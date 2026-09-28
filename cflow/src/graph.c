@@ -1111,13 +1111,17 @@ bool cflow_graph_reduce_seeded(cflow_graph *g,
     cflow_node_id id;
     if (!g || g->root >= g->subgraph_count)
         return fail(g, "graph is not initialized");
+    root = &g->subgraphs[g->root];
     if (!build_seeded_reduce_node(g, reducer, seed, &node))
         return false;
+    if (!cmeta_type_equal(root->output_type, node.input_type)) {
+        node_destroy(&node);
+        return fail(g, "seeded reduce input type does not match graph output");
+    }
     if (!cflow_graph_version_acquire(&version)) {
         node_destroy(&node);
         return fail(g, "graph version space exhausted");
     }
-    root = &g->subgraphs[g->root];
     old_tail = root->tail;
     id = subgraph_append_node(root, node);
     if (id == CMETA_INVALID_ID) {
