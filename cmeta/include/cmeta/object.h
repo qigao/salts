@@ -86,26 +86,36 @@ bool cmeta_object_method_provider_valid(
     const cmeta_object_method_provider *provider);
 
 /**
- * Explicit reflected-field mutation authority.
+ * Explicit reflected-field access authority.
  *
- * Reflection alone never implies writability. A provider names the exact
- * cmeta_data_desc object surface it can mutate and receives only field entries
- * from that descriptor's canonical struct shape. The incoming value is a
- * fully constructed semantic value matching field->value; the provider owns
- * the exact typed/native assignment policy.
+ * A provider names the exact cmeta_data_desc object surface it can expose.
+ * read is optional and enables logical/provider-backed fields whose native
+ * storage is not object + offset. assign is optional and is the only authority
+ * for reflected mutation. At least one callback must be present.
+ *
+ * The read callback returns one borrowed native value pointer matching
+ * field->value. The pointer is valid only under the enclosing object's
+ * documented mutation/lifetime rules. The assignment callback receives a
+ * fully constructed semantic value matching field->value.
  *
  * Providers may reject individual fields with CMETA_TRAIT_MISSING. CMeta does
- * not raw-memcpy managed fields and does not infer mutability from offsets.
+ * not raw-memcpy managed fields and never invents offsets for dynamic fields.
+ * The size prefix keeps the historical assign-only provider prefix valid while
+ * allowing read to be appended as an optional capability.
  */
 typedef cmeta_status (*cmeta_object_field_assign_fn)(
     void *context, void *object, const cmeta_data_field_desc *field,
     const void *value);
+typedef cmeta_status (*cmeta_object_field_read_fn)(
+    void *context, const void *object, const cmeta_data_field_desc *field,
+    const void **out_value);
 
 typedef struct cmeta_object_field_provider {
     size_t size;
     const cmeta_data_desc *data;
     void *context;
     cmeta_object_field_assign_fn assign;
+    cmeta_object_field_read_fn read;
 } cmeta_object_field_provider;
 
 bool cmeta_object_field_provider_valid(
@@ -198,7 +208,12 @@ cmeta_status cmeta_object_take(
 void cmeta_object_release(cmeta_object_ref *ref);
 
 /**
- * Resolve one reflected struct field and borrow its current native storage.
+ * Resolve one reflected field and borrow its current native storage.
+ *
+ * Provider-backed objects use field_provider->read when present. Otherwise
+ * fixed-layout fields use object + offset. A field marked with
+ * CMETA_FIELD_DYNAMIC_OFFSET therefore requires an explicit read provider and
+ * fails closed with CMETA_TRAIT_MISSING when none is available.
  *
  * No value copy or ownership transfer occurs. The returned pointer remains
  * valid only while the native object remains alive and the field is not
@@ -206,7 +221,7 @@ void cmeta_object_release(cmeta_object_ref *ref);
  *
  * Reflected field presence alone does not imply write permission.
  * cmeta_object_field_assign() is admitted only when this object carries an
- * explicit cmeta_object_field_provider.
+ * explicit assignment capability.
  */
 cmeta_status cmeta_object_field_read(
     const cmeta_object_ref *ref, const char *name,

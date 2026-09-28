@@ -250,7 +250,121 @@ static const cmeta_object_field_provider object_field_provider = {
     .size = sizeof(cmeta_object_field_provider),
     .data = &object_box_data,
     .context = &object_field_counts,
-    .assign = object_box_field_assign
+    .assign = object_box_field_assign,
+    .read = NULL
+};
+
+typedef struct dynamic_object_box {
+    int marker;
+    int slots[2];
+} dynamic_object_box;
+
+static const cmeta_type_desc dynamic_object_box_type = {
+    .name = "dynamic_object_box",
+    .size = sizeof(dynamic_object_box),
+    .align = _Alignof(dynamic_object_box),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = NULL,
+    .identity = NULL
+};
+
+static const cmeta_field_desc dynamic_object_layout_fields[] = {
+    {
+        .name = "value",
+        .type_name = "int",
+        .offset = CMETA_FIELD_DYNAMIC_OFFSET,
+        .size = sizeof(int),
+        .align = _Alignof(int),
+        .type = &cmeta_type_int,
+        .declared_type = NULL
+    }
+};
+
+static const cmeta_struct_desc dynamic_object_layout = {
+    .name = "dynamic_object_box",
+    .size = sizeof(dynamic_object_box),
+    .align = _Alignof(dynamic_object_box),
+    .fields = dynamic_object_layout_fields,
+    .field_count = 1u
+};
+
+static const cmeta_data_field_desc dynamic_object_data_fields[] = {
+    {
+        .stable_id = "test.dynamic_object_box.value",
+        .name = "value",
+        .offset = CMETA_FIELD_DYNAMIC_OFFSET,
+        .value = &cmeta_data_int
+    }
+};
+
+static const cmeta_data_struct_shape dynamic_object_shape = {
+    .layout = &dynamic_object_layout,
+    .fields = dynamic_object_data_fields,
+    .field_count = 1u
+};
+
+static const cmeta_data_desc dynamic_object_data = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.dynamic_object_box.data",
+    .display_name = "dynamic_object_box",
+    .kind = CMETA_DATA_STRUCT,
+    .storage_type = &dynamic_object_box_type,
+    .shape = &dynamic_object_shape,
+    .buffer_ops = NULL,
+    .enum_ops = NULL,
+    .variant_ops = NULL,
+    .fixed_ops = NULL,
+    .enum_bits_ops = NULL,
+    .collection_ops = NULL,
+    .map_ops = NULL,
+    .construct_ops = NULL
+};
+
+static cmeta_status dynamic_object_field_read(
+    void *context, const void *object, const cmeta_data_field_desc *field,
+    const void **out_value) {
+    const dynamic_object_box *box = (const dynamic_object_box *)object;
+
+    (void)context;
+    if (box == NULL || field == NULL || out_value == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    *out_value = NULL;
+    if (field != &dynamic_object_data_fields[0])
+        return CMETA_TRAIT_MISSING;
+    *out_value = &box->slots[1];
+    return CMETA_OK;
+}
+
+static cmeta_status dynamic_object_field_assign(
+    void *context, void *object, const cmeta_data_field_desc *field,
+    const void *value) {
+    dynamic_object_box *box = (dynamic_object_box *)object;
+
+    (void)context;
+    if (box == NULL || field == NULL || value == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (field != &dynamic_object_data_fields[0])
+        return CMETA_TRAIT_MISSING;
+    box->slots[1] = *(const int *)value;
+    return CMETA_OK;
+}
+
+static const cmeta_object_field_provider dynamic_object_field_provider = {
+    .size = sizeof(cmeta_object_field_provider),
+    .data = &dynamic_object_data,
+    .context = NULL,
+    .assign = dynamic_object_field_assign,
+    .read = dynamic_object_field_read
+};
+
+static const cmeta_object_field_provider dynamic_object_read_only_provider = {
+    .size = sizeof(cmeta_object_field_provider),
+    .data = &dynamic_object_data,
+    .context = NULL,
+    .assign = NULL,
+    .read = dynamic_object_field_read
 };
 
 typedef struct object_lifecycle_counts {
@@ -442,6 +556,83 @@ spec("CMeta canonical borrowed object") {
                     CMETA_INVALID_ARGUMENT);
         check_null(field_data);
         check_null(field_value);
+    }
+
+    it("reads provider-backed dynamic fields without fabricated offsets") {
+        dynamic_object_box box = {3, {5, 9}};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        const cmeta_data_desc *field_data = NULL;
+        const void *field_value = NULL;
+        int next = 17;
+
+        check_true(cmeta_data_desc_valid(&dynamic_object_data));
+        check_true(cmeta_object_field_provider_valid(
+            &dynamic_object_field_provider));
+        check_equal(cmeta_object_borrow_with_providers(
+                        &object, &box, &dynamic_object_data,
+                        &dynamic_object_field_provider, NULL),
+                    CMETA_OK);
+
+        check_equal(cmeta_object_field_read(
+                        &object, "value", &field_data, &field_value),
+                    CMETA_OK);
+        check_true(field_data == &cmeta_data_int);
+        check_true(field_value == &box.slots[1]);
+        check_equal(*(const int *)field_value, 9);
+
+        box.slots[1] = 12;
+        check_equal(*(const int *)field_value, 12);
+
+        check_equal(cmeta_object_field_assign(
+                        &object, "value", &cmeta_data_int, &next),
+                    CMETA_OK);
+        check_equal(box.marker, 3);
+        check_equal(box.slots[0], 5);
+        check_equal(box.slots[1], 17);
+
+        cmeta_object_release(&object);
+    }
+
+    it("fails closed for dynamic fields without a read provider") {
+        dynamic_object_box box = {1, {2, 3}};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        const cmeta_data_desc *field_data = &cmeta_data_long;
+        const void *field_value = &box;
+
+        check_equal(cmeta_object_borrow(
+                        &object, &box, &dynamic_object_data, NULL),
+                    CMETA_OK);
+        check_equal(cmeta_object_field_read(
+                        &object, "value", &field_data, &field_value),
+                    CMETA_TRAIT_MISSING);
+        check_null(field_data);
+        check_null(field_value);
+        cmeta_object_release(&object);
+    }
+
+    it("supports read-only dynamic field providers") {
+        dynamic_object_box box = {1, {2, 8}};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        const cmeta_data_desc *field_data = NULL;
+        const void *field_value = NULL;
+        int next = 11;
+
+        check_true(cmeta_object_field_provider_valid(
+            &dynamic_object_read_only_provider));
+        check_equal(cmeta_object_borrow_with_providers(
+                        &object, &box, &dynamic_object_data,
+                        &dynamic_object_read_only_provider, NULL),
+                    CMETA_OK);
+        check_equal(cmeta_object_field_read(
+                        &object, "value", &field_data, &field_value),
+                    CMETA_OK);
+        check_true(field_value == &box.slots[1]);
+        check_equal(*(const int *)field_value, 8);
+        check_equal(cmeta_object_field_assign(
+                        &object, "value", &cmeta_data_int, &next),
+                    CMETA_TRAIT_MISSING);
+        check_equal(box.slots[1], 8);
+        cmeta_object_release(&object);
     }
 
     it("assigns reflected fields only through explicit authority") {
