@@ -980,14 +980,14 @@ static int cnet_owner_tls_accept_write(cnet_owner_impl *impl,
 
     for (size_t index = 0u; index < span_count; ++index) {
       bool span_complete = false;
-      if (spans[index].data == NULL || spans[index].size == 0u ||
-          spans[index].size > (size_t)INT_MAX)
+      if (spans[index].data == NULL || spans[index].length == 0u ||
+          spans[index].length > (size_t)INT_MAX)
         return SALTS_EPROTO;
-      status = cnet_tls_write(&session->tls, spans[index].data, spans[index].size,
+      status = cnet_tls_write(&session->tls, spans[index].data, spans[index].length,
                               &span_complete);
       if (status != SALTS_OK) return status;
       if (!span_complete) return SALTS_OK;
-      status = cnet_write_queue_advance(&impl->writes, write, spans[index].size);
+      status = cnet_write_queue_advance(&impl->writes, write, spans[index].length);
       if (status != SALTS_OK) return status;
     }
   }
