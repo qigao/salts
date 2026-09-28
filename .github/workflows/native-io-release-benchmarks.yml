@@ -687,6 +687,39 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
+      - name: Run borrowed-copy versus owned receive benchmark
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_io_benchmark
+          CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
+          CNET_IO_BENCHMARK_RECEIVE_COMPARE: "1"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:IO_BENCHMARK_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "CNet receive ownership benchmark executable not found: $benchmark"
+          }
+          $output = & $benchmark 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "cnet-receive-ownership.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $evidence = @($output | Where-Object { $_ -match '^RECEIVE delta payload=' })
+          if ($evidence.Count -ne 3) {
+            throw "Expected 3 receive ownership evidence rows, got $($evidence.Count)"
+          }
+          foreach ($payload in @(64, 65536, 1048576)) {
+            if (-not ($evidence | Where-Object { $_ -match "^RECEIVE delta payload=${payload}:" })) {
+              throw "Missing receive ownership evidence for payload=$payload"
+            }
+          }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CNet borrowed-copy versus owned receive: $env:CNET_IO_BENCHMARK_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
       - name: Run flatten versus NativeIO SG merge-gate comparison
         if: steps.scope.outputs.adapted == 'true'
         shell: pwsh

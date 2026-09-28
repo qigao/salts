@@ -84,6 +84,17 @@ typedef struct cnet_api_test_wake_probe {
   uint64_t elapsed_ms;
 } cnet_api_test_wake_probe;
 
+typedef struct cnet_api_test_owned_receive_probe {
+  atomic_int connected;
+  atomic_int owned_received;
+  atomic_int borrowed_received;
+  atomic_int terminal;
+  atomic_int failed;
+  mem_slice_t owned_slice;
+  cnet_message_kind owned_kind;
+  unsigned char borrowed_value;
+} cnet_api_test_owned_receive_probe;
+
 #if !defined(_WIN32)
 typedef struct cnet_api_test_interrupt_probe {
   pthread_t target;
@@ -299,6 +310,52 @@ static void cnet_api_test_listener_receive(void *user, cnet_connection connectio
     atomic_store_explicit(&probe->failed, 1, memory_order_release);
   else probe->received_value = *(const unsigned char *)view->data;
   atomic_store_explicit(&probe->received, 1, memory_order_release);
+}
+
+static void cnet_api_test_owned_state(void *user, cnet_connection connection,
+                                      cnet_connection_state state,
+                                      const cnet_error *error) {
+  cnet_api_test_owned_receive_probe *probe =
+      (cnet_api_test_owned_receive_probe *)user;
+  (void)connection;
+  if (state == CNET_CONNECTION_CONNECTED) {
+    atomic_store_explicit(&probe->connected, 1, memory_order_release);
+  } else if (state == CNET_CONNECTION_CLOSED ||
+             state == CNET_CONNECTION_FAILED) {
+    if (state == CNET_CONNECTION_FAILED || error != NULL)
+      atomic_store_explicit(&probe->failed, 1, memory_order_release);
+    atomic_store_explicit(&probe->terminal, 1, memory_order_release);
+  }
+}
+
+static void cnet_api_test_owned_borrowed_receive(
+    void *user, cnet_connection connection, const cnet_receive_view *view) {
+  cnet_api_test_owned_receive_probe *probe =
+      (cnet_api_test_owned_receive_probe *)user;
+  (void)connection;
+  if (view == NULL || view->kind != CNET_MESSAGE_BYTES || view->size != 1u)
+    atomic_store_explicit(&probe->failed, 1, memory_order_release);
+  else
+    probe->borrowed_value = *(const unsigned char *)view->data;
+  atomic_fetch_add_explicit(&probe->borrowed_received, 1, memory_order_release);
+}
+
+static void cnet_api_test_owned_receive(void *user,
+                                        cnet_connection connection,
+                                        mem_slice_t slice,
+                                        cnet_message_kind kind) {
+  cnet_api_test_owned_receive_probe *probe =
+      (cnet_api_test_owned_receive_probe *)user;
+  (void)connection;
+  if (slice.buffer == NULL || slice.data == NULL || slice.length == 0u ||
+      kind != CNET_MESSAGE_BYTES || probe->owned_slice.buffer != NULL) {
+    atomic_store_explicit(&probe->failed, 1, memory_order_release);
+    mem_slice_release(&slice);
+  } else {
+    probe->owned_slice = slice;
+    probe->owned_kind = kind;
+  }
+  atomic_fetch_add_explicit(&probe->owned_received, 1, memory_order_release);
 }
 
 static void cnet_api_test_listener_send(void *user, cnet_connection connection, size_t size) {
@@ -748,6 +805,122 @@ spec("CNet public client API") {
     check_equal(cnet_listener_destroy(&listener), SALTS_OK);
     check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(cnet_client_destroy(&client), SALTS_OK);
+    cnet_api_test_close_socket(peer);
+  }
+
+  it("keeps an owned receive slice valid across later progress and client destroy") {
+    static const unsigned char owned_payload[] =
+        "owned-receive-survives-client-destroy";
+    static const unsigned char borrowed_payload = 0x5du;
+    cnet_client client = {0};
+    cnet_listener listener = {0};
+    cnet_client_config config = cnet_api_test_config();
+    cnet_listener_config listener_config = {
+        .backend = config.backend, .host = "127.0.0.1", .port = 0u, .backlog = 2u};
+    cnet_api_test_owned_receive_probe probe = {0};
+    cnet_api_test_socket peer = CNET_API_TEST_INVALID_SOCKET;
+    struct sockaddr_in address;
+    cnet_connection connection = {0};
+    cnet_observer observer = {.on_state = cnet_api_test_owned_state,
+                              .on_receive = cnet_api_test_owned_borrowed_receive,
+                              .user = &probe};
+    uint16_t port = 0u;
+    int ready = 0;
+
+    atomic_init(&probe.connected, 0);
+    atomic_init(&probe.owned_received, 0);
+    atomic_init(&probe.borrowed_received, 0);
+    atomic_init(&probe.terminal, 0);
+    atomic_init(&probe.failed, 0);
+
+    check_equal(cnet_set_receive_slice_handler(NULL, connection,
+                                               cnet_api_test_owned_receive,
+                                               &probe),
+                SALTS_EINVAL);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_listener_init(&listener, &listener_config), SALTS_OK);
+    check_equal(cnet_listener_port(&listener, &port), SALTS_OK);
+
+    peer = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    check_true(peer != CNET_API_TEST_INVALID_SOCKET);
+    check_equal(cnet_api_test_set_receive_timeout(peer), SALTS_OK);
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons(port);
+    check_equal(connect(peer, (const struct sockaddr *)&address,
+                        (int)sizeof(address)),
+                0);
+
+    check_equal(cnet_listener_wait(&listener, CNET_API_TEST_TIMEOUT_MS, &ready),
+                SALTS_OK);
+    check_equal(ready, 1);
+    check_equal(cnet_listener_accept(&listener, &client, &observer, &connection),
+                SALTS_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
+
+    check_equal(cnet_set_receive_slice_handler(&client, connection,
+                                               cnet_api_test_owned_receive,
+                                               &probe),
+                SALTS_OK);
+    check_equal(cnet_receive(&client, connection, 1u), SALTS_OK);
+    /* Already-admitted demand cannot change lifetime contract in flight. */
+    check_equal(cnet_set_receive_slice_handler(&client, connection, NULL, NULL),
+                SALTS_EBUSY);
+
+    check_equal(send(peer, (const char *)owned_payload,
+                     (int)(sizeof(owned_payload) - 1u), 0),
+                (int)(sizeof(owned_payload) - 1u));
+    check_equal(cnet_api_test_poll_until(&client, &probe.owned_received, 1),
+                SALTS_OK);
+    check_equal(atomic_load_explicit(&probe.borrowed_received,
+                                     memory_order_acquire),
+                0);
+    check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
+    check_not_null(probe.owned_slice.buffer);
+    check_not_null(probe.owned_slice.data);
+    check_equal(probe.owned_slice.length, sizeof(owned_payload) - 1u);
+    check_equal(probe.owned_kind, CNET_MESSAGE_BYTES);
+    check_true(mem_buffer_pool(probe.owned_slice.buffer) == mem_global());
+    check_equal(memcmp(probe.owned_slice.data, owned_payload,
+                       probe.owned_slice.length),
+                0);
+
+    /*
+     * Clear owned delivery only after demand settles; the next receive returns
+     * to the original borrowed callback without disturbing the held owner.
+     */
+    check_equal(cnet_set_receive_slice_handler(&client, connection, NULL, NULL),
+                SALTS_OK);
+    check_equal(cnet_receive(&client, connection, 1u), SALTS_OK);
+    check_equal(send(peer, (const char *)&borrowed_payload,
+                     (int)sizeof(borrowed_payload), 0),
+                (int)sizeof(borrowed_payload));
+    check_equal(cnet_api_test_poll_until(&client, &probe.borrowed_received, 1),
+                SALTS_OK);
+    check_equal(probe.borrowed_value, borrowed_payload);
+    check_equal(memcmp(probe.owned_slice.data, owned_payload,
+                       probe.owned_slice.length),
+                0);
+
+    check_equal(cnet_close(&client, connection), SALTS_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
+    check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
+    check_equal(memcmp(probe.owned_slice.data, owned_payload,
+                       probe.owned_slice.length),
+                0);
+
+    check_equal(cnet_listener_close(&listener), SALTS_OK);
+    check_equal(cnet_listener_destroy(&listener), SALTS_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+
+    /* The handed-off global-pool owner is independent of client lifetime. */
+    check_equal(memcmp(probe.owned_slice.data, owned_payload,
+                       probe.owned_slice.length),
+                0);
+    mem_slice_release(&probe.owned_slice);
+    check_null(probe.owned_slice.buffer);
     cnet_api_test_close_socket(peer);
   }
 
@@ -1360,6 +1533,9 @@ spec("CNet public client API") {
       salts_thread_yield();
     } while (salts_monotonic_ms() < stale_deadline);
     check_equal(stale_status, SALTS_ENOENT);
+    check_equal(cnet_set_receive_slice_handler(
+                    &client, connection, cnet_api_test_owned_receive, NULL),
+                SALTS_ENOENT);
     check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(cnet_client_destroy(&client), SALTS_OK);
     cnet_api_test_close_socket(accepted);

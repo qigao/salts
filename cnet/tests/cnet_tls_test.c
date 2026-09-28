@@ -186,6 +186,9 @@ typedef struct cnet_tls_network_probe {
   int failed;
   int failure_status;
   const char *failure_stage;
+  mem_slice_t owned_slice;
+  cnet_message_kind owned_kind;
+  size_t owned_received_size;
 } cnet_tls_network_probe;
 
 static void cnet_tls_network_state(void *user, cnet_connection connection,
@@ -222,6 +225,24 @@ static void cnet_tls_network_receive(void *user, cnet_connection connection,
   }
   memcpy(probe->received + probe->received_size, view->data, view->size);
   probe->received_size += view->size;
+}
+
+static void cnet_tls_network_receive_owned(void *user,
+                                           cnet_connection connection,
+                                           mem_slice_t slice,
+                                           cnet_message_kind kind) {
+  cnet_tls_network_probe *probe = (cnet_tls_network_probe *)user;
+  (void)connection;
+  if (kind != CNET_MESSAGE_BYTES || slice.buffer == NULL ||
+      slice.data == NULL || slice.length == 0u ||
+      probe->owned_slice.buffer != NULL) {
+    probe->failed = 1;
+    mem_slice_release(&slice);
+    return;
+  }
+  probe->owned_slice = slice;
+  probe->owned_kind = kind;
+  probe->owned_received_size = slice.length;
 }
 
 static void cnet_tls_network_send(void *user, cnet_connection connection, size_t size) {
@@ -575,17 +596,29 @@ spec("CNet bounded TLS engine") {
     check_equal(memcmp(server_probe.received, combined_requests, sizeof(combined_requests) - 1u), 0);
     check_equal(client_probe.sent, 2);
 
+    /*
+     * Switch one verified TLS plaintext receive to the explicit owned surface.
+     * The old borrowed callback must remain silent for this admitted demand.
+     */
+    check_equal(cnet_set_receive_slice_handler(
+                    &client, client_connection,
+                    cnet_tls_network_receive_owned, &client_probe),
+                SALTS_OK);
     check_equal(cnet_receive(&client, client_connection, 1u), SALTS_OK);
     check_equal(cnet_send(&server, server_probe.connection, response, sizeof(response) - 1u),
                 SALTS_OK);
     deadline = salts_monotonic_ms() + 5000u;
-    while ((client_probe.received_size == 0u || server_probe.sent == 0) &&
+    while ((client_probe.owned_received_size == 0u || server_probe.sent == 0) &&
            salts_monotonic_ms() < deadline)
       check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
                                          &accepted),
                   SALTS_OK);
-    check_equal(client_probe.received_size, sizeof(response) - 1u);
-    check_equal(memcmp(client_probe.received, response, sizeof(response) - 1u), 0);
+    check_equal(client_probe.received_size, (size_t)0u);
+    check_equal(client_probe.owned_received_size, sizeof(response) - 1u);
+    check_equal(client_probe.owned_kind, CNET_MESSAGE_BYTES);
+    check_not_null(client_probe.owned_slice.buffer);
+    check_true(mem_buffer_pool(client_probe.owned_slice.buffer) == mem_global());
+    check_equal(memcmp(client_probe.owned_slice.data, response, sizeof(response) - 1u), 0);
     check_equal(server_probe.sent, 1);
 
     server_probe.received_size = 0u;
@@ -626,6 +659,14 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_client_stop(&server, 5000u), SALTS_OK);
     check_equal(cnet_client_destroy(&client), SALTS_OK);
     check_equal(cnet_client_destroy(&server), SALTS_OK);
+
+    /* Owned decrypted plaintext remains valid after both CNet clients are gone. */
+    check_not_null(client_probe.owned_slice.buffer);
+    check_equal(client_probe.owned_received_size, sizeof(response) - 1u);
+    check_equal(memcmp(client_probe.owned_slice.data, response, sizeof(response) - 1u), 0);
+    mem_slice_release(&client_probe.owned_slice);
+    check_null(client_probe.owned_slice.buffer);
+
     check_equal(cnet_tls_server_destroy(&tls_server), SALTS_OK);
     check_equal(tt_remove_file(cert_path), 0);
     check_equal(tt_remove_file(key_path), 0);

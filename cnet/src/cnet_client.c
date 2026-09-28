@@ -23,6 +23,8 @@ typedef struct cnet_client_record {
   cnet_shard_connection internal;
   cnet_connection public_handle;
   cnet_observer observer;
+  cnet_receive_slice_fn receive_slice_handler;
+  void *receive_slice_user;
   cnet_uri_scheme scheme;
   size_t negotiated_alpn_size;
   size_t receive_pending;
@@ -168,6 +170,24 @@ static bool cnet_client_terminal(cnet_event_state state) {
   return state == CNET_EVENT_STATE_CLOSED || state == CNET_EVENT_STATE_FAILED;
 }
 
+static int cnet_client_materialize_receive(const cnet_dispatch_view *view,
+                                           mem_slice_t *out_slice) {
+  mem_buffer_t *buffer;
+  if (view == NULL || out_slice == NULL || view->kind != CNET_EVENT_RECEIVE ||
+      (view->size != 0u && view->data == NULL))
+    return SALTS_EINVAL;
+  memset(out_slice, 0, sizeof(*out_slice));
+  if (view->size == 0u) return SALTS_OK;
+
+  buffer = mem_get_buffer(mem_global(), view->size);
+  if (buffer == NULL) return SALTS_ENOMEM;
+  memcpy(mem_buffer_data(buffer), view->data, view->size);
+  mem_set_used(buffer, view->size);
+  *out_slice = mem_slice(buffer, 0u, view->size);
+  mem_buffer_release(buffer);
+  return out_slice->buffer != NULL ? SALTS_OK : SALTS_ENOMEM;
+}
+
 static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
   cnet_client_record *record = (cnet_client_record *)context;
   cnet_client_impl *impl = record->client;
@@ -175,15 +195,29 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
 
   cnet_active_callback_client = impl;
   if (view->kind == CNET_EVENT_RECEIVE) {
+    const cnet_message_kind kind =
+        record->scheme == CNET_URI_UDP ? CNET_MESSAGE_DATAGRAM : CNET_MESSAGE_BYTES;
     if (record->active && record->internal.session.slot == view->session.slot &&
         record->internal.session.generation == view->session.generation) {
       if (record->receive_pending == 0u) cnet_client_record_error(impl, SALTS_EPROTO);
       else --record->receive_pending;
     }
-    if (record->observer.on_receive != NULL) {
-      const cnet_receive_view public_view = {view->data, view->size,
-                                             record->scheme == CNET_URI_UDP ? CNET_MESSAGE_DATAGRAM
-                                                                            : CNET_MESSAGE_BYTES};
+    if (record->receive_slice_handler != NULL) {
+      mem_slice_t slice = {0};
+      const int materialize_status = cnet_client_materialize_receive(view, &slice);
+      if (materialize_status != SALTS_OK) {
+        cnet_client_record_error(impl, materialize_status);
+      } else {
+        /*
+         * Ownership of this single retained slice reference transfers to the
+         * callback by value. CNet must not release it after invocation.
+         */
+        record->receive_slice_handler(record->receive_slice_user, record->public_handle,
+                                      slice, kind);
+        ++impl->poll_callback_count;
+      }
+    } else if (record->observer.on_receive != NULL) {
+      const cnet_receive_view public_view = {view->data, view->size, kind};
       record->observer.on_receive(record->observer.user, record->public_handle, &public_view);
       ++impl->poll_callback_count;
     }
@@ -229,6 +263,8 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
       record->tls_command_pending = false;
       record->receive_pending = 0u;
       record->observer = (cnet_observer){0};
+      record->receive_slice_handler = NULL;
+      record->receive_slice_user = NULL;
       record->negotiated_alpn_size = 0u;
       record->negotiated_alpn[0] = '\0';
       if (impl->active_count == 0u) cnet_client_record_error(impl, SALTS_EPROTO);
@@ -423,6 +459,8 @@ static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_pa
   record->internal = internal;
   record->public_handle = (cnet_connection){(uint32_t)(index + 1u), internal.session.generation};
   record->observer = *observer;
+  record->receive_slice_handler = NULL;
+  record->receive_slice_user = NULL;
   record->scheme = scheme;
   record->active = true;
   record->pending_writes = 0u;
@@ -436,6 +474,8 @@ static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_pa
   } else {
     record->active = false;
     record->observer = (cnet_observer){0};
+    record->receive_slice_handler = NULL;
+    record->receive_slice_user = NULL;
     --impl->active_count;
     (void)cnet_shards_close(&impl->shards, internal);
   }
@@ -961,6 +1001,31 @@ int cnet_send_buffer_and_close(cnet_client *client, cnet_connection connection,
   return cnet_client_send_admit(impl, connection, &input);
 }
 
+int cnet_set_receive_slice_handler(cnet_client *client,
+                                   cnet_connection connection,
+                                   cnet_receive_slice_fn handler,
+                                   void *user) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_client_record *record;
+  cnet_session_state state = CNET_SESSION_FREE;
+  int status;
+
+  if (impl == NULL) return SALTS_EINVAL;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  record = cnet_client_find_record(impl, connection, NULL);
+  if (record == NULL) return SALTS_ENOENT;
+  if (record->receive_pending != 0u) return SALTS_EBUSY;
+  status = cnet_client_record_session_state(impl, record, &state);
+  if (status != SALTS_OK) return status;
+  if (state == CNET_SESSION_DRAINING || state == CNET_SESSION_TERMINAL ||
+      state == CNET_SESSION_RETIRED)
+    return SALTS_EBUSY;
+
+  record->receive_slice_handler = handler;
+  record->receive_slice_user = handler != NULL ? user : NULL;
+  return SALTS_OK;
+}
+
 int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand) {
   cnet_client_impl *impl = cnet_client_get(client);
   cnet_shard_connection internal = {0};
@@ -979,7 +1044,8 @@ int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand)
     else {
       record = cnet_client_find_record(impl, connection, &internal);
       if (record == NULL) status = SALTS_ENOENT;
-      else if (record->observer.on_receive == NULL) status = SALTS_EINVAL;
+      else if (record->observer.on_receive == NULL && record->receive_slice_handler == NULL)
+        status = SALTS_EINVAL;
       else if (record->close_command_pending || record->tls_command_pending)
         status = SALTS_EBUSY;
       else if (demand > SIZE_MAX - record->receive_pending) {
@@ -998,7 +1064,8 @@ int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand)
   if (!impl->admission_open) return SALTS_ESHUTDOWN;
   record = cnet_client_find_record(impl, connection, &internal);
   if (record == NULL) return SALTS_ENOENT;
-  if (record->observer.on_receive == NULL) return SALTS_EINVAL;
+  if (record->observer.on_receive == NULL && record->receive_slice_handler == NULL)
+    return SALTS_EINVAL;
   if (record->close_command_pending || record->tls_command_pending) return SALTS_EBUSY;
   if (demand > SIZE_MAX - record->receive_pending) {
     cnet_session_state session_state = CNET_SESSION_FREE;
