@@ -85,6 +85,56 @@ spec("CNet bounded callback events") {
     check_equal(cnet_event_queue_release(&events, &view), SALTS_OK);
   }
 
+  it("retains canonical receive backing without copying DATA") {
+    static const unsigned char payload_bytes[] = "canonical-receive";
+    const cnet_event_queue_config config = {
+        .capacity = 4u, .data_capacity = 2u, .max_payload_bytes = 64u,
+        .payload_capacity_bytes = 64u};
+    mem_buffer_t *backing = mem_get_buffer(mem_global(), sizeof(payload_bytes) - 1u);
+    mem_slice_t retained = {0};
+    cnet_event event = {0};
+    cnet_event_view view = {0};
+    const void *original;
+
+    check_not_null(backing);
+    memcpy(mem_buffer_data(backing), payload_bytes, sizeof(payload_bytes) - 1u);
+    mem_set_used(backing, sizeof(payload_bytes) - 1u);
+    original = mem_buffer_const_data(backing);
+    check_equal(mem_buffer_ref_count(backing), UINT32_C(1));
+
+    event = (cnet_event){.kind = CNET_EVENT_RECEIVE,
+                         .session = {1u, 1u},
+                         .state = CNET_EVENT_STATE_NONE,
+                         .status = SALTS_OK,
+                         .stage = CNET_SESSION_STAGE_NONE,
+                         .data = original,
+                         .size = sizeof(payload_bytes) - 1u,
+                         .backing = backing};
+
+    check_equal(cnet_event_queue_init(&events, &config), SALTS_OK);
+    check_equal(cnet_event_queue_publish(&events, &event), SALTS_OK);
+    check_equal(mem_buffer_ref_count(backing), UINT32_C(2));
+
+    check_equal(cnet_event_queue_take(&events, &view), SALTS_OK);
+    check_true(view.data == original);
+    check_true(view.backing == backing);
+    check_equal(view.size, sizeof(payload_bytes) - 1u);
+    check_equal(memcmp(view.data, payload_bytes, view.size), 0);
+
+    retained = mem_slice(view.backing, 0u, view.size);
+    check_not_null(retained.buffer);
+    check_equal(mem_buffer_ref_count(backing), UINT32_C(3));
+
+    check_equal(cnet_event_queue_release(&events, &view), SALTS_OK);
+    check_equal(mem_buffer_ref_count(backing), UINT32_C(2));
+    mem_buffer_release(backing);
+    backing = NULL;
+
+    check_equal(retained.length, sizeof(payload_bytes) - 1u);
+    check_equal(memcmp(retained.data, payload_bytes, retained.length), 0);
+    mem_slice_release(&retained);
+  }
+
   it("reserves state headroom when receive data reaches its own limit") {
     static const uint8_t first[] = {1u};
     static const uint8_t second[] = {2u, 3u};
