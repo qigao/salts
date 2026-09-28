@@ -175,7 +175,6 @@ static bool node_set_reduce_seed(cflow_node *node, const void *seed) {
         return false;
     }
     node->param_kind = CFLOW_NODE_PARAM_REDUCE_SEED;
-    node->params.reduce_seed.value = slot->storage;
     node->params.reduce_seed.owner = slot;
     return true;
 }
@@ -284,10 +283,11 @@ static bool clone_node(cflow_node *dst, const cflow_node *src) {
     dst->subgraphs = NULL;
     dst->fn_chain = NULL;
     if (src->param_kind == CFLOW_NODE_PARAM_REDUCE_SEED) {
-        const void *seed = src->params.reduce_seed.value;
+        const cflow_value_slot *src_seed = node_reduce_seed_slot(src);
+        const void *seed = src_seed ? src_seed->storage : NULL;
         memset(&dst->params, 0, sizeof(dst->params));
         dst->param_kind = CFLOW_NODE_PARAM_NONE;
-        if (!node_set_reduce_seed(dst, seed)) return false;
+        if (!seed || !node_set_reduce_seed(dst, seed)) return false;
     }
     if (src->fn_chain_count) {
         dst->fn_chain = malloc(src->fn_chain_count * sizeof(*dst->fn_chain));
@@ -1139,9 +1139,8 @@ bool cflow_graph_reduce_seeded(cflow_graph *g,
 }
 
 const void *cflow_node_reduce_seed(const cflow_node *node) {
-    return node && node->op == CFLOW_OP_REDUCE &&
-                   node->param_kind == CFLOW_NODE_PARAM_REDUCE_SEED
-        ? node->params.reduce_seed.value : NULL;
+    const cflow_value_slot *slot = node_reduce_seed_slot(node);
+    return slot && slot->live ? slot->storage : NULL;
 }
 
 
@@ -1393,7 +1392,6 @@ static bool validate_subgraph_nodes(const cflow_graph *g,
             if (!node->has_fn || node->fn_chain_count != 0u ||
                 node->has_relation || node->subgraph_count != 0u ||
                 !seed_slot || !seed_slot->live ||
-                seed_slot->storage != node->params.reduce_seed.value ||
                 !cmeta_type_equal(seed_slot->type, node->input_type) ||
                 !cmeta_type_equal(node->input_type, node->output_type) ||
                 cmeta_type_require_traits(node->input_type,
