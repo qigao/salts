@@ -182,6 +182,7 @@ typedef struct io_bench_cnet {
   io_bench_protocol protocol;
   io_bench_receive_mode receive_mode;
   unsigned char *receive_copy;
+  mem_slice_t held_receive_slice;
   const unsigned char *expected_data;
   size_t payload_size;
   size_t received;
@@ -1174,6 +1175,14 @@ static void io_bench_cnet_receive_owned(void *user, cnet_connection connection,
   const uint64_t callback_started = fixture->measuring ? salts_hrtime() : 0u;
   const cnet_message_kind expected =
       fixture->protocol == IO_BENCH_TCP ? CNET_MESSAGE_BYTES : CNET_MESSAGE_DATAGRAM;
+
+  /*
+   * Keep one receive owner beyond each callback return. Releasing the previous
+   * owner only when the next callback begins forces CNet to exercise its
+   * producer-backing rotation path while keeping benchmark retention bounded.
+   */
+  mem_slice_release(&fixture->held_receive_slice);
+
   if (slice.buffer == NULL || slice.data == NULL || slice.length == 0u ||
       kind != expected || slice.length > fixture->payload_size - fixture->received ||
       (fixture->protocol == IO_BENCH_UDP && slice.length != fixture->payload_size)) {
@@ -1203,8 +1212,9 @@ static void io_bench_cnet_receive_owned(void *user, cnet_connection connection,
       return;
     }
   }
+
   fixture->received += slice.length;
-  mem_slice_release(&slice);
+  fixture->held_receive_slice = slice;
   if (fixture->received == fixture->payload_size) fixture->done = 1;
   else {
     const uint64_t admission_started = fixture->measuring ? salts_hrtime() : 0u;
@@ -1322,6 +1332,7 @@ static int io_bench_cnet_exchange(io_bench_cnet *fixture, const unsigned char *s
   fixture->expected_data = sent;
   fixture->payload_size = length;
   fixture->received = 0u;
+  if (fixture->held_receive_slice.buffer != NULL) return SALTS_EPROTO;
   fixture->done = 0;
   fixture->send_done = 0;
   fixture->status = SALTS_OK;
@@ -1354,11 +1365,13 @@ static int io_bench_cnet_exchange(io_bench_cnet *fixture, const unsigned char *s
   if (status == SALTS_OK && fixture->send_mode != IO_BENCH_SEND_BASELINE &&
       fixture->received != length) status = SALTS_EIO;
   if (status == SALTS_OK) status = fixture->status;
+  mem_slice_release(&fixture->held_receive_slice);
   return status;
 }
 
 static int io_bench_cnet_destroy(io_bench_cnet *fixture) {
   int status = SALTS_OK;
+  mem_slice_release(&fixture->held_receive_slice);
   if (fixture->client.impl != NULL) {
     status = cnet_close(&fixture->client, fixture->connection);
     if (status == SALTS_OK) status = io_bench_wait_cnet(fixture, &fixture->terminal, 1);
@@ -2590,9 +2603,9 @@ static int io_bench_compare_receive_ownership(
 
   printf("\nCNet receive ownership comparison: backend=%s. "
          "borrowed_copy performs one consumer memcpy; owned_receive retains the "
-         "canonical producer receive backing and transfers a mem_slice_t owner "
-         "without an additional CNet payload memcpy. Neither row is a kernel "
-         "zero-copy claim.\n",
+         "canonical producer receive backing across callback return, forcing "
+         "bounded receive-buffer rotation, with no additional CNet payload memcpy. "
+         "Neither row is a kernel zero-copy claim.\n",
          backend->name);
   printf("| payload | borrowed+consumer-copy p50 us | owned receive p50 us | "
          "borrowed MiB/s | owned MiB/s | owned p50 delta | owned rate delta |\n");
