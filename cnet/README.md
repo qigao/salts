@@ -599,3 +599,33 @@ terminal success. The next TLS logical head starts on a later owner drive.
 A final TLS write carries the same close-after-send marker. Further public
 admission closes immediately, while `close_notify` starts only after the final
 plaintext has been accepted and all of its ciphertext has flushed.
+
+
+## Coroutine ownership boundary
+
+CNet remains a caller-driven, single-owner session/request state machine above NativeIO. It does
+not create a private coroutine executor, I/O thread pool, or second await/result registry.
+
+The dependency boundary is intentional:
+
+```text
+CNet session state
+      |
+      v
+NativeIO request/completion authority
+      |
+      +-> Direct / Coroutine / Sharded execution style
+```
+
+NativeIO coroutine frames are an optional execution-position mechanism owned by NativeIO. They do
+not replace CNet's session lifecycle, write FIFO, TLS state, or terminal callback contract.
+Application code that wants coroutine orchestration may use the generic Coroutine Executor above
+CNet, but the executor must return to the connection owner before mutating CNet session state.
+
+Current owner tests require that ordinary CNet NativeIO requests do not retain NativeIO coroutine
+frames. This is deliberate: adding a coroutine frame around the existing CNet owner state machine
+would duplicate execution state without removing an I/O hop. A future CNet coroutine-facing adapter
+requires a concrete consumer and paired evidence before it can change this boundary.
+
+Cross-owner work remains explicit and bounded. CNet never hides live connection migration,
+work-stealing, or an implicit worker-pool hop behind its public send/receive APIs.
