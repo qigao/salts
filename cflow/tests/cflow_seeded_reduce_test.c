@@ -159,14 +159,19 @@ suite("CFlow seeded reduce") {
         cflow_graph normalized = {0};
         cflow_graph other_surface = {0};
         cflow_graph other_normalized = {0};
+        cflow_graph unseeded_surface = {0};
+        cflow_graph unseeded_normalized = {0};
         cflow_plan plan = {0};
         cflow_plan other_plan = {0};
+        cflow_plan unseeded_plan = {0};
         cflow_plan_certificate certificate = {0};
         cflow_plan_certificate mismatch = {0};
+        cflow_plan_certificate unseeded_certificate = {0};
         const char *error = NULL;
 
         surface.root = normalized.root = other_surface.root =
-            other_normalized.root = CMETA_INVALID_ID;
+            other_normalized.root = unseeded_surface.root =
+            unseeded_normalized.root = CMETA_INVALID_ID;
         cflow_graph_init(&surface, &cmeta_type_long);
         check_true(cflow_graph_reduce_seeded(
             &surface, cflow_seeded_subtract.fn, &seed));
@@ -196,10 +201,27 @@ suite("CFlow seeded reduce") {
                 CFLOW_CERTIFIED_PATH_SEQUENTIAL));
         }
 
+        cflow_graph_init(&unseeded_surface, &cmeta_type_long);
+        check_true(cflow_graph_reduce(
+            &unseeded_surface, cflow_seeded_subtract.fn));
+        check_true(cflow_graph_normalize(
+            &unseeded_normalized, &unseeded_surface));
+        check_true(cflow_plan_compile(
+            &unseeded_plan, &unseeded_normalized, NULL));
+        check_true(cflow_plan_certificate_build(
+            &unseeded_certificate, &unseeded_normalized, &unseeded_plan,
+            CFLOW_CERTIFIED_PATH_SEQUENTIAL));
+        check_not_equal(certificate.graph_fingerprint,
+                        unseeded_certificate.graph_fingerprint);
+
+        cflow_plan_certificate_destroy(&unseeded_certificate);
         cflow_plan_certificate_destroy(&mismatch);
         cflow_plan_certificate_destroy(&certificate);
+        cflow_plan_destroy(&unseeded_plan);
         cflow_plan_destroy(&other_plan);
         cflow_plan_destroy(&plan);
+        cflow_graph_destroy(&unseeded_normalized);
+        cflow_graph_destroy(&unseeded_surface);
         cflow_graph_destroy(&other_normalized);
         cflow_graph_destroy(&other_surface);
         cflow_graph_destroy(&normalized);
