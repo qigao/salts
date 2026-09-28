@@ -286,7 +286,9 @@ bool cflow_graph_sorted(cflow_graph *g, size_t max_elements);
 /* Ordered seeded fold:
  *   acc = seed; for value in input: acc = reducer(acc, value)
  * Empty input produces one result equal to seed. The Graph owns a typed copy
- * of seed; reducer must satisfy the canonical REDUCE T(T,T)->T contract. */
+ * of seed; reducer must satisfy the canonical REDUCE T(T,T)->T contract.
+ * T must satisfy CFlow's normal value lifecycle contract and provide EQUAL so
+ * Graph clones/snapshots retain meaningful structural identity. */
 bool cflow_graph_reduce_seeded(
     cflow_graph *g,
     cmeta_callable reducer,
