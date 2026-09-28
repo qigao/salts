@@ -532,8 +532,11 @@ records, handshake timeout/cancel, accepted sockets, and clean close.
 
 设置 `CNET_IO_BENCHMARK_RECEIVE_COMPARE=1` 会运行独立的 receive ownership
 comparison，使用同一 CNet TCP echo harness 比较 `borrowed callback + consumer
-memcpy` 与 `producer-owned slice retain + release`，覆盖 64 B、64 KiB、1 MiB。
-该实验用于量化 producer-owned receive 的成本/收益；这里的 zero-copy 只指
+memcpy` 与 `producer-owned slice retain + bounded backing rotation`，覆盖 64 B、64 KiB、
+1 MiB。owned benchmark 会让 slice 跨 callback return 存活，直到下一 receive callback
+或本次 poll 返回后才 release，因此实际覆盖 retained owner 触发的 receive-buffer rotation，
+而不是只测 callback 内立即释放。该实验用于量化 producer-owned receive 的成本/收益；
+这里的 zero-copy 只指
 CNet receive backing → public owned callback 之间不再 payload memcpy，不代表
 kernel/TLS transform zero-copy，也不混入主 libuv/NativeIO 排名表。
 
