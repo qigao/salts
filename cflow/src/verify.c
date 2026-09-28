@@ -21,6 +21,7 @@ static bool fn_equal(cmeta_callable a, cmeta_callable b) {
 static bool node_shallow_equal(const cflow_node *a, const cflow_node *b) {
     if (!a || !b) return a == b;
     if (a->op != b->op || a->has_fn != b->has_fn ||
+        a->explicit_callable_types != b->explicit_callable_types ||
         a->fn_chain_count != b->fn_chain_count ||
         a->has_relation != b->has_relation ||
         a->has_size_parameter != b->has_size_parameter ||
