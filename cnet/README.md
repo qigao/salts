@@ -90,18 +90,30 @@ current command/TLS ownership until W3 migrates their ordering semantics.
 W3 then enables bounded multiple-write FIFO admission. NativeIO now exposes
 bounded scatter/gather writes, but `cnet_sendv()` deliberately remains the
 copy-on-admission convenience API: its caller-owned segment descriptors and
-payload pointers are borrowed only for the synchronous call. Zero-copy vectored
-stream sends use the explicit retained `cnet_send_slicev()` contract instead.
-`cnet_send_slicev_and_close()` uses the same retained scatter/gather ownership
-for the final logical write and closes only after that vector settles:
-CNet validates 1..`CNET_RETAINED_VECTOR_MAX` canonical `mem_slice_t`
-ranges (currently 32), retains each unique backing buffer once, copies only
-fixed range descriptors into the owner-local write slot, and preserves those
-ranges until the single logical terminal completion. One NativeIO submission
-still exposes at most `NATIVE_IO_VECTOR_MAX` spans (currently 16); a larger
-CNet logical vector advances through successive native span windows without
-flattening or publishing an intermediate CNet send terminal. Unsupported/TLS
-paths return `SALTS_ENOTSUP`; there is no hidden flatten fallback.
+payload pointers are borrowed only for the synchronous call. Retained vectored
+stream sends use the explicit `cnet_send_slicev()` contract instead.
+`cnet_send_slicev_and_close()` uses the same retained ownership for the final
+logical write and closes only after that vector settles. CNet validates
+1..`CNET_RETAINED_VECTOR_MAX` canonical `mem_slice_t` ranges (currently 32),
+retains each unique backing buffer once, copies only fixed range descriptors
+into the owner-local write slot, and preserves those ranges until the single
+logical terminal completion.
+
+For plaintext stream transports, the retained ranges flow into NativeIO
+scatter/gather. One NativeIO submission exposes at most
+`NATIVE_IO_VECTOR_MAX` spans (currently 16); a larger CNet logical vector
+advances through successive native span windows without flattening or
+publishing an intermediate CNet send terminal.
+
+TLS keeps the same retained-vector ownership but necessarily transforms
+plaintext before NativeIO sees it. CNet feeds retained spans to the TLS engine
+in order, advances only accepted spans, then sends the generated ciphertext
+through the normal TLS/NativeIO path. It does not flatten plaintext into copied
+CNet storage. TLS record and receive-callback boundaries are intentionally not
+preserved as vector boundaries. Small, highly fragmented TLS vectors may cost
+more TLS write/record operations; callers should avoid unnecessary
+fragmentation when throughput matters. UDP retained slicev remains unsupported;
+there is no hidden flatten fallback.
 
 The larger logical range bound remains fixed-memory. On a 64-bit build, raising
 the retained range/owner arrays from 16 to 32 adds approximately 512 bytes per
