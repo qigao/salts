@@ -271,9 +271,11 @@ typedef void (*cnet_receive_fn)(void *user, cnet_connection connection,
 /**
  * Owned receive callback.
  *
- * On entry, `slice` owns exactly one canonical Salts Core buffer reference.
- * The callback may keep the descriptor after return and must eventually release
- * that reference with mem_slice_release(). The backing is allocated from the
+ * For a non-empty receive, `slice` owns exactly one canonical Salts Core
+ * buffer reference. A zero-length receive (for example an empty UDP datagram)
+ * is delivered as an empty slice with no backing reference. The callback may
+ * keep a non-empty descriptor after return and must eventually release that
+ * reference with mem_slice_release(). The backing is allocated from the
  * process-global Salts pool, so an already delivered slice remains valid across
  * later cnet_client_poll(), connection close, cnet_client_stop(), and
  * cnet_client_destroy().
