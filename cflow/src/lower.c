@@ -60,7 +60,7 @@ static bool append_typed_node(lower_ctx *ctx, cflow_subgraph_id sgid,
              node->param_kind == CFLOW_NODE_PARAM_REDUCE_SEED)
         ok = cflow_graph_create_seeded_reduce_node(
             ctx->dst, sgid, node->fn,
-            node->params.reduce_seed.value, &id);
+            cflow_node_reduce_seed(node), &id);
     else
         ok = cflow_graph_create_node(ctx->dst, sgid, node->op, node->fn,
                                     nested, node->subgraph_count, &id);
