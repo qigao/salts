@@ -569,6 +569,19 @@ bool cmeta_callable_contract_valid(cmeta_callable fn) {
     return cmeta_callable_bind(fn, &bound);
 }
 
+bool cmeta_callable_explicit_adapter_valid(cmeta_callable fn) {
+    const cmeta_raw_call zero_call = {0};
+    return fn.dispatch == CMETA_CALLABLE_DISPATCH_ADAPTER &&
+           fn.meta.sig == CMETA_SIG_INVALID &&
+           memcmp(&fn.meta.call, &zero_call, sizeof(zero_call)) == 0 &&
+           cmeta_effect_property_contract_valid(
+               fn.meta.effects, fn.meta.properties) &&
+           fn.resolve == NULL &&
+           fn.invoke != NULL &&
+           fn.generate == NULL &&
+           fn.capture_size <= CMETA_CAPTURE_INLINE;
+}
+
 bool cmeta_callable_can_dispatch_canonical_raw(cmeta_callable fn) {
     cmeta_callable bound;
     return cmeta_callable_bind(fn, &bound) &&
@@ -595,6 +608,8 @@ bool cmeta_callable_invoke(const cmeta_callable *fn, void *out, const void *cons
     if (!fn) return false;
     if (fn->meta.sig != CMETA_SIG_INVALID)
         return fn->invoke ? fn->invoke(fn, out, args) : false;
+    if (cmeta_callable_explicit_adapter_valid(*fn))
+        return fn->invoke(fn, out, args);
     if (!cmeta_callable_bind(*fn, &bound) || !bound.invoke) return false;
     return bound.invoke(&bound, out, args);
 }
