@@ -24,6 +24,8 @@ Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
 - `observer.on_send` to observe completion before admitting the next ordered
   write on that connection;
 - `cnet_receive` to add explicit receive demand;
+- `cnet_set_receive_slice_handler` to opt one connection into explicit
+  application-owned receive slices without changing the legacy observer layout;
 - `cnet_close` for one connection;
 - `cnet_client_poll` to advance I/O and invoke callbacks on the caller;
 - `cnet_client_stop` followed by `cnet_client_destroy` for shutdown.
@@ -41,7 +43,29 @@ buffers are allocated only while in use; configuring a large per-message bound
 therefore no longer reserves its product with every event or connection slot.
 
 TCP, VSOCK, and Pipe deliver byte chunks. Connected UDP delivers one datagram per
-receive callback. A receive view is borrowed only until its callback returns.
+receive callback. The ordinary `observer.on_receive` view is borrowed only until
+its callback returns. Applications that need receive bytes to outlive the callback
+can install `cnet_set_receive_slice_handler()` for that connection. While
+installed, owned delivery takes precedence over the borrowed callback; changing
+the handler while receive demand is outstanding returns `SALTS_EBUSY`, so one
+admitted demand cannot change lifetime contracts in flight.
+
+For each non-empty owned delivery, CNet materializes the callback bytes into a
+canonical `mem_global()` buffer and transfers one `mem_slice_t` reference to
+the callback. The application releases it with `mem_slice_release()`. Because
+that backing belongs to the process-global Salts pool rather than the client,
+an already delivered slice remains valid across later poll calls, connection
+close, `cnet_client_stop()`, and `cnet_client_destroy()`. An empty UDP
+datagram is represented by an empty slice with no backing reference.
+
+This first owned surface is a **lifetime/ownership contract, not a kernel
+zero-copy claim**. The inline dispatcher currently receives borrowed owner
+scratch directly, while the fallback event queue copies into its own private
+payload pool. Normalizing the public owned lifetime therefore performs an
+explicit materialization copy today. A later internal optimization may move the
+canonical backing earlier in owner/event publication without changing this
+public API.
+
 TLS delivers verified encrypted byte streams through the same send/receive
 contract. The same header also exposes bound UDP, the KCP session engine, and
 their unified packet endpoint; WebSocket remains in `<cnet/websocket.h>`. CNet parses
@@ -495,6 +519,12 @@ receive demand across request-slot reuse, verified TLS, ALPN, mTLS, partial
 records, handshake timeout/cancel, accepted sockets, and clean close.
 
 ## Benchmark
+
+设置 `CNET_IO_BENCHMARK_RECEIVE_COMPARE=1` 会运行独立的 receive ownership
+comparison，使用同一 CNet TCP echo harness 比较 `borrowed callback + consumer
+memcpy` 与 `owned slice materialization + release`，覆盖 64 B、64 KiB、1 MiB。
+该实验用于量化 callback-lifetime ownership 的成本/收益，不把 materialization
+描述成 zero-copy，也不混入主 libuv/NativeIO 排名表。
 
 `cnet_io_benchmark` 比较 libuv、NativeIO direct、NativeIO coroutine 和 CNet
 public byte API。每个客户端使用独立 blocking loopback echo peer；每个 payload
