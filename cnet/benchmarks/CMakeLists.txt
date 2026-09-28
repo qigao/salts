@@ -24,6 +24,17 @@ set_target_properties(cnet_io_benchmark PROPERTIES
   C_EXTENSIONS OFF
   LINKER_LANGUAGE CXX)
 
+cmake_add_benchmark(cnet_tls_sg_benchmark
+  SOURCES cnet_tls_sg_benchmark.c
+  LIBS cnet_profile Salts::TinyTest
+  FOLDER "cnet/benchmarks")
+target_include_directories(cnet_tls_sg_benchmark PRIVATE ../src)
+set_target_properties(cnet_tls_sg_benchmark PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF
+  LINKER_LANGUAGE CXX)
+
 cmake_add_benchmark(cnet_owner_lifecycle_compare
   SOURCES cnet_owner_lifecycle_compare.c cnet_benchmark_stats.c
   LIBS Salts::Platform Salts::Core Salts::NativeIO
