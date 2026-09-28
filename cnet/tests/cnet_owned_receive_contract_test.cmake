@@ -8,7 +8,9 @@ foreach(_required IN ITEMS
     "int cnet_set_receive_slice_handler("
     "mem_get_buffer(mem_global(), view->size)"
     "record->receive_slice_handler(record->receive_slice_user"
-    "record->observer.on_receive == NULL && record->receive_slice_handler == NULL")
+    "record->observer.on_receive == NULL && record->receive_slice_handler == NULL"
+    "record->receive_slice_handler = NULL;"
+    "record->receive_slice_user = NULL;")
   string(FIND "${_header}\n${_client}" "${_required}" _index)
   if(_index EQUAL -1)
     message(FATAL_ERROR
