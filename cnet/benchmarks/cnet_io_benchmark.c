@@ -2589,9 +2589,10 @@ static int io_bench_compare_receive_ownership(
   if (status != SALTS_OK) return status;
 
   printf("\nCNet receive ownership comparison: backend=%s. "
-         "borrowed_copy performs one consumer memcpy; owned_receive performs "
-         "one CNet mem_global() materialization and transfers a mem_slice_t owner. "
-         "Neither row is a kernel zero-copy claim.\n",
+         "borrowed_copy performs one consumer memcpy; owned_receive retains the "
+         "canonical producer receive backing and transfers a mem_slice_t owner "
+         "without an additional CNet payload memcpy. Neither row is a kernel "
+         "zero-copy claim.\n",
          backend->name);
   printf("| payload | borrowed+consumer-copy p50 us | owned receive p50 us | "
          "borrowed MiB/s | owned MiB/s | owned p50 delta | owned rate delta |\n");
