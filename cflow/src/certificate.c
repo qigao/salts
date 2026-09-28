@@ -221,7 +221,6 @@ bool cflow_plan_certificate_build(cflow_plan_certificate *certificate,
                     ? CMETA_EFFECT_STATEFUL : call->fn.meta.effects,
                 .properties = intrinsic
                     ? CMETA_PROP_NONE : call->fn.meta.properties,
-                .parameter_kind = (uint32_t)inst->param_kind,
                 .input_type = call->input_type ? call->input_type : inst->input_type,
                 .output_type = call->output_type ? call->output_type : inst->output_type,
                 .callable = call->fn,
@@ -284,8 +283,6 @@ static bool certificate_rows_equal(const cflow_plan_certificate *left,
             return certificate_fail(error, "certificate effect mismatch");
         if (a->properties != b->properties)
             return certificate_fail(error, "certificate property mismatch");
-        if (a->parameter_kind != b->parameter_kind)
-            return certificate_fail(error, "certificate parameter kind mismatch");
     }
     return true;
 }
