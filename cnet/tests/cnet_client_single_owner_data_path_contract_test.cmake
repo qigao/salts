@@ -73,9 +73,13 @@ if(tls_sg_marker EQUAL -1 OR tls_sg_end EQUAL -1 OR tls_sg_end LESS tls_sg_marke
 endif()
 math(EXPR tls_sg_length "${tls_sg_end} - ${tls_sg_marker}")
 string(SUBSTRING "${owner}" ${tls_sg_marker} ${tls_sg_length} tls_sg_path)
-string(FIND "${tls_sg_path}" "session->peer.scheme == CNET_URI_TLS" tls_sg_reject)
-if(tls_sg_reject EQUAL -1)
-  message(FATAL_ERROR "CNet TLS retained-SG unsupported boundary changed")
+string(FIND "${tls_sg_path}" "session->peer.scheme == CNET_URI_TLS" tls_sg_tls_reject)
+if(NOT tls_sg_tls_reject EQUAL -1)
+  message(FATAL_ERROR "CNet retained-SG direct path unexpectedly rejects TLS")
+endif()
+string(FIND "${tls_sg_path}" "session->peer.scheme == CNET_URI_UDP" tls_sg_udp_reject)
+if(tls_sg_udp_reject EQUAL -1)
+  message(FATAL_ERROR "CNet retained-SG direct path must still reject UDP")
 endif()
 
 
