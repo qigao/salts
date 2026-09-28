@@ -2,6 +2,7 @@
 #include <cflow/graph.h>
 #include "dense_successor_index.h"
 #include "graph_internal.h"
+#include "value_storage.h"
 
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -149,8 +150,44 @@ static bool reserve_edges(cflow_subgraph *sg, size_t need) {
     return true;
 }
 
+static cflow_value_slot *node_reduce_seed_slot(const cflow_node *node) {
+    if (!node || node->op != CFLOW_OP_REDUCE ||
+        node->param_kind != CFLOW_NODE_PARAM_REDUCE_SEED ||
+        !node->params.reduce_seed.owner)
+        return NULL;
+    return (cflow_value_slot *)node->params.reduce_seed.owner;
+}
+
+static bool node_set_reduce_seed(cflow_node *node, const void *seed) {
+    cflow_value_slot *slot;
+    if (!node || node->op != CFLOW_OP_REDUCE || !seed ||
+        node->param_kind != CFLOW_NODE_PARAM_NONE ||
+        !cmeta_type_equal(node->input_type, node->output_type) ||
+        cmeta_type_require_traits(node->input_type, CMETA_TRAIT_EQUAL) != CMETA_OK ||
+        !cflow_value_type_supported(node->input_type))
+        return false;
+    slot = (cflow_value_slot *)calloc(1u, sizeof(*slot));
+    if (!slot) return false;
+    if (!cflow_value_slot_init(slot, node->input_type) ||
+        !cflow_value_slot_copy(slot, seed)) {
+        cflow_value_slot_destroy(slot);
+        free(slot);
+        return false;
+    }
+    node->param_kind = CFLOW_NODE_PARAM_REDUCE_SEED;
+    node->params.reduce_seed.value = slot->storage;
+    node->params.reduce_seed.owner = slot;
+    return true;
+}
+
 static void node_destroy(cflow_node *n) {
+    cflow_value_slot *seed_slot;
     if (!n) return;
+    seed_slot = node_reduce_seed_slot(n);
+    if (seed_slot) {
+        cflow_value_slot_destroy(seed_slot);
+        free(seed_slot);
+    }
     free(n->subgraphs);
     free(n->fn_chain);
     memset(n, 0, sizeof(*n));
@@ -246,6 +283,12 @@ static bool clone_node(cflow_node *dst, const cflow_node *src) {
     *dst = *src;
     dst->subgraphs = NULL;
     dst->fn_chain = NULL;
+    if (src->param_kind == CFLOW_NODE_PARAM_REDUCE_SEED) {
+        const void *seed = src->params.reduce_seed.value;
+        memset(&dst->params, 0, sizeof(dst->params));
+        dst->param_kind = CFLOW_NODE_PARAM_NONE;
+        if (!node_set_reduce_seed(dst, seed)) return false;
+    }
     if (src->fn_chain_count) {
         dst->fn_chain = malloc(src->fn_chain_count * sizeof(*dst->fn_chain));
         if (!dst->fn_chain) return false;
@@ -671,6 +714,52 @@ bool cflow_graph_create_sorted_node(cflow_graph *g,
     return true;
 }
 
+
+static bool build_seeded_reduce_node(cflow_graph *g,
+                                     cmeta_callable reducer,
+                                     const void *seed,
+                                     cflow_node *out_node) {
+    cflow_node node = {0};
+    if (!g || !seed || !out_node ||
+        !derive_node(g, CFLOW_OP_REDUCE, reducer, NULL, 0u, &node))
+        return false;
+    if (!cmeta_type_equal(node.input_type, node.output_type) ||
+        !node_set_reduce_seed(&node, seed)) {
+        node_destroy(&node);
+        return fail(g, "seeded reduce requires an owned comparable T seed");
+    }
+    *out_node = node;
+    return true;
+}
+
+bool cflow_graph_create_seeded_reduce_node(
+    cflow_graph *g,
+    cflow_subgraph_id subgraph,
+    cmeta_callable reducer,
+    const void *seed,
+    cflow_node_id *out_node) {
+    uint64_t version;
+    cflow_subgraph *sg =
+        g && subgraph < g->subgraph_count ? &g->subgraphs[subgraph] : NULL;
+    cflow_node node = {0};
+    cflow_node_id id;
+    if (!sg || !out_node || !build_seeded_reduce_node(g, reducer, seed, &node))
+        return false;
+    if (!cflow_graph_version_acquire(&version)) {
+        node_destroy(&node);
+        return fail(g, "graph version space exhausted");
+    }
+    id = subgraph_append_node(sg, node);
+    if (id == CMETA_INVALID_ID) {
+        node_destroy(&node);
+        return fail(g, "seeded reduce node allocation failed");
+    }
+    g->version = version;
+    g->error = NULL;
+    *out_node = id;
+    return true;
+}
+
 bool cflow_graph_create_relation_node(cflow_graph *g,
                                       cflow_subgraph_id subgraph,
                                       const cmeta_type_desc *input_type,
@@ -1012,6 +1101,50 @@ bool cflow_graph_sorted(cflow_graph *g, size_t max_elements) {
 }
 
 
+bool cflow_graph_reduce_seeded(cflow_graph *g,
+                               cmeta_callable reducer,
+                               const void *seed) {
+    uint64_t version;
+    cflow_subgraph *root;
+    cflow_node node = {0};
+    cflow_node_id old_tail;
+    cflow_node_id id;
+    if (!g || g->root >= g->subgraph_count)
+        return fail(g, "graph is not initialized");
+    if (!build_seeded_reduce_node(g, reducer, seed, &node))
+        return false;
+    if (!cflow_graph_version_acquire(&version)) {
+        node_destroy(&node);
+        return fail(g, "graph version space exhausted");
+    }
+    root = &g->subgraphs[g->root];
+    old_tail = root->tail;
+    id = subgraph_append_node(root, node);
+    if (id == CMETA_INVALID_ID) {
+        node_destroy(&node);
+        return fail(g, "seeded reduce node allocation failed");
+    }
+    if (old_tail != CMETA_INVALID_ID &&
+        !subgraph_add_edge(root, old_tail, id)) {
+        node_destroy(&root->nodes[id]);
+        --root->node_count;
+        root->tail = old_tail;
+        root->output_type = old_tail < root->node_count
+            ? root->nodes[old_tail].output_type : root->input_type;
+        return fail(g, "seeded reduce edge allocation failed");
+    }
+    g->version = version;
+    g->error = NULL;
+    return true;
+}
+
+const void *cflow_node_reduce_seed(const cflow_node *node) {
+    return node && node->op == CFLOW_OP_REDUCE &&
+                   node->param_kind == CFLOW_NODE_PARAM_REDUCE_SEED
+        ? node->params.reduce_seed.value : NULL;
+}
+
+
 static bool relation_schema_valid(cflow_graph *g, cflow_relation_schema schema) {
     switch (schema.coordination) {
         case CFLOW_REL_COORD_ALL:
@@ -1252,6 +1385,20 @@ static bool validate_subgraph_nodes(const cflow_graph *g,
                     CMETA_OK ||
                 !cmeta_type_equal(node->input_type, node->output_type)) {
                 if (error) *error = "sorted node metadata is inconsistent";
+                return false;
+            }
+        } else if (node->op == CFLOW_OP_REDUCE &&
+                   node->param_kind == CFLOW_NODE_PARAM_REDUCE_SEED) {
+            const cflow_value_slot *seed_slot = node_reduce_seed_slot(node);
+            if (!node->has_fn || node->fn_chain_count != 0u ||
+                node->has_relation || node->subgraph_count != 0u ||
+                !seed_slot || !seed_slot->live ||
+                seed_slot->storage != node->params.reduce_seed.value ||
+                !cmeta_type_equal(seed_slot->type, node->input_type) ||
+                !cmeta_type_equal(node->input_type, node->output_type) ||
+                cmeta_type_require_traits(node->input_type,
+                                          CMETA_TRAIT_EQUAL) != CMETA_OK) {
+                if (error) *error = "seeded reduce metadata is inconsistent";
                 return false;
             }
         } else if (node->param_kind != CFLOW_NODE_PARAM_NONE) {
