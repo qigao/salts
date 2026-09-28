@@ -60,10 +60,18 @@ receive scratch and the public owned callback.
 
 After successful publication, CNet reuses the same receive backing when nobody
 retained it. If an owned callback or fallback event queue retains the backing,
-the session rotates to a fresh bounded buffer before rearming, so future network
-progress cannot overwrite application-owned bytes. The fallback event queue
-retains canonical DATA backing rather than copying it into its private payload
-pool, while non-DATA payloads such as ALPN keep the existing copied path.
+the session moves that reference into one lazy spare slot and rearms on another
+buffer, so future network progress cannot overwrite application-owned bytes.
+For the common case where at most one slice remains live across callback return,
+the two buffers then ping-pong: once the application releases the previous slice,
+its spare refcount returns to one and CNet promotes it as the next active backing
+without allocation. If multiple slices remain live concurrently, CNet drops only
+its old spare reference and allocates another active buffer; user-owned slices
+stay valid. Thus CNet itself caches at most one spare per session.
+
+The fallback event queue retains canonical DATA backing rather than copying it
+into its private payload pool, while non-DATA payloads such as ALPN keep the
+existing copied path.
 
 The application releases owned slices with `mem_slice_release()`. Because the
 canonical backing belongs to the process-global Salts pool rather than the
