@@ -433,6 +433,14 @@ bool cmeta_callable_bind(cmeta_callable in, cmeta_callable *out);
 const cmeta_sig_desc *cmeta_callable_signature(cmeta_callable fn);
 bool cmeta_callable_contract_valid(cmeta_callable fn);
 bool cmeta_callable_can_dispatch_canonical_raw(cmeta_callable fn);
+/**
+ * Validate an adapter-only callable whose value types are carried explicitly
+ * by a higher-level admission artifact instead of the finite cmeta_sig table.
+ *
+ * The invoke ABI is unchanged: invoke(self, out, args). Explicit adapters have
+ * no raw target, resolver, generator, or typed signature row.
+ */
+bool cmeta_callable_explicit_adapter_valid(cmeta_callable fn);
 /* Canonical-raw identity uses the authoritative raw target across translation
  * units. Adapter identity uses adapter/generator pointers and capture bytes. */
 bool cmeta_callable_same(cmeta_callable a, cmeta_callable b);
