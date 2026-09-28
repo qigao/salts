@@ -2451,7 +2451,8 @@ static int io_bench_compare_sg_windows(
         status = io_bench_run_counted(
             IO_BENCH_TCP, IO_BENCH_CNET, payload_size, false,
             backend->kind, methods[method].mode, segment_count,
-            WINDOW_WARMUPS, WINDOW_EXCHANGES, methods[method].enable_nodelay, result);
+            WINDOW_WARMUPS, WINDOW_EXCHANGES, methods[method].enable_nodelay,
+            IO_BENCH_RECEIVE_BORROWED_DIRECT, result);
         if (status != SALTS_OK) {
           free(runs);
           return status;
