@@ -1,5 +1,7 @@
 #include "cnet_tls.h"
 #include "cnet_write_queue.h"
+
+#define TINYTEST_NO_MAIN
 #include "tinytest.h"
 
 #include <salts/clock.h>
