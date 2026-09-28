@@ -78,6 +78,16 @@ using cnet_start_tls_function = int (*)(cnet_client *, cnet_connection,
                                         const cnet_start_tls_options *);
 static_assert(std::is_same<decltype(&cnet_start_tls), cnet_start_tls_function>::value,
               "TLS upgrade must keep its C linkage signature");
+using cnet_receive_slice_handler_function =
+    int (*)(cnet_client *, cnet_connection, cnet_receive_slice_fn, void *);
+static_assert(
+    std::is_same<decltype(&cnet_set_receive_slice_handler),
+                 cnet_receive_slice_handler_function>::value,
+    "owned receive handler setter must keep its additive C linkage signature");
+using cnet_owned_receive_callback =
+    void (*)(void *, cnet_connection, mem_slice_t, cnet_message_kind);
+static_assert(std::is_same<cnet_receive_slice_fn, cnet_owned_receive_callback>::value,
+              "owned receive callback must transfer a C value slice descriptor");
 using cnet_send_buffer_function = int (*)(cnet_client *, cnet_connection, mem_buffer_t *);
 static_assert(std::is_same<decltype(&cnet_send_buffer), cnet_send_buffer_function>::value,
               "retained-buffer send must keep its C linkage signature");
