@@ -534,7 +534,10 @@ spec("CNet bounded TLS engine") {
                        CNET_TLS_CHANNEL_BINDING_BYTES),
                 0);
 
-    check_equal(cnet_receive(&server, server_probe.connection, 2u), SALTS_OK);
+    /* TLS records and receive callbacks are not aligned with one logical slicev send.
+     * Retained vectors feed plaintext spans independently, so request enough bounded
+     * receive demand for the complete byte stream without depending on record grouping. */
+    check_equal(cnet_receive(&server, server_probe.connection, 4u), SALTS_OK);
     request_first = mem_get_buffer(mem_global(), 2u);
     request_second = mem_get_buffer(mem_global(), 2u);
     check_not_null(request_first);
