@@ -39,9 +39,6 @@ typedef struct cflow_plan_certificate_row {
     uint32_t callable_index;
     uint32_t effects;
     uint32_t properties;
-    /* Mirrors cflow_node_param_kind. In particular,
-     * CFLOW_NODE_PARAM_REDUCE_SEED distinguishes seeded from unseeded REDUCE. */
-    uint32_t parameter_kind;
     const cmeta_type_desc *input_type;
     const cmeta_type_desc *output_type;
     cmeta_callable callable;
