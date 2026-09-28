@@ -167,6 +167,9 @@ static cnet_owner_impl *cnet_owner_get(cnet_owner *owner) {
   return owner != NULL ? (cnet_owner_impl *)owner->impl : NULL;
 }
 
+static cnet_owner_session *cnet_owner_find_session(cnet_owner_impl *impl,
+                                                   cnet_session_handle handle);
+
 #if defined(CNET_INTERNAL_PROFILING)
 static uint64_t cnet_owner_profile_start(const cnet_owner_impl *impl) {
   return impl->profile_active ? salts_hrtime() : 0u;
