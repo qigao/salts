@@ -26,6 +26,14 @@ typedef struct cmeta_struct_desc {
     size_t field_count;
 } cmeta_struct_desc;
 
+/*
+ * Explicit marker for a reflected logical field whose native storage is not
+ * reachable as object + offset. Such fields require a provider-backed object
+ * access path; fixed-layout reflection must fail closed instead of inventing
+ * an offset.
+ */
+#define CMETA_FIELD_DYNAMIC_OFFSET ((size_t)-1)
+
 CMETA_INLINE const cmeta_field_desc *
 cmeta_struct_field(const cmeta_struct_desc *desc, size_t index) {
     return desc && index < desc->field_count ? &desc->fields[index] : NULL;
