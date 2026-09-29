@@ -1,6 +1,7 @@
 #include <cflow/plan_internal.h>
 
 #include "value_storage.h"
+#include "graph_internal.h"
 #include <cflow/lower.h>
 #include <cflow/opt.h>
 #include <cflow/property.h>
@@ -125,6 +126,26 @@ static bool prepare_unary_call(cflow_plan_call *out, cmeta_callable fn) {
     }
     prepared.input_type = sig->params[0];
     prepared.output_type = sig->return_type;
+    *out = prepared;
+    return true;
+}
+
+static bool prepare_explicit_map_call(cflow_plan_call *out,
+                                      const cflow_node *node) {
+    cflow_plan_call prepared = {0};
+
+    if (!out || !node || node->op != CFLOW_OP_MAP ||
+        node->param_kind != CFLOW_NODE_PARAM_TYPED_ADAPTER ||
+        !cflow_graph_explicit_adapter_callable_valid(node->fn) ||
+        !cmeta_type_desc_valid(node->input_type) || node->input_type->size == 0u ||
+        !cmeta_type_desc_valid(node->output_type) || node->output_type->size == 0u)
+        return false;
+
+    prepared.fn = node->fn;
+    prepared.invoke = node->fn.invoke;
+    prepared.raw_batch = NULL;
+    prepared.input_type = node->input_type;
+    prepared.output_type = node->output_type;
     *out = prepared;
     return true;
 }
@@ -420,25 +441,43 @@ bool cflow_plan_compile(cflow_plan *plan,
                     return plan_compile_fail(plan, &index, "filter callable predecode failed");
                 }
             } else if (op == CMETA_PLAN_MAP) {
-                const cmeta_callable *src = n->fn_chain_count ? n->fn_chain : &n->fn;
-                size_t count = n->fn_chain_count ? n->fn_chain_count : 1u;
-                inst.fn_chain = malloc(count * sizeof(*inst.fn_chain));
-                if (!inst.fn_chain) return plan_compile_fail(plan, &index, "allocation failed");
-                const cmeta_type_desc *expected_input = n->input_type;
-                for (size_t k = 0; k < count; ++k) {
-                    if (!prepare_unary_call(&inst.fn_chain[k], src[k]) ||
-                        !cmeta_type_equal(inst.fn_chain[k].input_type, expected_input)) {
+                if (n->param_kind == CFLOW_NODE_PARAM_TYPED_ADAPTER) {
+                    inst.fn_chain = malloc(sizeof(*inst.fn_chain));
+                    if (!inst.fn_chain)
+                        return plan_compile_fail(plan, &index, "allocation failed");
+                    if (!prepare_explicit_map_call(&inst.fn_chain[0], n)) {
                         inst_destroy(&inst);
-                        return plan_compile_fail(plan, &index, "map callable predecode failed");
+                        return plan_compile_fail(
+                            plan, &index, "explicit typed adapter predecode failed");
                     }
-                    expected_input = inst.fn_chain[k].output_type;
+                    inst.fn_chain_count = 1u;
+                    if (stats) ++stats->map_callbacks;
+                } else {
+                    const cmeta_callable *src =
+                        n->fn_chain_count ? n->fn_chain : &n->fn;
+                    size_t count = n->fn_chain_count ? n->fn_chain_count : 1u;
+                    inst.fn_chain = malloc(count * sizeof(*inst.fn_chain));
+                    if (!inst.fn_chain)
+                        return plan_compile_fail(plan, &index, "allocation failed");
+                    const cmeta_type_desc *expected_input = n->input_type;
+                    for (size_t k = 0; k < count; ++k) {
+                        if (!prepare_unary_call(&inst.fn_chain[k], src[k]) ||
+                            !cmeta_type_equal(
+                                inst.fn_chain[k].input_type, expected_input)) {
+                            inst_destroy(&inst);
+                            return plan_compile_fail(
+                                plan, &index, "map callable predecode failed");
+                        }
+                        expected_input = inst.fn_chain[k].output_type;
+                    }
+                    if (!cmeta_type_equal(expected_input, n->output_type)) {
+                        inst_destroy(&inst);
+                        return plan_compile_fail(
+                            plan, &index, "map callable output type mismatch");
+                    }
+                    inst.fn_chain_count = count;
+                    if (stats) stats->map_callbacks += count;
                 }
-                if (!cmeta_type_equal(expected_input, n->output_type)) {
-                    inst_destroy(&inst);
-                    return plan_compile_fail(plan, &index, "map callable output type mismatch");
-                }
-                inst.fn_chain_count = count;
-                if (stats) stats->map_callbacks += count;
             } else if (op == CMETA_PLAN_TAKE || op == CMETA_PLAN_SKIP) {
                 if (!n->has_size_parameter || n->has_fn ||
                     !cmeta_type_equal(n->input_type, n->output_type))
