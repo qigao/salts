@@ -2447,7 +2447,9 @@ int cnet_owner_send_slicev_close_direct(cnet_owner *owner,
                                            segment_count, true, &handle);
   if (status != SALTS_OK) return status;
   return cnet_owner_finish_write_admission(impl, session, handle);
-}int cnet_owner_send_buffer_close_direct(cnet_owner *owner,
+}
+
+int cnet_owner_send_buffer_close_direct(cnet_owner *owner,
                                         cnet_session_handle session_handle,
                                         mem_buffer_t *buffer) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
