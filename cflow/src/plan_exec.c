@@ -331,6 +331,20 @@ size_t cflow_plan_batch_workspace_capacity(const cflow_plan_batch_workspace *wor
     return state ? state->capacity : 0u;
 }
 
+size_t cflow_plan_batch_workspace_bytes(const cflow_plan_batch_workspace *workspace) {
+    const cflow_plan_batch_workspace_impl *state =
+        workspace ? (const cflow_plan_batch_workspace_impl *)workspace->impl : NULL;
+    return state ? state->allocation_bytes : 0u;
+}
+
+static bool workspace_pointer_in_buffer(const unsigned char *pointer,
+                                        const unsigned char *buffer,
+                                        size_t capacity) {
+    const uintptr_t p = (uintptr_t)pointer;
+    const uintptr_t b = (uintptr_t)buffer;
+    return pointer && buffer && p >= b && p - b < capacity;
+}
+
 static bool fused_allocate(cflow_fused_resources *resources,
                            size_t bytes,
                            unsigned char **allocation) {
@@ -981,9 +995,12 @@ bool cflow_plan_eval_array_workspace_profile(
                 next_bytes > state->buffer_capacity)
                 return false;
 
-            if (current_data >= state->buffer_a &&
-                current_data < state->buffer_a + state->buffer_capacity)
+            if (workspace_pointer_in_buffer(current_data, state->buffer_a,
+                                                    state->buffer_capacity))
                 pending = state->buffer_b;
+            else if (workspace_pointer_in_buffer(current_data, state->buffer_b,
+                                                 state->buffer_capacity))
+                pending = state->buffer_a;
             else
                 pending = state->buffer_a;
 
