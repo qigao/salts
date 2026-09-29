@@ -500,6 +500,9 @@ jobs:
           grep -F "cmeta_function_abi_desc" package/sdk/linux-x64/include/cmeta/function.h
           grep -F "cmeta_function_abi_desc" package/sdk/windows-x64/include/cmeta/function.h
           grep -F "cmeta_function_abi_desc" package/sdk/android-arm64-v8a/include/cmeta/function.h
+          grep -F "cflow_function_typed_filter_projection_admit" package/sdk/linux-x64/include/cflow/function_projection.h
+          grep -F "cflow_function_typed_filter_projection_admit" package/sdk/windows-x64/include/cflow/function_projection.h
+          grep -F "cflow_function_typed_filter_projection_admit" package/sdk/android-arm64-v8a/include/cflow/function_projection.h
           mac_header="$(find package/sdk -path '*/include/cmeta/function.h' -path '*macos-*' -print -quit)"
           mac_projection="$(find package/sdk -path '*/include/cflow/function_projection.h' -path '*macos-*' -print -quit)"
           mac_interface="$(find package/sdk -path '*/include/cmeta/interface.h' -path '*macos-*' -print -quit)"
@@ -515,6 +518,7 @@ jobs:
           grep -F "cmeta_interface_desc_valid" "$mac_interface"
           grep -F "cmeta_interface_desc_equal" "$mac_interface"
           grep -F "cmeta_function_abi_desc" "$mac_header"
+          grep -F "cflow_function_typed_filter_projection_admit" "$mac_projection"
           test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 4
 
           mapfile -t cache_contracts < <(
