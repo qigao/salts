@@ -718,6 +718,11 @@ static bool eval_fused_value(const cflow_plan *plan,
                 }
                 if (output_index != selected_count) goto fail;
 
+                /*
+                 * The consumed input buffer is dead after this call returns.
+                 * Retain at most one such buffer for a later non-aliasing
+                 * output slot; current_owned remains the live input until now.
+                 */
                 reusable = current_owned;
                 reusable_capacity = current_owned_capacity;
                 current_owned = pending;
