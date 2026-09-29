@@ -28,6 +28,8 @@ on:
       - "cflow/tests/cflow_io_native_test.c"
       - "cflow/tests/cflow_pipe_data_plane_contract_test.cmake"
       - "cflow/tests/CMakeLists.txt"
+      - "cflow/src/plan_exec.c"
+      - "cflow/tests/cflow_pipeline_test.c"
   push:
     branches: [master]
     paths:
@@ -56,6 +58,8 @@ on:
       - "cflow/tests/cflow_io_native_test.c"
       - "cflow/tests/cflow_pipe_data_plane_contract_test.cmake"
       - "cflow/tests/CMakeLists.txt"
+      - "cflow/src/plan_exec.c"
+      - "cflow/tests/cflow_pipeline_test.c"
   workflow_dispatch:
 
 permissions:
@@ -322,7 +326,7 @@ jobs:
               concurrency_deadline_queue_test native_io_queue_depth_benchmark \
               native_io_idle_observe_benchmark native_io_sharded_routing_benchmark native_io_pipe_styles_benchmark \
               native_io_stream_styles_benchmark native_io_udp_styles_benchmark native_io_vsock_styles_benchmark cnet_scaling_benchmark \
-              cflow_seeded_reduce_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
+              cflow_seeded_reduce_test cflow_pipeline_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
 
       - name: Configure Windows Release
         if: matrix.family == 'windows'
@@ -340,7 +344,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_sharded_test native_io_header_cpp_test native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark cnet_websocket_parser_test cnet_websocket_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_owner_profile_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_api_profile_test cnet_header_cpp_test cnet_tls_test cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test cnet_packet_endpoint_test cnet_stop_contract_test cnet_benchmark_stats_test cnet_io_benchmark_config_test concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_seeded_reduce_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
+          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_sharded_test native_io_header_cpp_test native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark cnet_websocket_parser_test cnet_websocket_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_owner_profile_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_api_profile_test cnet_header_cpp_test cnet_tls_test cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test cnet_packet_endpoint_test cnet_stop_contract_test cnet_benchmark_stats_test cnet_io_benchmark_config_test concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_seeded_reduce_test cflow_pipeline_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
 
       - name: Configure and build macOS Release
         if: matrix.family == 'mac'
@@ -362,7 +366,7 @@ jobs:
               cnet_packet_endpoint_test cnet_stop_contract_test \
               cnet_benchmark_stats_test \
               cnet_io_benchmark_config_test \
-              concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_seeded_reduce_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
+              concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_seeded_reduce_test cflow_pipeline_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
 
       - name: Run NativeIO and NativeIPC contract tests
         shell: pwsh
@@ -373,7 +377,666 @@ jobs:
       - name: Run CFlow contract tests
         shell: pwsh
         run: |
-          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cflow_seeded_reduce_test|cflow_io_native_test|cflow_io_native(_sharded)?_adapter_test|cflow_io_cnet_adapter_test|cflow_header_cpp_test|cflow_cnet_header_cpp_test|cflow_cnet_dependency_contract_test|cflow_pipe_data_plane_contract_test)$' --timeout 60 --output-on-failure
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cflow_seeded_reduce_test|cflow_pipeline_test|cflow_io_native_test|cflow_io_native(_sharded)?_adapter_test|cflow_io_cnet_adapter_test|cflow_header_cpp_test|cflow_cnet_header_cpp_test|cflow_cnet_dependency_contract_test|cflow_pipe_data_plane_contract_test) --timeout 60 --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run CNet contract tests
+        shell: pwsh
+        run: |
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cnet_.*_test|concurrency_deadline_queue_test)$' --timeout 60 --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./cnet/tests/cnet_io_trace_test.ps1
+
+      - name: Build PR-base CNet comparison DSO
+        if: matrix.family == 'windows' && steps.scope.outputs.adapted == 'true' && github.event_name == 'pull_request'
+        shell: cmd
+        env:
+          CNET_COMPARE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set "BASELINE_SOURCE=%RUNNER_TEMP%\salts-cnet-baseline"
+          if exist "%BASELINE_SOURCE%" rmdir /s /q "%BASELINE_SOURCE%"
+          git worktree add --detach "%BASELINE_SOURCE%" "%CNET_COMPARE_BASE_SHA%"
+          if errorlevel 1 exit /b 1
+          cd /d "%BASELINE_SOURCE%"
+          set "PROJECT_ROOT=%BASELINE_SOURCE%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
+          cmake --preset win-release-user -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF
+          if errorlevel 1 exit /b 1
+          cmake --build --preset win-release-user --target cnet
+          if errorlevel 1 exit /b 1
+          if not exist "build\Msvc-Release\bin\cnet.dll" exit /b 1
+          echo CNET_COMPARE_BASELINE_DSO=%BASELINE_SOURCE%\build\Msvc-Release\bin\cnet.dll>>"%GITHUB_ENV%"
+          echo CNET_COMPARE_CANDIDATE_DSO=%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\bin\cnet.dll>>"%GITHUB_ENV%"
+          echo CNET_COMPARE_EXECUTABLE=%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\bin\cnet_owner_lifecycle_compare.exe>>"%GITHUB_ENV%"
+
+      - name: Compare PR-base and candidate CNet owner
+        if: matrix.family == 'windows' && steps.scope.outputs.adapted == 'true' && github.event_name == 'pull_request'
+        shell: pwsh
+        env:
+          CNET_IO_BENCHMARK_BACKEND: iocp
+          CNET_COMPARE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CNET_COMPARE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          foreach ($path in @($env:CNET_COMPARE_BASELINE_DSO,
+                              $env:CNET_COMPARE_CANDIDATE_DSO,
+                              $env:CNET_COMPARE_EXECUTABLE)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "CNet owner comparison input not found: $path"
+            }
+          }
+          $report = Join-Path $resultDir "cnet-owner-base-vs-direct.md"
+          & $env:CNET_COMPARE_EXECUTABLE `
+            $env:CNET_COMPARE_BASELINE_DSO `
+            $env:CNET_COMPARE_CANDIDATE_DSO `
+            $report
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @(
+            "base_sha=$env:CNET_COMPARE_BASE_SHA"
+            "candidate_sha=$env:CNET_COMPARE_HEAD_SHA"
+            "baseline_dso=$env:CNET_COMPARE_BASELINE_DSO"
+            "candidate_dso=$env:CNET_COMPARE_CANDIDATE_DSO"
+          ) | Set-Content -LiteralPath (Join-Path $resultDir "cnet-owner-compare-metadata.txt")
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CNet owner PR-base versus candidate: IOCP"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Get-Content -LiteralPath $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run NativeIO Sharded same-owner versus cross-owner routing benchmark
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_SHARDED_BENCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_sharded_routing_benchmark
+          NATIVE_IO_SHARDED_BENCH_BACKEND: ${{ matrix.backend }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_SHARDED_BENCH_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "NativeIO Sharded routing benchmark executable not found: $benchmark"
+          }
+          $env:NATIVE_IO_SHARDED_BENCH_OUTPUT = Join-Path $resultDir "native-io-sharded-routing"
+          $output = & $benchmark 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "native-io-sharded-routing.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./native-io/benchmarks/verify_sharded_routing_benchmark.ps1 `
+            -Path "$env:NATIVE_IO_SHARDED_BENCH_OUTPUT.csv" `
+            -Backend $env:NATIVE_IO_SHARDED_BENCH_BACKEND
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO Sharded routing: $env:NATIVE_IO_SHARDED_BENCH_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run NativeIO PIPE execution-style benchmark
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_PIPE_STYLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_pipe_styles_benchmark
+          NATIVE_IO_PIPE_STYLE_BACKEND: ${{ matrix.backend }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_PIPE_STYLE_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "NativeIO PIPE style benchmark executable not found: $benchmark"
+          }
+          $env:NATIVE_IO_PIPE_STYLE_OUTPUT = Join-Path $resultDir "native-io-pipe-styles"
+          $output = & $benchmark 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "native-io-pipe-styles.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./native-io/benchmarks/verify_pipe_styles_benchmark.ps1 `
+            -Path "$env:NATIVE_IO_PIPE_STYLE_OUTPUT.csv" `
+            -Backend $env:NATIVE_IO_PIPE_STYLE_BACKEND
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO PIPE execution styles: $env:NATIVE_IO_PIPE_STYLE_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run NativeIO TCP STREAM execution-style benchmark
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_STREAM_STYLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_stream_styles_benchmark
+          NATIVE_IO_STREAM_STYLE_BACKEND: ${{ matrix.backend }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_STREAM_STYLE_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "NativeIO TCP STREAM style benchmark executable not found: $benchmark"
+          }
+          $env:NATIVE_IO_STREAM_STYLE_OUTPUT = Join-Path $resultDir "native-io-stream-styles"
+          $output = & $benchmark 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "native-io-stream-styles.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./native-io/benchmarks/verify_stream_styles_benchmark.ps1 `
+            -Path "$env:NATIVE_IO_STREAM_STYLE_OUTPUT.csv" `
+            -Backend $env:NATIVE_IO_STREAM_STYLE_BACKEND
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO TCP STREAM execution styles: $env:NATIVE_IO_STREAM_STYLE_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run NativeIO Direct/Coroutine bounded vector-write benchmark
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_STREAM_STYLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_stream_styles_benchmark
+          NATIVE_IO_STREAM_STYLE_BACKEND: ${{ matrix.backend }}
+          NATIVE_IO_STREAM_VECTOR_BENCHMARK: "1"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_STREAM_STYLE_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "NativeIO vector-write benchmark executable not found: $benchmark"
+          }
+          $output = & $benchmark 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "native-io-vector-writes.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO Direct/Coroutine vector writes: $env:NATIVE_IO_STREAM_STYLE_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Trace NativeIO STREAM execution-style mechanisms
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: bash
+        env:
+          NATIVE_IO_STREAM_STYLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_stream_styles_benchmark
+          NATIVE_IO_STREAM_STYLE_BACKEND: ${{ matrix.backend }}
+        run: |
+          set -euo pipefail
+          trace_dir="native-io-results/stream-style-syscalls"
+          mkdir -p "$trace_dir"
+          benchmark="$GITHUB_WORKSPACE/$NATIVE_IO_STREAM_STYLE_EXECUTABLE"
+          test -x "$benchmark"
+          for style in direct coroutine sharded_same_owner sharded_cross_owner; do
+            export NATIVE_IO_STREAM_STYLE_TRACE="$style:32768"
+            label="stream-$style-32768"
+            strace -ff -ttt -T -s 256 \
+              -e trace=%network,read,readv,write,writev,poll,ppoll,epoll_ctl,epoll_wait,epoll_pwait,epoll_pwait2,io_uring_enter,futex \
+              -o "$trace_dir/$label.trace" \
+              "$benchmark" \
+              > "$trace_dir/$label.log" 2>&1
+          done
+          unset NATIVE_IO_STREAM_STYLE_TRACE
+
+      - name: Verify NativeIO STREAM mechanism evidence
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_STREAM_STYLE_BACKEND: ${{ matrix.backend }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $traceDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results/stream-style-syscalls"
+          $styleCsv = Join-Path $env:GITHUB_WORKSPACE "native-io-results/native-io-stream-styles.csv"
+          $summary = & ./native-io/benchmarks/summarize_stream_style_trace.ps1 `
+            -Directory $traceDir `
+            -Backend $env:NATIVE_IO_STREAM_STYLE_BACKEND
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $summary | Tee-Object -FilePath (Join-Path $traceDir "summary.md") |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          & ./native-io/benchmarks/verify_stream_mechanism_evidence.ps1 `
+            -StyleCsv $styleCsv `
+            -TraceCsv (Join-Path $traceDir "summary.csv") `
+            -Backend $env:NATIVE_IO_STREAM_STYLE_BACKEND
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run NativeIO UDP DATAGRAM execution-style benchmark
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_UDP_STYLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_udp_styles_benchmark
+          NATIVE_IO_UDP_STYLE_BACKEND: ${{ matrix.backend }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_UDP_STYLE_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "NativeIO UDP DATAGRAM style benchmark executable not found: $benchmark"
+          }
+          $env:NATIVE_IO_UDP_STYLE_OUTPUT = Join-Path $resultDir "native-io-udp-styles"
+          $output = & $benchmark 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "native-io-udp-styles.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./native-io/benchmarks/verify_udp_styles_benchmark.ps1 `
+            -Path "$env:NATIVE_IO_UDP_STYLE_OUTPUT.csv" `
+            -Backend $env:NATIVE_IO_UDP_STYLE_BACKEND
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO UDP DATAGRAM execution styles: $env:NATIVE_IO_UDP_STYLE_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run NativeIO AF_VSOCK execution-style benchmark
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_VSOCK_STYLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_vsock_styles_benchmark
+          NATIVE_IO_VSOCK_STYLE_BACKEND: ${{ matrix.backend }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_VSOCK_STYLE_EXECUTABLE
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "NativeIO AF_VSOCK style benchmark executable not found: $benchmark"
+          }
+          $env:NATIVE_IO_VSOCK_STYLE_OUTPUT = Join-Path $resultDir "native-io-vsock-styles"
+          $output = & $benchmark 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "native-io-vsock-styles.md")
+          $benchmarkExit = $LASTEXITCODE
+          if ($benchmarkExit -eq 77) {
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO AF_VSOCK execution styles: $env:NATIVE_IO_VSOCK_STYLE_BACKEND"
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+            $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+            Write-Host "AF_VSOCK unavailable on this runtime; no TCP fallback was attempted."
+          } elseif ($benchmarkExit -ne 0) {
+            exit $benchmarkExit
+          } else {
+            & ./native-io/benchmarks/verify_vsock_styles_benchmark.ps1 `
+              -Path "$env:NATIVE_IO_VSOCK_STYLE_OUTPUT.csv" `
+              -Backend $env:NATIVE_IO_VSOCK_STYLE_BACKEND
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO AF_VSOCK execution styles: $env:NATIVE_IO_VSOCK_STYLE_BACKEND"
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+            $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Run retained TLS contiguous versus slicev benchmark
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          CNET_TLS_SG_BENCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_tls_sg_benchmark
+          CNET_TLS_SG_BENCH_BACKEND: ${{ matrix.backend }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:CNET_TLS_SG_BENCH_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "CNet TLS SG benchmark executable not found: $benchmark"
+          }
+          $env:CNET_TLS_SG_BENCH_OUTPUT = Join-Path $resultDir "cnet-tls-sg"
+          $output = & $benchmark 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "cnet-tls-sg.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./cnet/benchmarks/verify_tls_sg_benchmark.ps1 `
+            -Path "$env:CNET_TLS_SG_BENCH_OUTPUT.csv" `
+            -Backend $env:CNET_TLS_SG_BENCH_BACKEND
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CNet retained TLS contiguous versus slicev: $env:CNET_TLS_SG_BENCH_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run borrowed-copy versus owned receive benchmark
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_io_benchmark
+          CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
+          CNET_IO_BENCHMARK_RECEIVE_COMPARE: "1"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:IO_BENCHMARK_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "CNet receive ownership benchmark executable not found: $benchmark"
+          }
+          $output = & $benchmark 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "cnet-receive-ownership.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $evidence = @($output | Where-Object { $_ -match '^RECEIVE delta payload=' })
+          if ($evidence.Count -ne 3) {
+            throw "Expected 3 receive ownership evidence rows, got $($evidence.Count)"
+          }
+          foreach ($payload in @(64, 65536, 1048576)) {
+            if (-not ($evidence | Where-Object { $_ -match "^RECEIVE delta payload=${payload}:" })) {
+              throw "Missing receive ownership evidence for payload=$payload"
+            }
+          }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CNet borrowed-copy versus owned receive: $env:CNET_IO_BENCHMARK_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run flatten versus NativeIO SG merge-gate comparison
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_io_benchmark
+          CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
+          CNET_IO_BENCHMARK_SG_COMPARE: "1"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:IO_BENCHMARK_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "SG comparison benchmark executable not found: $benchmark"
+          }
+          $env:CNET_IO_BENCHMARK_OUTPUT = Join-Path $resultDir "sg-compare"
+          $output = & $benchmark 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "sg-compare.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path -LiteralPath "$env:CNET_IO_BENCHMARK_OUTPUT.sg.csv" -PathType Leaf)) {
+            throw "SG comparison CSV was not produced"
+          }
+          $windowCsv = "$env:CNET_IO_BENCHMARK_OUTPUT.sg-window.csv"
+          if (-not (Test-Path -LiteralPath $windowCsv -PathType Leaf)) {
+            throw "SG cross-window qualification CSV was not produced"
+          }
+          $evidence = $output | Where-Object { $_ -match '^SG delta payload=' }
+          if (@($evidence).Count -ne 16) {
+            throw "Expected 16 SG paired-delta evidence rows, got $(@($evidence).Count)"
+          }
+          $windowEvidence = $output | Where-Object { $_ -match '^SG window delta payload=' }
+          if (@($windowEvidence).Count -ne 6) {
+            throw "Expected 6 SG cross-window evidence rows, got $(@($windowEvidence).Count)"
+          }
+          $windowRows = @(Import-Csv -LiteralPath $windowCsv)
+          if ($windowRows.Count -ne 6) {
+            throw "Expected 6 SG cross-window CSV rows, got $($windowRows.Count)"
+          }
+          $expectedCases = @(
+            "65536:16", "65536:17", "65536:32",
+            "1048576:16", "1048576:17", "1048576:32"
+          )
+          foreach ($row in $windowRows) {
+            $key = "$($row.payload_bytes):$($row.segments)"
+            if ($expectedCases -notcontains $key) {
+              throw "Unexpected SG cross-window case: $key"
+            }
+            $segments = [int]$row.segments
+            $expectedWindows = if ($segments -le 16) { 1 } else { 2 }
+            if ([int]$row.expected_windows -ne $expectedWindows) {
+              throw "SG window count mismatch for $key"
+            }
+            if ([double]$row.vector_submissions_per_op + 0.000001 -lt $expectedWindows) {
+              throw "SG native submission count is below the logical window floor for $key"
+            }
+            if ([math]::Abs([double]$row.terminal_callbacks_per_op - 1.0) -gt 0.000001) {
+              throw "SG logical terminal count is not exactly one per send for $key"
+            }
+          }
+          Write-Host "SG paired-delta evidence: $env:CNET_IO_BENCHMARK_BACKEND"
+          $evidence | ForEach-Object { Write-Host $_ }
+          Write-Host "SG cross-window evidence: $env:CNET_IO_BENCHMARK_BACKEND"
+          $windowEvidence | ForEach-Object { Write-Host $_ }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## Flatten versus retained SG + cross-window qualification: $env:CNET_IO_BENCHMARK_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run libuv versus NativeIO direct/coroutine versus CNet retained benchmark
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_io_benchmark
+          CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
+          BENCHMARK_HOST: ${{ matrix.host }}
+          BENCHMARK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:IO_BENCHMARK_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "I/O benchmark executable not found: $benchmark"
+          }
+          $env:CNET_IO_BENCHMARK_OUTPUT = Join-Path $resultDir "io"
+          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "libuv-native-io-cnet-benchmark.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./cnet/benchmarks/verify_io_benchmark.ps1 -Prefix $env:CNET_IO_BENCHMARK_OUTPUT
+          @(
+            "report_schema=2"
+            "host=$env:BENCHMARK_HOST"
+            "commit=$env:BENCHMARK_COMMIT"
+            "workflow_sha=$env:GITHUB_SHA"
+            "runner_os=$env:RUNNER_OS"
+            "runner_arch=$env:RUNNER_ARCH"
+            "native_io_backend=$env:CNET_IO_BENCHMARK_BACKEND"
+            "image_os=$env:ImageOS"
+            "image_version=$env:ImageVersion"
+          ) | Set-Content -LiteralPath (Join-Path $resultDir "metadata.txt")
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## libuv versus NativeIO direct/coroutine versus CNet retained: $env:BENCHMARK_HOST"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run NativeIO direct versus CNet retained scaling benchmark
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          CNET_SCALING_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_scaling_benchmark
+          CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:CNET_SCALING_EXECUTABLE
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "CNet scaling benchmark executable not found: $benchmark"
+          }
+          $env:CNET_SCALING_BENCHMARK_OUTPUT = Join-Path $resultDir "cnet-scaling"
+          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "nativeio-cnet-scaling.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./cnet/benchmarks/verify_scaling_benchmark.ps1 -Path "$env:CNET_SCALING_BENCHMARK_OUTPUT.csv"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO direct versus CNet retained scaling: $env:CNET_IO_BENCHMARK_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run NativeIO io_uring idle observe benchmark
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_IDLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_idle_observe_benchmark
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_IDLE_EXECUTABLE
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "idle observe benchmark executable not found: $benchmark"
+          }
+          $env:NATIVE_IO_IDLE_OBSERVE_OUTPUT = Join-Path $resultDir "native-io-idle-observe"
+          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "native-io-idle-observe.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./native-io/benchmarks/verify_idle_observe_benchmark.ps1 -Path "$env:NATIVE_IO_IDLE_OBSERVE_OUTPUT.csv"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO io_uring idle observe(0)"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run NativeIO io_uring queue-depth benchmark
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_QD_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_queue_depth_benchmark
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_QD_EXECUTABLE
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "queue-depth benchmark executable not found: $benchmark"
+          }
+          $env:NATIVE_IO_QD_BENCHMARK_OUTPUT = Join-Path $resultDir "native-io-queue-depth"
+          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "native-io-queue-depth.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./native-io/benchmarks/verify_queue_depth_benchmark.ps1 -Path "$env:NATIVE_IO_QD_BENCHMARK_OUTPUT.csv"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO io_uring queue-depth benchmark"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Trace NativeIO io_uring queue-depth control path
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
+        shell: bash
+        env:
+          NATIVE_IO_QD_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_queue_depth_benchmark
+        run: |
+          set -euo pipefail
+          trace_dir="native-io-results/queue-depth-syscalls"
+          mkdir -p "$trace_dir"
+          benchmark="$GITHUB_WORKSPACE/$NATIVE_IO_QD_EXECUTABLE"
+          for qd in 1 8 32 64; do
+            export NATIVE_IO_QD_TRACE="$qd:32768"
+            label="qd-$qd-payload-32768"
+            strace -ff -ttt -T -s 128 \
+              -e trace=io_uring_enter,poll,ppoll,write \
+              -o "$trace_dir/$label.trace" \
+              "$benchmark" \
+              > "$trace_dir/$label.log" 2>&1
+          done
+          unset NATIVE_IO_QD_TRACE
+
+      - name: Summarize NativeIO queue-depth syscall evidence
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        run: |
+          ./native-io/benchmarks/summarize_queue_depth_trace.ps1 -Directory native-io-results/queue-depth-syscalls |
+            Tee-Object -FilePath native-io-results/queue-depth-syscalls/summary.txt |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Collect isolated Linux syscall evidence
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: bash
+        env:
+          CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
+          IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_io_benchmark
+        run: |
+          set -euo pipefail
+          # Traced timings are never scores. Each file is one thread; stderr
+          # markers delimit the 512 measured RTTs after setup and warmup.
+          mkdir -p native-io-results/syscalls
+          strace --version > native-io-results/syscalls/tool-version.txt
+          for workload in tcp:1024 tcp:32768 tcp:65536 udp:8192; do
+            for driver in libuv native coroutine cnet; do
+              export CNET_IO_BENCHMARK_TRACE="$driver:$workload"
+              label="${CNET_IO_BENCHMARK_TRACE//:/-}"
+              strace -ff -ttt -T -s 128 \
+                -e trace=%network,read,readv,write,writev,poll,ppoll,epoll_ctl,epoll_wait,epoll_pwait,epoll_pwait2,io_uring_setup,io_uring_register,io_uring_enter,futex \
+                -o "native-io-results/syscalls/$label.trace" \
+                "$IO_BENCHMARK_EXECUTABLE" --no-color \
+                > "native-io-results/syscalls/$label.log" 2>&1
+            done
+          done
+          printf '%s\n' \
+            'Traces are independent reruns, not explanations of individual untraced outliers.' \
+            'Only count the client thread between IO_BENCH_MEASURE_BEGIN/END markers.' \
+            'Other thread files contain the echo peer; syscall elapsed includes scheduling.' \
+            'io_uring_enter counts are NOT SQE counts. API call counts are NOT syscall counts.' \
+            'poll/ppoll include io_uring ring/wake-fd waits; they are separate from epoll waits and io_uring_enter.' \
+            'libuv can submit epoll control via io_uring; zero direct epoll_ctl calls do not mean zero registration work.' \
+            'CPU stacks and runnable/blocked split are not collected by strace; use perf on a profiling host.' \
+            > native-io-results/syscalls/README.txt
+
+      - name: Summarize measured client syscall counts
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        run: |
+          ./cnet/benchmarks/summarize_io_trace.ps1 -Directory native-io-results/syscalls |
+            Tee-Object -FilePath native-io-results/syscalls/summary.txt |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload I/O benchmark evidence
+        if: always() && steps.scope.outputs.adapted == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: io-benchmark-${{ matrix.artifact }}
+          path: native-io-results
+          if-no-files-found: error
+          retention-days: 30
+
+  cnet-owned-receive-asan:
+    name: CNet owned receive ASan / Ubuntu 24.04 GCC
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Prepare Linux ASan dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes ninja-build nasm
+          test -n "${VCPKG_ROOT:-}"
+          test -f "${QIGAO_VCPKG_TOOLCHAIN_FILE:-}"
+
+      - name: Configure CNet Debug with AddressSanitizer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset linux-dev-user \
+            -DBUILD_TESTS=ON \
+            -DENABLE_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_ADDRESS=ON
+
+      - name: Build CNet ownership and lifecycle tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build --preset linux-dev-user --parallel 2 --target \
+            cnet_owner_test \
+            cnet_session_test \
+            cnet_event_test \
+            cnet_dispatcher_test \
+            cnet_api_test \
+            cnet_tls_test \
+            cnet_datagram_test \
+            cnet_stop_contract_test
+
+      - name: Run CNet ownership and lifecycle tests under ASan
+        shell: bash
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:abort_on_error=1
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/linux-gcc-debug \
+            -R '^(cnet_(owner|session|event|dispatcher|api|tls|datagram|stop_contract)_test)$' \
+            --timeout 90 --output-on-failure
+
+ --timeout 60 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run CNet contract tests
