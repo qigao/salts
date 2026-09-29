@@ -37,7 +37,9 @@ bool cflow_callable_declares_associative_endomap(cmeta_callable fn) {
 }
 
 static cmeta_properties fn_props(cmeta_callable fn) {
-    return cmeta_callable_contract_valid(fn) ? fn.meta.properties : CMETA_PROP_NONE;
+    return (cmeta_callable_contract_valid(fn) ||
+            cflow_typed_adapter_callable_valid(fn))
+        ? fn.meta.properties : CMETA_PROP_NONE;
 }
 
 static cmeta_properties subgraph_props_rec(const cflow_graph *g,
