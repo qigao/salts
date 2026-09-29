@@ -259,8 +259,8 @@ suite("CFlow reflected function projection") {
 
         check_equal(
             cflow_function_projection_admit(
-                FunctionMeta(cflow_projection_void),
-                FunctionAbi(cflow_projection_void),
+                FunctionMeta(cflow_projection_zero),
+                FunctionAbi(cflow_projection_zero),
                 (cmeta_callable){0},
                 CFLOW_OP_MAP,
                 &projection),
