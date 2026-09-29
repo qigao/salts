@@ -57,8 +57,6 @@ foreach ($payload in $payloads) {
     $rate = Parse-Double $row.median_bytes_per_second "median_bytes_per_second"
     $writes = Parse-Double $row.median_tls_write_calls_per_op "median_tls_write_calls_per_op"
     $cipher = Parse-Double $row.median_cipher_bytes_per_op "median_cipher_bytes_per_op"
-    $copied = Parse-Double $row.copied_bytes_per_op "copied_bytes_per_op"
-
     if ($iterations -le 0 -or $replicates -ne 11) {
       throw "invalid benchmark sample dimensions payload=$payload segments=$segmentCount iterations=$iterations replicates=$replicates"
     }
