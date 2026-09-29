@@ -135,8 +135,8 @@ static bool append_plain_node(opt_ctx *ctx, cflow_subgraph_id sgid,
             ctx->dst, sgid, src->input_type,
             src->params.sorted.max_elements, out);
     else if (src->param_kind == CFLOW_NODE_PARAM_TYPED_ADAPTER)
-        created = cflow_graph_create_explicit_map_adapter_node(
-            ctx->dst, sgid, src->fn,
+        created = cflow_graph_create_explicit_typed_adapter_node(
+            ctx->dst, sgid, src->op, src->fn,
             src->input_type, src->output_type, out);
     else if (op == CFLOW_OP_REDUCE &&
              src->param_kind == CFLOW_NODE_PARAM_REDUCE_SEED)

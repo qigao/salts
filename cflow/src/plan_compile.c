@@ -150,6 +150,27 @@ static bool prepare_explicit_map_call(cflow_plan_call *out,
     return true;
 }
 
+static bool prepare_explicit_filter_call(cflow_plan_call *out,
+                                         const cflow_node *node) {
+    cflow_plan_call prepared = {0};
+
+    if (!out || !node || node->op != CFLOW_OP_FILTER ||
+        node->param_kind != CFLOW_NODE_PARAM_TYPED_ADAPTER ||
+        !cflow_graph_explicit_adapter_callable_valid(node->fn) ||
+        !cmeta_type_desc_valid(node->input_type) ||
+        node->input_type->size == 0u ||
+        !cmeta_type_equal(node->input_type, node->output_type))
+        return false;
+
+    prepared.fn = node->fn;
+    prepared.invoke = node->fn.invoke;
+    prepared.raw_batch = NULL;
+    prepared.input_type = node->input_type;
+    prepared.output_type = &cmeta_type_bool;
+    *out = prepared;
+    return true;
+}
+
 static bool checked_add(size_t left, size_t right, size_t *sum) {
     if (!sum || left > SIZE_MAX - right) return false;
     *sum = left + right;
@@ -435,10 +456,18 @@ bool cflow_plan_compile(cflow_plan *plan,
             inst.size_parameter = n->size_parameter;
             inst.param_kind = n->param_kind;
             if (op == CMETA_PLAN_FILTER) {
-                if (!prepare_unary_call(&inst.call, n->fn) ||
-                    !cmeta_type_equal(inst.call.input_type, n->input_type) ||
-                    !cmeta_type_equal(inst.call.output_type, &cmeta_type_bool)) {
-                    return plan_compile_fail(plan, &index, "filter callable predecode failed");
+                if (n->param_kind == CFLOW_NODE_PARAM_TYPED_ADAPTER) {
+                    if (!prepare_explicit_filter_call(&inst.call, n))
+                        return plan_compile_fail(
+                            plan, &index,
+                            "explicit typed filter predecode failed");
+                } else if (!prepare_unary_call(&inst.call, n->fn) ||
+                           !cmeta_type_equal(
+                               inst.call.input_type, n->input_type) ||
+                           !cmeta_type_equal(
+                               inst.call.output_type, &cmeta_type_bool)) {
+                    return plan_compile_fail(
+                        plan, &index, "filter callable predecode failed");
                 }
             } else if (op == CMETA_PLAN_MAP) {
                 if (n->param_kind == CFLOW_NODE_PARAM_TYPED_ADAPTER) {

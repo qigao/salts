@@ -540,9 +540,10 @@ cflow_subgraph_id cflow_graph_create_subgraph(cflow_graph *g,
     return id;
 }
 
-bool cflow_graph_create_explicit_map_adapter_node(
+bool cflow_graph_create_explicit_typed_adapter_node(
     cflow_graph *g,
     cflow_subgraph_id subgraph,
+    cflow_op op,
     cmeta_callable fn,
     const cmeta_type_desc *input_type,
     const cmeta_type_desc *output_type,
@@ -553,15 +554,18 @@ bool cflow_graph_create_explicit_map_adapter_node(
     uint64_t version;
 
     if (!sg || !out_node ||
+        (op != CFLOW_OP_MAP && op != CFLOW_OP_FILTER) ||
         !cmeta_type_desc_valid(input_type) || input_type->size == 0u ||
         !cmeta_type_desc_valid(output_type) || output_type->size == 0u ||
+        (op == CFLOW_OP_FILTER &&
+         !cmeta_type_equal(input_type, output_type)) ||
         !cflow_graph_explicit_adapter_callable_valid(fn))
         return fail(g, "invalid explicit typed adapter node");
 
     if (!cflow_graph_version_acquire(&version))
         return fail(g, "graph version space exhausted");
 
-    node.op = CFLOW_OP_MAP;
+    node.op = op;
     node.fn = fn;
     node.has_fn = true;
     node.input_type = input_type;
@@ -576,6 +580,18 @@ bool cflow_graph_create_explicit_map_adapter_node(
     g->error = NULL;
     *out_node = id;
     return true;
+}
+
+bool cflow_graph_create_explicit_map_adapter_node(
+    cflow_graph *g,
+    cflow_subgraph_id subgraph,
+    cmeta_callable fn,
+    const cmeta_type_desc *input_type,
+    const cmeta_type_desc *output_type,
+    cflow_node_id *out_node) {
+    return cflow_graph_create_explicit_typed_adapter_node(
+        g, subgraph, CFLOW_OP_MAP, fn,
+        input_type, output_type, out_node);
 }
 
 static bool derive_node(cflow_graph *g,
@@ -1031,8 +1047,9 @@ bool cflow_graph_add(cflow_graph *g, cflow_op op,
 }
 
 
-bool cflow_graph_add_explicit_map_adapter(
+bool cflow_graph_add_explicit_typed_adapter(
     cflow_graph *g,
+    cflow_op op,
     cmeta_callable fn,
     const cmeta_type_desc *input_type,
     const cmeta_type_desc *output_type) {
@@ -1047,8 +1064,8 @@ bool cflow_graph_add_explicit_map_adapter(
         return fail(g, "explicit typed adapter input type does not match graph output");
 
     old_tail = root->tail;
-    if (!cflow_graph_create_explicit_map_adapter_node(
-            g, g->root, fn, input_type, output_type, &id))
+    if (!cflow_graph_create_explicit_typed_adapter_node(
+            g, g->root, op, fn, input_type, output_type, &id))
         return false;
 
     root = &g->subgraphs[g->root];
@@ -1063,6 +1080,15 @@ bool cflow_graph_add_explicit_map_adapter(
     }
     g->error = NULL;
     return true;
+}
+
+bool cflow_graph_add_explicit_map_adapter(
+    cflow_graph *g,
+    cmeta_callable fn,
+    const cmeta_type_desc *input_type,
+    const cmeta_type_desc *output_type) {
+    return cflow_graph_add_explicit_typed_adapter(
+        g, CFLOW_OP_MAP, fn, input_type, output_type);
 }
 
 static bool graph_add_slice(cflow_graph *g, cflow_op op, size_t limit) {
@@ -1494,13 +1520,18 @@ static bool validate_subgraph_nodes(const cflow_graph *g,
                 return false;
             }
         } else if (node->param_kind == CFLOW_NODE_PARAM_TYPED_ADAPTER) {
-            if (node->op != CFLOW_OP_MAP || !node->has_fn ||
+            if ((node->op != CFLOW_OP_MAP &&
+                 node->op != CFLOW_OP_FILTER) ||
+                !node->has_fn ||
                 node->fn_chain_count != 0u || node->has_relation ||
                 node->subgraph_count != 0u ||
                 !cmeta_type_desc_valid(node->input_type) ||
                 node->input_type->size == 0u ||
                 !cmeta_type_desc_valid(node->output_type) ||
                 node->output_type->size == 0u ||
+                (node->op == CFLOW_OP_FILTER &&
+                 !cmeta_type_equal(
+                     node->input_type, node->output_type)) ||
                 !cflow_graph_explicit_adapter_callable_valid(node->fn)) {
                 if (error) *error =
                     "explicit typed adapter metadata is inconsistent";

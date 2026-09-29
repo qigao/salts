@@ -1,4 +1,5 @@
 #include <cflow/operators.h>
+#include "graph_internal.h"
 #include <cflow/reactive.h>
 #include "scheduler_internal.h"
 #include <cflow/lower.h>
@@ -313,8 +314,20 @@ static node_action semantic_filter(run_impl *r, cflow_node_id i, const cflow_nod
                                    cflow_value_slot *owned, const cmeta_type_desc **cur_type,
                                    const void *root_source) {
     (void)r; (void)i; (void)cur_type; (void)root_source;
-    _Bool keep = false; const void *args[1] = { owned->storage };
-    if (!cmeta_callable_invoke(&n->fn, &keep, args)) return NODE_FAIL;
+    _Bool keep = false;
+    const void *args[1] = { owned->storage };
+    bool invoked;
+
+    if (n->param_kind == CFLOW_NODE_PARAM_TYPED_ADAPTER) {
+        if (!cflow_graph_explicit_adapter_callable_valid(n->fn) ||
+            !cmeta_type_equal(n->input_type, n->output_type))
+            return NODE_FAIL;
+        invoked = n->fn.invoke &&
+            n->fn.invoke(&n->fn, &keep, args);
+    } else {
+        invoked = cmeta_callable_invoke(&n->fn, &keep, args);
+    }
+    if (!invoked) return NODE_FAIL;
     if (!keep) { cflow_value_slot_reset(owned); return NODE_STOP; }
     return NODE_CONTINUE;
 }
