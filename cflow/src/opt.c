@@ -137,6 +137,12 @@ static bool append_plain_node(opt_ctx *ctx, cflow_subgraph_id sgid,
         created = cflow_graph_create_seeded_reduce_node(
             ctx->dst, sgid, src->fn,
             cflow_node_reduce_seed(src), out);
+    else if (op == CFLOW_OP_MAP &&
+             src->has_fn &&
+             cflow_typed_adapter_callable_valid(src->fn))
+        created = cflow_graph_create_typed_adapter_map_node(
+            ctx->dst, sgid, src->fn,
+            src->input_type, src->output_type, out);
     else
         created = cflow_graph_create_node(
             ctx->dst, sgid, op, src->fn, nested, nested_count, out);
@@ -370,6 +376,8 @@ static bool optimize_subgraph(opt_ctx *ctx, cflow_subgraph_id src_id,
         if (!node) { ctx->error = "optimizer encountered invalid node"; goto done; }
 
         if ((ctx->passes & CMETA_OPT_MAP_FUSION) && maplike(node) &&
+            !cflow_typed_adapter_callable_valid(node->fn) &&
+            node->fn_chain_count == 0u &&
             cflow_value_storage_type_supported(node->input_type) &&
             cflow_value_storage_type_supported(node->output_type) &&
             node_is_pure(ctx, node)) {
