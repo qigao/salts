@@ -191,6 +191,127 @@ suite("CFlow pipeline") {
         cflow_stream_destroy(&stream);
     }
 
+    it("reuses one bounded workspace across fused raw batches") {
+        cflow_stream stream = {0};
+        cflow_plan plan = {0};
+        cflow_plan_batch_workspace workspace = {0};
+        cflow_plan_batch_result result = {0};
+        cflow_plan_eval_stats stats = {0};
+        const int first[] = {1, 2, 3, 4, 5, 6};
+        const double first_expected[] = {2.0, 8.0, 18.0};
+        const int second[] = {2, 4};
+        const double second_expected[] = {2.0, 8.0};
+        const size_t max_value_size = sizeof(long) > sizeof(double)
+                                          ? sizeof(long)
+                                          : sizeof(double);
+        const size_t expected_workspace_bytes =
+            1u + 2u * 6u * max_value_size;
+
+        check_true(cflow_test_build_pipeline(&stream));
+        check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+        check_true(cflow_plan_batch_workspace_supported(&plan));
+        check_true(cflow_plan_batch_workspace_init(&workspace, &plan, 6u));
+        check_equal(cflow_plan_batch_workspace_capacity(&workspace), (size_t)6u);
+        check_equal(cflow_plan_batch_workspace_bytes(&workspace),
+                    expected_workspace_bytes);
+
+        check_true(cflow_plan_eval_array_workspace_profile(
+            &plan, first, 6u, &workspace, &result, &stats));
+        check_equal(stats.allocation_calls, (size_t)0u);
+        check_equal(stats.allocated_bytes, (size_t)0u);
+        check_equal(stats.raw_batch_stage_calls, (size_t)3u);
+        check_equal(stats.adapter_item_calls, (size_t)0u);
+        check_equal(stats.selection_bytes, (size_t)1u);
+        check_equal(stats.intermediate_bytes, (size_t)3u * sizeof(long));
+        check_equal(stats.result_bytes, sizeof(first_expected));
+        check_equal(stats.peak_live_bytes, expected_workspace_bytes);
+        check_equal(result.count, (size_t)3u);
+        check_true(cmeta_type_equal(result.type, &cmeta_type_double));
+        check_not_null(result.data);
+        check_equal(memcmp(result.data, first_expected, sizeof(first_expected)), 0);
+
+        memset(&result, 0, sizeof(result));
+        memset(&stats, 0, sizeof(stats));
+        check_true(cflow_plan_eval_array_workspace_profile(
+            &plan, second, 2u, &workspace, &result, &stats));
+        check_equal(stats.allocation_calls, (size_t)0u);
+        check_equal(stats.allocated_bytes, (size_t)0u);
+        check_equal(stats.raw_batch_stage_calls, (size_t)3u);
+        check_equal(stats.adapter_item_calls, (size_t)0u);
+        check_equal(result.count, (size_t)2u);
+        check_true(cmeta_type_equal(result.type, &cmeta_type_double));
+        check_equal(memcmp(result.data, second_expected, sizeof(second_expected)), 0);
+
+        cflow_plan_batch_workspace_destroy(&workspace);
+        check_equal(cflow_plan_batch_workspace_capacity(&workspace), (size_t)0u);
+        check_equal(cflow_plan_batch_workspace_bytes(&workspace), (size_t)0u);
+        cflow_plan_destroy(&plan);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("keeps a fused workspace reusable after capacity rejection") {
+        cflow_stream stream = {0};
+        cflow_plan plan = {0};
+        cflow_plan_batch_workspace workspace = {0};
+        cflow_plan_batch_result result = {(const void *)1, 99u, &cmeta_type_int};
+        const int too_many[] = {1, 2, 3, 4};
+        const int valid[] = {2, 4};
+        const double expected[] = {2.0, 8.0};
+
+        check_true(cflow_test_build_pipeline(&stream));
+        check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+        check_true(cflow_plan_batch_workspace_init(&workspace, &plan, 3u));
+
+        check_false(cflow_plan_eval_array_workspace(
+            &plan, too_many, 4u, &workspace, &result));
+        check_null(result.data);
+        check_equal(result.count, (size_t)0u);
+        check_null(result.type);
+
+        check_true(cflow_plan_eval_array_workspace(
+            &plan, valid, 2u, &workspace, &result));
+        check_equal(result.count, (size_t)2u);
+        check_true(cmeta_type_equal(result.type, &cmeta_type_double));
+        check_equal(memcmp(result.data, expected, sizeof(expected)), 0);
+
+        cflow_plan_batch_workspace_destroy(&workspace);
+        cflow_plan_destroy(&plan);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("rejects fused workspaces for adapter and materialized plans") {
+        cflow_stream captured_stream = {0};
+        cflow_stream stateful_stream = {0};
+        cflow_plan captured_plan = {0};
+        cflow_plan stateful_plan = {0};
+        cflow_plan_batch_workspace workspace = {0};
+        cflow_map_callable captured = cflow_test_captured_add(10L);
+
+        check_not_null(cflow_stream_init(&captured_stream, &cmeta_type_int));
+        check_not_null(captured_stream.map(&captured_stream, captured));
+        check_true(cflow_plan_compile_surface(
+            &captured_plan, &captured_stream.graph, NULL));
+        check_false(cflow_plan_batch_workspace_supported(&captured_plan));
+        check_false(cflow_plan_batch_workspace_init(
+            &workspace, &captured_plan, 8u));
+        check_null(workspace.impl);
+
+        check_not_null(cflow_stream_init(&stateful_stream, &cmeta_type_int));
+        check_not_null(stateful_stream.map(
+            &stateful_stream, cflow_test_stateful_add_ten));
+        check_true(cflow_plan_compile_surface(
+            &stateful_plan, &stateful_stream.graph, NULL));
+        check_false(cflow_plan_batch_workspace_supported(&stateful_plan));
+        check_false(cflow_plan_batch_workspace_init(
+            &workspace, &stateful_plan, 8u));
+        check_null(workspace.impl);
+
+        cflow_plan_destroy(&stateful_plan);
+        cflow_plan_destroy(&captured_plan);
+        cflow_stream_destroy(&stateful_stream);
+        cflow_stream_destroy(&captured_stream);
+    }
+
     it("reports exact bounded resources for a fused value plan") {
         cflow_stream stream = {0};
         cflow_plan plan = {0};
