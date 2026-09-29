@@ -45,6 +45,21 @@ typedef struct cflow_function_projection {
     const cmeta_type_desc *output_type;
 } cflow_function_projection;
 
+/*
+ * Control-plane admission artifact for reflected actions that are not Graph
+ * operators. It proves semantic/ABI/callable consistency only; the consuming
+ * runtime owns argument binding, transactional lifecycle and scheduling.
+ *
+ * Descriptor pointers, callable code and borrowed captures follow the same
+ * provider-lifetime rules as cflow_function_projection.
+ */
+typedef struct cflow_function_action_projection {
+    size_t size;
+    const cmeta_function_desc *function;
+    const cmeta_function_abi_desc *abi;
+    cmeta_callable callable;
+} cflow_function_action_projection;
+
 const char *cflow_function_projection_status_string(
     cflow_function_projection_status status);
 
@@ -55,8 +70,17 @@ cflow_function_projection_status cflow_function_projection_admit(
     cflow_op op,
     cflow_function_projection *out);
 
+cflow_function_projection_status cflow_function_action_projection_admit(
+    const cmeta_function_desc *function,
+    const cmeta_function_abi_desc *abi,
+    cmeta_callable adapter,
+    cflow_function_action_projection *out);
+
 bool cflow_function_projection_valid(
     const cflow_function_projection *projection);
+
+bool cflow_function_action_projection_valid(
+    const cflow_function_action_projection *projection);
 
 bool cflow_graph_add_function_projection(
     cflow_graph *graph,
