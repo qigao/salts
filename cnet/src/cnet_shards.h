@@ -66,17 +66,9 @@ int cnet_shards_bind_event_sink(cnet_shards *shards, cnet_shards_event_sink_fn s
 /** Reserves one stable shard/session pair and publishes a copied connect command. */
 int cnet_shards_connect(cnet_shards *shards, const cnet_owner_connect_payload *payload,
                         cnet_shard_connection *out_connection);
-int cnet_shards_send(cnet_shards *shards, cnet_shard_connection connection, const void *data,
-                     size_t size);
 int cnet_shards_send_buffer(cnet_shards *shards, cnet_shard_connection connection,
                             mem_buffer_t *buffer, size_t size);
-int cnet_shards_sendv(cnet_shards *shards, cnet_shard_connection connection,
-                      const cnet_const_buffer *segments, size_t segment_count, size_t total_size);
-int cnet_shards_send_and_close(cnet_shards *shards, cnet_shard_connection connection,
-                               const void *data, size_t size);
-/** Owner-local non-TLS send ownership paths; no generic command publication. */
-int cnet_shards_send_direct(cnet_shards *shards, cnet_shard_connection connection,
-                            const void *data, size_t size);
+/** Owner-local retained send ownership paths; no generic command publication. */
 int cnet_shards_send_buffer_direct(cnet_shards *shards, cnet_shard_connection connection,
                                    mem_buffer_t *buffer);
 int cnet_shards_send_slice_direct(cnet_shards *shards, cnet_shard_connection connection,
@@ -87,10 +79,6 @@ int cnet_shards_send_slicev_close_direct(cnet_shards *shards,
                                          cnet_shard_connection connection,
                                          const mem_slice_t *segments,
                                          size_t segment_count);
-int cnet_shards_sendv_direct(cnet_shards *shards, cnet_shard_connection connection,
-                             const cnet_const_buffer *segments, size_t segment_count);
-int cnet_shards_send_close_direct(cnet_shards *shards, cnet_shard_connection connection,
-                                  const void *data, size_t size);
 int cnet_shards_send_buffer_close_direct(cnet_shards *shards,
                                          cnet_shard_connection connection,
                                          mem_buffer_t *buffer);
