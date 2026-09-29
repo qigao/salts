@@ -8,7 +8,7 @@ endif()
 
 project(
   Salts
-  VERSION 1.8.4
+  VERSION 1.8.5
   LANGUAGES C CXX)
 
 # Project configuration - output directories
