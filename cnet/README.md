@@ -18,9 +18,9 @@ Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
 
 - `cnet_connect` with `tcp://host:port`, `tls://host:port`, `udp://host:port`,
   `pipe://name`, or Linux `vsock://CID:PORT`;
-- `cnet_send` to transfer one bounded payload copy into CNet;
-- `cnet_sendv` to concatenate non-empty borrowed ranges directly into that
-  same final bounded command slot without caller-side staging;
+- `cnet_send_buffer` for retained contiguous payload ownership;
+- `cnet_send_slice` / `cnet_send_slicev` for retained subrange and scatter/gather ownership;
+- `cnet_send_buffer_and_close` / `cnet_send_slicev_and_close` for retained final writes;
 - `observer.on_send` to observe completion before admitting the next ordered
   write on that connection;
 - `cnet_receive` to add explicit receive demand;
@@ -30,12 +30,11 @@ Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
 - `cnet_client_poll` to advance I/O and invoke callbacks on the caller;
 - `cnet_client_stop` followed by `cnet_client_destroy` for shutdown.
 
-`command_capacity` bounds the number of live copied commands,
-`max_send_bytes` bounds one send, and `command_buffer_bytes` independently
-bounds their aggregate copied payload. A zero aggregate budget preserves the
-legacy `command_capacity * max_command_payload` bound. Set it explicitly when
-large individual writes must coexist with a smaller retained-memory budget;
-admission over either the slot or byte budget returns `SALTS_ENOBUFS`.
+`command_capacity` bounds the generic control/deferred command mailbox. `command_buffer_bytes`
+bounds copied payloads that still belong to that control plane; stream data-plane sends do not
+copy payload bytes into this mailbox. `max_send_bytes` remains the per-logical-send bound, while
+retained stream writes are bounded by their fixed owner-local write slots. Capacity exhaustion
+returns `SALTS_ENOBUFS`.
 
 `event_capacity` likewise bounds event descriptors while `event_buffer_bytes`
 bounds their aggregate copied payload. Event payloads and per-connection receive
@@ -118,22 +117,13 @@ silent fallback.
 
 ## Bounded write ownership
 
-CNet is migrating ordinary stream-send payload lifetime out of the generic
-command mailbox into a dedicated owner-local write queue. The queue has a fixed
-global slot bound plus per-connection FIFO chains. Copied payloads consume an
-explicit aggregate byte budget; retained `mem_buffer_t` payloads consume one
-retained reference but no copied-byte budget.
+Ordinary stream-send payload lifetime lives in the dedicated owner-local write
+queue. The queue has a fixed global slot bound plus per-connection FIFO chains.
+Every public stream data-plane write retains caller-provided `mem_buffer_t` ownership
+directly or retains the unique backing buffers referenced by canonical `mem_slice_t`
+ranges. CNet does not maintain a copied stream-payload queue or copied-byte budget.
 
-W1 installs and tests this ownership substrate. W2 routes ordinary non-TLS
-`send`, retained-buffer send, and vector-copy send directly into these
-owner-local slots, bypassing the generic command mailbox while preserving the
-existing one-write public admission rule. TLS and `send_and_close` keep their
-current command/TLS ownership until W3 migrates their ordering semantics.
-W3 then enables bounded multiple-write FIFO admission. NativeIO now exposes
-bounded scatter/gather writes, but `cnet_sendv()` deliberately remains the
-copy-on-admission convenience API: its caller-owned segment descriptors and
-payload pointers are borrowed only for the synchronous call. Retained vectored
-stream sends use the explicit `cnet_send_slicev()` contract instead.
+`cnet_send_slicev()` preserves scatter/gather ownership without flattening.
 `cnet_send_slicev_and_close()` uses the same retained ownership for the final
 logical write and closes only after that vector settles. CNet validates
 1..`CNET_RETAINED_VECTOR_MAX` canonical `mem_slice_t` ranges (currently 32),
@@ -462,24 +452,20 @@ NativeIO coroutine APIs remain available to other consumers and to the
 standalone NativeIO coroutine benchmark; CNet simply no longer creates one
 coroutine per stream I/O.
 
-The URI, observer, and send bytes are copied before their admitting call returns
-success. For `cnet_sendv`, both the descriptor array and its immutable backing
-ranges are borrowed only during the call; successful admission has copied their
-ordered concatenation and `on_send` reports its total size once. Empty ranges
-are rejected so segment count is bounded by the configured byte limit. A
-callback may call `cnet_send`, `cnet_sendv`, `cnet_receive`, or `cnet_close` for
+The URI and observer configuration are copied before their admitting call returns
+success. Stream send payload bytes are not copied into CNet: successful
+`cnet_send_buffer()`, `cnet_send_slice()`, and `cnet_send_slicev()` admission
+retains the required backing ownership until the logical send terminal. A callback
+may admit another retained send, call `cnet_receive`, or call `cnet_close` for
 its client. Calling `cnet_client_poll`, `cnet_client_stop`, or
 `cnet_client_destroy` recursively from that callback returns `SALTS_EBUSY`.
 Plain non-TLS connections admit multiple logical writes into a fixed-capacity
-owner-local FIFO. Admission is bounded by write slots and copied-byte budget;
-capacity exhaustion returns `SALTS_ENOBUFS`. NativeIO still progresses one
-stream write head at a time where the transport requires serialization, and
-`on_send` callbacks remain FIFO. TLS remains one-logical-write-at-a-time in
-this slice. A non-TLS `cnet_send_and_close()` is admitted as the final FIFO
-write behind already accepted messages, immediately closes further public
-send/receive admission, and begins the transport close only after that final
-write succeeds. TLS final-write ownership is completed in the following #479
-slice.
+owner-local FIFO. Admission is bounded by write slots; capacity exhaustion returns
+`SALTS_ENOBUFS`. NativeIO progresses one stream write head at a time where the
+transport requires serialization, and `on_send` callbacks remain FIFO.
+Retained final-send APIs close further public send/receive admission immediately
+after successful admission and begin transport/TLS close only after the final
+logical write settles.
 
 Hostname resolution uses c-ares' external-event-loop integration. The same
 poll owner checks its bounded DNS socket set without blocking and advances
@@ -597,24 +583,12 @@ CI 保存 CSV，不把所有样本灌入 step summary，并运行
 276480 个样本、逐样本非重叠阶段、计数以及从样本重算的 p50/p95。
 慢样本的阶段只能与**同一诊断轮次、同一 sample 编号**关联。
 
-### retained/owned 基准与手工 copied-send 诊断
+### retained/owned 基准
 
-默认四驱动基线中的 CNet 已使用 `cnet_send_buffer`，CI 只把 retained/owned
-路径与 NativeIO direct 比较和设门禁。copied send 不再属于 CI 性能合同。
-
-迁移期间仍可设置 `CNET_IO_BENCHMARK_SEND_COMPARE=1` 手工比较 `cnet_send` 与
-`cnet_send_buffer`，用于诊断旧 consumer 的 copy tax；其他值或同时设置 TRACE 均报错。
-这组结果不进入 CI verifier、step summary 或 hard gate，也不能替代 canonical retained
-结果。consumer 完成 #513 迁移后，该手工入口可随 copied API 一起删除。
-
-```powershell
-$env:CNET_IO_BENCHMARK_SEND_COMPARE = '1'
-$env:CNET_IO_BENCHMARK_OUTPUT = 'build/send'
-./build/Msvc-Release/bin/cnet_io_benchmark.exe --no-color
-if ($LASTEXITCODE -ne 0) { throw 'Send comparison failed' }
-Remove-Item Env:CNET_IO_BENCHMARK_SEND_COMPARE
-Remove-Item Env:CNET_IO_BENCHMARK_OUTPUT
-```
+默认四驱动基线中的 CNet 使用 `cnet_send_buffer`；CI 只把 retained/owned
+路径与 NativeIO direct 比较和设门禁。CNet copied-send benchmark mode 已随
+copied stream API 一起移除。NativeIO 自身仍可保留 flatten-vs-SG 诊断，用于隔离
+payload memcpy 与 vectored submit 成本，但这不代表 CNet 存在 copied data plane。
 
 ### Linux 系统调用证据
 
