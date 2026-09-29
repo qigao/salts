@@ -618,11 +618,14 @@ static bool eval_fused_value(const cflow_plan *plan,
     unsigned char *selection = NULL;
     unsigned char *current_owned = NULL;
     unsigned char *pending = NULL;
+    unsigned char *reusable = NULL;
     const unsigned char *current_data = input_bytes;
     size_t input_bytes_count = 0u;
     size_t selected_count = input_count;
     size_t current_type_size = plan->input_type->size;
-    size_t current_owned_bytes = 0u;
+    size_t current_owned_capacity = 0u;
+    size_t pending_capacity = 0u;
+    size_t reusable_capacity = 0u;
     cflow_fused_resources resources = {0};
 
     if (stats) stats->fused_value_path = true;
@@ -653,9 +656,26 @@ static bool eval_fused_value(const cflow_plan *plan,
                 const bool final_map = map_index + 1u == impl->fused_map_call_count;
                 size_t next_bytes = 0u;
                 size_t output_index = 0u;
-                if (!checked_bytes(selected_count, call->output_type->size, &next_bytes) ||
-                    !fused_allocate(&resources, next_bytes, &pending))
+                if (!checked_bytes(selected_count, call->output_type->size, &next_bytes))
                     goto fail;
+                if (reusable && reusable_capacity >= next_bytes) {
+                    pending = reusable;
+                    pending_capacity = reusable_capacity;
+                    reusable = NULL;
+                    reusable_capacity = 0u;
+                } else {
+                    if (reusable) {
+                        const size_t released_capacity = reusable_capacity;
+                        free(reusable);
+                        reusable = NULL;
+                        reusable_capacity = 0u;
+                        if (!fused_release(&resources, released_capacity))
+                            goto fail;
+                    }
+                    if (!fused_allocate(&resources, next_bytes, &pending))
+                        goto fail;
+                    pending_capacity = next_bytes;
+                }
 
                 if (!map_index && selection) {
                     if (call->raw_batch) {
@@ -698,12 +718,13 @@ static bool eval_fused_value(const cflow_plan *plan,
                 }
                 if (output_index != selected_count) goto fail;
 
-                free(current_owned);
+                reusable = current_owned;
+                reusable_capacity = current_owned_capacity;
                 current_owned = pending;
+                current_owned_capacity = pending_capacity;
                 pending = NULL;
+                pending_capacity = 0u;
                 current_data = current_owned;
-                if (!fused_release(&resources, current_owned_bytes)) goto fail;
-                current_owned_bytes = next_bytes;
                 current_type_size = call->output_type->size;
                 if (!map_index && selection) {
                     free(selection);
@@ -733,11 +754,21 @@ static bool eval_fused_value(const cflow_plan *plan,
         }
         if (output_index != selected_count) goto fail;
         current_owned = pending;
+        current_owned_capacity = resources.result_bytes;
         pending = NULL;
-        current_owned_bytes = resources.result_bytes;
+        pending_capacity = 0u;
     }
 
+    if (reusable) {
+        const size_t released_capacity = reusable_capacity;
+        free(reusable);
+        reusable = NULL;
+        reusable_capacity = 0u;
+        if (!fused_release(&resources, released_capacity))
+            goto fail;
+    }
     free(selection);
+    selection = NULL;
     if (stats) {
         stats->allocation_calls = resources.allocation_calls;
         stats->allocated_bytes = resources.allocated_bytes;
@@ -754,6 +785,7 @@ static bool eval_fused_value(const cflow_plan *plan,
 fail:
     free(pending);
     free(current_owned);
+    free(reusable);
     free(selection);
     return false;
 }
