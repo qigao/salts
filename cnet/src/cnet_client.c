@@ -86,8 +86,6 @@ static bool cnet_client_config_valid(const cnet_client_config *config) {
       config->completion_batch_capacity > config->request_capacity ||
       !cnet_power_of_two(config->event_capacity) || config->event_capacity < 2u ||
       config->max_send_bytes == 0u || config->receive_buffer_bytes == 0u ||
-      (config->command_buffer_bytes != 0u &&
-       config->command_buffer_bytes < config->max_send_bytes) ||
       (config->event_buffer_bytes != 0u &&
        config->event_buffer_bytes < config->receive_buffer_bytes) ||
       ((config->tls_io_buffer_bytes == 0u) != (config->tls_handshake_timeout_ms == 0u)) ||
