@@ -176,6 +176,20 @@ cflow_find_result_type(const cflow_find_result *result);
 const void *cflow_find_result_value(const cflow_find_result *result);
 void cflow_find_result_destroy(cflow_find_result *result);
 
+/**
+ * Move the sole owned result value into caller-provided uninitialized storage.
+ *
+ * expected_type must equal result->type and destination must satisfy that
+ * type's alignment and size requirements. On success CFlow applies the type's
+ * MOVE/DESTROY lifecycle when required, releases the result backing allocation,
+ * and restores result to zero. The destination then owns one live value.
+ *
+ * Failure leaves result unchanged and does not construct destination.
+ */
+bool cflow_result_move_value(cflow_result *result,
+                             const cmeta_type_desc *expected_type,
+                             void *destination);
+
 void cflow_result_destroy(cflow_result *result);
 
 #ifdef __cplusplus

@@ -797,6 +797,48 @@ void cflow_find_result_destroy(cflow_find_result *result) {
     result->impl = NULL;
 }
 
+bool cflow_result_move_value(cflow_result *result,
+                             const cmeta_type_desc *expected_type,
+                             void *destination) {
+    const cmeta_type_desc *type;
+    void *allocation;
+
+    if (!result || !expected_type || !destination || !result->data ||
+        result->count != 1u || !result->type ||
+        !cmeta_type_equal(result->type, expected_type) ||
+        !cflow_value_type_supported(result->type) ||
+        result->type->size == 0u || result->type->align == 0u ||
+        ((uintptr_t)destination % result->type->align) != 0u)
+        return false;
+
+    type = result->type;
+    {
+        const uintptr_t source_begin = (uintptr_t)result->data;
+        const uintptr_t destination_begin = (uintptr_t)destination;
+        if (source_begin > UINTPTR_MAX - type->size ||
+            destination_begin > UINTPTR_MAX - type->size)
+            return false;
+        if (source_begin < destination_begin + type->size &&
+            destination_begin < source_begin + type->size)
+            return false;
+    }
+    if (cflow_value_storage_type_supported(type)) {
+        allocation = result->data;
+    } else {
+        cflow_managed_result_header *header =
+            (cflow_managed_result_header *)result->data - 1;
+        allocation = header->allocation;
+        if (!allocation) return false;
+    }
+
+    if (!cflow_value_move_construct(type, destination, result->data))
+        return false;
+
+    free(allocation);
+    memset(result, 0, sizeof(*result));
+    return true;
+}
+
 void cflow_result_destroy(cflow_result *result) {
     cflow_result_storage_destroy(result);
 }
