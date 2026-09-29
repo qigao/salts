@@ -1,4 +1,5 @@
 #include <cstl/multimap.h>
+#include <cstl/detail/instance_meta.h>
 
 #include "rbtree_internal.h"
 #include "sequence_internal.h"
@@ -10,6 +11,42 @@ static rbtree_t *multimap_tree(multimap_t *map) {
 static const rbtree_t *multimap_tree_const(
     const multimap_t *map) {
   return map == NULL ? NULL : (const rbtree_t *)map->impl;
+}
+
+static bool multimap_is_typed_semantic_zero(const multimap_t *map) {
+  return map != NULL && map->impl == NULL &&
+         map->cmeta.descriptor == &stl_multimap_container_desc &&
+         map->key_type != NULL && map->value_type != NULL &&
+         cmeta_type_desc_valid(map->key_type) &&
+         cmeta_type_desc_valid(map->value_type);
+}
+
+static stl_status multimap_materialize_for_mutation(
+    multimap_t *map, multimap_t *zero_snapshot, bool *materialized) {
+  stl_status status;
+  if (zero_snapshot == NULL || materialized == NULL)
+    return STL_INVALID_ARGUMENT;
+  *materialized = false;
+  if (multimap_tree(map) != NULL) return STL_OK;
+  if (!multimap_is_typed_semantic_zero(map)) return STL_INVALID_ARGUMENT;
+
+  *zero_snapshot = *map;
+  status = multimap_raw_init(
+      map, zero_snapshot->key_type, zero_snapshot->value_type, SIZE_MAX);
+  if (status != STL_OK) {
+    *map = *zero_snapshot;
+    return status;
+  }
+  map->generation = zero_snapshot->generation;
+  *materialized = true;
+  return STL_OK;
+}
+
+static void multimap_rollback_materialization(
+    multimap_t *map, const multimap_t *zero_snapshot, bool materialized) {
+  if (!materialized) return;
+  multimap_raw_destroy_storage(map);
+  *map = *zero_snapshot;
 }
 
 static stl_status multimap_initialize(
@@ -127,13 +164,22 @@ void multimap_clear(multimap_t *map) {
 
 stl_status multimap_put(multimap_t *map, const void *key,
                                     const void *value) {
-  rbtree_t *tree = multimap_tree(map);
+  multimap_t zero_snapshot = {0};
+  bool materialized = false;
+  rbtree_t *tree;
   rbtree_put_result result;
   stl_status status;
-  if (tree == NULL) return STL_INVALID_ARGUMENT;
+  if (map == NULL || key == NULL || value == NULL) return STL_INVALID_ARGUMENT;
+  status = multimap_materialize_for_mutation(map, &zero_snapshot, &materialized);
+  if (status != STL_OK) return status;
+  tree = multimap_tree(map);
   status = rbtree_put(tree, key, value, &result);
   (void)result;
-  if (status == STL_OK) ++map->generation;
+  if (status == STL_OK) {
+    ++map->generation;
+  } else {
+    multimap_rollback_materialization(map, &zero_snapshot, materialized);
+  }
   return status;
 }
 
