@@ -341,7 +341,8 @@ suite("CFlow reflected function projection") {
             CFLOW_FUNCTION_PROJECTION_INVALID_ADAPTER);
 
         adapter = cflow_service_adapter(cflow_service_local_invoke);
-        adapter.meta.effects = CMETA_EFFECT_UNKNOWN;
+        adapter.meta.effects =
+            CMETA_EFFECT_MAY_FAIL | CMETA_EFFECT_IO;
         check_equal(
             cflow_function_typed_adapter_projection_admit(
                 FunctionMeta(cflow_projection_service),
@@ -374,6 +375,24 @@ suite("CFlow reflected function projection") {
                 &cflow_service_response_type,
                 &projection),
             CFLOW_FUNCTION_PROJECTION_TYPE_MISMATCH);
+
+        adapter = cflow_service_adapter(cflow_service_local_invoke);
+        check_equal(
+            cflow_function_typed_adapter_projection_admit(
+                FunctionMeta(cflow_projection_service),
+                FunctionAbi(cflow_projection_service),
+                adapter,
+                &cflow_service_request_type,
+                &cflow_service_response_type,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_OK);
+        {
+            cflow_graph wrong_graph = {0};
+            cflow_graph_init(&wrong_graph, &cmeta_type_int);
+            check_false(cflow_graph_add_function_typed_adapter_projection(
+                &wrong_graph, &projection));
+            cflow_graph_destroy(&wrong_graph);
+        }
     }
 
     it("admits local and mock adapters without changing Graph topology") {
