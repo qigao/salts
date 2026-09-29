@@ -251,6 +251,12 @@ spec("CFlow compiled Plan managed values") {
         check_equal(plan_managed_live_resources, (size_t)2u);
         check_equal(plan_managed_moves, (size_t)0u);
 
+        check_false(cflow_result_move_value(
+            &result, &plan_managed_type, result.data));
+        check_not_null(result.data);
+        check_equal(result.count, (size_t)1u);
+        check_equal(plan_managed_moves, (size_t)0u);
+
         check_true(cflow_result_move_value(
             &result, &plan_managed_type, &destination));
         check_null(result.data);
