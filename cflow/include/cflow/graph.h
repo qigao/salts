@@ -226,6 +226,19 @@ bool cflow_graph_create_node(cflow_graph *g,
                              const cflow_subgraph_id *nested,
                              size_t nested_count,
                              cflow_node_id *out_node);
+/**
+ * Explicitly typed adapter callables deliberately have no finite cmeta_sig.
+ * They are admitted only through the typed-adapter MAP builders below; ordinary
+ * cflow_graph_add/create_node keep requiring canonical callable signatures.
+ */
+bool cflow_typed_adapter_callable_valid(cmeta_callable fn);
+bool cflow_graph_create_typed_adapter_map_node(
+    cflow_graph *g,
+    cflow_subgraph_id subgraph,
+    cmeta_callable adapter,
+    const cmeta_type_desc *input_type,
+    const cmeta_type_desc *output_type,
+    cflow_node_id *out_node);
 /* Create a detached TAKE/SKIP node. input_type and limit are immutable Graph
  * metadata; mutable position belongs to each execution. */
 bool cflow_graph_create_slice_node(cflow_graph *g,
@@ -272,6 +285,12 @@ bool cflow_graph_set_subgraph_exit(cflow_graph *g,
 
 bool cflow_graph_add(cflow_graph *g, cflow_op op, cmeta_callable fn,
                      const cflow_graph *nested_graph);
+/** Append one explicitly typed MAP adapter to the root linear path. */
+bool cflow_graph_add_typed_adapter_map(
+    cflow_graph *g,
+    cmeta_callable adapter,
+    const cmeta_type_desc *input_type,
+    const cmeta_type_desc *output_type);
 /* Positional intermediate operations. TAKE short-circuits upstream; SKIP
  * discards without consuming downstream demand. */
 bool cflow_graph_take(cflow_graph *g, size_t limit);
