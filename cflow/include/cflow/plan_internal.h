@@ -96,6 +96,14 @@ bool cflow_plan_eval_array_profile(const cflow_plan *plan,
                                    cflow_result *out,
                                    cflow_plan_eval_stats *stats);
 
+bool cflow_plan_eval_array_workspace_profile(
+    const cflow_plan *plan,
+    const void *inputs,
+    size_t input_count,
+    cflow_plan_batch_workspace *workspace,
+    cflow_plan_batch_result *out,
+    cflow_plan_eval_stats *stats);
+
 bool cflow_plan_eval_prefix_materialized(const cflow_plan *plan,
                                          const void *inputs,
                                          size_t input_count,
