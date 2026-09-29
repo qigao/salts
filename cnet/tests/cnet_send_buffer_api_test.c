@@ -646,7 +646,7 @@ spec("CNet retained buffer public send API") {
     check_equal(cnet_send_slicev_and_close(&client, connection, slices, 3u), SALTS_OK);
     check_equal(mem_buffer_ref_count(first), UINT32_C(4));
     check_equal(mem_buffer_ref_count(second), UINT32_C(3));
-    check_equal(cnet_send(&client, connection, &rejected, sizeof(rejected)), SALTS_EBUSY);
+    check_equal(cnet_send_buffer(&client, connection, second), SALTS_EBUSY);
     check_equal(cnet_receive(&client, connection, 1u), SALTS_EBUSY);
 
     for (size_t index = 0u; index < 3u; ++index) mem_slice_release(&slices[index]);
@@ -727,7 +727,7 @@ spec("CNet retained buffer public send API") {
     check_equal(cnet_send_buffer_and_close(&client, connection, buffer), SALTS_OK);
     check_equal(mem_buffer_ref_count(buffer), UINT32_C(2));
 
-    check_equal(cnet_send(&client, connection, &rejected, sizeof(rejected)), SALTS_EBUSY);
+    check_equal(cnet_send_buffer(&client, connection, second), SALTS_EBUSY);
     check_equal(cnet_receive(&client, connection, 1u), SALTS_EBUSY);
 
     mem_buffer_release(buffer);
