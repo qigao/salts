@@ -2,6 +2,7 @@
 #include <salts/clock.h>
 #include <salts/error_codes.h>
 #include <salts/thread.h>
+#include <salts_buffer.h>
 
 #include "cnet_benchmark_stats.h"
 
@@ -52,7 +53,7 @@ typedef struct compare_api {
   int (*client_init)(cnet_client *client, const cnet_client_config *config);
   int (*connect)(cnet_client *client, const cnet_connect_options *options,
                  cnet_connection *out_connection);
-  int (*send)(cnet_client *client, cnet_connection connection, const void *data, size_t size);
+  int (*send_buffer)(cnet_client *client, cnet_connection connection, mem_buffer_t *buffer);
   int (*receive)(cnet_client *client, cnet_connection connection, size_t demand);
   int (*client_poll)(cnet_client *client, uint32_t timeout_ms, size_t *out_events);
   int (*close)(cnet_client *client, cnet_connection connection);
@@ -75,6 +76,7 @@ typedef struct compare_client {
   cnet_client client;
   cnet_connection connection;
   const unsigned char *expected_data;
+  mem_buffer_t *send_buffer;
   size_t payload_size;
   size_t received;
   int connected;
@@ -373,7 +375,7 @@ static int compare_api_load(compare_api *api, const char *path) {
   } while (0)
   COMPARE_LOAD(client_init, "cnet_client_init");
   COMPARE_LOAD(connect, "cnet_connect");
-  COMPARE_LOAD(send, "cnet_send");
+  COMPARE_LOAD(send_buffer, "cnet_send_buffer");
   COMPARE_LOAD(receive, "cnet_receive");
   COMPARE_LOAD(client_poll, "cnet_client_poll");
   COMPARE_LOAD(close, "cnet_close");
@@ -479,6 +481,10 @@ static int compare_client_init(compare_client *fixture, compare_api *api,
   fixture->status = SALTS_OK;
   status = api->client_init(&fixture->client, &config);
   if (status != SALTS_OK) return status;
+  fixture->send_buffer = mem_get_buffer(mem_global(), CNET_OWNER_COMPARE_PAYLOAD_BYTES);
+  if (fixture->send_buffer == NULL) return SALTS_ENOMEM;
+  memset(mem_buffer_data(fixture->send_buffer), 0x5a, CNET_OWNER_COMPARE_PAYLOAD_BYTES);
+  mem_set_used(fixture->send_buffer, CNET_OWNER_COMPARE_PAYLOAD_BYTES);
   (void)snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)ntohs(address->sin_port));
   options = (cnet_connect_options){.uri = uri,
                                    .observer = {.on_state = compare_cnet_state,
@@ -503,8 +509,11 @@ static int compare_exchange(compare_client *fixture, const unsigned char *payloa
   fixture->received = 0u;
   fixture->done = 0;
   fixture->status = SALTS_OK;
-  status = fixture->api->send(&fixture->client, fixture->connection, payload,
-                              CNET_OWNER_COMPARE_PAYLOAD_BYTES);
+  if (memcmp(mem_buffer_const_data(fixture->send_buffer), payload,
+             CNET_OWNER_COMPARE_PAYLOAD_BYTES) != 0)
+    return SALTS_EPROTO;
+  status = fixture->api->send_buffer(
+      &fixture->client, fixture->connection, fixture->send_buffer);
   if (status == SALTS_OK) status = compare_wait(fixture, &fixture->done, 1);
   if (status == SALTS_OK) status = fixture->status;
   return status;
@@ -522,6 +531,10 @@ static int compare_client_destroy(compare_client *fixture) {
   if (first_error == SALTS_OK && status != SALTS_OK) first_error = status;
   status = fixture->api->client_destroy(&fixture->client);
   if (first_error == SALTS_OK && status != SALTS_OK) first_error = status;
+  if (fixture->send_buffer != NULL) {
+    mem_buffer_release(fixture->send_buffer);
+    fixture->send_buffer = NULL;
+  }
   return first_error;
 }
 
@@ -642,7 +655,7 @@ static int compare_write_report(const char *baseline_path, const char *candidate
   fprintf(report, "# CNet owner base-SHA versus candidate\n\n");
   fprintf(report, "- baseline DSO: `%s`\n", baseline_path);
   fprintf(report, "- candidate DSO: `%s`\n", candidate_path);
-  fprintf(report, "- workload: TCP loopback, %u bytes, %u warmups, %u measured RTTs, %u paired repeats\n\n",
+  fprintf(report, "- workload: retained-buffer TCP loopback, %u bytes, %u warmups, %u measured RTTs, %u paired repeats\n\n",
           (unsigned int)CNET_OWNER_COMPARE_PAYLOAD_BYTES,
           (unsigned int)CNET_OWNER_COMPARE_WARMUPS,
           (unsigned int)CNET_OWNER_COMPARE_EXCHANGES,
