@@ -962,7 +962,9 @@ int cnet_send_slicev_and_close(cnet_client *client, cnet_connection connection,
     input.size += segments[index].length;
   }
   return cnet_client_send_admit(impl, connection, &input);
-}int cnet_send_buffer_and_close(cnet_client *client, cnet_connection connection,
+}
+
+int cnet_send_buffer_and_close(cnet_client *client, cnet_connection connection,
                                mem_buffer_t *buffer) {
   cnet_client_impl *impl = cnet_client_get(client);
   size_t size;
