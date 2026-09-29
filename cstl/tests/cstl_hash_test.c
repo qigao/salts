@@ -209,6 +209,43 @@ suite("CSTL hash ownership") {
         hash_map_raw_destroy_storage(&map);
     }
 
+    it("rolls failed first hash mutations back to the exact typed zero") {
+        hash_map_t map =
+            SALTS_STL_HASH_MAP_INITIALIZER_WITH_TYPES(
+                int, counted_value, &cmeta_type_int, &counted_type);
+        hash_set_t set =
+            SALTS_STL_HASH_SET_INITIALIZER_WITH_TYPE(
+                counted_value, &counted_type);
+        hash_map_t map_before;
+        hash_set_t set_before;
+        const int key = 7;
+        counted_value map_value;
+        counted_value set_key;
+
+        reset_counts();
+        map_value = counted_make(70);
+        set_key = counted_make(9);
+        map_before = map;
+        set_before = set;
+
+        fail_copy_on = 1u;
+        check_equal(hash_map_put(&map, &key, &map_value), STL_OUT_OF_MEMORY);
+        check_equal(memcmp(&map, &map_before, sizeof(map)), 0);
+        check_false(map.initialized);
+        check_null(map.states);
+
+        reset_counts();
+        fail_copy_on = 1u;
+        check_equal(hash_set_add(&set, &set_key), STL_OUT_OF_MEMORY);
+        check_equal(memcmp(&set, &set_before, sizeof(set)), 0);
+        check_false(set.table.initialized);
+        check_null(set.table.states);
+
+        fail_copy_on = 0u;
+        counted_destroy(&map_value);
+        counted_destroy(&set_key);
+    }
+
     it("keeps replacement transactional including self aliases") {
         hash_map_t map = {0};
         counted_value key;
