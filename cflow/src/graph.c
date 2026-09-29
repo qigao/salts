@@ -116,15 +116,18 @@ static bool fail(cflow_graph *g, const char *message) {
 }
 
 bool cflow_graph_explicit_adapter_callable_valid(cmeta_callable fn) {
-    const cmeta_raw_call zero_target = {0};
-
+    /*
+     * CMETA_SIG_INVALID means no member of the canonical raw target union has
+     * semantic identity. Requiring ADAPTER dispatch + no resolver makes this
+     * path unambiguously erased-invoke only without depending on function
+     * pointer object representations.
+     */
     return fn.dispatch == CMETA_CALLABLE_DISPATCH_ADAPTER &&
            fn.meta.sig == CMETA_SIG_INVALID &&
            fn.resolve == NULL &&
            fn.invoke != NULL &&
            fn.generate == NULL &&
            fn.capture_size <= CMETA_CAPTURE_INLINE &&
-           memcmp(&fn.meta.call, &zero_target, sizeof(zero_target)) == 0 &&
            cmeta_effect_property_contract_valid(
                fn.meta.effects, fn.meta.properties);
 }
