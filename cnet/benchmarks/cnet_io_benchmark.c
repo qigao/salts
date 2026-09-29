@@ -2261,7 +2261,7 @@ static int io_bench_compare_receive_ownership(
         const size_t method = (first + order) % RECEIVE_METHODS;
         status = io_bench_run_counted(
             IO_BENCH_TCP, IO_BENCH_CNET, payloads[payload_index], false,
-            backend->kind, IO_BENCH_SEND_BASELINE, 0u,
+            backend->kind, IO_BENCH_SEND_RETAINED, 0u,
             warmups[payload_index], exchanges[payload_index], true,
             modes[method], &runs[method][repeat]);
         if (status != SALTS_OK) return status;
