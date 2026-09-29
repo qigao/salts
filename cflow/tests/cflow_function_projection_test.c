@@ -5,6 +5,8 @@
 
 #include "tinytest.h"
 
+#include <stdbool.h>
+
 FunctionDecl(value, int, cflow_projection_local,
     (int, request, CMETA_PARAM_IN));
 
@@ -22,6 +24,24 @@ int cflow_projection_mock(int request) {
 }
 
 CFLOW_REFLECTED_ADAPTER(cflow_projection_mock);
+
+FunctionDecl(value, bool, cflow_projection_positive,
+    (int, request, CMETA_PARAM_IN));
+
+bool cflow_projection_positive(int request) {
+    return request > 0;
+}
+
+CFLOW_REFLECTED_ADAPTER(cflow_projection_positive);
+
+FunctionDecl(value, bool, cflow_projection_even,
+    (int, request, CMETA_PARAM_IN));
+
+bool cflow_projection_even(int request) {
+    return (request % 2) == 0;
+}
+
+CFLOW_REFLECTED_ADAPTER(cflow_projection_even);
 
 FunctionDecl(stateful, int, cflow_projection_stateful,
     (int, request, CMETA_PARAM_IN));
@@ -173,6 +193,131 @@ suite("CFlow reflected function projection") {
         cflow_graph_destroy(&mock_graph);
     }
 
+    it("does not infer FILTER intent when MAP policy rejects a bool return") {
+        cflow_function_projection projection = {0};
+
+        check_equal(
+            cflow_function_projection_admit(
+                FunctionMeta(cflow_projection_positive),
+                FunctionAbi(cflow_projection_positive),
+                CFLOW_REFLECTED_CALLABLE(cflow_projection_positive),
+                CFLOW_OP_MAP,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_INVALID_ADAPTER);
+        check_false(cflow_function_projection_valid(&projection));
+    }
+
+    it("admits reflected FILTER predicates while preserving the element type") {
+        cflow_function_projection local_projection = {0};
+        cflow_function_projection mock_projection = {0};
+        cflow_graph local_graph = {0};
+        cflow_graph mock_graph = {0};
+        cflow_plan local_plan = {0};
+        cflow_plan mock_plan = {0};
+        cflow_result local_result = {0};
+        cflow_result mock_result = {0};
+        cflow_result local_compiled = {0};
+        cflow_result mock_compiled = {0};
+        const int input[] = {-2, -1, 0, 1, 2, 3};
+        const int expected_positive[] = {1, 2, 3};
+        const int expected_even[] = {-2, 0, 2};
+
+        check_equal(
+            cflow_function_projection_admit(
+                FunctionMeta(cflow_projection_positive),
+                FunctionAbi(cflow_projection_positive),
+                CFLOW_REFLECTED_CALLABLE(cflow_projection_positive),
+                CFLOW_OP_FILTER,
+                &local_projection),
+            CFLOW_FUNCTION_PROJECTION_OK);
+        check_equal(
+            cflow_function_projection_admit(
+                FunctionMeta(cflow_projection_positive),
+                FunctionAbi(cflow_projection_positive),
+                CFLOW_REFLECTED_CALLABLE(cflow_projection_even),
+                CFLOW_OP_FILTER,
+                &mock_projection),
+            CFLOW_FUNCTION_PROJECTION_OK);
+
+        check_true(cflow_function_projection_valid(&local_projection));
+        check_true(cflow_function_projection_valid(&mock_projection));
+        check_true(cmeta_type_equal(
+            local_projection.function->return_type, &cmeta_type_bool));
+        check_true(cmeta_type_equal(
+            local_projection.input_type, &cmeta_type_int));
+        check_true(cmeta_type_equal(
+            local_projection.output_type, &cmeta_type_int));
+        check_true(cmeta_type_equal(
+            mock_projection.output_type, &cmeta_type_int));
+
+        cflow_graph_init(&local_graph, &cmeta_type_int);
+        cflow_graph_init(&mock_graph, &cmeta_type_int);
+        check_true(cflow_graph_add_function_projection(
+            &local_graph, &local_projection));
+        check_true(cflow_graph_add_function_projection(
+            &mock_graph, &mock_projection));
+
+        check_true(cflow_eval_array(
+            &local_graph, input, 6u, &local_result));
+        check_true(cflow_eval_array(
+            &mock_graph, input, 6u, &mock_result));
+        check_int_result(&local_result, expected_positive, 3u);
+        check_int_result(&mock_result, expected_even, 3u);
+
+        check_true(cflow_plan_compile_surface(
+            &local_plan, &local_graph, NULL));
+        check_true(cflow_plan_compile_surface(
+            &mock_plan, &mock_graph, NULL));
+        check_true(cflow_plan_eval_array(
+            &local_plan, input, 6u, &local_compiled));
+        check_true(cflow_plan_eval_array(
+            &mock_plan, input, 6u, &mock_compiled));
+        check_int_result(&local_compiled, expected_positive, 3u);
+        check_int_result(&mock_compiled, expected_even, 3u);
+
+        cflow_result_destroy(&local_result);
+        cflow_result_destroy(&mock_result);
+        cflow_result_destroy(&local_compiled);
+        cflow_result_destroy(&mock_compiled);
+        cflow_plan_destroy(&local_plan);
+        cflow_plan_destroy(&mock_plan);
+        cflow_graph_destroy(&local_graph);
+        cflow_graph_destroy(&mock_graph);
+    }
+
+    it("admits reflected TRANSFORM within the generated signature policy") {
+        cflow_function_projection projection = {0};
+        cflow_graph graph = {0};
+        cflow_plan plan = {0};
+        cflow_result result = {0};
+        const int input[] = {1, 2, 3};
+        const long expected[] = {1L, 2L, 3L};
+
+        check_equal(
+            cflow_function_projection_admit(
+                FunctionMeta(cflow_projection_type_mismatch),
+                FunctionAbi(cflow_projection_type_mismatch),
+                CFLOW_REFLECTED_CALLABLE(cflow_projection_type_mismatch),
+                CFLOW_OP_TRANSFORM,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_OK);
+        check_true(cflow_function_projection_valid(&projection));
+        check_true(cmeta_type_equal(projection.input_type, &cmeta_type_int));
+        check_true(cmeta_type_equal(projection.output_type, &cmeta_type_long));
+
+        cflow_graph_init(&graph, &cmeta_type_int);
+        check_true(cflow_graph_add_function_projection(&graph, &projection));
+        check_true(cflow_plan_compile_surface(&plan, &graph, NULL));
+        check_true(cflow_plan_eval_array(&plan, input, 3u, &result));
+        check_equal(result.count, (size_t)3u);
+        check_true(cmeta_type_equal(result.type, &cmeta_type_long));
+        check_equal(result.data, expected, sizeof(expected));
+
+        cflow_result_destroy(&result);
+        cflow_plan_destroy(&plan);
+        cflow_graph_destroy(&graph);
+    }
+
     it("preserves effectful FunctionDesc semantics as a Graph barrier") {
         cflow_function_projection projection = {0};
         cflow_graph graph = {0};
@@ -272,6 +417,15 @@ suite("CFlow reflected function projection") {
                 FunctionAbi(cflow_projection_local),
                 CFLOW_REFLECTED_CALLABLE(cflow_projection_local),
                 CFLOW_OP_FILTER,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_UNSUPPORTED_SHAPE);
+
+        check_equal(
+            cflow_function_projection_admit(
+                FunctionMeta(cflow_projection_local),
+                FunctionAbi(cflow_projection_local),
+                CFLOW_REFLECTED_CALLABLE(cflow_projection_local),
+                CFLOW_OP_REDUCE,
                 &projection),
             CFLOW_FUNCTION_PROJECTION_UNSUPPORTED_OPERATOR);
     }

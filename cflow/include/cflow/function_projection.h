@@ -37,11 +37,17 @@ typedef enum cflow_function_projection_status {
  */
 typedef struct cflow_function_projection {
     size_t size;
+    /** Explicit Graph semantic intent; never inferred from the C return type. */
     cflow_op op;
     const cmeta_function_desc *function;
     const cmeta_function_abi_desc *abi;
     cmeta_callable callable;
     const cmeta_type_desc *input_type;
+    /**
+     * Graph value type after the operator. MAP/TRANSFORM use the reflected
+     * return type; FILTER preserves the input element type while the callable
+     * itself returns canonical bool.
+     */
     const cmeta_type_desc *output_type;
 } cflow_function_projection;
 
