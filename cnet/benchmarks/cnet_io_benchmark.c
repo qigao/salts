@@ -2421,18 +2421,6 @@ static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const c
                native_rate_delta.median, native_rate_delta.mad);
       }
       free(runs);
-          return status;
-        }
-        printf("SG delta payload=%zu segments=%zu: native SG vs flatten p50=%+.2f%% +/- %.2fpp, "
-               "rate=%+.2f%% +/- %.2fpp; CNet retained-SG vs sendv-flatten "
-               "p50=%+.2f%% +/- %.2fpp, rate=%+.2f%% +/- %.2fpp\n",
-               payloads[payload_index], segments[segment_index],
-               native_p50_delta.median, native_p50_delta.mad,
-               native_rate_delta.median, native_rate_delta.mad,
-               cnet_p50_delta.median, cnet_p50_delta.mad,
-               cnet_rate_delta.median, cnet_rate_delta.mad);
-      }
-      free(runs);
     }
   }
 
