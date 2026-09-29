@@ -1,0 +1,98 @@
+name: Secure root-relative FS
+
+on:
+  pull_request:
+    paths:
+      - "utils/include/salts_fs.h"
+      - "utils/src/salts_fs_root.c"
+      - "utils/tests/test_salts_fs_root.c"
+      - "utils/CMakeLists.txt"
+      - "utils/tests/CMakeLists.txt"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - ".github/actions/setup-re2c-tools/**"
+      - ".github/workflows/fs-root-capability.yml"
+  push:
+    branches: [master]
+    paths:
+      - "utils/include/salts_fs.h"
+      - "utils/src/salts_fs_root.c"
+      - "utils/tests/test_salts_fs_root.c"
+      - "utils/CMakeLists.txt"
+      - "utils/tests/CMakeLists.txt"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - ".github/actions/setup-re2c-tools/**"
+      - ".github/workflows/fs-root-capability.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  qualify:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux GCC
+            runner: ubuntu-24.04
+            configure_preset: linux-release-user
+            build_preset: linux-release-user
+            build_dir: build/linux-gcc-release
+          - name: Windows MSVC
+            runner: windows-2022
+            configure_preset: win-release-user
+            build_preset: win-release-user
+            build_dir: build/Msvc-Release
+          - name: macOS AppleClang
+            runner: macos-15
+            configure_preset: release-mac-ninja
+            build_preset: build-default-mac
+            build_dir: build/mac-clang-release
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Configure focused FS build
+        shell: pwsh
+        env:
+          CONFIGURE_PRESET: ${{ matrix.configure_preset }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          cmake --preset $env:CONFIGURE_PRESET `
+            -DENABLE_TESTS=ON `
+            -DBUILD_TESTS=ON `
+            -DBUILD_BENCHMARKS=OFF `
+            -DBUILD_EXAMPLES=OFF `
+            '-DVCPKG_INSTALL_OPTIONS=--only-binarycaching'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build root capability test
+        shell: pwsh
+        env:
+          BUILD_PRESET: ${{ matrix.build_preset }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          cmake --build --preset $env:BUILD_PRESET --parallel 2 --target test_salts_fs_root
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run root capability test
+        shell: pwsh
+        env:
+          BUILD_DIR: ${{ matrix.build_dir }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          ctest --test-dir $env:BUILD_DIR --output-on-failure -R '^test_salts_fs_root$'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Source hygiene
+        shell: bash
+        run: git diff --check
