@@ -41,6 +41,12 @@
       "displayName": "Build (Android arm64-v8a Release)",
       "inherits": "ISLinux",
       "configurePreset": "android-arm64-v8a-release"
+    },
+    {
+      "name": "build-android-arm64-v8a-runtime-test-mac",
+      "displayName": "Build (Android arm64-v8a Runtime Test on macOS)",
+      "inherits": "ISMac",
+      "configurePreset": "android-arm64-v8a-runtime-test"
     }
   ]
 }
