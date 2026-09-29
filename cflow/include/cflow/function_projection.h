@@ -52,6 +52,26 @@ typedef struct cflow_function_projection {
 } cflow_function_projection;
 
 /*
+ * Explicit logical value adapter for native Service-style functions whose exact
+ * C ABI is not itself a unary value signature. The producer supplies the
+ * Request/Response CMeta descriptors and an adapter using the existing
+ * cmeta_callable.invoke(self,out,args) ABI.
+ *
+ * Unlike cflow_function_projection, callable.meta.sig intentionally remains
+ * CMETA_SIG_INVALID and resolve remains NULL. The typed-adapter projection is
+ * the explicit admission marker; ordinary invalid-signature callables are not
+ * admitted through normal Graph APIs.
+ */
+typedef struct cflow_function_typed_adapter_projection {
+    size_t size;
+    const cmeta_function_desc *function;
+    const cmeta_function_abi_desc *abi;
+    cmeta_callable callable;
+    const cmeta_type_desc *input_type;
+    const cmeta_type_desc *output_type;
+} cflow_function_typed_adapter_projection;
+
+/*
  * Control-plane admission artifact for reflected actions that are not Graph
  * operators. It proves semantic/ABI/callable consistency only; the consuming
  * runtime owns argument binding, transactional lifecycle and scheduling.
@@ -75,6 +95,22 @@ cflow_function_projection_status cflow_function_projection_admit(
     cmeta_callable adapter,
     cflow_op op,
     cflow_function_projection *out);
+
+cflow_function_projection_status
+cflow_function_typed_adapter_projection_admit(
+    const cmeta_function_desc *function,
+    const cmeta_function_abi_desc *abi,
+    cmeta_callable adapter,
+    const cmeta_type_desc *input_type,
+    const cmeta_type_desc *output_type,
+    cflow_function_typed_adapter_projection *out);
+
+bool cflow_function_typed_adapter_projection_valid(
+    const cflow_function_typed_adapter_projection *projection);
+
+bool cflow_graph_add_function_typed_adapter_projection(
+    cflow_graph *graph,
+    const cflow_function_typed_adapter_projection *projection);
 
 cflow_function_projection_status cflow_function_action_projection_admit(
     const cmeta_function_desc *function,
