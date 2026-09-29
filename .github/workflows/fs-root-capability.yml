@@ -61,7 +61,25 @@ jobs:
       - name: Set up shared build dependencies
         uses: ./.github/actions/setup-re2c-tools
 
+      - name: Setup Windows build environment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
+            throw "vswhere is unavailable: $vswhere"
+          }
+          $vsInstall = & $vswhere -latest -products '*' `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) {
+            throw "Visual Studio x64 C++ toolchain was not found"
+          }
+          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+
       - name: Configure focused FS build
+        if: runner.os != 'Windows'
         shell: pwsh
         env:
           CONFIGURE_PRESET: ${{ matrix.configure_preset }}
@@ -75,7 +93,17 @@ jobs:
             '-DVCPKG_INSTALL_OPTIONS=--only-binarycaching'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Configure focused FS build (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
+          cmake --preset "${{ matrix.configure_preset }}" -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF "-DVCPKG_INSTALL_OPTIONS=--only-binarycaching"
+
       - name: Build root capability test
+        if: runner.os != 'Windows'
         shell: pwsh
         env:
           BUILD_PRESET: ${{ matrix.build_preset }}
@@ -84,6 +112,14 @@ jobs:
           cmake --build --preset $env:BUILD_PRESET --parallel 2 --target test_salts_fs_root
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Build root capability test (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target test_salts_fs_root
       - name: Run root capability test
         shell: pwsh
         env:
