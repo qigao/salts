@@ -1,4 +1,5 @@
 name: Publish Salts 1.8.6 by CI
+# One-shot trigger: remove after the canonical release completes.
 
 on:
   push:
