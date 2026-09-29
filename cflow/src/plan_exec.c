@@ -214,9 +214,10 @@ typedef struct cflow_plan_batch_workspace_impl {
     size_t capacity;
     size_t selection_capacity;
     size_t buffer_capacity;
+    size_t buffer_stride;
     size_t allocation_bytes;
-    unsigned char *allocation;
     unsigned char *selection;
+    unsigned char *value_allocation;
     unsigned char *buffer_a;
     unsigned char *buffer_b;
 } cflow_plan_batch_workspace_impl;
@@ -261,6 +262,8 @@ bool cflow_plan_batch_workspace_init(cflow_plan_batch_workspace *workspace,
     cflow_plan_batch_workspace_impl *state = NULL;
     size_t selection_capacity = 0u;
     size_t buffer_capacity = 0u;
+    size_t max_alignment = 1u;
+    size_t buffer_stride = 0u;
     size_t two_buffers = 0u;
     size_t allocation_bytes = 0u;
 
@@ -275,27 +278,43 @@ bool cflow_plan_batch_workspace_init(cflow_plan_batch_workspace *workspace,
         for (size_t pc = impl->fused_filter_count; pc < impl->count; ++pc) {
             const cflow_plan_inst *inst = &impl->code[pc];
             for (size_t k = 0u; k < inst->fn_chain_count; ++k) {
+                const cmeta_type_desc *type = inst->fn_chain[k].output_type;
                 size_t bytes = 0u;
-                if (!checked_bytes(item_capacity, inst->fn_chain[k].output_type->size,
-                                   &bytes))
+                if (!checked_bytes(item_capacity, type->size, &bytes))
                     return false;
                 if (bytes > buffer_capacity) buffer_capacity = bytes;
+                if (type->align > max_alignment) max_alignment = type->align;
             }
         }
-    } else if (!checked_bytes(item_capacity, plan->output_type->size,
-                              &buffer_capacity)) {
-        return false;
+    } else {
+        if (!checked_bytes(item_capacity, plan->output_type->size,
+                           &buffer_capacity))
+            return false;
+        max_alignment = plan->output_type->align;
     }
 
-    if (!buffer_capacity ||
-        !checked_add(buffer_capacity, buffer_capacity, &two_buffers) ||
+    if (!buffer_capacity || !max_alignment ||
+        buffer_capacity > SIZE_MAX - (max_alignment - 1u))
+        return false;
+    buffer_stride =
+        (buffer_capacity + max_alignment - 1u) / max_alignment * max_alignment;
+    if (buffer_stride < buffer_capacity ||
+        !checked_add(buffer_stride, buffer_stride, &two_buffers) ||
         !checked_add(selection_capacity, two_buffers, &allocation_bytes))
         return false;
 
     state = (cflow_plan_batch_workspace_impl *)calloc(1u, sizeof(*state));
     if (!state) return false;
-    state->allocation = (unsigned char *)malloc(allocation_bytes);
-    if (!state->allocation) {
+    if (selection_capacity) {
+        state->selection = (unsigned char *)malloc(selection_capacity);
+        if (!state->selection) {
+            free(state);
+            return false;
+        }
+    }
+    state->value_allocation = (unsigned char *)malloc(two_buffers);
+    if (!state->value_allocation) {
+        free(state->selection);
         free(state);
         return false;
     }
@@ -305,10 +324,10 @@ bool cflow_plan_batch_workspace_init(cflow_plan_batch_workspace *workspace,
     state->capacity = item_capacity;
     state->selection_capacity = selection_capacity;
     state->buffer_capacity = buffer_capacity;
+    state->buffer_stride = buffer_stride;
     state->allocation_bytes = allocation_bytes;
-    state->selection = selection_capacity ? state->allocation : NULL;
-    state->buffer_a = state->allocation + selection_capacity;
-    state->buffer_b = state->buffer_a + buffer_capacity;
+    state->buffer_a = state->value_allocation;
+    state->buffer_b = state->value_allocation + buffer_stride;
     workspace->impl = state;
     return true;
 }
@@ -318,7 +337,8 @@ void cflow_plan_batch_workspace_destroy(cflow_plan_batch_workspace *workspace) {
     if (!workspace) return;
     state = (cflow_plan_batch_workspace_impl *)workspace->impl;
     if (state) {
-        free(state->allocation);
+        free(state->selection);
+        free(state->value_allocation);
         memset(state, 0, sizeof(*state));
         free(state);
     }
@@ -996,10 +1016,10 @@ bool cflow_plan_eval_array_workspace_profile(
                 return false;
 
             if (workspace_pointer_in_buffer(current_data, state->buffer_a,
-                                                    state->buffer_capacity))
+                                                    state->buffer_stride))
                 pending = state->buffer_b;
             else if (workspace_pointer_in_buffer(current_data, state->buffer_b,
-                                                 state->buffer_capacity))
+                                                 state->buffer_stride))
                 pending = state->buffer_a;
             else
                 pending = state->buffer_a;
