@@ -5,6 +5,15 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      release_sha:
+        description: "Exact commit SHA to package and publish"
+        required: true
+        type: string
+      tag:
+        description: "Immutable release tag (for example v1.8.5)"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -17,27 +26,52 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      release_sha: ${{ steps.version.outputs.release_sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.release_sha }}
+        with:
+          fetch-depth: 0
       - name: Read project version
         id: version
         shell: bash
         run: |
           set -euo pipefail
-          version="$(awk '/^[[:space:]]*VERSION[[:space:]]+[0-9]/{print $2; exit}' CMakeLists.txt)"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            release_sha='${{ inputs.release_sha }}'
+            requested_tag='${{ inputs.tag }}'
+          else
+            release_sha="$GITHUB_SHA"
+            requested_tag="$GITHUB_REF_NAME"
+          fi
+
+          test -n "$release_sha"
+          git cat-file -e "$release_sha^{commit}"
+
+          version="$(
+            git show "$release_sha:CMakeLists.txt" |
+              awk '/^[[:space:]]*VERSION[[:space:]]+[0-9]/{print $2; exit}'
+          )"
           test -n "$version"
-          vcpkg_version="$(python3 -c 'import json; print(json.load(open("vcpkg.json", encoding="utf-8"))["version-semver"])')"
+          vcpkg_version="$(
+            git show "$release_sha:vcpkg.json" |
+              python3 -c 'import json,sys; print(json.load(sys.stdin)["version-semver"])'
+          )"
           if [ "$vcpkg_version" != "$version" ]; then
             echo "release version mismatch: CMake=$version vcpkg=$vcpkg_version" >&2
             exit 1
           fi
+
           expected_tag="v$version"
-          if [ "$GITHUB_REF_NAME" != "$expected_tag" ]; then
-            echo "release tag mismatch: pushed=$GITHUB_REF_NAME expected=$expected_tag" >&2
+          if [ "$requested_tag" != "$expected_tag" ]; then
+            echo "release tag mismatch: requested=$requested_tag expected=$expected_tag" >&2
             exit 1
           fi
+
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$expected_tag" >> "$GITHUB_OUTPUT"
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
 
   linux:
     name: Linux x64 SDK
@@ -45,6 +79,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.release_sha }}
       - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
         id: shared_deps
         uses: ./.github/actions/setup-re2c-tools
@@ -98,7 +134,7 @@ jobs:
           grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ needs.metadata.outputs.version }}
-          commit=$GITHUB_SHA
+          commit=${{ needs.metadata.outputs.release_sha }}
           os=linux
           arch=x64
           profile=release
@@ -118,6 +154,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.release_sha }}
       - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
         id: shared_deps
         uses: ./.github/actions/setup-re2c-tools
@@ -175,7 +213,7 @@ jobs:
           grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ needs.metadata.outputs.version }}
-          commit=$GITHUB_SHA
+          commit=${{ needs.metadata.outputs.release_sha }}
           os=macos
           arch=$RUNNER_ARCH
           profile=release
@@ -195,6 +233,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.release_sha }}
       - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
         id: shared_deps
         uses: ./.github/actions/setup-re2c-tools
@@ -279,7 +319,7 @@ jobs:
           }
           $manifest = @(
             "version=${{ needs.metadata.outputs.version }}"
-            "commit=$env:GITHUB_SHA"
+            "commit=${{ needs.metadata.outputs.release_sha }}"
             "os=windows"
             "arch=x64"
             "profile=release"
@@ -304,6 +344,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.release_sha }}
       - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
         id: shared_deps
         uses: ./.github/actions/setup-re2c-tools
@@ -360,7 +402,7 @@ jobs:
           grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ needs.metadata.outputs.version }}
-          commit=$GITHUB_SHA
+          commit=${{ needs.metadata.outputs.release_sha }}
           os=android
           abi=arm64-v8a
           api=android-24
@@ -381,6 +423,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.release_sha }}
       - uses: actions/download-artifact@v4
         with:
           pattern: salts-sdk-*
@@ -451,7 +495,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dotnet pack packaging/nuget/Salts.Native.csproj --configuration Release --output dist -p:PackageVersion=${{ needs.metadata.outputs.version }} -p:PackageRoot="$GITHUB_WORKSPACE/package" -p:RepositoryCommit="$GITHUB_SHA"
+          dotnet pack packaging/nuget/Salts.Native.csproj --configuration Release --output dist -p:PackageVersion=${{ needs.metadata.outputs.version }} -p:PackageRoot="$GITHUB_WORKSPACE/package" -p:RepositoryCommit="${{ needs.metadata.outputs.release_sha }}"
           test -f "dist/Salts.Native.${{ needs.metadata.outputs.version }}.nupkg"
       - uses: actions/upload-artifact@v4
         with:
@@ -479,19 +523,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.metadata.outputs.tag }}
+          RELEASE_SHA: ${{ needs.metadata.outputs.release_sha }}
         run: |
           set -euo pipefail
           if existing_tag="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha 2>/dev/null)"; then
-            if [ "$existing_tag" != "$GITHUB_SHA" ]; then
-              echo "tag $TAG resolves to $existing_tag, not $GITHUB_SHA" >&2
+            if [ "$existing_tag" != "$RELEASE_SHA" ]; then
+              echo "tag $TAG resolves to $existing_tag, not $RELEASE_SHA" >&2
               echo "bump the Salts project/package version before publishing a changed SDK" >&2
               exit 1
             fi
             echo "tag $TAG already resolves to this commit"
+          else
+            echo "required release tag $TAG does not exist" >&2
+            exit 1
           fi
           if existing_release="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish 2>/dev/null)"; then
-            if [ "$existing_release" != "$GITHUB_SHA" ] && [ "$existing_release" != "$TAG" ]; then
-              echo "release $TAG targets $existing_release, not $GITHUB_SHA" >&2
+            if [ "$existing_release" != "$RELEASE_SHA" ] && [ "$existing_release" != "$TAG" ]; then
+              echo "release $TAG targets $existing_release, not $RELEASE_SHA" >&2
               exit 1
             fi
             echo "release $TAG already exists for this release identity"
