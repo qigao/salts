@@ -1423,6 +1423,19 @@ spec("CNet public client API") {
     check_null(client.impl);
   }
 
+  it("decouples the control command byte budget from retained stream send size") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+
+    config.max_send_bytes = 1024u * 1024u;
+    config.command_buffer_bytes = 64u * 1024u;
+    check_true(config.command_buffer_bytes < config.max_send_bytes);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+    check_null(client.impl);
+  }
+
   it("clears immediate connect failures and stops a quiescent client") {
     cnet_client client = {0};
     cnet_client_config config = cnet_api_test_config();
