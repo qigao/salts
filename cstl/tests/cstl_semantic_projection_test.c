@@ -447,6 +447,57 @@ spec("CSTL semantic projection") {
                     &meta_list_collection_data, &list), CMETA_OK);
   }
 
+  it("materializes HashSet and HashMap typed zero on first mutation") {
+    hash_set_t set =
+        SALTS_STL_HASH_SET_INITIALIZER_WITH_TYPE(int, &cmeta_type_int);
+    hash_map_t map =
+        SALTS_STL_HASH_MAP_INITIALIZER_WITH_TYPES(
+            int, long, &cmeta_type_int, &cmeta_type_long);
+    hash_set_t raw_set = {0};
+    hash_map_t raw_map = {0};
+    int key = 7;
+    int second_key = 9;
+    long value = 70L;
+    long second_value = 90L;
+
+    check_true(hash_set_empty(&set));
+    check_true(hash_map_empty(&map));
+    check_false(set.table.initialized);
+    check_false(map.initialized);
+
+    check_equal(hash_set_add(&set, &key), STL_OK);
+    check_equal(hash_map_put(&map, &key, &value), STL_OK);
+    check_true(set.table.initialized);
+    check_true(map.initialized);
+    check_equal(set.table.entry_limit, (size_t)SIZE_MAX);
+    check_equal(map.entry_limit, (size_t)SIZE_MAX);
+    check_true(set.cmeta.descriptor == &stl_hash_set_container_desc);
+    check_true(map.cmeta.descriptor == &stl_hash_map_container_desc);
+    check_true(hash_set_contains(&set, &key));
+    check_equal(*(const long *)hash_map_get_const(&map, &key), value);
+
+    hash_set_destroy(&set);
+    hash_map_destroy(&map);
+    check_false(set.table.initialized);
+    check_false(map.initialized);
+    check_true(set.cmeta.descriptor == &stl_hash_set_container_desc);
+    check_true(map.cmeta.descriptor == &stl_hash_map_container_desc);
+    check_true(set.element_type == &cmeta_type_int);
+    check_true(map.key_type == &cmeta_type_int);
+    check_true(map.value_type == &cmeta_type_long);
+
+    check_equal(hash_set_add(&set, &second_key), STL_OK);
+    check_equal(hash_map_put(&map, &second_key, &second_value), STL_OK);
+    check_true(hash_set_contains(&set, &second_key));
+    check_equal(*(const long *)hash_map_get_const(&map, &second_key), second_value);
+
+    check_equal(hash_set_add(&raw_set, &key), STL_INVALID_ARGUMENT);
+    check_equal(hash_map_put(&raw_map, &key, &value), STL_INVALID_ARGUMENT);
+
+    hash_set_destroy(&set);
+    hash_map_destroy(&map);
+  }
+
   it("materializes Deque Stack Queue and Heap typed zero on first mutation") {
     deque_t deque =
         SALTS_STL_DEQUE_INITIALIZER_WITH_TYPE(int, &cmeta_type_int);
