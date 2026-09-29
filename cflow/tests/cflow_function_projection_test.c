@@ -193,6 +193,23 @@ suite("CFlow reflected function projection") {
         cflow_graph_destroy(&mock_graph);
     }
 
+    it("does not infer FILTER intent from a bool-returning MAP") {
+        cflow_function_projection projection = {0};
+
+        check_equal(
+            cflow_function_projection_admit(
+                FunctionMeta(cflow_projection_positive),
+                FunctionAbi(cflow_projection_positive),
+                CFLOW_REFLECTED_CALLABLE(cflow_projection_positive),
+                CFLOW_OP_MAP,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_OK);
+        check_true(cflow_function_projection_valid(&projection));
+        check_equal(projection.op, CFLOW_OP_MAP);
+        check_true(cmeta_type_equal(projection.input_type, &cmeta_type_int));
+        check_true(cmeta_type_equal(projection.output_type, &cmeta_type_bool));
+    }
+
     it("admits reflected FILTER predicates while preserving the element type") {
         cflow_function_projection local_projection = {0};
         cflow_function_projection mock_projection = {0};
