@@ -61,6 +61,12 @@ static bool append_typed_node(lower_ctx *ctx, cflow_subgraph_id sgid,
         ok = cflow_graph_create_seeded_reduce_node(
             ctx->dst, sgid, node->fn,
             cflow_node_reduce_seed(node), &id);
+    else if (node->op == CFLOW_OP_MAP &&
+             node->has_fn &&
+             cflow_typed_adapter_callable_valid(node->fn))
+        ok = cflow_graph_create_typed_adapter_map_node(
+            ctx->dst, sgid, node->fn,
+            node->input_type, node->output_type, &id);
     else
         ok = cflow_graph_create_node(ctx->dst, sgid, node->op, node->fn,
                                     nested, node->subgraph_count, &id);
