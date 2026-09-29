@@ -1,5 +1,7 @@
 #include <cflow/function_projection.h>
 
+#include "graph_internal.h"
+
 #include <string.h>
 
 static bool projection_reflection_pair_valid(
@@ -166,6 +168,72 @@ cflow_function_projection_status cflow_function_projection_admit(
     return CFLOW_FUNCTION_PROJECTION_OK;
 }
 
+
+
+cflow_function_projection_status
+cflow_function_typed_adapter_projection_admit(
+    const cmeta_function_desc *function,
+    const cmeta_function_abi_desc *abi,
+    cmeta_callable adapter,
+    const cmeta_type_desc *input_type,
+    const cmeta_type_desc *output_type,
+    cflow_function_typed_adapter_projection *out) {
+    if (out == NULL)
+        return CFLOW_FUNCTION_PROJECTION_INVALID_ARGUMENT;
+    memset(out, 0, sizeof(*out));
+
+    if (!cmeta_function_desc_valid(function))
+        return CFLOW_FUNCTION_PROJECTION_INVALID_REFLECTION;
+    if (!cmeta_function_abi_desc_valid(abi) ||
+        !cmeta_function_desc_equal(function, abi->function))
+        return CFLOW_FUNCTION_PROJECTION_INVALID_ABI;
+    if (!cmeta_type_desc_valid(input_type) || input_type->size == 0u ||
+        !cmeta_type_desc_valid(output_type) || output_type->size == 0u)
+        return CFLOW_FUNCTION_PROJECTION_TYPE_MISMATCH;
+    if (!cflow_graph_explicit_adapter_callable_valid(adapter))
+        return CFLOW_FUNCTION_PROJECTION_INVALID_ADAPTER;
+    if (adapter.meta.effects != function->effects ||
+        adapter.meta.properties != function->properties)
+        return CFLOW_FUNCTION_PROJECTION_CONTRACT_MISMATCH;
+
+    out->size = sizeof(*out);
+    out->function = function;
+    out->abi = abi;
+    out->callable = adapter;
+    out->input_type = input_type;
+    out->output_type = output_type;
+    return CFLOW_FUNCTION_PROJECTION_OK;
+}
+
+bool cflow_function_typed_adapter_projection_valid(
+    const cflow_function_typed_adapter_projection *projection) {
+    return projection != NULL &&
+           projection->size >= sizeof(*projection) &&
+           projection_reflection_pair_valid(
+               projection->function, projection->abi) &&
+           cmeta_type_desc_valid(projection->input_type) &&
+           projection->input_type->size != 0u &&
+           cmeta_type_desc_valid(projection->output_type) &&
+           projection->output_type->size != 0u &&
+           cflow_graph_explicit_adapter_callable_valid(projection->callable) &&
+           projection->callable.meta.effects ==
+               projection->function->effects &&
+           projection->callable.meta.properties ==
+               projection->function->properties;
+}
+
+bool cflow_graph_add_function_typed_adapter_projection(
+    cflow_graph *graph,
+    const cflow_function_typed_adapter_projection *projection) {
+    if (graph == NULL ||
+        !cflow_function_typed_adapter_projection_valid(projection))
+        return false;
+    return cflow_graph_add_explicit_map_adapter(
+        graph,
+        projection->callable,
+        projection->input_type,
+        projection->output_type);
+}
 
 cflow_function_projection_status cflow_function_action_projection_admit(
     const cmeta_function_desc *function,
