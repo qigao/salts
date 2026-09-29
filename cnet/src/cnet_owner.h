@@ -127,12 +127,10 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms);
 int cnet_owner_receive_direct(cnet_owner *owner, cnet_session_handle session, size_t demand);
 
 /**
- * Owner-thread send ownership admission. These copy/retain into the bounded
+ * Owner-thread retained send ownership admission. These retain into the bounded
  * write queue and schedule owner-local work; they never publish a callback
  * synchronously. TLS remains on the existing command/TLS path in W2.
  */
-int cnet_owner_send_copy_direct(cnet_owner *owner, cnet_session_handle session,
-                                const void *data, size_t size);
 int cnet_owner_send_buffer_direct(cnet_owner *owner, cnet_session_handle session,
                                   mem_buffer_t *buffer);
 int cnet_owner_send_slice_direct(cnet_owner *owner, cnet_session_handle session,
@@ -142,11 +140,6 @@ int cnet_owner_send_slicev_direct(cnet_owner *owner, cnet_session_handle session
 /** Admits one retained final vector through the same close-after-send write-slot semantics. */
 int cnet_owner_send_slicev_close_direct(cnet_owner *owner, cnet_session_handle session,
                                         const mem_slice_t *segments, size_t segment_count);
-int cnet_owner_sendv_direct(cnet_owner *owner, cnet_session_handle session,
-                            const cnet_const_buffer *segments, size_t segment_count);
-/** Admits one copied final write behind already accepted write slots. */
-int cnet_owner_send_close_direct(cnet_owner *owner, cnet_session_handle session,
-                                 const void *data, size_t size);
 /** Admits one retained final buffer using the same close-after-send write-slot semantics. */
 int cnet_owner_send_buffer_close_direct(cnet_owner *owner, cnet_session_handle session,
                                         mem_buffer_t *buffer);
