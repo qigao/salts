@@ -65,6 +65,24 @@ typedef struct cflow_function_action_projection {
     const cmeta_function_abi_desc *abi;
     cmeta_callable callable;
 } cflow_function_action_projection;
+/**
+ * Explicit producer adapter for a logical value boundary that differs from the
+ * reflected native FunctionDesc shape. The native ABI remains authoritative
+ * metadata, while input_type/output_type are the already-proven CFlow MAP
+ * boundary supplied by the adapter producer.
+ *
+ * This path deliberately does not require a finite cmeta_sig row. The callable
+ * must be an adapter-only value (ADAPTER dispatch, invalid sig, no resolver,
+ * existing invoke ABI). Descriptor/code/capture lifetime remains borrowed.
+ */
+typedef struct cflow_function_adapter_projection {
+    size_t size;
+    const cmeta_function_desc *function;
+    const cmeta_function_abi_desc *abi;
+    cmeta_callable callable;
+    const cmeta_type_desc *input_type;
+    const cmeta_type_desc *output_type;
+} cflow_function_adapter_projection;
 
 const char *cflow_function_projection_status_string(
     cflow_function_projection_status status);
@@ -81,16 +99,28 @@ cflow_function_projection_status cflow_function_action_projection_admit(
     const cmeta_function_abi_desc *abi,
     cmeta_callable adapter,
     cflow_function_action_projection *out);
+cflow_function_projection_status cflow_function_adapter_projection_admit(
+    const cmeta_function_desc *function,
+    const cmeta_function_abi_desc *abi,
+    cmeta_callable adapter,
+    const cmeta_type_desc *input_type,
+    const cmeta_type_desc *output_type,
+    cflow_function_adapter_projection *out);
 
 bool cflow_function_projection_valid(
     const cflow_function_projection *projection);
 
 bool cflow_function_action_projection_valid(
     const cflow_function_action_projection *projection);
+bool cflow_function_adapter_projection_valid(
+    const cflow_function_adapter_projection *projection);
 
 bool cflow_graph_add_function_projection(
     cflow_graph *graph,
     const cflow_function_projection *projection);
+bool cflow_graph_add_function_adapter_projection(
+    cflow_graph *graph,
+    const cflow_function_adapter_projection *projection);
 
 #ifdef __cplusplus
 } /* extern "C" */
