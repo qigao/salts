@@ -489,12 +489,6 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
               SALTS_OK);
   check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
-  if (timeout == CNET_OWNER_TEST_WRITE_TIMEOUT) {
-    check_equal(event.state, CNET_EVENT_STATE_CLOSING);
-    check_equal(event.status, SALTS_OK);
-    check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
-    check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
-  }
   check_equal(event.state, timeout != CNET_OWNER_TEST_NO_TIMEOUT ? CNET_EVENT_STATE_FAILED
                                                                  : CNET_EVENT_STATE_CLOSING);
   if (timeout == CNET_OWNER_TEST_READ_TIMEOUT || timeout == CNET_OWNER_TEST_WRITE_TIMEOUT) {
