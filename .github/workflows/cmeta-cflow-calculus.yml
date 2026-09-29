@@ -10,6 +10,9 @@ on:
       - "cflow/include/cflow/generated/builtin_operator_policy.h"
       - "cflow/include/cflow/generated/machine_schema.h"
       - "cflow/include/cflow/operator_policy.h"
+      - "cflow/include/cflow/function_projection.h"
+      - "cflow/src/function_projection.c"
+      - "cflow/tests/cflow_function_projection_test.c"
       - ".github/workflows/cmeta-cflow-calculus.yml"
   push:
     branches: [master]
@@ -21,6 +24,9 @@ on:
       - "cflow/include/cflow/generated/builtin_operator_policy.h"
       - "cflow/include/cflow/generated/machine_schema.h"
       - "cflow/include/cflow/operator_policy.h"
+      - "cflow/include/cflow/function_projection.h"
+      - "cflow/src/function_projection.c"
+      - "cflow/tests/cflow_function_projection_test.c"
       - ".github/workflows/cmeta-cflow-calculus.yml"
   workflow_dispatch:
 
@@ -28,6 +34,72 @@ permissions:
   contents: read
 
 jobs:
+  projection:
+    name: CFlow reflected function projection
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Install native build prerequisite
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y nasm
+
+      - name: Configure focused CFlow build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset linux-release-user \
+            -DENABLE_TESTS=ON \
+            -DBUILD_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            '-DVCPKG_INSTALL_OPTIONS=--only-binarycaching'
+
+      - name: Build and run reflected projection contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build --preset linux-release-user --parallel 2 --target \
+            cflow_function_projection_test
+          ctest --test-dir build/linux-gcc-release \
+            --output-on-failure \
+            -R '^cflow_function_projection_test    name: Lean build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: true
+          test: true
+          lake-package-directory: formal/cmeta_cflow_calculus
+      - name: Verify generated signature manifest
+        working-directory: formal/cmeta_cflow_calculus
+        run: >-
+          lake exe cmeta-signature-gen --check
+          ../../cmeta/include/cmeta/generated/builtin_signature_manifest.h
+      - name: Verify generated CFlow operator policy
+        working-directory: formal/cmeta_cflow_calculus
+        run: >-
+          lake exe cflow-operator-policy-gen --check
+          ../../cflow/include/cflow/generated/builtin_operator_policy.h
+      - name: Verify generated CFlow Machine schema
+        working-directory: formal/cmeta_cflow_calculus
+        run: >-
+          lake exe cflow-machine-schema-gen --check
+          ../../cflow/include/cflow/generated/machine_schema.h
+
+
+      - name: Source hygiene
+        shell: bash
+        run: git diff --check
+
   lean:
     name: Lean build and test
     runs-on: ubuntu-latest
