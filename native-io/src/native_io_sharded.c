@@ -756,6 +756,15 @@ static int native_io_sharded_submit_internal(native_io_sharded *runtime, size_t 
     return status;
   }
 
+  /*
+   * Publish the Sharded accounting before handing the task to the executor.
+   * Once executor submission succeeds, the target shard may run immediately
+   * and observe these counters from inside the routed task. Counting only
+   * after submit_to() returns lets that task race ahead of its own accounting,
+   * which can leak an earlier external dispatch into a later stats window.
+   */
+  atomic_fetch_add(&runtime->submitted_tasks, 1u);
+  atomic_fetch_add(&runtime->queued_dispatches, 1u);
   {
     const salts_coro_executor_task_t routed = {
         native_io_sharded_routed_run, native_io_sharded_routed_cancel,
@@ -764,10 +773,9 @@ static int native_io_sharded_submit_internal(native_io_sharded *runtime, size_t 
                       : salts_coro_executor_try_submit_to(runtime->executor, shard_index, &routed);
   }
 
-  if (status == SALTS_OK) {
-    atomic_fetch_add(&runtime->submitted_tasks, 1u);
-    atomic_fetch_add(&runtime->queued_dispatches, 1u);
-  } else {
+  if (status != SALTS_OK) {
+    atomic_fetch_sub(&runtime->queued_dispatches, 1u);
+    atomic_fetch_sub(&runtime->submitted_tasks, 1u);
     native_io_sharded_release_slot(slot);
   }
   native_io_sharded_dispatch_end(runtime);
