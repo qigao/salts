@@ -523,6 +523,17 @@ cflow_subgraph_id cflow_graph_create_subgraph(cflow_graph *g,
     return id;
 }
 
+bool cflow_typed_adapter_callable_valid(cmeta_callable fn) {
+    return fn.dispatch == CMETA_CALLABLE_DISPATCH_ADAPTER &&
+           fn.meta.sig == CMETA_SIG_INVALID &&
+           fn.resolve == NULL &&
+           fn.invoke != NULL &&
+           fn.generate == NULL &&
+           fn.capture_size <= CMETA_CAPTURE_INLINE &&
+           cmeta_effect_property_contract_valid(
+               fn.meta.effects, fn.meta.properties);
+}
+
 static bool derive_node(cflow_graph *g,
                         cflow_op op,
                         cmeta_callable fn,
@@ -607,6 +618,39 @@ bool cflow_graph_create_node(cflow_graph *g,
     }
     cflow_node_id id = subgraph_append_node(sg, node);
     if (id == CMETA_INVALID_ID) { node_destroy(&node); return fail(g, "node allocation failed"); }
+    g->version = version;
+    g->error = NULL;
+    *out_node = id;
+    return true;
+}
+
+bool cflow_graph_create_typed_adapter_map_node(
+    cflow_graph *g,
+    cflow_subgraph_id subgraph,
+    cmeta_callable adapter,
+    const cmeta_type_desc *input_type,
+    const cmeta_type_desc *output_type,
+    cflow_node_id *out_node) {
+    uint64_t version;
+    cflow_subgraph *sg =
+        g && subgraph < g->subgraph_count ? &g->subgraphs[subgraph] : NULL;
+    cflow_node node = {0};
+    cflow_node_id id;
+    if (!sg || !out_node ||
+        !cflow_typed_adapter_callable_valid(adapter) ||
+        !cmeta_type_desc_valid(input_type) || input_type->size == 0u ||
+        !cmeta_type_desc_valid(output_type) || output_type->size == 0u)
+        return fail(g, "invalid explicitly typed MAP adapter");
+    if (!cflow_graph_version_acquire(&version))
+        return fail(g, "graph version space exhausted");
+    node.op = CFLOW_OP_MAP;
+    node.fn = adapter;
+    node.has_fn = true;
+    node.input_type = input_type;
+    node.output_type = output_type;
+    id = subgraph_append_node(sg, node);
+    if (id == CMETA_INVALID_ID)
+        return fail(g, "typed adapter node allocation failed");
     g->version = version;
     g->error = NULL;
     *out_node = id;
@@ -971,6 +1015,39 @@ bool cflow_graph_add(cflow_graph *g, cflow_op op,
         return fail(g, "edge allocation failed");
     }
     g->version = version;
+    g->error = NULL;
+    return true;
+}
+
+bool cflow_graph_add_typed_adapter_map(
+    cflow_graph *g,
+    cmeta_callable adapter,
+    const cmeta_type_desc *input_type,
+    const cmeta_type_desc *output_type) {
+    cflow_subgraph *root;
+    cflow_node_id old_tail;
+    cflow_node_id id = CMETA_INVALID_ID;
+    if (!g || g->root >= g->subgraph_count)
+        return fail(g, "graph is not initialized");
+    root = &g->subgraphs[g->root];
+    if (!cmeta_type_equal(root->output_type, input_type))
+        return fail(g, "typed adapter input type does not match graph output");
+    old_tail = root->tail;
+    if (!cflow_graph_create_typed_adapter_map_node(
+            g, g->root, adapter, input_type, output_type, &id))
+        return false;
+    root = &g->subgraphs[g->root];
+    if (old_tail != CMETA_INVALID_ID &&
+        !subgraph_add_edge(root, old_tail, id)) {
+        node_destroy(&root->nodes[id]);
+        --root->node_count;
+        root->tail = old_tail;
+        root->output_type = old_tail < root->node_count
+            ? root->nodes[old_tail].output_type : root->input_type;
+        return fail(g, "typed adapter edge allocation failed");
+    }
+    root->tail = id;
+    root->output_type = output_type;
     g->error = NULL;
     return true;
 }
@@ -1407,9 +1484,21 @@ static bool validate_subgraph_nodes(const cflow_graph *g,
             if (error) *error = "operator carries an unexpected typed parameter";
             return false;
         }
-        if (node->has_fn && !cmeta_callable_contract_valid(node->fn)) {
-            if (error) *error = "callable effect/property contract is invalid";
-            return false;
+        if (node->has_fn) {
+            if (cflow_typed_adapter_callable_valid(node->fn)) {
+                if (node->op != CFLOW_OP_MAP || node->fn_chain_count != 0u ||
+                    node->subgraph_count != 0u ||
+                    !cmeta_type_desc_valid(node->input_type) ||
+                    node->input_type->size == 0u ||
+                    !cmeta_type_desc_valid(node->output_type) ||
+                    node->output_type->size == 0u) {
+                    if (error) *error = "explicitly typed adapter node metadata is inconsistent";
+                    return false;
+                }
+            } else if (!cmeta_callable_contract_valid(node->fn)) {
+                if (error) *error = "callable effect/property contract is invalid";
+                return false;
+            }
         }
         if (!validate_map_chain(node, error)) return false;
         if (index->has_fanout && index->first_fanout == n) {
