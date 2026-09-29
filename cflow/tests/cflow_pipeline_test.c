@@ -36,6 +36,10 @@ typed(map, stateful, long, cflow_test_stateful_add_ten, (int value)) {
     return (long)value + 10L;
 }
 
+typed(map, value, int, cflow_test_increment_int, (int value)) {
+    return value + 1;
+}
+
 lambda1(map, value, long, cflow_test_captured_add,
         int, value, long, increment) {
     return (long)value + increment;
@@ -211,6 +215,43 @@ suite("CFlow pipeline") {
         check_equal(stats.staged_input_copy_bytes, (size_t)0u);
         check_equal(stats.raw_batch_stage_calls, (size_t)3u);
         check_equal(stats.adapter_item_calls, (size_t)0u);
+
+        cflow_result_destroy(&result);
+        cflow_plan_destroy(&plan);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("reuses dead fused map slots across long value chains") {
+        cflow_stream stream = {0};
+        cflow_plan plan = {0};
+        cflow_result result = {0};
+        cflow_plan_eval_stats stats = {0};
+        const int input[] = {1, 2, 3, 4};
+        const int expected[] = {5, 6, 7, 8};
+        const size_t value_bytes = sizeof(input);
+
+        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
+        check_not_null(stream.map(&stream, cflow_test_increment_int));
+        check_not_null(stream.map(&stream, cflow_test_increment_int));
+        check_not_null(stream.map(&stream, cflow_test_increment_int));
+        check_not_null(stream.map(&stream, cflow_test_increment_int));
+        check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+        check_true(cflow_plan_eval_array_profile(
+            &plan, input, sizeof(input) / sizeof(input[0]), &result, &stats));
+
+        check_true(stats.fused_value_path);
+        check_equal(stats.allocation_calls, (size_t)2u);
+        check_equal(stats.allocated_bytes, (size_t)2u * value_bytes);
+        check_equal(stats.peak_live_bytes, (size_t)2u * value_bytes);
+        check_equal(stats.selection_bytes, (size_t)0u);
+        check_equal(stats.intermediate_bytes, (size_t)3u * value_bytes);
+        check_equal(stats.result_bytes, value_bytes);
+        check_equal(stats.staged_input_copy_bytes, (size_t)0u);
+        check_equal(stats.raw_batch_stage_calls, (size_t)4u);
+        check_equal(stats.adapter_item_calls, (size_t)0u);
+        check_equal(result.count, sizeof(expected) / sizeof(expected[0]));
+        check_true(cmeta_type_equal(result.type, &cmeta_type_int));
+        check_equal(result.data, expected, sizeof(expected));
 
         cflow_result_destroy(&result);
         cflow_plan_destroy(&plan);
