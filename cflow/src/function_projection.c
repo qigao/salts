@@ -254,6 +254,19 @@ cflow_function_typed_filter_projection_admit(
     if (function->param_count != 1u ||
         !cmeta_type_equal(function->return_type, &cmeta_type_bool))
         return CFLOW_FUNCTION_PROJECTION_UNSUPPORTED_SHAPE;
+    {
+        const cmeta_param_desc *param = cmeta_function_param(function, 0u);
+        const cmeta_abi_carrier carrier = cmeta_function_param_abi(abi, 0u);
+        if (param == NULL ||
+            (param->flags & CMETA_PARAM_DIRECTION_MASK) != CMETA_PARAM_IN ||
+            carrier == CMETA_ABI_UNSPECIFIED ||
+            carrier == CMETA_ABI_OPAQUE)
+            return CFLOW_FUNCTION_PROJECTION_UNSUPPORTED_SHAPE;
+    }
+    if (abi->return_carrier == CMETA_ABI_UNSPECIFIED ||
+        abi->return_carrier == CMETA_ABI_OPAQUE ||
+        abi->return_carrier == CMETA_ABI_VOID)
+        return CFLOW_FUNCTION_PROJECTION_UNSUPPORTED_SHAPE;
     if (!cmeta_type_desc_valid(input_type) || input_type->size == 0u)
         return CFLOW_FUNCTION_PROJECTION_TYPE_MISMATCH;
     if (!cflow_graph_explicit_adapter_callable_valid(adapter))
