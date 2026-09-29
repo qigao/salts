@@ -40,7 +40,11 @@ typedef enum cflow_node_param_kind {
     CFLOW_NODE_PARAM_SKIP,
     CFLOW_NODE_PARAM_DISTINCT,
     CFLOW_NODE_PARAM_SORTED,
-    CFLOW_NODE_PARAM_REDUCE_SEED
+    CFLOW_NODE_PARAM_REDUCE_SEED,
+    /* Explicit logical Request -> Response MAP adapter. Its callable uses the
+     * existing cmeta_callable.invoke ABI but intentionally has no finite
+     * cmeta_sig row; only the typed projection admission path may create it. */
+    CFLOW_NODE_PARAM_TYPED_ADAPTER
 } cflow_node_param_kind;
 
 typedef union cflow_node_params {

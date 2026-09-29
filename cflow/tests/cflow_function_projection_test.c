@@ -2,10 +2,12 @@
 #include <cflow/adapters.h>
 #include <cflow/effect.h>
 #include <cflow/plan.h>
+#include <cflow/verify.h>
 
 #include "tinytest.h"
 
 #include <stdbool.h>
+#include <string.h>
 
 FunctionDecl(value, int, cflow_projection_local,
     (int, request, CMETA_PARAM_IN));
@@ -78,6 +80,113 @@ FunctionDeclAsAbi(fallible, int, &cmeta_type_int, CMETA_ABI_SCALAR,
 
 Function0Decl(value, int, cflow_projection_zero);
 
+typedef struct cflow_service_request {
+    int value;
+} cflow_service_request;
+
+typedef struct cflow_service_response {
+    int value;
+} cflow_service_response;
+
+static const cmeta_type_traits cflow_service_value_traits = {
+    .flags = CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY
+};
+
+static const cmeta_type_desc cflow_service_request_type = {
+    .name = "cflow_service_request",
+    .size = sizeof(cflow_service_request),
+    .align = _Alignof(cflow_service_request),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &cflow_service_value_traits,
+    .identity = NULL
+};
+
+static const cmeta_type_desc cflow_service_response_type = {
+    .name = "cflow_service_response",
+    .size = sizeof(cflow_service_response),
+    .align = _Alignof(cflow_service_response),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &cflow_service_value_traits,
+    .identity = NULL
+};
+
+static const cmeta_type_desc cflow_service_request_ptr_type = {
+    .name = "cflow_service_request *",
+    .size = sizeof(cflow_service_request *),
+    .align = _Alignof(cflow_service_request *),
+    .kind = CMETA_T_POINTER,
+    .pointee = &cflow_service_request_type,
+    .traits = NULL,
+    .identity = NULL
+};
+
+static const cmeta_type_desc cflow_service_response_ptr_type = {
+    .name = "cflow_service_response *",
+    .size = sizeof(cflow_service_response *),
+    .align = _Alignof(cflow_service_response *),
+    .kind = CMETA_T_POINTER,
+    .pointee = &cflow_service_response_type,
+    .traits = NULL,
+    .identity = NULL
+};
+
+FunctionDeclAsAbi(fallible, int, &cmeta_type_int, CMETA_ABI_SCALAR,
+                  cflow_projection_service,
+    (cflow_service_request *, request, CMETA_PARAM_IN,
+     &cflow_service_request_ptr_type, CMETA_ABI_OBJECT_POINTER),
+    (cflow_service_response *, response, CMETA_PARAM_OUT,
+     &cflow_service_response_ptr_type, CMETA_ABI_OBJECT_POINTER));
+
+int cflow_projection_service(
+    cflow_service_request *request,
+    cflow_service_response *response) {
+    if (request == NULL || response == NULL) return -1;
+    response->value = request->value + 7;
+    return 0;
+}
+
+static bool cflow_service_local_invoke(
+    const cmeta_callable *self,
+    void *out,
+    const void *const *args) {
+    cflow_service_response response = {0};
+    int status;
+    (void)self;
+    if (out == NULL || args == NULL || args[0] == NULL)
+        return false;
+    status = cflow_projection_service(
+        (cflow_service_request *)args[0], &response);
+    if (status != 0) return false;
+    *(cflow_service_response *)out = response;
+    return true;
+}
+
+static bool cflow_service_mock_invoke(
+    const cmeta_callable *self,
+    void *out,
+    const void *const *args) {
+    const cflow_service_request *request;
+    (void)self;
+    if (out == NULL || args == NULL || args[0] == NULL)
+        return false;
+    request = (const cflow_service_request *)args[0];
+    ((cflow_service_response *)out)->value = request->value + 100;
+    return true;
+}
+
+static cmeta_callable cflow_service_adapter(cmeta_callable_invoke_fn invoke) {
+    cmeta_callable adapter = {0};
+    const cmeta_function_desc *function =
+        FunctionMeta(cflow_projection_service);
+    adapter.meta.effects = function->effects;
+    adapter.meta.properties = function->properties;
+    adapter.invoke = invoke;
+    adapter.dispatch = CMETA_CALLABLE_DISPATCH_ADAPTER;
+    return adapter;
+}
+
 static void check_int_result(
     const cflow_result *result,
     const int *expected,
@@ -89,6 +198,210 @@ static void check_int_result(
 }
 
 suite("CFlow reflected function projection") {
+    it("admits explicit Request to Response adapters without a finite callable signature") {
+        cflow_function_typed_adapter_projection local_projection = {0};
+        cflow_function_typed_adapter_projection mock_projection = {0};
+        cflow_graph local_graph = {0};
+        cflow_graph mock_graph = {0};
+        cflow_plan local_plan = {0};
+        cflow_plan mock_plan = {0};
+        cflow_result local_result = {0};
+        cflow_result mock_result = {0};
+        cflow_result local_compiled = {0};
+        cflow_result mock_compiled = {0};
+        cflow_verify_report verify = {0};
+        const cflow_subgraph *local_root;
+        const cflow_subgraph *mock_root;
+        const cflow_service_request input[] = {{1}, {2}, {3}};
+        const cflow_service_response expected_local[] = {{8}, {9}, {10}};
+        const cflow_service_response expected_mock[] = {{101}, {102}, {103}};
+
+        check_equal(
+            cflow_function_typed_adapter_projection_admit(
+                FunctionMeta(cflow_projection_service),
+                FunctionAbi(cflow_projection_service),
+                cflow_service_adapter(cflow_service_local_invoke),
+                &cflow_service_request_type,
+                &cflow_service_response_type,
+                &local_projection),
+            CFLOW_FUNCTION_PROJECTION_OK);
+        check_equal(
+            cflow_function_typed_adapter_projection_admit(
+                FunctionMeta(cflow_projection_service),
+                FunctionAbi(cflow_projection_service),
+                cflow_service_adapter(cflow_service_mock_invoke),
+                &cflow_service_request_type,
+                &cflow_service_response_type,
+                &mock_projection),
+            CFLOW_FUNCTION_PROJECTION_OK);
+
+        check_true(cflow_function_typed_adapter_projection_valid(
+            &local_projection));
+        check_true(cflow_function_typed_adapter_projection_valid(
+            &mock_projection));
+        check_equal(local_projection.callable.meta.sig, CMETA_SIG_INVALID);
+        check_equal(mock_projection.callable.meta.sig, CMETA_SIG_INVALID);
+        check_null(local_projection.callable.resolve);
+        check_null(mock_projection.callable.resolve);
+        check_false(cmeta_callable_contract_valid(local_projection.callable));
+
+        cflow_graph_init(&local_graph, &cflow_service_request_type);
+        cflow_graph_init(&mock_graph, &cflow_service_request_type);
+        check_true(cflow_graph_add_function_typed_adapter_projection(
+            &local_graph, &local_projection));
+        check_true(cflow_graph_add_function_typed_adapter_projection(
+            &mock_graph, &mock_projection));
+
+        local_root = cflow_graph_subgraph(&local_graph, local_graph.root);
+        mock_root = cflow_graph_subgraph(&mock_graph, mock_graph.root);
+        check_not_null(local_root);
+        check_not_null(mock_root);
+        check_equal(local_root->node_count, (size_t)2u);
+        check_equal(mock_root->node_count, (size_t)2u);
+        check_equal(local_root->nodes[1].op, CFLOW_OP_MAP);
+        check_equal(mock_root->nodes[1].op, CFLOW_OP_MAP);
+        check_equal(
+            local_root->nodes[1].param_kind,
+            CFLOW_NODE_PARAM_TYPED_ADAPTER);
+        check_equal(
+            mock_root->nodes[1].param_kind,
+            CFLOW_NODE_PARAM_TYPED_ADAPTER);
+        check_equal(local_root->nodes[1].fn_chain_count, (size_t)0u);
+        check_equal(mock_root->nodes[1].fn_chain_count, (size_t)0u);
+        check_true(cmeta_type_equal(
+            local_root->nodes[1].input_type, &cflow_service_request_type));
+        check_true(cmeta_type_equal(
+            local_root->nodes[1].output_type, &cflow_service_response_type));
+
+        check_true(cflow_eval_array(
+            &local_graph, input, 3u, &local_result));
+        check_true(cflow_eval_array(
+            &mock_graph, input, 3u, &mock_result));
+        check_equal(local_result.count, (size_t)3u);
+        check_equal(mock_result.count, (size_t)3u);
+        check_true(cmeta_type_equal(
+            local_result.type, &cflow_service_response_type));
+        check_true(cmeta_type_equal(
+            mock_result.type, &cflow_service_response_type));
+        check_equal(
+            local_result.data, expected_local, sizeof(expected_local));
+        check_equal(
+            mock_result.data, expected_mock, sizeof(expected_mock));
+
+        check_true(cflow_plan_compile_surface(
+            &local_plan, &local_graph, NULL));
+        check_true(cflow_plan_compile_surface(
+            &mock_plan, &mock_graph, NULL));
+        check_true(cflow_plan_eval_array(
+            &local_plan, input, 3u, &local_compiled));
+        check_true(cflow_plan_eval_array(
+            &mock_plan, input, 3u, &mock_compiled));
+        check_equal(
+            local_compiled.data, expected_local, sizeof(expected_local));
+        check_equal(
+            mock_compiled.data, expected_mock, sizeof(expected_mock));
+
+        check_true(cflow_verify_pipeline(
+            &local_graph, input, 3u, &verify));
+        check_true(verify.compiled_plan_checked);
+        check_equal(verify.opt_stats.map_nodes_fused, (size_t)0u);
+
+        cflow_result_destroy(&local_result);
+        cflow_result_destroy(&mock_result);
+        cflow_result_destroy(&local_compiled);
+        cflow_result_destroy(&mock_compiled);
+        cflow_plan_destroy(&local_plan);
+        cflow_plan_destroy(&mock_plan);
+        cflow_graph_destroy(&local_graph);
+        cflow_graph_destroy(&mock_graph);
+    }
+
+    it("rejects malformed explicit typed adapters and mismatched contracts") {
+        cflow_function_typed_adapter_projection projection = {0};
+        cmeta_callable adapter =
+            cflow_service_adapter(cflow_service_local_invoke);
+        cmeta_function_abi_desc bad_abi =
+            *FunctionAbi(cflow_projection_service);
+        cmeta_type_desc zero_size = cflow_service_request_type;
+
+        adapter.invoke = NULL;
+        check_equal(
+            cflow_function_typed_adapter_projection_admit(
+                FunctionMeta(cflow_projection_service),
+                FunctionAbi(cflow_projection_service),
+                adapter,
+                &cflow_service_request_type,
+                &cflow_service_response_type,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_INVALID_ADAPTER);
+
+        adapter = cflow_service_adapter(cflow_service_local_invoke);
+        adapter.dispatch = CMETA_CALLABLE_DISPATCH_CANONICAL_RAW;
+        check_equal(
+            cflow_function_typed_adapter_projection_admit(
+                FunctionMeta(cflow_projection_service),
+                FunctionAbi(cflow_projection_service),
+                adapter,
+                &cflow_service_request_type,
+                &cflow_service_response_type,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_INVALID_ADAPTER);
+
+        adapter = cflow_service_adapter(cflow_service_local_invoke);
+        adapter.meta.effects =
+            CMETA_EFFECT_MAY_FAIL | CMETA_EFFECT_IO;
+        check_equal(
+            cflow_function_typed_adapter_projection_admit(
+                FunctionMeta(cflow_projection_service),
+                FunctionAbi(cflow_projection_service),
+                adapter,
+                &cflow_service_request_type,
+                &cflow_service_response_type,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_CONTRACT_MISMATCH);
+
+        adapter = cflow_service_adapter(cflow_service_local_invoke);
+        bad_abi.return_carrier = CMETA_ABI_VOID;
+        check_equal(
+            cflow_function_typed_adapter_projection_admit(
+                FunctionMeta(cflow_projection_service),
+                &bad_abi,
+                adapter,
+                &cflow_service_request_type,
+                &cflow_service_response_type,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_INVALID_ABI);
+
+        zero_size.size = 0u;
+        check_equal(
+            cflow_function_typed_adapter_projection_admit(
+                FunctionMeta(cflow_projection_service),
+                FunctionAbi(cflow_projection_service),
+                adapter,
+                &zero_size,
+                &cflow_service_response_type,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_TYPE_MISMATCH);
+
+        adapter = cflow_service_adapter(cflow_service_local_invoke);
+        check_equal(
+            cflow_function_typed_adapter_projection_admit(
+                FunctionMeta(cflow_projection_service),
+                FunctionAbi(cflow_projection_service),
+                adapter,
+                &cflow_service_request_type,
+                &cflow_service_response_type,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_OK);
+        {
+            cflow_graph wrong_graph = {0};
+            cflow_graph_init(&wrong_graph, &cmeta_type_int);
+            check_false(cflow_graph_add_function_typed_adapter_projection(
+                &wrong_graph, &projection));
+            cflow_graph_destroy(&wrong_graph);
+        }
+    }
+
     it("admits local and mock adapters without changing Graph topology") {
         cflow_function_projection local_projection = {0};
         cflow_function_projection mock_projection = {0};
