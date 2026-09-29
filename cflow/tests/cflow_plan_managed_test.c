@@ -238,6 +238,90 @@ spec("CFlow compiled Plan managed values") {
         check_equal(plan_managed_destroys, (size_t)6u);
     }
 
+    it("moves one managed result into caller storage without a second destroy") {
+        plan_managed_value input[] = {plan_managed_make(42)};
+        plan_managed_value destination;
+        cflow_plan plan = {0};
+        cflow_result result = {0};
+
+        memset(&destination, 0, sizeof(destination));
+        check_true(plan_managed_compile_slice(&plan, 0u, SIZE_MAX));
+        check_true(cflow_plan_eval_array(&plan, input, 1u, &result));
+        check_equal(result.count, (size_t)1u);
+        check_equal(plan_managed_live_resources, (size_t)2u);
+        check_equal(plan_managed_moves, (size_t)0u);
+
+        check_true(cflow_result_move_value(
+            &result, &plan_managed_type, &destination));
+        check_null(result.data);
+        check_equal(result.count, (size_t)0u);
+        check_null(result.type);
+        check_not_null(destination.resource);
+        check_equal(*destination.resource, 42);
+        check_true(destination.resource != input[0].resource);
+        check_equal(plan_managed_moves, (size_t)1u);
+        check_equal(plan_managed_live_resources, (size_t)2u);
+
+        cflow_result_destroy(&result);
+        plan_managed_destroy(&destination);
+        plan_managed_destroy_inputs(input, 1u);
+        cflow_plan_destroy(&plan);
+        check_equal(plan_managed_live_resources, (size_t)0u);
+        check_equal(plan_managed_destroys, (size_t)3u);
+    }
+
+    it("leaves a multi-value managed result unchanged when move transfer is ineligible") {
+        plan_managed_value input[] = {
+            plan_managed_make(7), plan_managed_make(14)
+        };
+        plan_managed_value destination = {0};
+        cflow_plan plan = {0};
+        cflow_result result = {0};
+        void *owned_data;
+
+        check_true(plan_managed_compile_slice(&plan, 0u, SIZE_MAX));
+        check_true(cflow_plan_eval_array(&plan, input, 2u, &result));
+        owned_data = result.data;
+        check_false(cflow_result_move_value(
+            &result, &plan_managed_type, &destination));
+        check_equal(result.data, owned_data);
+        check_equal(result.count, (size_t)2u);
+        check_true(cmeta_type_equal(result.type, &plan_managed_type));
+        check_null(destination.resource);
+        check_equal(plan_managed_moves, (size_t)0u);
+
+        check_false(cflow_result_move_value(
+            &result, &cmeta_type_int, &destination));
+        check_equal(result.data, owned_data);
+        check_equal(result.count, (size_t)2u);
+        check_equal(plan_managed_moves, (size_t)0u);
+
+        cflow_result_destroy(&result);
+        plan_managed_destroy_inputs(input, 2u);
+        cflow_plan_destroy(&plan);
+        check_equal(plan_managed_live_resources, (size_t)0u);
+    }
+
+    it("moves one trivial result and releases its backing allocation") {
+        cflow_result result = {0};
+        int destination;
+        int *owned = (int *)malloc(sizeof(*owned));
+
+        check_not_null(owned);
+        *owned = 91;
+        result.data = owned;
+        result.count = 1u;
+        result.type = &cmeta_type_int;
+
+        check_true(cflow_result_move_value(
+            &result, &cmeta_type_int, &destination));
+        check_equal(destination, 91);
+        check_null(result.data);
+        check_equal(result.count, (size_t)0u);
+        check_null(result.type);
+        cflow_result_destroy(&result);
+    }
+
     it("destroys managed values discarded by take exactly once") {
         plan_managed_value input[] = {
             plan_managed_make(3), plan_managed_make(6), plan_managed_make(9)
