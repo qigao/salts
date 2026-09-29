@@ -18,6 +18,21 @@ static bool fn_equal(cmeta_callable a, cmeta_callable b) {
            a.meta.properties == b.meta.properties && cmeta_callable_same(a, b);
 }
 
+static bool explicit_adapter_fn_equal(cmeta_callable a, cmeta_callable b) {
+    return a.meta.sig == CMETA_SIG_INVALID &&
+           b.meta.sig == CMETA_SIG_INVALID &&
+           a.meta.effects == b.meta.effects &&
+           a.meta.properties == b.meta.properties &&
+           a.dispatch == b.dispatch &&
+           a.resolve == b.resolve &&
+           a.invoke == b.invoke &&
+           a.generate == b.generate &&
+           a.capture_size == b.capture_size &&
+           memcmp(&a.meta.call, &b.meta.call, sizeof(a.meta.call)) == 0 &&
+           (a.capture_size == 0u ||
+            memcmp(a.capture.bytes, b.capture.bytes, a.capture_size) == 0);
+}
+
 static bool node_shallow_equal(const cflow_node *a, const cflow_node *b) {
     if (!a || !b) return a == b;
     if (a->op != b->op || a->has_fn != b->has_fn ||
@@ -57,10 +72,16 @@ static bool node_shallow_equal(const cflow_node *a, const cflow_node *b) {
                 return false;
             break;
         }
+        case CFLOW_NODE_PARAM_TYPED_ADAPTER:
+            break;
         default:
             return false;
     }
-    if (a->has_fn && !fn_equal(a->fn, b->fn)) return false;
+    if (a->has_fn &&
+        (a->param_kind == CFLOW_NODE_PARAM_TYPED_ADAPTER
+             ? !explicit_adapter_fn_equal(a->fn, b->fn)
+             : !fn_equal(a->fn, b->fn)))
+        return false;
     if (a->has_relation && memcmp(&a->relation, &b->relation, sizeof(a->relation)) != 0)
         return false;
     for (size_t i = 0; i < a->fn_chain_count; ++i)
