@@ -2,6 +2,7 @@ name: Salts native NuGet release
 
 on:
   push:
+    branches: [master]
     tags:
       - "v*"
   workflow_dispatch:
@@ -31,15 +32,19 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
       release_sha: ${{ steps.version.outputs.release_sha }}
+      release: ${{ steps.version.outputs.release }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Read project version
         id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
+          release=true
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             release_sha='${{ inputs.release_sha }}'
             requested_tag='${{ inputs.tag }}'
@@ -66,7 +71,16 @@ jobs:
           fi
 
           expected_tag="v$version"
-          if [ "$requested_tag" != "$expected_tag" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "push" ] &&
+             [ "$GITHUB_REF" = "refs/heads/master" ]; then
+            requested_tag="$expected_tag"
+            if gh release view "$expected_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              release=false
+              echo "release $expected_tag already exists; skipping duplicate SDK publication"
+            else
+              echo "release $expected_tag is absent; master push will publish it"
+            fi
+          elif [ "$requested_tag" != "$expected_tag" ]; then
             echo "release tag mismatch: requested=$requested_tag expected=$expected_tag" >&2
             exit 1
           fi
@@ -74,6 +88,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$expected_tag" >> "$GITHUB_OUTPUT"
           echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
 
       - name: Reject duplicate manual publication before building SDKs
         if: github.event_name == 'workflow_dispatch'
@@ -101,6 +116,7 @@ jobs:
   linux:
     name: Linux x64 SDK
     needs: metadata
+    if: needs.metadata.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -142,6 +158,7 @@ jobs:
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/cflow/function_projection.h"
+          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
           test -f "$prefix/include/cmeta/interface.h"
           grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
           grep -F "cmeta_interface_desc_valid" "$prefix/include/cmeta/interface.h"
@@ -176,6 +193,7 @@ jobs:
   macos:
     name: macOS SDK
     needs: metadata
+    if: needs.metadata.outputs.release == 'true'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -221,6 +239,7 @@ jobs:
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/cflow/function_projection.h"
+          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
           test -f "$prefix/include/cmeta/interface.h"
           grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
           grep -F "cmeta_interface_desc_valid" "$prefix/include/cmeta/interface.h"
@@ -255,6 +274,7 @@ jobs:
   windows:
     name: Windows x64 SDK
     needs: metadata
+    if: needs.metadata.outputs.release == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -320,6 +340,7 @@ jobs:
           if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "missing $config" }
           if (-not (Test-Path -LiteralPath $functionHeader -PathType Leaf)) { throw "missing $functionHeader" }
           if (-not (Test-Path -LiteralPath $projectionHeader -PathType Leaf)) { throw "missing $projectionHeader" }
+          if (-not (Select-String -LiteralPath $projectionHeader -SimpleMatch "cflow_function_typed_filter_projection_admit" -Quiet)) { throw "missing typed FILTER projection in $projectionHeader" }
           if (-not (Test-Path -LiteralPath $interfaceHeader -PathType Leaf)) { throw "missing $interfaceHeader" }
           $interfaceText = Get-Content -LiteralPath $interfaceHeader -Raw
           if ($interfaceText -notmatch "cmeta_interface_desc_valid") { throw "missing canonical Interface reflection in $interfaceHeader" }
@@ -366,6 +387,7 @@ jobs:
   android:
     name: Android arm64-v8a SDK
     needs: metadata
+    if: needs.metadata.outputs.release == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -410,6 +432,7 @@ jobs:
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/cflow/function_projection.h"
+          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
           test -f "$prefix/include/cmeta/interface.h"
           grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
           grep -F "cmeta_interface_desc_valid" "$prefix/include/cmeta/interface.h"
@@ -445,6 +468,7 @@ jobs:
   pack:
     name: Pack Salts.Native
     needs: [metadata, linux, macos, windows, android]
+    if: needs.metadata.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -531,6 +555,7 @@ jobs:
   publish:
     name: Publish package and GitHub Release
     needs: [metadata, pack]
+    if: needs.metadata.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -558,6 +583,9 @@ jobs:
               exit 1
             fi
             echo "tag $TAG already resolves to this commit"
+          elif [ "$GITHUB_EVENT_NAME" = "push" ] &&
+               [ "$GITHUB_REF" = "refs/heads/master" ]; then
+            echo "tag $TAG is absent; automatic master publication will create it at $RELEASE_SHA"
           else
             echo "required release tag $TAG does not exist" >&2
             exit 1
@@ -583,10 +611,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.metadata.outputs.tag }}
           VERSION: ${{ needs.metadata.outputs.version }}
+          RELEASE_SHA: ${{ needs.metadata.outputs.release_sha }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "release $TAG already exists; package publish was idempotent"
             exit 0
           fi
-          gh release create "$TAG" dist/*.nupkg --repo "$GITHUB_REPOSITORY" --verify-tag --title "Salts $VERSION" --generate-notes
+          if gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha >/dev/null 2>&1; then
+            gh release create "$TAG" dist/*.nupkg --repo "$GITHUB_REPOSITORY" \
+              --verify-tag --title "Salts $VERSION" --generate-notes
+          else
+            gh release create "$TAG" dist/*.nupkg --repo "$GITHUB_REPOSITORY" \
+              --target "$RELEASE_SHA" --title "Salts $VERSION" --generate-notes
+          fi
