@@ -251,8 +251,7 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
       .receive_buffer_count = 1u,
                                           .write_capacity = 8u,
                                           .max_write_bytes = 256u,
-                                          .write_buffer_bytes = 2048u,
-      .sessions = &sessions,
+                                          .sessions = &sessions,
       .commands = &commands,
       .events = &events,
       .now_ms = timeout != CNET_OWNER_TEST_NO_TIMEOUT ? cnet_owner_test_now : NULL,
@@ -548,7 +547,7 @@ static void cnet_owner_test_expired_partial_send(native_io_backend_kind backend_
                                    .receive_buffer_count = 1u,
                                           .write_capacity = 8u,
                                           .max_write_bytes = 256u,
-                                          .write_buffer_bytes = 2048u, .sessions = &sessions,
+                                          .sessions = &sessions,
                                    .commands = &commands, .events = &events,
                                    .now_ms = cnet_owner_test_now, .clock_context = &clock};
   cnet_owner_test_socket listener = CNET_OWNER_TEST_INVALID_SOCKET;
@@ -638,7 +637,6 @@ static void cnet_owner_test_expired_partial_vector_send(
                                    .receive_buffer_count = 1u,
                                    .write_capacity = 8u,
                                    .max_write_bytes = 256u,
-                                   .write_buffer_bytes = 2048u,
                                    .sessions = &sessions,
                                    .commands = &commands,
                                    .events = &events,
@@ -752,7 +750,6 @@ static void cnet_owner_test_cancel_ealready(native_io_backend_kind backend_kind)
                                           .receive_buffer_count = 1u,
                                           .write_capacity = 8u,
                                           .max_write_bytes = 256u,
-                                          .write_buffer_bytes = 2048u,
                                           .sessions = &sessions,
                                           .commands = &commands,
                                           .events = &events};
@@ -849,7 +846,6 @@ static void cnet_owner_test_start_tls_init_failure(native_io_backend_kind backen
                                           .receive_buffer_count = 1u,
                                           .write_capacity = 8u,
                                           .max_write_bytes = 256u,
-                                          .write_buffer_bytes = 2048u,
                                           .sessions = &sessions,
                                           .commands = &commands,
                                           .events = &events};
@@ -943,7 +939,6 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
                                           .receive_buffer_count = 1u,
                                           .write_capacity = 8u,
                                           .max_write_bytes = 256u,
-                                          .write_buffer_bytes = 2048u,
                                           .sessions = &sessions,
                                           .commands = &commands,
                                           .events = &events};
@@ -1074,7 +1069,6 @@ static void cnet_owner_test_resolve_failure(native_io_backend_kind backend_kind)
                                           .receive_buffer_count = 1u,
                                           .write_capacity = 8u,
                                           .max_write_bytes = 256u,
-                                          .write_buffer_bytes = 2048u,
                                           .sessions = &sessions,
                                           .commands = &commands,
                                           .events = &events};
@@ -1132,7 +1126,6 @@ static void cnet_owner_test_pipe_open_failure(native_io_backend_kind backend_kin
                                           .receive_buffer_count = 1u,
                                           .write_capacity = 8u,
                                           .max_write_bytes = 256u,
-                                          .write_buffer_bytes = 2048u,
                                           .sessions = &sessions,
                                           .commands = &commands,
                                           .events = &events};
@@ -1191,7 +1184,6 @@ static void cnet_owner_test_vsock_rejected_policy(native_io_backend_kind backend
                                           .receive_buffer_count = 1u,
                                           .write_capacity = 8u,
                                           .max_write_bytes = 256u,
-                                          .write_buffer_bytes = 2048u,
                                           .sessions = &sessions,
                                           .commands = &commands,
                                           .events = &events};
@@ -1263,7 +1255,6 @@ static void cnet_owner_test_pipe(native_io_backend_kind backend_kind) {
                                           .receive_buffer_count = 1u,
                                           .write_capacity = 8u,
                                           .max_write_bytes = 256u,
-                                          .write_buffer_bytes = 2048u,
                                           .sessions = &sessions,
                                           .commands = &commands,
                                           .events = &events};
@@ -1402,7 +1393,6 @@ static void cnet_owner_test_retained_vector_partial_send(native_io_backend_kind 
       .receive_buffer_count = 1u,
       .write_capacity = 8u,
       .max_write_bytes = 256u,
-      .write_buffer_bytes = 2048u,
       .sessions = &sessions,
       .commands = &commands,
       .events = &events};
