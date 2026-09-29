@@ -10,6 +10,42 @@ static bool projection_reflection_pair_valid(
            cmeta_function_desc_equal(function, abi->function);
 }
 
+static cflow_function_projection_status projection_adapter_admit(
+    const cmeta_function_desc *function,
+    cmeta_callable adapter,
+    cmeta_callable *out_bound) {
+    const cmeta_sig_desc *signature;
+    cmeta_callable bound;
+    size_t parameter;
+
+    if (!cmeta_callable_bind(adapter, &bound))
+        return CFLOW_FUNCTION_PROJECTION_INVALID_ADAPTER;
+
+    signature = cmeta_fn_signature(bound.meta);
+    if (signature == NULL ||
+        signature->protocol != CMETA_FN_PROTOCOL_VALUE ||
+        signature->param_count != function->param_count)
+        return CFLOW_FUNCTION_PROJECTION_INVALID_ADAPTER;
+
+    if (!cmeta_type_equal(signature->return_type, function->return_type))
+        return CFLOW_FUNCTION_PROJECTION_TYPE_MISMATCH;
+
+    for (parameter = 0u; parameter < function->param_count; ++parameter) {
+        const cmeta_param_desc *param =
+            cmeta_function_param(function, parameter);
+        if (param == NULL ||
+            !cmeta_type_equal(signature->params[parameter], param->type))
+            return CFLOW_FUNCTION_PROJECTION_TYPE_MISMATCH;
+    }
+
+    if (bound.meta.effects != function->effects ||
+        bound.meta.properties != function->properties)
+        return CFLOW_FUNCTION_PROJECTION_CONTRACT_MISMATCH;
+
+    if (out_bound != NULL) *out_bound = bound;
+    return CFLOW_FUNCTION_PROJECTION_OK;
+}
+
 static bool projection_shape_supported(
     const cmeta_function_desc *function,
     const cmeta_function_abi_desc *abi,
@@ -87,22 +123,16 @@ cflow_function_projection_status cflow_function_projection_admit(
 
     param = cmeta_function_param(function, 0u);
 
-    if (!cmeta_callable_bind(adapter, &bound))
-        return CFLOW_FUNCTION_PROJECTION_INVALID_ADAPTER;
+    {
+        const cflow_function_projection_status adapter_status =
+            projection_adapter_admit(function, adapter, &bound);
+        if (adapter_status != CFLOW_FUNCTION_PROJECTION_OK)
+            return adapter_status;
+    }
     signature = cmeta_fn_signature(bound.meta);
     if (signature == NULL ||
-        signature->protocol != CMETA_FN_PROTOCOL_VALUE ||
-        signature->param_count != 1u ||
         !cflow_op_signature_allowed(op, bound.meta.sig))
         return CFLOW_FUNCTION_PROJECTION_INVALID_ADAPTER;
-
-    if (!cmeta_type_equal(signature->params[0], param->type) ||
-        !cmeta_type_equal(signature->return_type, function->return_type))
-        return CFLOW_FUNCTION_PROJECTION_TYPE_MISMATCH;
-
-    if (bound.meta.effects != function->effects ||
-        bound.meta.properties != function->properties)
-        return CFLOW_FUNCTION_PROJECTION_CONTRACT_MISMATCH;
 
     out->size = sizeof(*out);
     out->op = op;
@@ -112,6 +142,70 @@ cflow_function_projection_status cflow_function_projection_admit(
     out->input_type = param->type;
     out->output_type = function->return_type;
     return CFLOW_FUNCTION_PROJECTION_OK;
+}
+
+
+cflow_function_projection_status cflow_function_action_projection_admit(
+    const cmeta_function_desc *function,
+    const cmeta_function_abi_desc *abi,
+    cmeta_callable adapter,
+    cflow_function_action_projection *out) {
+    cmeta_callable bound;
+    cflow_function_projection_status status;
+
+    if (out == NULL)
+        return CFLOW_FUNCTION_PROJECTION_INVALID_ARGUMENT;
+    memset(out, 0, sizeof(*out));
+
+    if (!cmeta_function_desc_valid(function))
+        return CFLOW_FUNCTION_PROJECTION_INVALID_REFLECTION;
+    if (!cmeta_function_abi_desc_valid(abi) ||
+        !cmeta_function_desc_equal(function, abi->function))
+        return CFLOW_FUNCTION_PROJECTION_INVALID_ABI;
+
+    status = projection_adapter_admit(function, adapter, &bound);
+    if (status != CFLOW_FUNCTION_PROJECTION_OK)
+        return status;
+
+    out->size = sizeof(*out);
+    out->function = function;
+    out->abi = abi;
+    out->callable = bound;
+    return CFLOW_FUNCTION_PROJECTION_OK;
+}
+
+bool cflow_function_action_projection_valid(
+    const cflow_function_action_projection *projection) {
+    const cmeta_sig_desc *signature;
+    size_t parameter;
+
+    if (projection == NULL || projection->size < sizeof(*projection) ||
+        !projection_reflection_pair_valid(
+            projection->function, projection->abi) ||
+        !cmeta_callable_contract_valid(projection->callable))
+        return false;
+
+    signature = cmeta_fn_signature(projection->callable.meta);
+    if (signature == NULL ||
+        signature->protocol != CMETA_FN_PROTOCOL_VALUE ||
+        signature->param_count != projection->function->param_count ||
+        !cmeta_type_equal(signature->return_type,
+                          projection->function->return_type) ||
+        projection->callable.meta.effects !=
+            projection->function->effects ||
+        projection->callable.meta.properties !=
+            projection->function->properties)
+        return false;
+
+    for (parameter = 0u; parameter < projection->function->param_count;
+         ++parameter) {
+        const cmeta_param_desc *param =
+            cmeta_function_param(projection->function, parameter);
+        if (param == NULL ||
+            !cmeta_type_equal(signature->params[parameter], param->type))
+            return false;
+    }
+    return true;
 }
 
 bool cflow_function_projection_valid(
