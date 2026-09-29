@@ -1413,7 +1413,7 @@ spec("CNet public client API") {
     check_null(client.impl);
 
     config = cnet_api_test_config();
-    config.command_buffer_bytes = config.max_send_bytes - 1u;
+    config.command_buffer_bytes = 1u;
     check_equal(cnet_client_init(&client, &config), SALTS_EINVAL);
     check_null(client.impl);
 
