@@ -529,6 +529,65 @@ spec("CSTL semantic projection") {
     multimap_destroy(&map);
   }
 
+  it("materializes BTree and BPlusTree typed zero on first mutation") {
+    btree_t btree =
+        SALTS_STL_BTREE_INITIALIZER_WITH_TYPES(
+            int, long, &cmeta_type_int, &cmeta_type_long);
+    bplus_tree_t bplus =
+        SALTS_STL_BPLUS_TREE_INITIALIZER_WITH_TYPES(
+            int, long, &cmeta_type_int, &cmeta_type_long);
+    btree_t raw_btree = {0};
+    bplus_tree_t raw_bplus = {0};
+    int key = 6;
+    int second_key = 8;
+    long value = 60L;
+    long second_value = 80L;
+
+    check_true(btree_empty(&btree));
+    check_true(bplus_tree_empty(&bplus));
+    check_false(btree.initialized);
+    check_false(bplus.initialized);
+    check_equal(btree_reserve(&btree, 0u), STL_OK);
+    check_equal(bplus_tree_reserve(&bplus, 0u), STL_OK);
+    check_false(btree.initialized);
+    check_false(bplus.initialized);
+
+    check_equal(btree_put(&btree, &key, &value), STL_OK);
+    check_equal(bplus_tree_put(&bplus, &key, &value), STL_OK);
+    check_true(btree.initialized);
+    check_true(bplus.initialized);
+    check_equal(btree.min_degree, (size_t)BTREE_DEFAULT_MIN_DEGREE);
+    check_equal(bplus.min_degree, (size_t)BPLUS_TREE_DEFAULT_MIN_DEGREE);
+    check_equal(btree.entry_limit, (size_t)SIZE_MAX);
+    check_equal(bplus.entry_limit, (size_t)SIZE_MAX);
+    check_true(btree.cmeta.descriptor == &stl_btree_container_desc);
+    check_true(bplus.cmeta.descriptor == &stl_bplus_tree_container_desc);
+    check_equal(*(const long *)btree_get_const(&btree, &key), value);
+    check_equal(*(const long *)bplus_tree_get_const(&bplus, &key), value);
+
+    btree_destroy(&btree);
+    bplus_tree_destroy(&bplus);
+    check_false(btree.initialized);
+    check_false(bplus.initialized);
+    check_true(btree.cmeta.descriptor == &stl_btree_container_desc);
+    check_true(bplus.cmeta.descriptor == &stl_bplus_tree_container_desc);
+    check_true(btree.key_type == &cmeta_type_int);
+    check_true(btree.value_type == &cmeta_type_long);
+    check_true(bplus.key_type == &cmeta_type_int);
+    check_true(bplus.value_type == &cmeta_type_long);
+
+    check_equal(btree_put(&btree, &second_key, &second_value), STL_OK);
+    check_equal(bplus_tree_put(&bplus, &second_key, &second_value), STL_OK);
+    check_equal(*(const long *)btree_get_const(&btree, &second_key), second_value);
+    check_equal(*(const long *)bplus_tree_get_const(&bplus, &second_key), second_value);
+
+    check_equal(btree_put(&raw_btree, &key, &value), STL_INVALID_ARGUMENT);
+    check_equal(bplus_tree_put(&raw_bplus, &key, &value), STL_INVALID_ARGUMENT);
+
+    btree_destroy(&btree);
+    bplus_tree_destroy(&bplus);
+  }
+
   it("materializes Deque Stack Queue and Heap typed zero on first mutation") {
     deque_t deque =
         SALTS_STL_DEQUE_INITIALIZER_WITH_TYPE(int, &cmeta_type_int);
