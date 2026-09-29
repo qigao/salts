@@ -442,6 +442,28 @@ static node_action semantic_map(run_impl *r, cflow_node_id i, const cflow_node *
                                 cflow_value_slot *owned, const cmeta_type_desc **cur_type,
                                 const void *root_source) {
     (void)r; (void)i; (void)root_source;
+    if (n->param_kind == CFLOW_NODE_PARAM_TYPED_ADAPTER) {
+        cflow_value_slot next = {0};
+        const void *args[1];
+
+        if (!owned || !owned->live || !cur_type ||
+            !cmeta_type_equal(*cur_type, n->input_type) ||
+            n->fn.invoke == NULL ||
+            !cflow_value_slot_init(&next, n->output_type))
+            return NODE_FAIL;
+
+        args[0] = owned->storage;
+        if (!n->fn.invoke(&n->fn, next.storage, args)) {
+            cflow_value_slot_destroy(&next);
+            return NODE_FAIL;
+        }
+        next.live = true;
+        cflow_value_slot_destroy(owned);
+        *owned = next;
+        *cur_type = n->output_type;
+        return NODE_CONTINUE;
+    }
+
     const cmeta_callable *chain = n->fn_chain_count ? n->fn_chain : &n->fn;
     size_t count = n->fn_chain_count ? n->fn_chain_count : 1u;
     const cmeta_type_desc *type = *cur_type;
