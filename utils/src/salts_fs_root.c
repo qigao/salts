@@ -103,6 +103,19 @@ static int salts_fs_root_next_component(
   return 0;
 }
 
+static int salts_fs_root_validate_relative_path(const char *path) {
+  salts_fs_root_path_cursor_t cursor = {path, 0u, 0u};
+  for (;;) {
+    char component[SALTS_FS_ROOT_COMPONENT_MAX];
+    bool last = false;
+    int rc = salts_fs_root_next_component(&cursor, component, &last);
+    if (rc != 0)
+      return rc;
+    if (last)
+      return 0;
+  }
+}
+
 static int salts_fs_root_validate_open_flags(int flags) {
   const int access =
       flags & (SALTS_FS_O_RDONLY | SALTS_FS_O_WRONLY | SALTS_FS_O_RDWR);
@@ -347,6 +360,11 @@ static int salts_fs_root_open_parent_win(
   if (!root || !path || !out_parent || !out_parent_owned ||
       !final_component || root->handle == INVALID_HANDLE_VALUE)
     return -EINVAL;
+  {
+    int rc = salts_fs_root_validate_relative_path(path);
+    if (rc != 0)
+      return rc;
+  }
   current = root->handle;
   for (;;) {
     char component[SALTS_FS_ROOT_COMPONENT_MAX];
@@ -587,6 +605,11 @@ static int salts_fs_root_open_parent_posix(
 
   if (!root || root->fd < 0 || !path || !out_parent || !final_component)
     return -EINVAL;
+  {
+    int rc = salts_fs_root_validate_relative_path(path);
+    if (rc != 0)
+      return rc;
+  }
   current = salts_fs_root_dup_dir_fd(root->fd);
   if (current < 0)
     return -errno;
