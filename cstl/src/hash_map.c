@@ -1,4 +1,5 @@
 #include <cstl/hash_map.h>
+#include <cstl/detail/instance_meta.h>
 
 #include "sequence_internal.h"
 
@@ -11,6 +12,50 @@
 
 static bool hash_map_valid(const hash_map_t *map) {
     return map != NULL && map->initialized && map->key_size != 0u && map->value_size != 0u;
+}
+
+static bool hash_map_is_typed_semantic_zero(const hash_map_t *map) {
+    return map != NULL && !map->initialized &&
+           map->states == NULL && map->hashes == NULL &&
+           map->keys == NULL && map->values == NULL &&
+           map->size == 0u && map->capacity == 0u && map->tombstones == 0u &&
+           map->key_size == 0u && map->key_stride == 0u && map->key_align == 0u &&
+           map->value_size == 0u && map->value_stride == 0u && map->value_align == 0u &&
+           map->entry_limit == 0u &&
+           map->cmeta.descriptor == &stl_hash_map_container_desc &&
+           map->key_type != NULL && map->value_type != NULL &&
+           cmeta_type_desc_valid(map->key_type) &&
+           cmeta_type_desc_valid(map->value_type) &&
+           map->hash == NULL && map->equal == NULL && map->ctx == NULL;
+}
+
+static stl_status hash_map_materialize_for_mutation(
+    hash_map_t *map, hash_map_t *zero_snapshot, bool *materialized) {
+    stl_status status;
+    if (zero_snapshot == NULL || materialized == NULL)
+        return STL_INVALID_ARGUMENT;
+    *materialized = false;
+    if (hash_map_valid(map)) return STL_OK;
+    if (!hash_map_is_typed_semantic_zero(map)) return STL_INVALID_ARGUMENT;
+
+    *zero_snapshot = *map;
+    status = hash_map_raw_init(
+        map, zero_snapshot->key_type, zero_snapshot->value_type, SIZE_MAX);
+    if (status != STL_OK) {
+        *map = *zero_snapshot;
+        return status;
+    }
+    map->cmeta.descriptor = zero_snapshot->cmeta.descriptor;
+    map->generation = zero_snapshot->generation;
+    *materialized = true;
+    return STL_OK;
+}
+
+static void hash_map_rollback_materialization(
+    hash_map_t *map, const hash_map_t *zero_snapshot, bool materialized) {
+    if (!materialized) return;
+    hash_map_raw_destroy_storage(map);
+    *map = *zero_snapshot;
 }
 
 static unsigned char *hash_key_slot(hash_map_t *map, size_t slot) {
@@ -400,55 +445,92 @@ void hash_map_clear(hash_map_t *map) {
 }
 
 stl_status hash_map_reserve(hash_map_t *map, size_t min_entries) {
+    hash_map_t zero_snapshot = {0};
+    bool materialized = false;
     size_t buckets;
     stl_status status;
-    if (!hash_map_valid(map)) return STL_INVALID_ARGUMENT;
-    if (min_entries > map->entry_limit) return STL_CAPACITY_EXCEEDED;
-    status = hash_buckets_for_entries(min_entries, &buckets);
+
+    if (map == NULL) return STL_INVALID_ARGUMENT;
+    if (!hash_map_valid(map) && hash_map_is_typed_semantic_zero(map) && min_entries == 0u)
+        return STL_OK;
+    status = hash_map_materialize_for_mutation(map, &zero_snapshot, &materialized);
     if (status != STL_OK) return status;
+    if (min_entries > map->entry_limit) {
+        hash_map_rollback_materialization(map, &zero_snapshot, materialized);
+        return STL_CAPACITY_EXCEEDED;
+    }
+    status = hash_buckets_for_entries(min_entries, &buckets);
+    if (status != STL_OK) {
+        hash_map_rollback_materialization(map, &zero_snapshot, materialized);
+        return status;
+    }
     if (buckets > map->capacity || (map->tombstones > map->size && map->capacity != 0u)) {
         if (buckets < map->capacity) buckets = map->capacity;
         status = hash_map_rehash(map, buckets);
         if (status == STL_OK) ++map->generation;
     }
+    if (status != STL_OK)
+        hash_map_rollback_materialization(map, &zero_snapshot, materialized);
     return status;
 }
 
 stl_status hash_map_put(hash_map_t *map, const void *key, const void *value) {
+    hash_map_t zero_snapshot = {0};
+    bool materialized = false;
     size_t hash;
     size_t slot;
     void *prepared_key = NULL;
     void *prepared_value = NULL;
     stl_status status;
-    if (!hash_map_valid(map) || key == NULL || value == NULL) return STL_INVALID_ARGUMENT;
+
+    if (map == NULL || key == NULL || value == NULL) return STL_INVALID_ARGUMENT;
+    status = hash_map_materialize_for_mutation(map, &zero_snapshot, &materialized);
+    if (status != STL_OK) return status;
+
     hash = hash_map_hash(map, key);
     if (hash_map_find_slot(map, key, hash, &slot)) {
         status = hash_prepare(map->value_type, map->value_size, map->value_stride,
-                                    map->value_align, value, &prepared_value);
-        if (status != STL_OK) return status;
+                              map->value_align, value, &prepared_value);
+        if (status != STL_OK) {
+            hash_map_rollback_materialization(map, &zero_snapshot, materialized);
+            return status;
+        }
         hash_destroy_value(map->value_type, hash_value_slot(map, slot));
-        hash_move_destroy(map->value_type, map->value_size, hash_value_slot(map, slot),
-                                prepared_value);
+        hash_move_destroy(map->value_type, map->value_size,
+                          hash_value_slot(map, slot), prepared_value);
         sequence_deallocate(prepared_value);
         ++map->generation;
         return STL_OK;
     }
-    if (map->size >= map->entry_limit) return STL_CAPACITY_EXCEEDED;
-    status = hash_prepare(map->key_type, map->key_size, map->key_stride, map->key_align,
-                                key, &prepared_key);
-    if (status != STL_OK) return status;
+    if (map->size >= map->entry_limit) {
+        hash_map_rollback_materialization(map, &zero_snapshot, materialized);
+        return STL_CAPACITY_EXCEEDED;
+    }
+    status = hash_prepare(map->key_type, map->key_size, map->key_stride,
+                          map->key_align, key, &prepared_key);
+    if (status != STL_OK) {
+        hash_map_rollback_materialization(map, &zero_snapshot, materialized);
+        return status;
+    }
     status = hash_prepare(map->value_type, map->value_size, map->value_stride,
-                                map->value_align, value, &prepared_value);
-    if (status != STL_OK) { hash_discard(map->key_type, prepared_key); return status; }
+                          map->value_align, value, &prepared_value);
+    if (status != STL_OK) {
+        hash_discard(map->key_type, prepared_key);
+        hash_map_rollback_materialization(map, &zero_snapshot, materialized);
+        return status;
+    }
     status = hash_map_ensure_insert(map);
     if (status != STL_OK) {
         hash_discard(map->key_type, prepared_key);
         hash_discard(map->value_type, prepared_value);
+        hash_map_rollback_materialization(map, &zero_snapshot, materialized);
         return status;
     }
     slot = hash_map_insert_slot(map, hash);
-    hash_move_destroy(map->key_type, map->key_size, hash_key_slot(map, slot), prepared_key);
-    hash_move_destroy(map->value_type, map->value_size, hash_value_slot(map, slot), prepared_value);
+    hash_move_destroy(map->key_type, map->key_size,
+                      hash_key_slot(map, slot), prepared_key);
+    hash_move_destroy(map->value_type, map->value_size,
+                      hash_value_slot(map, slot), prepared_value);
     sequence_deallocate(prepared_key);
     sequence_deallocate(prepared_value);
     map->hashes[slot] = hash;

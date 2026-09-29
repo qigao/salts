@@ -1,6 +1,51 @@
 #include <cstl/hash_set.h>
+#include <cstl/detail/instance_meta.h>
 
 #include <stdint.h>
+
+static bool hash_set_is_typed_semantic_zero(const hash_set_t *set) {
+  const hash_map_t *table;
+  if (set == NULL || set->cmeta.descriptor != &stl_hash_set_container_desc ||
+      set->element_type == NULL || !cmeta_type_desc_valid(set->element_type))
+    return false;
+  table = &set->table;
+  return !table->initialized && table->states == NULL && table->hashes == NULL &&
+         table->keys == NULL && table->values == NULL &&
+         table->size == 0u && table->capacity == 0u && table->tombstones == 0u &&
+         table->key_size == 0u && table->key_stride == 0u && table->key_align == 0u &&
+         table->value_size == 0u && table->value_stride == 0u &&
+         table->value_align == 0u && table->entry_limit == 0u &&
+         table->cmeta.descriptor == NULL && table->key_type == NULL &&
+         table->value_type == NULL && table->hash == NULL &&
+         table->equal == NULL && table->ctx == NULL;
+}
+
+static stl_status hash_set_materialize_for_mutation(
+    hash_set_t *set, hash_set_t *zero_snapshot, bool *materialized) {
+  stl_status status;
+  if (zero_snapshot == NULL || materialized == NULL)
+    return STL_INVALID_ARGUMENT;
+  *materialized = false;
+  if (set != NULL && set->table.initialized) return STL_OK;
+  if (!hash_set_is_typed_semantic_zero(set)) return STL_INVALID_ARGUMENT;
+
+  *zero_snapshot = *set;
+  status = hash_set_raw_init(set, zero_snapshot->element_type, SIZE_MAX);
+  if (status != STL_OK) {
+    *set = *zero_snapshot;
+    return status;
+  }
+  set->table.generation = zero_snapshot->table.generation;
+  *materialized = true;
+  return STL_OK;
+}
+
+static void hash_set_rollback_materialization(
+    hash_set_t *set, const hash_set_t *zero_snapshot, bool materialized) {
+  if (!materialized) return;
+  hash_set_raw_destroy_storage(set);
+  *set = *zero_snapshot;
+}
 
 stl_status hash_set_raw_init(hash_set_t *set,
                                      const cmeta_type_desc *key_type,
@@ -77,16 +122,35 @@ void hash_set_clear(hash_set_t *set) {
 
 stl_status hash_set_reserve(hash_set_t *set,
                                         size_t min_entries) {
-  return set == NULL ? STL_INVALID_ARGUMENT
-                     : hash_map_reserve(&set->table, min_entries);
+  hash_set_t zero_snapshot = {0};
+  bool materialized = false;
+  stl_status status;
+  if (set == NULL) return STL_INVALID_ARGUMENT;
+  if (!set->table.initialized && hash_set_is_typed_semantic_zero(set) &&
+      min_entries == 0u)
+    return STL_OK;
+  status = hash_set_materialize_for_mutation(set, &zero_snapshot, &materialized);
+  if (status != STL_OK) return status;
+  status = hash_map_reserve(&set->table, min_entries);
+  if (status != STL_OK)
+    hash_set_rollback_materialization(set, &zero_snapshot, materialized);
+  return status;
 }
 
 stl_status hash_set_add(hash_set_t *set,
                                     const void *key) {
+  hash_set_t zero_snapshot = {0};
+  bool materialized = false;
   uint8_t present = 1u;
-  if (set == NULL) return STL_INVALID_ARGUMENT;
+  stl_status status;
+  if (set == NULL || key == NULL) return STL_INVALID_ARGUMENT;
+  status = hash_set_materialize_for_mutation(set, &zero_snapshot, &materialized);
+  if (status != STL_OK) return status;
   if (hash_map_contains(&set->table, key)) return STL_OK;
-  return hash_map_put(&set->table, key, &present);
+  status = hash_map_put(&set->table, key, &present);
+  if (status != STL_OK)
+    hash_set_rollback_materialization(set, &zero_snapshot, materialized);
+  return status;
 }
 
 bool hash_set_contains(const hash_set_t *set, const void *key) {
