@@ -14,6 +14,19 @@ static size_t graph_node_count(const cflow_graph *g) {
 }
 
 static bool fn_equal(cmeta_callable a, cmeta_callable b) {
+    const bool a_explicit = cflow_typed_adapter_callable_valid(a);
+    const bool b_explicit = cflow_typed_adapter_callable_valid(b);
+    if (a_explicit || b_explicit) {
+        return a_explicit && b_explicit &&
+               a.meta.effects == b.meta.effects &&
+               a.meta.properties == b.meta.properties &&
+               a.dispatch == b.dispatch &&
+               a.invoke == b.invoke &&
+               a.generate == b.generate &&
+               a.capture_size == b.capture_size &&
+               (!a.capture_size ||
+                memcmp(a.capture.bytes, b.capture.bytes, a.capture_size) == 0);
+    }
     return a.meta.sig == b.meta.sig && a.meta.effects == b.meta.effects &&
            a.meta.properties == b.meta.properties && cmeta_callable_same(a, b);
 }
