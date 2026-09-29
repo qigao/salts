@@ -21,6 +21,9 @@
 #ifndef ENAMETOOLONG
 #define ENAMETOOLONG ERANGE
 #endif
+#ifndef EOVERFLOW
+#define EOVERFLOW ERANGE
+#endif
 
 typedef struct salts_fs_root_path_cursor_s {
   const char *path;
@@ -30,6 +33,23 @@ typedef struct salts_fs_root_path_cursor_s {
 
 static bool salts_fs_root_is_separator(char ch) {
   return ch == '/' || ch == '\\';
+}
+
+static bool salts_fs_root_host_path_is_absolute(const char *path) {
+  size_t length;
+  if (!path || path[0] == '\0')
+    return false;
+  length = strlen(path);
+#ifdef _WIN32
+  if (length >= 3u && path[1] == ':' &&
+      salts_fs_root_is_separator(path[2]))
+    return true;
+  return length >= 2u &&
+      salts_fs_root_is_separator(path[0]) &&
+      salts_fs_root_is_separator(path[1]);
+#else
+  return path[0] == '/';
+#endif
 }
 
 static int salts_fs_root_next_component(
@@ -103,6 +123,7 @@ static int salts_fs_root_validate_open_flags(int flags) {
 
 #ifdef _WIN32
 
+#include <sys/stat.h>
 #include <winternl.h>
 
 #ifndef FILE_DIRECTORY_FILE
@@ -155,9 +176,9 @@ static BOOL CALLBACK salts_fs_root_init_nt(
   if (!module)
     return FALSE;
   salts_fs_root_nt_create_file =
-      (salts_nt_create_file_fn)(void *)GetProcAddress(module, "NtCreateFile");
+      (salts_nt_create_file_fn)GetProcAddress(module, "NtCreateFile");
   salts_fs_root_status_to_dos =
-      (salts_rtl_status_to_dos_fn)(void *)GetProcAddress(
+      (salts_rtl_status_to_dos_fn)GetProcAddress(
           module, "RtlNtStatusToDosError");
   return salts_fs_root_nt_create_file != NULL &&
          salts_fs_root_status_to_dos != NULL;
@@ -395,18 +416,15 @@ static int salts_fs_root_stat_handle_win(
 static ACCESS_MASK salts_fs_root_access_win(int flags) {
   const int access =
       flags & (SALTS_FS_O_RDONLY | SALTS_FS_O_WRONLY | SALTS_FS_O_RDWR);
+  const bool append = (flags & SALTS_FS_O_APPEND) != 0;
   ACCESS_MASK desired = 0u;
-  if (access == SALTS_FS_O_RDONLY)
-    desired |= GENERIC_READ;
-  else if (access == SALTS_FS_O_WRONLY)
-    desired |= GENERIC_WRITE;
-  else
-    desired |= GENERIC_READ | GENERIC_WRITE;
 
-  if ((flags & SALTS_FS_O_APPEND) != 0) {
-    desired &= ~((ACCESS_MASK)FILE_WRITE_DATA);
-    desired |= FILE_APPEND_DATA;
-  }
+  if (access == SALTS_FS_O_RDONLY || access == SALTS_FS_O_RDWR)
+    desired |= FILE_READ_DATA | FILE_READ_EA;
+  if (access == SALTS_FS_O_WRONLY || access == SALTS_FS_O_RDWR)
+    desired |= append
+        ? (ACCESS_MASK)(FILE_APPEND_DATA | FILE_WRITE_EA)
+        : (ACCESS_MASK)(FILE_WRITE_DATA | FILE_WRITE_EA);
   return desired;
 }
 
@@ -714,8 +732,7 @@ int salts_fs_root_open(
   if (!out_root)
     return -EINVAL;
   *out_root = NULL;
-  if (!host_root || host_root[0] == '\0' ||
-      !salts_fs_path_is_absolute(host_root))
+  if (!salts_fs_root_host_path_is_absolute(host_root))
     return -EINVAL;
 
   root = (salts_fs_root_t *)calloc(1, sizeof(*root));
@@ -917,6 +934,8 @@ int salts_fs_root_file_read(
     salts_fs_root_file_t *file, char *buffer, size_t length) {
   if (!file || (!buffer && length != 0u) || length > (size_t)INT_MAX)
     return length > (size_t)INT_MAX ? -EOVERFLOW : -EINVAL;
+  if (length == 0u)
+    return 0;
 #ifdef _WIN32
   {
     DWORD count = 0u;
@@ -937,6 +956,8 @@ int salts_fs_root_file_write(
     salts_fs_root_file_t *file, const char *data, size_t length) {
   if (!file || (!data && length != 0u) || length > (size_t)INT_MAX)
     return length > (size_t)INT_MAX ? -EOVERFLOW : -EINVAL;
+  if (length == 0u)
+    return 0;
 #ifdef _WIN32
   {
     DWORD count = 0u;
@@ -1162,6 +1183,51 @@ int salts_fs_root_unlink(
     return rc;
   }
 #endif
+}
+
+int salts_fs_root_opendir_self(
+    const salts_fs_root_t *root, salts_fs_root_dir_t **out_dir) {
+  salts_fs_root_dir_t *dir;
+  if (!out_dir)
+    return -EINVAL;
+  *out_dir = NULL;
+  if (!root)
+    return -EINVAL;
+
+  dir = (salts_fs_root_dir_t *)calloc(1, sizeof(*dir));
+  if (!dir)
+    return -ENOMEM;
+
+#ifdef _WIN32
+  dir->handle = INVALID_HANDLE_VALUE;
+  if (!DuplicateHandle(
+          GetCurrentProcess(), root->handle,
+          GetCurrentProcess(), &dir->handle,
+          0u, FALSE, DUPLICATE_SAME_ACCESS)) {
+    int rc = salts_fs_root_win32_error(GetLastError());
+    free(dir);
+    return rc;
+  }
+  dir->restart = true;
+#else
+  {
+    int fd = salts_fs_root_dup_dir_fd(root->fd);
+    if (fd < 0) {
+      int rc = -errno;
+      free(dir);
+      return rc;
+    }
+    dir->stream = fdopendir(fd);
+    if (!dir->stream) {
+      int rc = -errno;
+      close(fd);
+      free(dir);
+      return rc;
+    }
+  }
+#endif
+  *out_dir = dir;
+  return 0;
 }
 
 int salts_fs_root_opendir(
