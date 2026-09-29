@@ -28,7 +28,6 @@ static bool explicit_adapter_fn_equal(cmeta_callable a, cmeta_callable b) {
            a.invoke == b.invoke &&
            a.generate == b.generate &&
            a.capture_size == b.capture_size &&
-           memcmp(&a.meta.call, &b.meta.call, sizeof(a.meta.call)) == 0 &&
            (a.capture_size == 0u ||
             memcmp(a.capture.bytes, b.capture.bytes, a.capture_size) == 0);
 }
