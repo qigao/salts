@@ -8,8 +8,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-typedef struct mem_buffer_s mem_buffer_t;
-
 typedef struct cnet_command_queue {
   void *impl;
 } cnet_command_queue;
@@ -52,35 +50,19 @@ typedef struct cnet_command_queue_profile {
 typedef enum cnet_command_kind {
   CNET_COMMAND_NONE = 0,
   CNET_COMMAND_CONNECT,
-  CNET_COMMAND_SEND,
-  CNET_COMMAND_SEND_CLOSE,
   CNET_COMMAND_RECEIVE,
   CNET_COMMAND_START_TLS,
   CNET_COMMAND_CLOSE,
   CNET_COMMAND_STOP
 } cnet_command_kind;
 
-typedef enum cnet_command_payload_kind {
-  CNET_COMMAND_PAYLOAD_NONE = 0,
-  CNET_COMMAND_PAYLOAD_COPIED,
-  CNET_COMMAND_PAYLOAD_RETAINED_BUFFER
-} cnet_command_payload_kind;
-
-/**
- * One producer-owned descriptor. Copied commands borrow `data` or `segments`
- * only for `cnet_command_queue_publish()`. A retained SEND instead supplies
- * `retained_buffer`; successful publication retains that buffer until the
- * corresponding command view is released.
- */
+/** One producer-owned control descriptor. Payload bytes are copied on publication. */
 typedef struct cnet_command {
   cnet_command_kind kind;
   cnet_session_handle connection;
   const void *data;
   size_t size;
   size_t argument;
-  const cnet_const_buffer *segments;
-  size_t segment_count;
-  mem_buffer_t *retained_buffer;
 } cnet_command;
 
 /**
