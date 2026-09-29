@@ -111,6 +111,9 @@ void cflow_plan_batch_workspace_destroy(cflow_plan_batch_workspace *workspace);
 /** Return the admitted item capacity, or zero for an invalid workspace. */
 size_t cflow_plan_batch_workspace_capacity(const cflow_plan_batch_workspace *workspace);
 
+/** Return the pre-reserved scratch bytes owned by the workspace. */
+size_t cflow_plan_batch_workspace_bytes(const cflow_plan_batch_workspace *workspace);
+
 /**
  * Execute a supported fused Plan using only pre-reserved workspace storage.
  *
