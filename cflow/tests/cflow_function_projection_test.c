@@ -45,6 +45,12 @@ FunctionDecl(value, long, cflow_projection_binary,
     (long, left, CMETA_PARAM_IN),
     (long, right, CMETA_PARAM_IN));
 
+long cflow_projection_binary(long left, long right) {
+    return left + right;
+}
+
+CFLOW_REFLECTED_ADAPTER(cflow_projection_binary);
+
 FunctionDeclAsAbi(fallible, int, &cmeta_type_int, CMETA_ABI_SCALAR,
                   cflow_projection_out,
     (int *, output, CMETA_PARAM_OUT,
@@ -52,6 +58,12 @@ FunctionDeclAsAbi(fallible, int, &cmeta_type_int, CMETA_ABI_SCALAR,
 
 FunctionDecl(stateful, void, cflow_projection_void,
     (int, request, CMETA_PARAM_IN));
+
+void cflow_projection_void(int request) {
+    (void)request;
+}
+
+CFLOW_REFLECTED_ADAPTER(cflow_projection_void);
 
 Function0Decl(value, int, cflow_projection_zero);
 
@@ -190,6 +202,58 @@ suite("CFlow reflected function projection") {
         check_true(cflow_graph_add_function_projection(&graph, &projection));
         check_true((cflow_graph_effects(&graph) & CMETA_EFFECT_STATEFUL) != 0u);
         cflow_graph_destroy(&graph);
+    }
+
+    it("admits reflected actions without inventing a Graph operator") {
+        cflow_function_action_projection binary = {0};
+        cflow_function_action_projection void_action = {0};
+
+        check_equal(
+            cflow_function_action_projection_admit(
+                FunctionMeta(cflow_projection_binary),
+                FunctionAbi(cflow_projection_binary),
+                CFLOW_REFLECTED_CALLABLE(cflow_projection_binary),
+                &binary),
+            CFLOW_FUNCTION_PROJECTION_OK);
+        check_true(cflow_function_action_projection_valid(&binary));
+        check_equal(binary.function->param_count, (size_t)2);
+
+        check_equal(
+            cflow_function_action_projection_admit(
+                FunctionMeta(cflow_projection_void),
+                FunctionAbi(cflow_projection_void),
+                CFLOW_REFLECTED_CALLABLE(cflow_projection_void),
+                &void_action),
+            CFLOW_FUNCTION_PROJECTION_OK);
+        check_true(cflow_function_action_projection_valid(&void_action));
+        check_equal(void_action.function->return_type->kind, CMETA_T_VOID);
+    }
+
+    it("rejects reflected action adapter mismatches") {
+        cflow_function_action_projection projection = {0};
+
+        check_equal(
+            cflow_function_action_projection_admit(
+                FunctionMeta(cflow_projection_local),
+                FunctionAbi(cflow_projection_local),
+                CFLOW_REFLECTED_CALLABLE(cflow_projection_type_mismatch),
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_TYPE_MISMATCH);
+
+        check_equal(
+            cflow_function_action_projection_admit(
+                FunctionMeta(cflow_projection_stateful),
+                FunctionAbi(cflow_projection_stateful),
+                CFLOW_REFLECTED_CALLABLE(cflow_projection_local),
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_CONTRACT_MISMATCH);
+
+        projection = (cflow_function_action_projection){
+            sizeof(cflow_function_action_projection),
+            FunctionMeta(cflow_projection_zero),
+            FunctionAbi(cflow_projection_zero),
+            {0}};
+        check_false(cflow_function_action_projection_valid(&projection));
     }
 
     it("rejects shapes that are not unary IN value transforms") {
