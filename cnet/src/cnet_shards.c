@@ -354,17 +354,6 @@ static int cnet_shards_publish(cnet_shards_impl *impl, cnet_shard_connection con
   salts_mutex_unlock(&impl->admission_lock);
   return status;
 }
-
-int cnet_shards_send(cnet_shards *shards, cnet_shard_connection connection, const void *data,
-                     size_t size) {
-  cnet_shards_impl *impl = cnet_shards_get(shards);
-  const cnet_command command = {
-      .kind = CNET_COMMAND_SEND, .connection = connection.session, .data = data, .size = size};
-  if (impl == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
-  if (size > impl->max_command_payload_bytes) return SALTS_EMSGSIZE;
-  return cnet_shards_publish(impl, connection, &command);
-}
-
 int cnet_shards_send_buffer(cnet_shards *shards, cnet_shard_connection connection,
                             mem_buffer_t *buffer, size_t size) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
@@ -375,35 +364,7 @@ int cnet_shards_send_buffer(cnet_shards *shards, cnet_shard_connection connectio
   if (impl == NULL || buffer == NULL || size == 0u) return SALTS_EINVAL;
   if (size > impl->max_command_payload_bytes) return SALTS_EMSGSIZE;
   return cnet_shards_publish(impl, connection, &command);
-}
-
-int cnet_shards_sendv(cnet_shards *shards, cnet_shard_connection connection,
-                      const cnet_const_buffer *segments, size_t segment_count, size_t total_size) {
-  cnet_shards_impl *impl = cnet_shards_get(shards);
-  const cnet_command command = {.kind = CNET_COMMAND_SEND,
-                                .connection = connection.session,
-                                .size = total_size,
-                                .segments = segments,
-                                .segment_count = segment_count};
-  if (impl == NULL || segments == NULL || segment_count == 0u || total_size == 0u)
-    return SALTS_EINVAL;
-  if (total_size > impl->max_command_payload_bytes) return SALTS_EMSGSIZE;
-  return cnet_shards_publish(impl, connection, &command);
-}
-
-int cnet_shards_send_and_close(cnet_shards *shards, cnet_shard_connection connection,
-                               const void *data, size_t size) {
-  cnet_shards_impl *impl = cnet_shards_get(shards);
-  const cnet_command command = {.kind = CNET_COMMAND_SEND_CLOSE,
-                                .connection = connection.session,
-                                .data = data,
-                                .size = size};
-  if (impl == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
-  if (size > impl->max_command_payload_bytes) return SALTS_EMSGSIZE;
-  return cnet_shards_publish(impl, connection, &command);
-}
-
-static int cnet_shards_direct_write_ready(cnet_shards_impl *impl,
+}static int cnet_shards_direct_write_ready(cnet_shards_impl *impl,
                                           cnet_shard_connection connection,
                                           cnet_shard_record **out_record) {
   cnet_shard_record *record;
@@ -424,20 +385,6 @@ static int cnet_shards_direct_write_ready(cnet_shards_impl *impl,
   *out_record = record;
   return SALTS_OK;
 }
-
-int cnet_shards_send_direct(cnet_shards *shards, cnet_shard_connection connection,
-                            const void *data, size_t size) {
-  cnet_shards_impl *impl = cnet_shards_get(shards);
-  cnet_shard_record *record;
-  int status;
-  if (data == NULL || size == 0u) return SALTS_EINVAL;
-  if (impl != NULL && size > impl->max_write_payload_bytes) return SALTS_EMSGSIZE;
-  status = cnet_shards_direct_write_ready(impl, connection, &record);
-  return status == SALTS_OK
-             ? cnet_owner_send_copy_direct(&record->owner, connection.session, data, size)
-             : status;
-}
-
 int cnet_shards_send_buffer_direct(cnet_shards *shards, cnet_shard_connection connection,
                                    mem_buffer_t *buffer) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
@@ -497,34 +444,7 @@ int cnet_shards_send_slicev_close_direct(cnet_shards *shards,
              ? cnet_owner_send_slicev_close_direct(&record->owner, connection.session,
                                                    segments, segment_count)
              : status;
-}
-
-int cnet_shards_sendv_direct(cnet_shards *shards, cnet_shard_connection connection,
-                             const cnet_const_buffer *segments, size_t segment_count) {
-  cnet_shards_impl *impl = cnet_shards_get(shards);
-  cnet_shard_record *record;
-  int status;
-  if (segments == NULL || segment_count == 0u) return SALTS_EINVAL;
-  status = cnet_shards_direct_write_ready(impl, connection, &record);
-  return status == SALTS_OK
-             ? cnet_owner_sendv_direct(&record->owner, connection.session, segments, segment_count)
-             : status;
-}
-
-int cnet_shards_send_close_direct(cnet_shards *shards, cnet_shard_connection connection,
-                                  const void *data, size_t size) {
-  cnet_shards_impl *impl = cnet_shards_get(shards);
-  cnet_shard_record *record;
-  int status;
-  if (data == NULL || size == 0u) return SALTS_EINVAL;
-  if (impl != NULL && size > impl->max_write_payload_bytes) return SALTS_EMSGSIZE;
-  status = cnet_shards_direct_write_ready(impl, connection, &record);
-  return status == SALTS_OK
-             ? cnet_owner_send_close_direct(&record->owner, connection.session, data, size)
-             : status;
-}
-
-int cnet_shards_send_buffer_close_direct(cnet_shards *shards,
+}int cnet_shards_send_buffer_close_direct(cnet_shards *shards,
                                          cnet_shard_connection connection,
                                          mem_buffer_t *buffer) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
