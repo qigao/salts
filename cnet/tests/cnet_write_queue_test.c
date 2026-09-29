@@ -32,27 +32,42 @@ static mem_buffer_t *cnet_write_queue_external(size_t size, unsigned char value,
   return buffer;
 }
 
+static mem_buffer_t *cnet_write_queue_bytes(const void *data, size_t size) {
+  mem_buffer_t *buffer;
+  if (data == NULL || size == 0u) return NULL;
+  buffer = mem_get_buffer(mem_global(), size);
+  if (buffer == NULL) return NULL;
+  memcpy(mem_buffer_data(buffer), data, size);
+  mem_set_used(buffer, size);
+  return buffer;
+}
+
 spec("CNet bounded write ownership queue") {
-  it("copies payloads and preserves independent per-connection FIFO order") {
+  it("preserves retained payloads and independent per-connection FIFO order") {
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {2u, 4u, 16u, 32u};
+    const cnet_write_queue_config config = {2u, 4u, 16u};
     const cnet_session_handle first = {1u, 7u};
     const cnet_session_handle second = {2u, 3u};
-    unsigned char a[] = {1u, 2u, 3u};
+    const unsigned char a[] = {1u, 2u, 3u};
     const unsigned char b[] = {4u, 5u};
-    const unsigned char c[] = {8u, 9u};
+    const unsigned char d[] = {8u, 9u};
+    mem_buffer_t *a_buffer = cnet_write_queue_bytes(a, sizeof(a));
+    mem_buffer_t *b_buffer = cnet_write_queue_bytes(b, sizeof(b));
+    mem_buffer_t *d_buffer = cnet_write_queue_bytes(d, sizeof(d));
     cnet_write_handle handle = {0};
     cnet_write_view view = {0};
 
+    check_true(a_buffer != NULL);
+    check_true(b_buffer != NULL);
+    check_true(d_buffer != NULL);
     check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
-    check_equal(cnet_write_queue_enqueue_copy(&queue, first, a, sizeof(a), false, &handle),
-                SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_buffer(&queue, first, a_buffer, false, &handle), SALTS_OK);
     check_true(cnet_write_handle_valid(handle));
-    memset(a, 0u, sizeof(a));
-    check_equal(cnet_write_queue_enqueue_copy(&queue, first, b, sizeof(b), true, &handle),
-                SALTS_OK);
-    check_equal(cnet_write_queue_enqueue_copy(&queue, second, c, sizeof(c), false, &handle),
-                SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_buffer(&queue, first, b_buffer, true, &handle), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_buffer(&queue, second, d_buffer, false, &handle), SALTS_OK);
+    mem_buffer_release(a_buffer);
+    mem_buffer_release(b_buffer);
+    mem_buffer_release(d_buffer);
 
     check_equal(cnet_write_queue_peek(&queue, first, &view), SALTS_OK);
     check_equal(view.size, sizeof(a));
@@ -72,7 +87,7 @@ spec("CNet bounded write ownership queue") {
     check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
 
     check_equal(cnet_write_queue_peek(&queue, second, &view), SALTS_OK);
-    check_equal(view.size, sizeof(c));
+    check_equal(view.size, sizeof(d));
     check_equal(((const unsigned char *)view.data)[1], 9u);
     check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
     check_equal(cnet_write_queue_peek(&queue, first, &view), SALTS_ETIMEDOUT);
@@ -82,7 +97,7 @@ spec("CNet bounded write ownership queue") {
 
   it("retains external buffers only after successful bounded admission") {
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {1u, 1u, 8u, 8u};
+    const cnet_write_queue_config config = {1u, 1u, 8u};
     const cnet_session_handle connection = {1u, 1u};
     cnet_write_queue_free_probe first_free;
     cnet_write_queue_free_probe rejected_free;
@@ -119,51 +134,16 @@ spec("CNet bounded write ownership queue") {
     check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
   }
 
-  it("bounds copied bytes independently from retained payload ownership") {
+  it("discards retained queued tails while preserving an active FIFO head") {
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {2u, 2u, 8u, 8u};
-    const cnet_session_handle first = {1u, 1u};
-    const cnet_session_handle second = {2u, 1u};
-    const unsigned char copied[8] = {0};
-    cnet_write_queue_free_probe free_probe;
-    mem_buffer_t *retained;
-    cnet_write_handle handle = {0};
-    cnet_write_view view = {0};
-    cnet_write_queue_stats stats = {0};
-
-    atomic_init(&free_probe.freed, 0);
-    check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
-    check_equal(cnet_write_queue_enqueue_copy(&queue, first, copied, sizeof(copied), false, &handle),
-                SALTS_OK);
-    check_equal(cnet_write_queue_enqueue_copy(&queue, second, copied, 1u, false, &handle),
-                SALTS_ENOBUFS);
-
-    retained = cnet_write_queue_external(4u, 0x7fu, &free_probe);
-    check_true(retained != NULL);
-    check_equal(cnet_write_queue_enqueue_buffer(&queue, second, retained, false, &handle),
-                SALTS_OK);
-    mem_buffer_release(retained);
-    check_true(cnet_write_queue_get_stats(&queue, &stats));
-    check_equal(stats.live_writes, (size_t)2u);
-    check_equal(stats.copied_bytes, sizeof(copied));
-    check_equal(stats.peak_copied_bytes, sizeof(copied));
-
-    check_equal(cnet_write_queue_peek(&queue, first, &view), SALTS_OK);
-    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
-    check_equal(cnet_write_queue_peek(&queue, second, &view), SALTS_OK);
-    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
-    check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 1);
-    check_equal(cnet_write_queue_close(&queue), SALTS_OK);
-    check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
-  }
-
-  it("discards queued tails while preserving an active FIFO head") {
-    cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {1u, 4u, 8u, 32u};
+    const cnet_write_queue_config config = {1u, 4u, 8u};
     const cnet_session_handle connection = {1u, 9u};
     const unsigned char a = 1u;
     const unsigned char b = 2u;
     const unsigned char d = 3u;
+    mem_buffer_t *a_buffer = cnet_write_queue_bytes(&a, 1u);
+    mem_buffer_t *b_buffer = cnet_write_queue_bytes(&b, 1u);
+    mem_buffer_t *d_buffer = cnet_write_queue_bytes(&d, 1u);
     cnet_write_handle first = {0};
     cnet_write_handle second = {0};
     cnet_write_handle third = {0};
@@ -171,10 +151,16 @@ spec("CNet bounded write ownership queue") {
     size_t count = 0u;
     size_t discarded = 0u;
 
+    check_true(a_buffer != NULL);
+    check_true(b_buffer != NULL);
+    check_true(d_buffer != NULL);
     check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
-    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, &a, 1u, false, &first), SALTS_OK);
-    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, &b, 1u, false, &second), SALTS_OK);
-    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, &d, 1u, false, &third), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_buffer(&queue, connection, a_buffer, false, &first), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_buffer(&queue, connection, b_buffer, false, &second), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_buffer(&queue, connection, d_buffer, false, &third), SALTS_OK);
+    mem_buffer_release(a_buffer);
+    mem_buffer_release(b_buffer);
+    mem_buffer_release(d_buffer);
     check_equal(cnet_write_queue_count(&queue, connection, &count), SALTS_OK);
     check_equal(count, (size_t)3u);
 
@@ -186,8 +172,14 @@ spec("CNet bounded write ownership queue") {
     check_equal(view.handle.slot, first.slot);
     check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
 
-    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, &a, 1u, false, &first), SALTS_OK);
-    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, &b, 1u, false, &second), SALTS_OK);
+    a_buffer = cnet_write_queue_bytes(&a, 1u);
+    b_buffer = cnet_write_queue_bytes(&b, 1u);
+    check_true(a_buffer != NULL);
+    check_true(b_buffer != NULL);
+    check_equal(cnet_write_queue_enqueue_buffer(&queue, connection, a_buffer, false, &first), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_buffer(&queue, connection, b_buffer, false, &second), SALTS_OK);
+    mem_buffer_release(a_buffer);
+    mem_buffer_release(b_buffer);
     check_equal(cnet_write_queue_cancel_tail(&queue, connection, second), SALTS_OK);
     check_equal(cnet_write_queue_count(&queue, connection, &count), SALTS_OK);
     check_equal(count, (size_t)1u);
@@ -202,14 +194,13 @@ spec("CNet bounded write ownership queue") {
 
   it("retains canonical slice ranges and advances only inside the subrange") {
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {1u, 2u, 16u, 16u};
+    const cnet_write_queue_config config = {1u, 2u, 16u};
     const cnet_session_handle connection = {1u, 5u};
     cnet_write_queue_free_probe free_probe;
     mem_buffer_t *buffer;
     mem_slice_t slice;
     cnet_write_handle handle = {0};
     cnet_write_view view = {0};
-    cnet_write_queue_stats stats = {0};
 
     atomic_init(&free_probe.freed, 0);
     check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
@@ -238,8 +229,6 @@ spec("CNet bounded write ownership queue") {
     check_equal(view.offset, (size_t)2u);
     check_equal(view.remaining, (size_t)2u);
     check_equal(((const unsigned char *)view.data)[0], 5u);
-    check_true(cnet_write_queue_get_stats(&queue, &stats));
-    check_equal(stats.copied_bytes, (size_t)0u);
     check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
     check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 1);
 
@@ -249,7 +238,7 @@ spec("CNet bounded write ownership queue") {
 
   it("rejects forged or out-of-range slices without retaining") {
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {1u, 1u, 16u, 16u};
+    const cnet_write_queue_config config = {1u, 1u, 16u};
     const cnet_session_handle connection = {1u, 6u};
     cnet_write_queue_free_probe free_probe;
     mem_buffer_t *buffer;
@@ -286,7 +275,7 @@ spec("CNet bounded write ownership queue") {
 
   it("retains bounded vector slices without copying and rebuilds partial spans") {
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {1u, 2u, 32u, 32u};
+    const cnet_write_queue_config config = {1u, 2u, 32u};
     const cnet_session_handle connection = {1u, 12u};
     cnet_write_queue_free_probe first_free;
     cnet_write_queue_free_probe second_free;
@@ -362,8 +351,6 @@ spec("CNet bounded write ownership queue") {
     check_equal(spans[0].length, (size_t)1u);
     check_equal(((const unsigned char *)spans[1].data)[0], 0x22u);
     check_equal(spans[1].length, (size_t)3u);
-    check_true(cnet_write_queue_get_stats(&queue, &stats));
-    check_equal(stats.copied_bytes, (size_t)0u);
 
     check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
     check_equal(atomic_load_explicit(&first_free.freed, memory_order_acquire), 1);
@@ -374,7 +361,7 @@ spec("CNet bounded write ownership queue") {
 
   it("windows a 32-range logical retained vector through two native batches") {
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {1u, 1u, 64u, 64u};
+    const cnet_write_queue_config config = {1u, 1u, 64u};
     const cnet_session_handle connection = {1u, 16u};
     cnet_write_queue_free_probe free_probe;
     mem_buffer_t *buffer;
@@ -449,7 +436,7 @@ spec("CNet bounded write ownership queue") {
 
   it("rejects invalid retained vectors without acquiring backing references") {
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {1u, 1u, 16u, 16u};
+    const cnet_write_queue_config config = {1u, 1u, 16u};
     const cnet_session_handle connection = {1u, 13u};
     cnet_write_queue_free_probe free_probe;
     mem_buffer_t *buffer;
@@ -482,13 +469,14 @@ spec("CNet bounded write ownership queue") {
     check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
   }
 
-  it("preserves FIFO across copied retained and retained-vector writes") {
+  it("preserves FIFO across retained contiguous and retained-vector writes") {
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {1u, 4u, 32u, 64u};
+    const cnet_write_queue_config config = {1u, 4u, 32u};
     const cnet_session_handle connection = {1u, 14u};
-    const unsigned char copied[] = {0x01u, 0x02u};
+    const unsigned char leading[] = {0x01u, 0x02u};
     cnet_write_queue_free_probe retained_free;
     cnet_write_queue_free_probe vector_free;
+    mem_buffer_t *leading_buffer = cnet_write_queue_bytes(leading, sizeof(leading));
     mem_buffer_t *retained;
     mem_buffer_t *vector_buffer;
     mem_slice_t vector_slices[2];
@@ -500,6 +488,7 @@ spec("CNet bounded write ownership queue") {
 
     atomic_init(&retained_free.freed, 0);
     atomic_init(&vector_free.freed, 0);
+    check_true(leading_buffer != NULL);
     check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
 
     retained = cnet_write_queue_external(2u, 0x22u, &retained_free);
@@ -513,21 +502,17 @@ spec("CNet bounded write ownership queue") {
     vector_slices[0] = mem_slice(vector_buffer, 0u, 2u);
     vector_slices[1] = mem_slice(vector_buffer, 2u, 2u);
 
-    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, copied, sizeof(copied), false,
-                                              &handle),
-                SALTS_OK);
-    check_equal(cnet_write_queue_enqueue_buffer(&queue, connection, retained, false, &handle),
-                SALTS_OK);
-    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, vector_slices, 2u, false,
-                                                &handle),
-                SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_buffer(&queue, connection, leading_buffer, false, &handle), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_buffer(&queue, connection, retained, false, &handle), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, vector_slices, 2u, false, &handle), SALTS_OK);
+    mem_buffer_release(leading_buffer);
     mem_buffer_release(retained);
     for (size_t index = 0u; index < 2u; ++index) mem_slice_release(&vector_slices[index]);
     mem_buffer_release(vector_buffer);
 
     check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
     check_false(view.vector_write);
-    check_equal(view.size, sizeof(copied));
+    check_equal(view.size, sizeof(leading));
     check_equal(((const unsigned char *)view.data)[0], 0x01u);
     check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
 
@@ -541,8 +526,7 @@ spec("CNet bounded write ownership queue") {
     check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
     check_true(view.vector_write);
     check_equal(cnet_write_queue_build_vector(&queue, &view, view.remaining, spans,
-                                              &span_count, &span_bytes),
-                SALTS_OK);
+                                              &span_count, &span_bytes), SALTS_OK);
     check_equal(span_count, (size_t)2u);
     check_equal(span_bytes, (size_t)4u);
     check_equal(((const unsigned char *)spans[0].data)[0], 0x31u);
@@ -557,7 +541,7 @@ spec("CNet bounded write ownership queue") {
   it("resumes inside a retained range across the native vector window boundary") {
     enum { RANGE_COUNT = 17u, RANGE_BYTES = 2u };
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {1u, 1u, 64u, 64u};
+    const cnet_write_queue_config config = {1u, 1u, 64u};
     const cnet_session_handle connection = {1u, 18u};
     cnet_write_queue_free_probe free_probe;
     mem_buffer_t *buffer;
@@ -626,13 +610,15 @@ spec("CNet bounded write ownership queue") {
     check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
   }
 
-  it("preserves FIFO around one multi-window retained logical write") {
+  it("preserves retained FIFO around one multi-window logical write") {
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {1u, 4u, 96u, 96u};
+    const cnet_write_queue_config config = {1u, 4u, 96u};
     const cnet_session_handle connection = {1u, 17u};
     const unsigned char before = 0xa1u;
     const unsigned char after = 0xb2u;
     cnet_write_queue_free_probe free_probe;
+    mem_buffer_t *before_buffer = cnet_write_queue_bytes(&before, 1u);
+    mem_buffer_t *after_buffer = cnet_write_queue_bytes(&after, 1u);
     mem_buffer_t *buffer;
     mem_slice_t slices[32];
     cnet_write_handle before_handle = {0};
@@ -644,6 +630,8 @@ spec("CNet bounded write ownership queue") {
     size_t span_bytes = 0u;
 
     atomic_init(&free_probe.freed, 0);
+    check_true(before_buffer != NULL);
+    check_true(after_buffer != NULL);
     check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
     buffer = cnet_write_queue_external(32u, 0u, &free_probe);
     check_true(buffer != NULL);
@@ -652,17 +640,12 @@ spec("CNet bounded write ownership queue") {
       slices[index] = mem_slice(buffer, index, 1u);
     }
 
-    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, &before, 1u,
-                                              false, &before_handle),
-                SALTS_OK);
-    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, slices, 32u,
-                                                false, &vector_handle),
-                SALTS_OK);
-    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, &after, 1u,
-                                              false, &after_handle),
-                SALTS_OK);
-    for (size_t index = 0u; index < 32u; ++index)
-      mem_slice_release(&slices[index]);
+    check_equal(cnet_write_queue_enqueue_buffer(&queue, connection, before_buffer, false, &before_handle), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, slices, 32u, false, &vector_handle), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_buffer(&queue, connection, after_buffer, false, &after_handle), SALTS_OK);
+    mem_buffer_release(before_buffer);
+    mem_buffer_release(after_buffer);
+    for (size_t index = 0u; index < 32u; ++index) mem_slice_release(&slices[index]);
     mem_buffer_release(buffer);
 
     check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
@@ -674,20 +657,16 @@ spec("CNet bounded write ownership queue") {
     check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
     check_equal(view.handle.slot, vector_handle.slot);
     check_true(view.vector_write);
-    check_equal(cnet_write_queue_build_vector(&queue, &view, view.remaining,
-                                              spans, &span_count, &span_bytes),
-                SALTS_OK);
+    check_equal(cnet_write_queue_build_vector(&queue, &view, view.remaining, spans,
+                                              &span_count, &span_bytes), SALTS_OK);
     check_equal(span_count, (size_t)NATIVE_IO_VECTOR_MAX);
     check_equal(cnet_write_queue_advance(&queue, &view, span_bytes), SALTS_OK);
-
-    /* The same logical vector remains FIFO head after its first native window. */
     check_equal(view.handle.slot, vector_handle.slot);
     check_true(view.vector_write);
     span_count = 0u;
     span_bytes = 0u;
-    check_equal(cnet_write_queue_build_vector(&queue, &view, view.remaining,
-                                              spans, &span_count, &span_bytes),
-                SALTS_OK);
+    check_equal(cnet_write_queue_build_vector(&queue, &view, view.remaining, spans,
+                                              &span_count, &span_bytes), SALTS_OK);
     check_equal(span_count, (size_t)(32u - NATIVE_IO_VECTOR_MAX));
     check_equal(cnet_write_queue_advance(&queue, &view, span_bytes), SALTS_OK);
     check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
@@ -705,11 +684,12 @@ spec("CNet bounded write ownership queue") {
 
   it("releases retained-vector ownership exactly once on tail cancel and discard") {
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {1u, 4u, 32u, 64u};
+    const cnet_write_queue_config config = {1u, 4u, 32u};
     const cnet_session_handle connection = {1u, 15u};
     const unsigned char head_byte = 0x41u;
     cnet_write_queue_free_probe first_free;
     cnet_write_queue_free_probe second_free;
+    mem_buffer_t *head_buffer = cnet_write_queue_bytes(&head_byte, 1u);
     mem_buffer_t *first;
     mem_buffer_t *second;
     mem_slice_t first_slices[2];
@@ -722,6 +702,7 @@ spec("CNet bounded write ownership queue") {
 
     atomic_init(&first_free.freed, 0);
     atomic_init(&second_free.freed, 0);
+    check_true(head_buffer != NULL);
     check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
     first = cnet_write_queue_external(4u, 0x51u, &first_free);
     second = cnet_write_queue_external(4u, 0x61u, &second_free);
@@ -732,14 +713,10 @@ spec("CNet bounded write ownership queue") {
     second_slices[0] = mem_slice(second, 0u, 2u);
     second_slices[1] = mem_slice(second, 2u, 2u);
 
-    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, &head_byte, 1u, false, &head),
-                SALTS_OK);
-    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, first_slices, 2u, false,
-                                                &first_handle),
-                SALTS_OK);
-    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, second_slices, 2u, false,
-                                                &second_handle),
-                SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_buffer(&queue, connection, head_buffer, false, &head), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, first_slices, 2u, false, &first_handle), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, second_slices, 2u, false, &second_handle), SALTS_OK);
+    mem_buffer_release(head_buffer);
     for (size_t index = 0u; index < 2u; ++index) {
       mem_slice_release(&first_slices[index]);
       mem_slice_release(&second_slices[index]);
@@ -762,25 +739,4 @@ spec("CNet bounded write ownership queue") {
     check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
   }
 
-  it("copies vectors today without claiming native scatter gather") {
-    cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {1u, 2u, 16u, 16u};
-    const cnet_session_handle connection = {1u, 4u};
-    const unsigned char a[] = {1u, 2u};
-    const unsigned char b[] = {3u, 4u, 5u};
-    const cnet_const_buffer segments[] = {{a, sizeof(a)}, {b, sizeof(b)}};
-    cnet_write_handle handle = {0};
-    cnet_write_view view = {0};
-
-    check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
-    check_equal(cnet_write_queue_enqueuev_copy(&queue, connection, segments, 2u, false, &handle),
-                SALTS_OK);
-    check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
-    check_equal(view.size, (size_t)5u);
-    check_equal(((const unsigned char *)view.data)[0], 1u);
-    check_equal(((const unsigned char *)view.data)[4], 5u);
-    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
-    check_equal(cnet_write_queue_close(&queue), SALTS_OK);
-    check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
-  }
 }

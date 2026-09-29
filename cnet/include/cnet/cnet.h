@@ -705,18 +705,6 @@ int cnet_start_tls_server(cnet_client *client, cnet_connection connection,
                           const cnet_tls_server *server);
 
 /**
- * Copies `size` bytes into bounded owner write storage before returning success.
- * Multiple writes may be admitted up to the fixed write-slot/byte bound and
- * settle in FIFO order for both plain and TLS streams. If `observer.on_send`
- * is present it runs once per
- * full logical write, in admission order.
- * @return `SALTS_OK`, `SALTS_EMSGSIZE`, `SALTS_ENOENT` for a stale handle,
- * `SALTS_ENOBUFS` at the bounded write-slot/byte limit, or `SALTS_EBUSY`
- * before connected, during TLS/control transitions, or while closing.
- */
-int cnet_send(cnet_client *client, cnet_connection connection, const void *data, size_t size);
-
-/**
  * Retains one non-empty immutable buffer on successful admission and sends the
  * first mem_buffer_used(buffer) bytes without copying them into CNet write
  * storage. Multiple non-TLS retained writes share the same bounded FIFO. The
@@ -782,33 +770,9 @@ int cnet_send_slicev_and_close(cnet_client *client, cnet_connection connection,
                                const mem_slice_t *segments, size_t segment_count);
 
 /**
- * Copies the ordered concatenation of immutable, non-empty `segments` into
- * one bounded write slot before returning success. The descriptor array and
- * its backing ranges are borrowed only for this call. Completion, ordering,
- * capacity, and state errors are identical to `cnet_send`; `on_send` reports
- * the checked total byte count once. NULL data, empty segments, or zero count
- * return `SALTS_EINVAL`; an overflowing or oversized total returns
- * `SALTS_EMSGSIZE` without admitting a write.
- */
-int cnet_sendv(cnet_client *client, cnet_connection connection, const cnet_const_buffer *segments,
-               size_t segment_count);
-
-/**
- * Copies one final byte message into the bounded write FIFO. For a non-TLS
- * stream it is ordered after every previously accepted logical write, and the
- * stream begins closing only after this final logical write reaches terminal
- * success. For TLS, the logical slot remains owned until every ciphertext write
- * generated for that plaintext has reached terminal success; close_notify begins
- * only afterward. Once admitted, the connection immediately rejects further
- * send/receive work.
- */
-int cnet_send_and_close(cnet_client *client, cnet_connection connection, const void *data,
-                        size_t size);
-
-/**
  * Retains one non-empty immutable buffer as the final logical write without
  * copying payload bytes into CNet storage. Ordering and close semantics are
- * identical to cnet_send_and_close(): previously admitted writes drain first,
+ * identical to retained final-send semantics: previously admitted writes drain first,
  * further public send/receive admission closes immediately after success, and
  * the transport/TLS close starts only after this retained logical write reaches
  * terminal success. The caller may release its reference immediately after

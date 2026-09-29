@@ -17,8 +17,6 @@ typedef struct cnet_write_queue_config {
   size_t connection_capacity;
   size_t capacity;
   size_t max_payload_bytes;
-  /** Aggregate live copied bytes. Retained buffers do not consume this budget. */
-  size_t payload_capacity_bytes;
 } cnet_write_queue_config;
 
 typedef struct cnet_write_handle {
@@ -41,8 +39,6 @@ typedef struct cnet_write_view {
 typedef struct cnet_write_queue_stats {
   size_t live_writes;
   size_t peak_writes;
-  size_t copied_bytes;
-  size_t peak_copied_bytes;
   size_t capacity;
   size_t connection_capacity;
   bool admission_open;
@@ -51,14 +47,6 @@ typedef struct cnet_write_queue_stats {
 bool cnet_write_handle_valid(cnet_write_handle handle);
 
 int cnet_write_queue_init(cnet_write_queue *queue, const cnet_write_queue_config *config);
-
-int cnet_write_queue_enqueue_copy(cnet_write_queue *queue, cnet_session_handle connection,
-                                  const void *data, size_t size, bool close_after_send,
-                                  cnet_write_handle *out_handle);
-
-int cnet_write_queue_enqueuev_copy(cnet_write_queue *queue, cnet_session_handle connection,
-                                   const cnet_const_buffer *segments, size_t segment_count,
-                                   bool close_after_send, cnet_write_handle *out_handle);
 
 int cnet_write_queue_enqueue_buffer(cnet_write_queue *queue, cnet_session_handle connection,
                                     mem_buffer_t *buffer, bool close_after_send,

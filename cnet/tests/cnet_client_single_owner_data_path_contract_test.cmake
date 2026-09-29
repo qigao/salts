@@ -30,11 +30,11 @@ if(wake_marker EQUAL -1)
 endif()
 
 foreach(direct_marker
-    "cnet_shards_send_buffer_direct(&impl->shards"
-    "cnet_shards_send_slice_direct(&impl->shards"
-    "cnet_shards_send_slicev_direct(&impl->shards"
-    "cnet_shards_receive_direct(&impl->shards"
-    "cnet_shards_close_direct(&impl->shards")
+    "cnet_shards_send_buffer_direct("
+    "cnet_shards_send_slice_direct("
+    "cnet_shards_send_slicev_direct("
+    "cnet_shards_receive_direct("
+    "cnet_shards_close_direct(")
   string(FIND "${data_path}" "${direct_marker}" direct_path)
   if(direct_path EQUAL -1)
     message(FATAL_ERROR "CNet owner-local direct path missing: ${direct_marker}")

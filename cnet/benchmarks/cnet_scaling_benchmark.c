@@ -139,7 +139,6 @@ typedef struct scale_cnet {
   uint64_t callback_ns;
   uint64_t payload_check_ns;
   int status;
-  bool retained;
   bool measuring;
 } scale_cnet;
 
@@ -626,9 +625,7 @@ static int scale_cnet_cycle(scale_cnet *fixture, uint64_t *latencies, size_t lat
     entry->latency_out = latencies == NULL ? NULL : &latencies[latency_base + index];
     {
       const int status =
-          fixture->retained
-              ? cnet_send_buffer(&fixture->client, entry->handle, fixture->retained_buffer)
-              : cnet_send(&fixture->client, entry->handle, fixture->sent, fixture->payload_size);
+          cnet_send_buffer(&fixture->client, entry->handle, fixture->retained_buffer);
       if (status != SALTS_OK) return status;
     }
   }
@@ -648,7 +645,7 @@ static int scale_cnet_cycle(scale_cnet *fixture, uint64_t *latencies, size_t lat
 
 static int scale_cnet_init(scale_cnet *fixture, const struct sockaddr_in *address,
                            size_t connections, size_t payload_size,
-                           native_io_backend_kind backend_kind, size_t cycles, bool retained) {
+                           native_io_backend_kind backend_kind, size_t cycles) {
   const cnet_client_config config = {
       .backend = backend_kind,
       .connection_capacity = connections,
@@ -669,14 +666,11 @@ static int scale_cnet_init(scale_cnet *fixture, const struct sockaddr_in *addres
   fixture->connection_count = connections;
   fixture->payload_size = payload_size;
   fixture->status = SALTS_OK;
-  fixture->retained = retained;
   fixture->sent = (unsigned char *)malloc(payload_size);
   if (fixture->sent == NULL) return SALTS_ENOMEM;
   memset(fixture->sent, 0x5a, payload_size);
-  if (retained) {
-    fixture->retained_buffer = mem_wrap_external(fixture->sent, payload_size, NULL, NULL);
-    if (fixture->retained_buffer == NULL) return SALTS_ENOMEM;
-  }
+  fixture->retained_buffer = mem_wrap_external(fixture->sent, payload_size, NULL, NULL);
+  if (fixture->retained_buffer == NULL) return SALTS_ENOMEM;
 
   status = cnet_client_init(&fixture->client, &config);
   if (status != SALTS_OK) return status;
@@ -731,7 +725,7 @@ static int scale_cnet_destroy(scale_cnet *fixture) {
 }
 
 static int scale_run_cnet(size_t connections, size_t payload_size,
-                          native_io_backend_kind backend_kind, bool retained, scale_result *out) {
+                          native_io_backend_kind backend_kind, scale_result *out) {
   scale_peer peer;
   scale_cnet fixture;
   cnet_client_poll_profile profile = {0};
@@ -743,7 +737,7 @@ static int scale_run_cnet(size_t connections, size_t payload_size,
   int status;
 
   memset(out, 0, sizeof(*out));
-  out->driver = retained ? "CNet retained" : "CNet copy";
+  out->driver = "CNet retained";
   out->connections = connections;
   out->payload_size = payload_size;
   scale_peer_reset(&peer);
@@ -753,7 +747,7 @@ static int scale_run_cnet(size_t connections, size_t payload_size,
   status = scale_peer_init(&peer, connections, payload_size, cycles);
   if (status == SALTS_OK)
     status = scale_cnet_init(&fixture, &peer.address, connections, payload_size, backend_kind,
-                             cycles, retained);
+                             cycles);
   if (status != SALTS_OK) goto cleanup;
 
   for (size_t cycle = 0u; cycle < SCALE_WARMUPS; ++cycle) {
@@ -823,7 +817,7 @@ static int scale_run_driver(scale_driver driver, size_t connections, size_t payl
   case SCALE_DRIVER_NATIVE:
     return scale_run_native(connections, payload_size, backend_kind, out);
   case SCALE_DRIVER_CNET_RETAINED:
-    return scale_run_cnet(connections, payload_size, backend_kind, true, out);
+    return scale_run_cnet(connections, payload_size, backend_kind, out);
   default:
     return SALTS_EINVAL;
   }

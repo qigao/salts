@@ -11,6 +11,21 @@
 
 enum { CNET_VSOCK_TEST_ATTEMPTS = 200, CNET_VSOCK_TEST_POLL_MS = 10 };
 
+static int cnet_vsock_test_send_bytes(cnet_client *client,
+                                      cnet_connection connection,
+                                      const void *data, size_t size) {
+  mem_buffer_t *buffer;
+  int status;
+  if (client == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
+  buffer = mem_get_buffer(mem_global(), size);
+  if (buffer == NULL) return SALTS_ENOMEM;
+  memcpy(mem_buffer_data(buffer), data, size);
+  mem_set_used(buffer, size);
+  status = cnet_send_buffer(client, connection, buffer);
+  mem_buffer_release(buffer);
+  return status;
+}
+
 typedef struct cnet_vsock_test_probe {
   int connected;
   int received;
@@ -148,7 +163,7 @@ int main(void) {
       probe.value != inbound)
     goto fail;
 
-  if (cnet_send(&client, connection, &outbound, sizeof(outbound)) != SALTS_OK) goto fail;
+  if (cnet_vsock_test_send_bytes(&client, connection, &outbound, sizeof(outbound)) != SALTS_OK) goto fail;
   for (attempt = 0; attempt < CNET_VSOCK_TEST_ATTEMPTS; ++attempt) {
     size_t events = 0u;
     ssize_t received_size;

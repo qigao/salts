@@ -238,8 +238,7 @@ static int tls_bench_queue_init(cnet_write_queue *queue) {
   const cnet_write_queue_config config = {
       .connection_capacity = 1u,
       .capacity = 4u,
-      .max_payload_bytes = 65536u,
-      .payload_capacity_bytes = 65536u};
+      .max_payload_bytes = 65536u};
   return cnet_write_queue_init(queue, &config);
 }
 
@@ -379,8 +378,7 @@ static int tls_bench_run(size_t payload_bytes, size_t segment_count,
 
   {
     cnet_write_queue_stats stats = {0};
-    if (!cnet_write_queue_get_stats(&queue, &stats) || stats.live_writes != 0u ||
-        stats.copied_bytes != 0u || stats.peak_copied_bytes != 0u) {
+    if (!cnet_write_queue_get_stats(&queue, &stats) || stats.live_writes != 0u) {
       status = SALTS_EPROTO;
       goto cleanup;
     }
@@ -424,7 +422,7 @@ static FILE *tls_bench_open_csv(void) {
 
 static void tls_bench_print(FILE *stream, const char *backend,
                             const tls_bench_summary *row) {
-  fprintf(stream, "%s,%s,%zu,%zu,%zu,%zu,%.6f,%.6f,%.6f,%.6f,%.6f,0\n",
+  fprintf(stream, "%s,%s,%zu,%zu,%zu,%zu,%.6f,%.6f,%.6f,%.6f,%.6f\n",
           backend, row->style, row->payload_bytes, row->segment_count,
           row->iterations, row->replicates, row->p50_ns_per_op, row->p95_ns_per_op,
           row->median_bytes_per_second, row->median_tls_write_calls_per_op,
@@ -446,11 +444,11 @@ int main(void) {
     fprintf(csv,
             "backend,style,payload_bytes,segment_count,iterations_per_replicate,replicates,"
             "p50_ns_per_op,p95_ns_per_op,median_bytes_per_second,"
-            "median_tls_write_calls_per_op,median_cipher_bytes_per_op,copied_bytes_per_op\n");
+            "median_tls_write_calls_per_op,median_cipher_bytes_per_op\n");
   }
 
-  printf("| backend | style | payload | segments | p50 ns/op | p95 ns/op | median MiB/s | TLS writes/op | cipher bytes/op | copied bytes/op |\n");
-  printf("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+  printf("| backend | style | payload | segments | p50 ns/op | p95 ns/op | median MiB/s | TLS writes/op | cipher bytes/op |\n");
+  printf("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
 
   for (size_t p = 0u; p < sizeof(payloads) / sizeof(payloads[0]); ++p) {
     for (size_t sidx = 0u; sidx < sizeof(segment_counts) / sizeof(segment_counts[0]); ++sidx) {
@@ -463,7 +461,7 @@ int main(void) {
                 payloads[p], segment_counts[sidx], status);
         return 1;
       }
-      printf("| %s | %s | %zu | %zu | %.3f | %.3f | %.2f | %.3f | %.1f | 0 |\n",
+      printf("| %s | %s | %zu | %zu | %.3f | %.3f | %.2f | %.3f | %.1f |\n",
              backend, row.style, row.payload_bytes, row.segment_count,
              row.p50_ns_per_op, row.p95_ns_per_op,
              row.median_bytes_per_second / (1024.0 * 1024.0),

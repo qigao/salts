@@ -7,6 +7,21 @@
 #include <stdlib.h>
 #include <string.h>
 
+static int cnet_tls_test_send_bytes(cnet_client *client,
+                                    cnet_connection connection,
+                                    const void *data, size_t size) {
+  mem_buffer_t *buffer;
+  int status;
+  if (client == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
+  buffer = mem_get_buffer(mem_global(), size);
+  if (buffer == NULL) return SALTS_ENOMEM;
+  memcpy(mem_buffer_data(buffer), data, size);
+  mem_set_used(buffer, size);
+  status = cnet_send_buffer(client, connection, buffer);
+  mem_buffer_release(buffer);
+  return status;
+}
+
 static const char CNET_TLS_TEST_CERTIFICATE[] =
     "-----BEGIN CERTIFICATE-----\n"
     "MIIC7TCCAdWgAwIBAgIUT4pOT+qAkLpsC1bUF3bYRrTHssQwDQYJKoZIhvcNAQEL\n"
@@ -584,7 +599,7 @@ spec("CNet bounded TLS engine") {
     mem_buffer_release(request_second);
     request_first = NULL;
     request_second = NULL;
-    check_equal(cnet_send(&client, client_connection, second_request, sizeof(second_request) - 1u),
+    check_equal(cnet_tls_test_send_bytes(&client, client_connection, second_request, sizeof(second_request) - 1u),
                 SALTS_OK);
     deadline = salts_monotonic_ms() + 5000u;
     while ((server_probe.received_size < sizeof(combined_requests) - 1u || client_probe.sent < 2) &&
@@ -605,7 +620,7 @@ spec("CNet bounded TLS engine") {
                     cnet_tls_network_receive_owned, &client_probe),
                 SALTS_OK);
     check_equal(cnet_receive(&client, client_connection, 1u), SALTS_OK);
-    check_equal(cnet_send(&server, server_probe.connection, response, sizeof(response) - 1u),
+    check_equal(cnet_tls_test_send_bytes(&server, server_probe.connection, response, sizeof(response) - 1u),
                 SALTS_OK);
     deadline = salts_monotonic_ms() + 5000u;
     while ((client_probe.owned_received_size == 0u || server_probe.sent == 0) &&
@@ -633,7 +648,7 @@ spec("CNet bounded TLS engine") {
     check_equal(mem_buffer_ref_count(final_buffer), UINT32_C(2));
     mem_buffer_release(final_buffer);
     final_buffer = NULL;
-    check_equal(cnet_send(&client, client_connection, request, sizeof(request) - 1u), SALTS_EBUSY);
+    check_equal(cnet_tls_test_send_bytes(&client, client_connection, request, sizeof(request) - 1u), SALTS_EBUSY);
     check_equal(cnet_receive(&client, client_connection, 1u), SALTS_EBUSY);
     deadline = salts_monotonic_ms() + 5000u;
     while ((!client_probe.terminal || !server_probe.terminal ||
@@ -756,7 +771,7 @@ spec("CNet bounded TLS engine") {
 
     check_equal(cnet_receive(&server, server_connection, 1u), SALTS_OK);
     check_equal(
-        cnet_send(&client, client_connection, plaintext_request, sizeof(plaintext_request) - 1u),
+        cnet_tls_test_send_bytes(&client, client_connection, plaintext_request, sizeof(plaintext_request) - 1u),
         SALTS_OK);
     deadline = salts_monotonic_ms() + 5000u;
     while ((server_probe.received_size == 0u || client_probe.sent == 0) &&
@@ -772,7 +787,7 @@ spec("CNet bounded TLS engine") {
     client_probe.received_size = 0u;
     check_equal(cnet_receive(&client, client_connection, 1u), SALTS_OK);
     check_equal(
-        cnet_send(&server, server_connection, plaintext_response, sizeof(plaintext_response) - 1u),
+        cnet_tls_test_send_bytes(&server, server_connection, plaintext_response, sizeof(plaintext_response) - 1u),
         SALTS_OK);
     deadline = salts_monotonic_ms() + 5000u;
     while ((client_probe.received_size == 0u || server_probe.sent == 0) &&
@@ -806,7 +821,7 @@ spec("CNet bounded TLS engine") {
     check_false(server_probe.failed);
 
     check_equal(cnet_receive(&server, server_connection, 1u), SALTS_OK);
-    check_equal(cnet_send(&client, client_connection, secure_request, sizeof(secure_request) - 1u),
+    check_equal(cnet_tls_test_send_bytes(&client, client_connection, secure_request, sizeof(secure_request) - 1u),
                 SALTS_OK);
     deadline = salts_monotonic_ms() + 5000u;
     while (server_probe.received_size == 0u && salts_monotonic_ms() < deadline) {

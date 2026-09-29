@@ -20,8 +20,7 @@ typedef enum cnet_write_entry_state {
 } cnet_write_entry_state;
 
 typedef enum cnet_write_payload_kind {
-  CNET_WRITE_PAYLOAD_COPIED = 0,
-  CNET_WRITE_PAYLOAD_RETAINED,
+  CNET_WRITE_PAYLOAD_RETAINED = 0,
   CNET_WRITE_PAYLOAD_RETAINED_VECTOR
 } cnet_write_payload_kind;
 
@@ -37,7 +36,6 @@ typedef struct cnet_write_entry {
   size_t size;
   size_t base_offset;
   size_t offset;
-  size_t copied_bytes;
   cnet_write_range ranges[CNET_RETAINED_VECTOR_MAX];
   mem_buffer_t *owners[CNET_RETAINED_VECTOR_MAX];
   size_t range_count;
@@ -55,16 +53,12 @@ typedef struct cnet_write_queue_impl {
   uint32_t *heads;
   uint32_t *tails;
   size_t *counts;
-  mem_pool_t payload_pool;
   size_t connection_capacity;
   size_t capacity;
   size_t max_payload_bytes;
-  size_t payload_capacity_bytes;
   size_t free_count;
   size_t live_writes;
   size_t peak_writes;
-  size_t copied_bytes;
-  size_t peak_copied_bytes;
   bool admission_open;
 } cnet_write_queue_impl;
 
@@ -109,7 +103,7 @@ static int cnet_write_validate_payload(cnet_write_queue_impl *impl, cnet_session
 
 static int cnet_write_enqueue_owned(cnet_write_queue_impl *impl, cnet_session_handle connection,
                                     mem_buffer_t *payload, size_t size, size_t base_offset,
-                                    size_t copied_bytes, cnet_write_payload_kind payload_kind,
+                                    cnet_write_payload_kind payload_kind,
                                     bool close_after_send, cnet_write_handle *out_handle) {
   const size_t connection_index = cnet_write_connection_index(impl, connection);
   cnet_write_entry *entry;
@@ -138,7 +132,6 @@ static int cnet_write_enqueue_owned(cnet_write_queue_impl *impl, cnet_session_ha
   entry->size = size;
   entry->base_offset = base_offset;
   entry->offset = 0u;
-  entry->copied_bytes = copied_bytes;
   entry->range_count = 0u;
   entry->owner_count = 0u;
   entry->next = CNET_WRITE_SLOT_NONE;
@@ -161,9 +154,7 @@ static int cnet_write_enqueue_owned(cnet_write_queue_impl *impl, cnet_session_ha
   impl->tails[connection_index] = slot;
   ++impl->counts[connection_index];
   ++impl->live_writes;
-  impl->copied_bytes += copied_bytes;
   if (impl->peak_writes < impl->live_writes) impl->peak_writes = impl->live_writes;
-  if (impl->peak_copied_bytes < impl->copied_bytes) impl->peak_copied_bytes = impl->copied_bytes;
 
   *out_handle = (cnet_write_handle){slot + 1u, entry->generation};
   return SALTS_OK;
@@ -180,7 +171,7 @@ int cnet_write_queue_init(cnet_write_queue *queue, const cnet_write_queue_config
   if (queue == NULL || config == NULL) return SALTS_EINVAL;
   if (queue->impl != NULL) return SALTS_EALREADY;
   if (config->connection_capacity == 0u || config->capacity == 0u ||
-      config->max_payload_bytes == 0u || config->payload_capacity_bytes < config->max_payload_bytes)
+      config->max_payload_bytes == 0u)
     return SALTS_EINVAL;
   if (config->connection_capacity > UINT32_MAX || config->capacity > UINT32_MAX ||
       config->capacity > SIZE_MAX / sizeof(cnet_write_entry) ||
@@ -197,7 +188,7 @@ int cnet_write_queue_init(cnet_write_queue *queue, const cnet_write_queue_config
   impl->tails = (uint32_t *)malloc(config->connection_capacity * sizeof(*impl->tails));
   impl->counts = (size_t *)calloc(config->connection_capacity, sizeof(*impl->counts));
   if (impl->entries == NULL || impl->free_slots == NULL || impl->heads == NULL ||
-      impl->tails == NULL || impl->counts == NULL || mem_init(&impl->payload_pool, 0u) != 0) {
+      impl->tails == NULL || impl->counts == NULL) {
     free(impl->counts);
     free(impl->tails);
     free(impl->heads);
@@ -210,7 +201,6 @@ int cnet_write_queue_init(cnet_write_queue *queue, const cnet_write_queue_config
   impl->connection_capacity = config->connection_capacity;
   impl->capacity = config->capacity;
   impl->max_payload_bytes = config->max_payload_bytes;
-  impl->payload_capacity_bytes = config->payload_capacity_bytes;
   impl->free_count = config->capacity;
   impl->admission_open = true;
   for (index = 0u; index < config->capacity; ++index)
@@ -221,68 +211,6 @@ int cnet_write_queue_init(cnet_write_queue *queue, const cnet_write_queue_config
   }
   queue->impl = impl;
   return SALTS_OK;
-}
-
-int cnet_write_queue_enqueue_copy(cnet_write_queue *queue, cnet_session_handle connection,
-                                  const void *data, size_t size, bool close_after_send,
-                                  cnet_write_handle *out_handle) {
-  cnet_write_queue_impl *impl = cnet_write_impl(queue);
-  mem_buffer_t *payload;
-  int status;
-
-  if (out_handle == NULL) return SALTS_EINVAL;
-  *out_handle = (cnet_write_handle){0};
-  if (impl == NULL || data == NULL) return SALTS_EINVAL;
-  status = cnet_write_validate_payload(impl, connection, size);
-  if (status != SALTS_OK) return status;
-  if (impl->copied_bytes > impl->payload_capacity_bytes ||
-      size > impl->payload_capacity_bytes - impl->copied_bytes)
-    return SALTS_ENOBUFS;
-
-  payload = mem_get_buffer(&impl->payload_pool, size);
-  if (payload == NULL) return SALTS_ENOMEM;
-  memcpy(mem_buffer_data(payload), data, size);
-  mem_set_used(payload, size);
-  status = cnet_write_enqueue_owned(impl, connection, payload, size, 0u, size,
-                                    CNET_WRITE_PAYLOAD_COPIED, close_after_send, out_handle);
-  if (status != SALTS_OK) mem_buffer_release(payload);
-  return status;
-}
-
-int cnet_write_queue_enqueuev_copy(cnet_write_queue *queue, cnet_session_handle connection,
-                                   const cnet_const_buffer *segments, size_t segment_count,
-                                   bool close_after_send, cnet_write_handle *out_handle) {
-  cnet_write_queue_impl *impl = cnet_write_impl(queue);
-  mem_buffer_t *payload;
-  size_t total = 0u;
-  size_t offset = 0u;
-  int status;
-
-  if (out_handle == NULL) return SALTS_EINVAL;
-  *out_handle = (cnet_write_handle){0};
-  if (impl == NULL || segments == NULL || segment_count == 0u) return SALTS_EINVAL;
-  for (size_t index = 0u; index < segment_count; ++index) {
-    if (segments[index].data == NULL || segments[index].size == 0u) return SALTS_EINVAL;
-    if (segments[index].size > SIZE_MAX - total) return SALTS_EMSGSIZE;
-    total += segments[index].size;
-  }
-  status = cnet_write_validate_payload(impl, connection, total);
-  if (status != SALTS_OK) return status;
-  if (impl->copied_bytes > impl->payload_capacity_bytes ||
-      total > impl->payload_capacity_bytes - impl->copied_bytes)
-    return SALTS_ENOBUFS;
-
-  payload = mem_get_buffer(&impl->payload_pool, total);
-  if (payload == NULL) return SALTS_ENOMEM;
-  for (size_t index = 0u; index < segment_count; ++index) {
-    memcpy(mem_buffer_data(payload) + offset, segments[index].data, segments[index].size);
-    offset += segments[index].size;
-  }
-  mem_set_used(payload, total);
-  status = cnet_write_enqueue_owned(impl, connection, payload, total, 0u, total,
-                                    CNET_WRITE_PAYLOAD_COPIED, close_after_send, out_handle);
-  if (status != SALTS_OK) mem_buffer_release(payload);
-  return status;
 }
 
 int cnet_write_queue_enqueue_buffer(cnet_write_queue *queue, cnet_session_handle connection,
@@ -303,7 +231,7 @@ int cnet_write_queue_enqueue_buffer(cnet_write_queue *queue, cnet_session_handle
 
   payload = mem_buffer_retain(buffer);
   if (payload == NULL) return SALTS_EINVAL;
-  status = cnet_write_enqueue_owned(impl, connection, payload, size, 0u, 0u,
+  status = cnet_write_enqueue_owned(impl, connection, payload, size, 0u,
                                     CNET_WRITE_PAYLOAD_RETAINED, close_after_send, out_handle);
   if (status != SALTS_OK) mem_buffer_release(payload);
   return status;
@@ -351,7 +279,7 @@ int cnet_write_queue_enqueue_slice(cnet_write_queue *queue, cnet_session_handle 
 
   payload = mem_buffer_retain(slice->buffer);
   if (payload == NULL) return SALTS_EINVAL;
-  status = cnet_write_enqueue_owned(impl, connection, payload, slice->length, base_offset, 0u,
+  status = cnet_write_enqueue_owned(impl, connection, payload, slice->length, base_offset,
                                     CNET_WRITE_PAYLOAD_RETAINED, close_after_send, out_handle);
   if (status != SALTS_OK) mem_buffer_release(payload);
   return status;
@@ -427,7 +355,6 @@ int cnet_write_queue_enqueue_slicev(cnet_write_queue *queue,
   entry->size = total;
   entry->base_offset = 0u;
   entry->offset = 0u;
-  entry->copied_bytes = 0u;
   entry->range_count = segment_count;
   entry->next = CNET_WRITE_SLOT_NONE;
   entry->payload_kind = CNET_WRITE_PAYLOAD_RETAINED_VECTOR;
@@ -590,11 +517,10 @@ static int cnet_write_release_slot(cnet_write_queue_impl *impl, size_t connectio
       (size_t)slot >= impl->capacity)
     return SALTS_EINVAL;
   entry = &impl->entries[slot];
-  if (entry->state != CNET_WRITE_ENTRY_QUEUED || entry->copied_bytes > impl->copied_bytes ||
+  if (entry->state != CNET_WRITE_ENTRY_QUEUED ||
       impl->live_writes == 0u || impl->free_count >= impl->capacity)
     return SALTS_EPROTO;
 
-  impl->copied_bytes -= entry->copied_bytes;
   --impl->live_writes;
   if (entry->payload_kind == CNET_WRITE_PAYLOAD_RETAINED_VECTOR) {
     for (size_t index = 0u; index < entry->owner_count; ++index)
@@ -609,7 +535,6 @@ static int cnet_write_release_slot(cnet_write_queue_impl *impl, size_t connectio
   entry->size = 0u;
   entry->base_offset = 0u;
   entry->offset = 0u;
-  entry->copied_bytes = 0u;
   entry->range_count = 0u;
   entry->owner_count = 0u;
   entry->next = CNET_WRITE_SLOT_NONE;
@@ -767,8 +692,6 @@ bool cnet_write_queue_get_stats(const cnet_write_queue *queue,
   *out_stats = (cnet_write_queue_stats){
       .live_writes = impl->live_writes,
       .peak_writes = impl->peak_writes,
-      .copied_bytes = impl->copied_bytes,
-      .peak_copied_bytes = impl->peak_copied_bytes,
       .capacity = impl->capacity,
       .connection_capacity = impl->connection_capacity,
       .admission_open = impl->admission_open};
@@ -787,7 +710,6 @@ int cnet_write_queue_destroy(cnet_write_queue *queue) {
   free(impl->heads);
   free(impl->free_slots);
   free(impl->entries);
-  mem_destroy(&impl->payload_pool);
   free(impl);
   queue->impl = NULL;
   return SALTS_OK;
