@@ -1070,7 +1070,7 @@ bool cflow_plan_eval_array_workspace_profile(
     }
 
     if (!current_buffer || current_type_size != plan->output_type->size) return false;
-    out->data = current_data;
+    out->data = selected_count ? current_data : NULL;
     out->count = selected_count;
     out->type = plan->output_type;
     return true;
