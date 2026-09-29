@@ -34,6 +34,8 @@ static_assert(std::is_standard_layout<cmeta_callable>::value,
               "cmeta_callable must remain a C-compatible value");
 static_assert(std::is_standard_layout<cflow_function_projection>::value,
               "reflected function projection must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_function_action_projection>::value,
+              "reflected action projection must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_event_type>::value,
               "cflow_event_type must remain a C-compatible schema row");
 static_assert(std::is_standard_layout<cflow_mailbox>::value,
