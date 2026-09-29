@@ -364,7 +364,9 @@ int cnet_shards_send_buffer(cnet_shards *shards, cnet_shard_connection connectio
   if (impl == NULL || buffer == NULL || size == 0u) return SALTS_EINVAL;
   if (size > impl->max_command_payload_bytes) return SALTS_EMSGSIZE;
   return cnet_shards_publish(impl, connection, &command);
-}static int cnet_shards_direct_write_ready(cnet_shards_impl *impl,
+}
+
+static int cnet_shards_direct_write_ready(cnet_shards_impl *impl,
                                           cnet_shard_connection connection,
                                           cnet_shard_record **out_record) {
   cnet_shard_record *record;
@@ -444,7 +446,9 @@ int cnet_shards_send_slicev_close_direct(cnet_shards *shards,
              ? cnet_owner_send_slicev_close_direct(&record->owner, connection.session,
                                                    segments, segment_count)
              : status;
-}int cnet_shards_send_buffer_close_direct(cnet_shards *shards,
+}
+
+int cnet_shards_send_buffer_close_direct(cnet_shards *shards,
                                          cnet_shard_connection connection,
                                          mem_buffer_t *buffer) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
