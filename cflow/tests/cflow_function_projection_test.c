@@ -193,7 +193,7 @@ suite("CFlow reflected function projection") {
         cflow_graph_destroy(&mock_graph);
     }
 
-    it("does not infer FILTER intent from a bool-returning MAP") {
+    it("does not infer FILTER intent when MAP policy rejects a bool return") {
         cflow_function_projection projection = {0};
 
         check_equal(
@@ -203,11 +203,8 @@ suite("CFlow reflected function projection") {
                 CFLOW_REFLECTED_CALLABLE(cflow_projection_positive),
                 CFLOW_OP_MAP,
                 &projection),
-            CFLOW_FUNCTION_PROJECTION_OK);
-        check_true(cflow_function_projection_valid(&projection));
-        check_equal(projection.op, CFLOW_OP_MAP);
-        check_true(cmeta_type_equal(projection.input_type, &cmeta_type_int));
-        check_true(cmeta_type_equal(projection.output_type, &cmeta_type_bool));
+            CFLOW_FUNCTION_PROJECTION_INVALID_ADAPTER);
+        check_false(cflow_function_projection_valid(&projection));
     }
 
     it("admits reflected FILTER predicates while preserving the element type") {
@@ -288,31 +285,33 @@ suite("CFlow reflected function projection") {
         cflow_graph_destroy(&mock_graph);
     }
 
-    it("admits reflected TRANSFORM as the explicit map-equivalent operator") {
+    it("admits reflected TRANSFORM within the generated signature policy") {
         cflow_function_projection projection = {0};
         cflow_graph graph = {0};
         cflow_plan plan = {0};
         cflow_result result = {0};
         const int input[] = {1, 2, 3};
-        const int expected[] = {2, 3, 4};
+        const long expected[] = {1L, 2L, 3L};
 
         check_equal(
             cflow_function_projection_admit(
-                FunctionMeta(cflow_projection_local),
-                FunctionAbi(cflow_projection_local),
-                CFLOW_REFLECTED_CALLABLE(cflow_projection_local),
+                FunctionMeta(cflow_projection_type_mismatch),
+                FunctionAbi(cflow_projection_type_mismatch),
+                CFLOW_REFLECTED_CALLABLE(cflow_projection_type_mismatch),
                 CFLOW_OP_TRANSFORM,
                 &projection),
             CFLOW_FUNCTION_PROJECTION_OK);
         check_true(cflow_function_projection_valid(&projection));
         check_true(cmeta_type_equal(projection.input_type, &cmeta_type_int));
-        check_true(cmeta_type_equal(projection.output_type, &cmeta_type_int));
+        check_true(cmeta_type_equal(projection.output_type, &cmeta_type_long));
 
         cflow_graph_init(&graph, &cmeta_type_int);
         check_true(cflow_graph_add_function_projection(&graph, &projection));
         check_true(cflow_plan_compile_surface(&plan, &graph, NULL));
         check_true(cflow_plan_eval_array(&plan, input, 3u, &result));
-        check_int_result(&result, expected, 3u);
+        check_equal(result.count, (size_t)3u);
+        check_true(cmeta_type_equal(result.type, &cmeta_type_long));
+        check_equal(result.data, expected, sizeof(expected));
 
         cflow_result_destroy(&result);
         cflow_plan_destroy(&plan);
