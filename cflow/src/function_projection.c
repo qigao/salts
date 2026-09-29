@@ -46,26 +46,46 @@ static cflow_function_projection_status projection_adapter_admit(
     return CFLOW_FUNCTION_PROJECTION_OK;
 }
 
+static bool projection_operator_supported(cflow_op op) {
+    return op == CFLOW_OP_MAP ||
+           op == CFLOW_OP_TRANSFORM ||
+           op == CFLOW_OP_FILTER;
+}
+
 static bool projection_shape_supported(
     const cmeta_function_desc *function,
     const cmeta_function_abi_desc *abi,
     cflow_op op) {
     const cmeta_param_desc *param;
 
-    if (function == NULL || abi == NULL || op != CFLOW_OP_MAP ||
+    if (function == NULL || abi == NULL || !projection_operator_supported(op) ||
         function->param_count != 1u ||
         function->return_type == NULL ||
         function->return_type->kind == CMETA_T_VOID)
         return false;
 
     param = cmeta_function_param(function, 0u);
-    return param != NULL &&
-           param->flags == CMETA_PARAM_IN &&
-           cmeta_function_param_abi(abi, 0u) != CMETA_ABI_UNSPECIFIED &&
-           cmeta_function_param_abi(abi, 0u) != CMETA_ABI_OPAQUE &&
-           abi->return_carrier != CMETA_ABI_UNSPECIFIED &&
-           abi->return_carrier != CMETA_ABI_OPAQUE &&
-           abi->return_carrier != CMETA_ABI_VOID;
+    if (param == NULL ||
+        param->flags != CMETA_PARAM_IN ||
+        cmeta_function_param_abi(abi, 0u) == CMETA_ABI_UNSPECIFIED ||
+        cmeta_function_param_abi(abi, 0u) == CMETA_ABI_OPAQUE ||
+        abi->return_carrier == CMETA_ABI_UNSPECIFIED ||
+        abi->return_carrier == CMETA_ABI_OPAQUE ||
+        abi->return_carrier == CMETA_ABI_VOID)
+        return false;
+
+    if (op == CFLOW_OP_FILTER)
+        return cmeta_type_equal(function->return_type, &cmeta_type_bool);
+
+    return true;
+}
+
+static const cmeta_type_desc *projection_graph_output_type(
+    const cmeta_function_desc *function,
+    const cmeta_param_desc *param,
+    cflow_op op) {
+    if (!function || !param) return NULL;
+    return op == CFLOW_OP_FILTER ? param->type : function->return_type;
 }
 
 const char *cflow_function_projection_status_string(
@@ -113,10 +133,12 @@ cflow_function_projection_status cflow_function_projection_admit(
         return CFLOW_FUNCTION_PROJECTION_INVALID_ABI;
 
     /*
-     * First proven execution shape is a unary value transform. Do not infer
-     * FILTER/REDUCE/FLAT_MAP intent from a C signature alone.
+     * The caller explicitly selects semantic intent. MAP/TRANSFORM use the
+     * reflected return value as Graph output; FILTER requires a bool predicate
+     * but preserves the input element type. Do not infer FILTER intent merely
+     * because a function returns bool.
      */
-    if (op != CFLOW_OP_MAP)
+    if (!projection_operator_supported(op))
         return CFLOW_FUNCTION_PROJECTION_UNSUPPORTED_OPERATOR;
     if (!projection_shape_supported(function, abi, op))
         return CFLOW_FUNCTION_PROJECTION_UNSUPPORTED_SHAPE;
@@ -140,7 +162,7 @@ cflow_function_projection_status cflow_function_projection_admit(
     out->abi = abi;
     out->callable = bound;
     out->input_type = param->type;
-    out->output_type = function->return_type;
+    out->output_type = projection_graph_output_type(function, param, op);
     return CFLOW_FUNCTION_PROJECTION_OK;
 }
 
@@ -227,11 +249,16 @@ bool cflow_function_projection_valid(
            cflow_op_signature_allowed(projection->op,
                                       projection->callable.meta.sig) &&
            cmeta_type_equal(signature->params[0], projection->input_type) &&
-           cmeta_type_equal(signature->return_type, projection->output_type) &&
+           cmeta_type_equal(signature->return_type,
+                            projection->function->return_type) &&
            cmeta_type_equal(projection->input_type,
                             projection->function->params[0].type) &&
-           cmeta_type_equal(projection->output_type,
-                            projection->function->return_type) &&
+           cmeta_type_equal(
+               projection->output_type,
+               projection_graph_output_type(
+                   projection->function,
+                   &projection->function->params[0],
+                   projection->op)) &&
            projection->callable.meta.effects ==
                projection->function->effects &&
            projection->callable.meta.properties ==
