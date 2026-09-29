@@ -7,6 +7,11 @@ on:
       - master
     paths:
       - ".github/workflows/publish-salts-1.8.6.yml"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/publish-salts-1.8.6.yml"
 
 permissions:
   contents: write
