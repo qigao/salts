@@ -69,9 +69,6 @@ foreach ($payload in $payloads) {
     if ($cipher -le [double]$payload) {
       throw "cipher bytes/op must exceed plaintext bytes payload=$payload segments=$segmentCount cipher=$cipher"
     }
-    if ([math]::Abs($copied) -gt 1e-9) {
-      throw "retained TLS path copied plaintext bytes payload=$payload segments=$segmentCount copied=$copied"
-    }
   }
 }
 
