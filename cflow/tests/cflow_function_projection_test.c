@@ -201,6 +201,68 @@ static cmeta_callable cflow_service_adapter(cmeta_callable_invoke_fn invoke) {
     return adapter;
 }
 
+typedef struct cflow_typed_filter_box {
+    int value;
+} cflow_typed_filter_box;
+
+static const cmeta_type_traits cflow_typed_filter_box_traits = {
+    .flags = CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY
+};
+
+static const cmeta_type_desc cflow_typed_filter_box_type = {
+    .name = "cflow_typed_filter_box",
+    .size = sizeof(cflow_typed_filter_box),
+    .align = _Alignof(cflow_typed_filter_box),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &cflow_typed_filter_box_traits,
+    .identity = NULL
+};
+
+static const cmeta_type_desc cflow_typed_filter_box_ptr_type = {
+    .name = "cflow_typed_filter_box *",
+    .size = sizeof(cflow_typed_filter_box *),
+    .align = _Alignof(cflow_typed_filter_box *),
+    .kind = CMETA_T_POINTER,
+    .pointee = &cflow_typed_filter_box_type,
+    .traits = NULL,
+    .identity = NULL
+};
+
+FunctionDeclAsAbi(value, bool, &cmeta_type_bool, CMETA_ABI_SCALAR,
+                  cflow_projection_typed_positive,
+    (cflow_typed_filter_box *, request, CMETA_PARAM_IN,
+     &cflow_typed_filter_box_ptr_type, CMETA_ABI_OBJECT_POINTER));
+
+bool cflow_projection_typed_positive(cflow_typed_filter_box *request) {
+    return request != NULL && request->value > 0;
+}
+
+static bool cflow_typed_filter_invoke(
+    const cmeta_callable *self,
+    void *out,
+    const void *const *args) {
+    const cflow_typed_filter_box *box;
+    bool keep;
+    (void)self;
+    if (!out || !args || !args[0]) return false;
+    box = (const cflow_typed_filter_box *)args[0];
+    keep = box->value > 0;
+    memcpy(out, &keep, sizeof(keep));
+    return true;
+}
+
+static cmeta_callable cflow_typed_filter_adapter(void) {
+    cmeta_callable adapter = {0};
+    const cmeta_function_desc *function =
+        FunctionMeta(cflow_projection_typed_positive);
+    adapter.meta.effects = function->effects;
+    adapter.meta.properties = function->properties;
+    adapter.invoke = cflow_typed_filter_invoke;
+    adapter.dispatch = CMETA_CALLABLE_DISPATCH_ADAPTER;
+    return adapter;
+}
+
 static void check_int_result(
     const cflow_result *result,
     const int *expected,
@@ -212,6 +274,124 @@ static void check_int_result(
 }
 
 suite("CFlow reflected function projection") {
+    it("admits erased typed FILTER predicates and preserves element type") {
+        cflow_function_typed_adapter_projection projection = {0};
+        cflow_graph graph = {0};
+        cflow_plan plan = {0};
+        cflow_result direct = {0};
+        cflow_result compiled = {0};
+        cflow_verify_report verify = {0};
+        const cflow_subgraph *root;
+        const cflow_typed_filter_box input[] = {
+            {{-2}}, {{0}}, {{1}}, {{3}}
+        };
+        const cflow_typed_filter_box expected[] = {
+            {{1}}, {{3}}
+        };
+        const char *validation = NULL;
+
+        check_equal(
+            cflow_function_typed_filter_projection_admit(
+                FunctionMeta(cflow_projection_typed_positive),
+                FunctionAbi(cflow_projection_typed_positive),
+                cflow_typed_filter_adapter(),
+                &cflow_typed_filter_box_type,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_OK);
+        check_true(cflow_function_typed_filter_projection_valid(
+            &projection));
+        check_equal(projection.callable.meta.sig, CMETA_SIG_INVALID);
+        check_true(cmeta_type_equal(
+            projection.input_type, &cflow_typed_filter_box_type));
+        check_true(cmeta_type_equal(
+            projection.output_type, &cflow_typed_filter_box_type));
+        check_true(cmeta_type_equal(
+            projection.function->return_type, &cmeta_type_bool));
+
+        cflow_graph_init(&graph, &cflow_typed_filter_box_type);
+        check_true(cflow_graph_add_function_typed_filter_projection(
+            &graph, &projection));
+        check_true(cflow_graph_validate(&graph, &validation));
+        check_null(validation);
+
+        root = cflow_graph_subgraph(&graph, graph.root);
+        check_not_null(root);
+        check_equal(root->node_count, (size_t)2u);
+        check_equal(root->nodes[1].op, CFLOW_OP_FILTER);
+        check_equal(
+            root->nodes[1].param_kind,
+            CFLOW_NODE_PARAM_TYPED_ADAPTER);
+        check_true(cmeta_type_equal(
+            root->nodes[1].input_type, &cflow_typed_filter_box_type));
+        check_true(cmeta_type_equal(
+            root->nodes[1].output_type, &cflow_typed_filter_box_type));
+
+        check_true(cflow_eval_array(
+            &graph, input, sizeof(input) / sizeof(input[0]), &direct));
+        check_equal(direct.count, (size_t)2u);
+        check_true(cmeta_type_equal(
+            direct.type, &cflow_typed_filter_box_type));
+        check_equal(direct.data, expected, sizeof(expected));
+
+        check_true(cflow_plan_compile_surface(&plan, &graph, NULL));
+        check_true(cflow_plan_eval_array(
+            &plan, input, sizeof(input) / sizeof(input[0]), &compiled));
+        check_equal(compiled.count, (size_t)2u);
+        check_true(cmeta_type_equal(
+            compiled.type, &cflow_typed_filter_box_type));
+        check_equal(compiled.data, expected, sizeof(expected));
+
+        check_true(cflow_verify_pipeline(
+            &graph, input, sizeof(input) / sizeof(input[0]), &verify));
+        check_true(verify.compiled_plan_checked);
+        check_equal(verify.output_count, (size_t)2u);
+
+        cflow_result_destroy(&compiled);
+        cflow_result_destroy(&direct);
+        cflow_plan_destroy(&plan);
+        cflow_graph_destroy(&graph);
+    }
+
+    it("rejects malformed typed FILTER projections and graph mismatches") {
+        cflow_function_typed_adapter_projection projection = {0};
+        cflow_graph wrong_graph = {0};
+        cmeta_callable adapter = cflow_typed_filter_adapter();
+
+        check_equal(
+            cflow_function_typed_filter_projection_admit(
+                FunctionMeta(cflow_projection_service),
+                FunctionAbi(cflow_projection_service),
+                adapter,
+                &cflow_typed_filter_box_type,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_UNSUPPORTED_SHAPE);
+
+        adapter = cflow_typed_filter_adapter();
+        adapter.invoke = NULL;
+        check_equal(
+            cflow_function_typed_filter_projection_admit(
+                FunctionMeta(cflow_projection_typed_positive),
+                FunctionAbi(cflow_projection_typed_positive),
+                adapter,
+                &cflow_typed_filter_box_type,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_INVALID_ADAPTER);
+
+        check_equal(
+            cflow_function_typed_filter_projection_admit(
+                FunctionMeta(cflow_projection_typed_positive),
+                FunctionAbi(cflow_projection_typed_positive),
+                cflow_typed_filter_adapter(),
+                &cflow_typed_filter_box_type,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_OK);
+
+        cflow_graph_init(&wrong_graph, &cmeta_type_int);
+        check_false(cflow_graph_add_function_typed_filter_projection(
+            &wrong_graph, &projection));
+        cflow_graph_destroy(&wrong_graph);
+    }
+
     it("admits explicit Request to Response adapters without a finite callable signature") {
         cflow_function_typed_adapter_projection local_projection = {0};
         cflow_function_typed_adapter_projection mock_projection = {0};
