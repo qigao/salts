@@ -532,6 +532,43 @@ spec("CSTL trees") {
         btree_destroy(&btree);
     }
 
+    it("rolls failed first BTree and BPlusTree puts back to exact typed zero") {
+        btree_t btree =
+            SALTS_STL_BTREE_INITIALIZER_WITH_TYPES(
+                owned_tree_value, owned_tree_value,
+                &owned_tree_type, &owned_tree_type);
+        bplus_tree_t bplus =
+            SALTS_STL_BPLUS_TREE_INITIALIZER_WITH_TYPES(
+                owned_tree_value, owned_tree_value,
+                &owned_tree_type, &owned_tree_type);
+        btree_t btree_before = btree;
+        bplus_tree_t bplus_before = bplus;
+        owned_tree_value key;
+        owned_tree_value value;
+
+        check_equal(owned_tree_live, (size_t)0u);
+        owned_tree_fail_copy = false;
+        key = owned_tree_make(1);
+        value = owned_tree_make(10);
+        check_equal(owned_tree_live, (size_t)2u);
+
+        owned_tree_fail_copy = true;
+        check_equal(btree_put(&btree, &key, &value), STL_OUT_OF_MEMORY);
+        check_equal(memcmp(&btree, &btree_before, sizeof(btree)), 0);
+        check_false(btree.initialized);
+        check_null(btree.root);
+
+        check_equal(bplus_tree_put(&bplus, &key, &value), STL_OUT_OF_MEMORY);
+        check_equal(memcmp(&bplus, &bplus_before, sizeof(bplus)), 0);
+        check_false(bplus.initialized);
+        check_null(bplus.root);
+
+        owned_tree_fail_copy = false;
+        owned_tree_destroy(&value);
+        owned_tree_destroy(&key);
+        check_equal(owned_tree_live, (size_t)0u);
+    }
+
     it("keeps owning BTree mutations transactional and transfers removal") {
         btree_t tree = {0};
         owned_tree_value key = owned_tree_make(1);
