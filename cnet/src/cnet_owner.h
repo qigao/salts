@@ -60,7 +60,6 @@ typedef struct cnet_owner_config {
   /** Mandatory bounded logical-write ownership capacity. */
   size_t write_capacity;
   size_t max_write_bytes;
-  size_t write_buffer_bytes;
   cnet_session_table *sessions;
   cnet_command_queue *commands;
   cnet_event_queue *events;
@@ -129,7 +128,7 @@ int cnet_owner_receive_direct(cnet_owner *owner, cnet_session_handle session, si
 /**
  * Owner-thread retained send ownership admission. These retain into the bounded
  * write queue and schedule owner-local work; they never publish a callback
- * synchronously. TLS remains on the existing command/TLS path in W2.
+ * synchronously. TLS uses the same retained write ownership path.
  */
 int cnet_owner_send_buffer_direct(cnet_owner *owner, cnet_session_handle session,
                                   mem_buffer_t *buffer);
