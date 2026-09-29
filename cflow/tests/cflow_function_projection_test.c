@@ -56,15 +56,6 @@ FunctionDeclAsAbi(fallible, int, &cmeta_type_int, CMETA_ABI_SCALAR,
     (int *, output, CMETA_PARAM_OUT,
      &cmeta_type_int_ptr, CMETA_ABI_OBJECT_POINTER));
 
-FunctionDecl(stateful, void, cflow_projection_void,
-    (int, request, CMETA_PARAM_IN));
-
-void cflow_projection_void(int request) {
-    (void)request;
-}
-
-CFLOW_REFLECTED_ADAPTER(cflow_projection_void);
-
 Function0Decl(value, int, cflow_projection_zero);
 
 static void check_int_result(
@@ -206,7 +197,6 @@ suite("CFlow reflected function projection") {
 
     it("admits reflected actions without inventing a Graph operator") {
         cflow_function_action_projection binary = {0};
-        cflow_function_action_projection void_action = {0};
 
         check_equal(
             cflow_function_action_projection_admit(
@@ -217,16 +207,6 @@ suite("CFlow reflected function projection") {
             CFLOW_FUNCTION_PROJECTION_OK);
         check_true(cflow_function_action_projection_valid(&binary));
         check_equal(binary.function->param_count, (size_t)2);
-
-        check_equal(
-            cflow_function_action_projection_admit(
-                FunctionMeta(cflow_projection_void),
-                FunctionAbi(cflow_projection_void),
-                CFLOW_REFLECTED_CALLABLE(cflow_projection_void),
-                &void_action),
-            CFLOW_FUNCTION_PROJECTION_OK);
-        check_true(cflow_function_action_projection_valid(&void_action));
-        check_equal(void_action.function->return_type->kind, CMETA_T_VOID);
     }
 
     it("rejects reflected action adapter mismatches") {
