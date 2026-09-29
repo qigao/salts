@@ -589,6 +589,9 @@ SALTS_C_API int salts_fs_root_unlink(
  * cookie 0 starts/restarts enumeration; next_cookie resumes from the returned
  * entry. Cookies are stable only while the directory contents are unchanged.
  */
+/* Enumerate the admitted root directory itself without inventing "." syntax. */
+SALTS_C_API int salts_fs_root_opendir_self(
+    const salts_fs_root_t *root, salts_fs_root_dir_t **out_dir);
 SALTS_C_API int salts_fs_root_opendir(
     const salts_fs_root_t *root, const char *relative_path,
     salts_fs_root_dir_t **out_dir);
