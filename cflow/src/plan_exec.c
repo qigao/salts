@@ -207,6 +207,130 @@ typedef struct cflow_fused_resources {
     size_t result_bytes;
 } cflow_fused_resources;
 
+typedef struct cflow_plan_batch_workspace_impl {
+    const void *plan_impl;
+    const cmeta_type_desc *input_type;
+    const cmeta_type_desc *output_type;
+    size_t capacity;
+    size_t selection_capacity;
+    size_t buffer_capacity;
+    size_t allocation_bytes;
+    unsigned char *allocation;
+    unsigned char *selection;
+    unsigned char *buffer_a;
+    unsigned char *buffer_b;
+} cflow_plan_batch_workspace_impl;
+
+static bool cflow_plan_raw_fused_workspace_supported(
+    const cflow_plan *plan, const cflow_plan_impl *impl) {
+    size_t map_count = 0u;
+    if (!plan || !impl || !impl->fused_value || !plan->input_type ||
+        !plan->output_type ||
+        !cflow_value_storage_type_supported(plan->input_type) ||
+        !cflow_value_storage_type_supported(plan->output_type))
+        return false;
+    for (size_t pc = 0u; pc < impl->fused_filter_count; ++pc) {
+        const cflow_plan_call *call = &impl->code[pc].call;
+        if (!call->raw_batch || !cflow_value_storage_type_supported(call->input_type) ||
+            !cflow_value_storage_type_supported(call->output_type))
+            return false;
+    }
+    for (size_t pc = impl->fused_filter_count; pc < impl->count; ++pc) {
+        const cflow_plan_inst *inst = &impl->code[pc];
+        if (inst->opcode != CMETA_PLAN_MAP || !inst->fn_chain_count) return false;
+        for (size_t k = 0u; k < inst->fn_chain_count; ++k) {
+            const cflow_plan_call *call = &inst->fn_chain[k];
+            if (!call->raw_batch || !cflow_value_storage_type_supported(call->input_type) ||
+                !cflow_value_storage_type_supported(call->output_type))
+                return false;
+            ++map_count;
+        }
+    }
+    return map_count == impl->fused_map_call_count;
+}
+
+bool cflow_plan_batch_workspace_supported(const cflow_plan *plan) {
+    const cflow_plan_impl *impl = plan_impl(plan);
+    return cflow_plan_raw_fused_workspace_supported(plan, impl);
+}
+
+bool cflow_plan_batch_workspace_init(cflow_plan_batch_workspace *workspace,
+                                     const cflow_plan *plan,
+                                     size_t item_capacity) {
+    const cflow_plan_impl *impl = plan_impl(plan);
+    cflow_plan_batch_workspace_impl *state = NULL;
+    size_t selection_capacity = 0u;
+    size_t buffer_capacity = 0u;
+    size_t two_buffers = 0u;
+    size_t allocation_bytes = 0u;
+
+    if (!workspace) return false;
+    workspace->impl = NULL;
+    if (!item_capacity || !cflow_plan_raw_fused_workspace_supported(plan, impl))
+        return false;
+
+    selection_capacity =
+        impl->fused_filter_count ? selection_byte_count(item_capacity) : 0u;
+    if (impl->fused_map_call_count) {
+        for (size_t pc = impl->fused_filter_count; pc < impl->count; ++pc) {
+            const cflow_plan_inst *inst = &impl->code[pc];
+            for (size_t k = 0u; k < inst->fn_chain_count; ++k) {
+                size_t bytes = 0u;
+                if (!checked_bytes(item_capacity, inst->fn_chain[k].output_type->size,
+                                   &bytes))
+                    return false;
+                if (bytes > buffer_capacity) buffer_capacity = bytes;
+            }
+        }
+    } else if (!checked_bytes(item_capacity, plan->output_type->size,
+                              &buffer_capacity)) {
+        return false;
+    }
+
+    if (!buffer_capacity ||
+        !checked_add(buffer_capacity, buffer_capacity, &two_buffers) ||
+        !checked_add(selection_capacity, two_buffers, &allocation_bytes))
+        return false;
+
+    state = (cflow_plan_batch_workspace_impl *)calloc(1u, sizeof(*state));
+    if (!state) return false;
+    state->allocation = (unsigned char *)malloc(allocation_bytes);
+    if (!state->allocation) {
+        free(state);
+        return false;
+    }
+    state->plan_impl = plan->impl;
+    state->input_type = plan->input_type;
+    state->output_type = plan->output_type;
+    state->capacity = item_capacity;
+    state->selection_capacity = selection_capacity;
+    state->buffer_capacity = buffer_capacity;
+    state->allocation_bytes = allocation_bytes;
+    state->selection = selection_capacity ? state->allocation : NULL;
+    state->buffer_a = state->allocation + selection_capacity;
+    state->buffer_b = state->buffer_a + buffer_capacity;
+    workspace->impl = state;
+    return true;
+}
+
+void cflow_plan_batch_workspace_destroy(cflow_plan_batch_workspace *workspace) {
+    cflow_plan_batch_workspace_impl *state;
+    if (!workspace) return;
+    state = (cflow_plan_batch_workspace_impl *)workspace->impl;
+    if (state) {
+        free(state->allocation);
+        memset(state, 0, sizeof(*state));
+        free(state);
+    }
+    workspace->impl = NULL;
+}
+
+size_t cflow_plan_batch_workspace_capacity(const cflow_plan_batch_workspace *workspace) {
+    const cflow_plan_batch_workspace_impl *state =
+        workspace ? (const cflow_plan_batch_workspace_impl *)workspace->impl : NULL;
+    return state ? state->capacity : 0u;
+}
+
 static bool fused_allocate(cflow_fused_resources *resources,
                            size_t bytes,
                            unsigned char **allocation) {
@@ -793,6 +917,135 @@ fail:
     free(reusable);
     free(selection);
     return false;
+}
+
+bool cflow_plan_eval_array_workspace_profile(
+    const cflow_plan *plan,
+    const void *inputs,
+    size_t input_count,
+    cflow_plan_batch_workspace *workspace,
+    cflow_plan_batch_result *out,
+    cflow_plan_eval_stats *stats) {
+    const cflow_plan_impl *impl = plan_impl(plan);
+    cflow_plan_batch_workspace_impl *state =
+        workspace ? (cflow_plan_batch_workspace_impl *)workspace->impl : NULL;
+    const unsigned char *input_bytes = (const unsigned char *)inputs;
+    const unsigned char *current_data = input_bytes;
+    unsigned char *selection = NULL;
+    unsigned char *current_buffer = NULL;
+    size_t selected_count = input_count;
+    size_t current_type_size;
+    size_t map_index = 0u;
+
+    if (stats) memset(stats, 0, sizeof(*stats));
+    if (out) memset(out, 0, sizeof(*out));
+    if (!plan || !impl || !state || !out ||
+        state->plan_impl != plan->impl ||
+        state->input_type != plan->input_type ||
+        state->output_type != plan->output_type ||
+        input_count > state->capacity || (!inputs && input_count) ||
+        !cflow_plan_raw_fused_workspace_supported(plan, impl))
+        return false;
+
+    if (stats) {
+        stats->fused_value_path = true;
+        stats->selection_bytes =
+            impl->fused_filter_count ? selection_byte_count(input_count) : 0u;
+        stats->peak_live_bytes = state->allocation_bytes;
+    }
+    if (!input_count) {
+        out->type = plan->output_type;
+        return true;
+    }
+
+    selection = impl->fused_filter_count ? state->selection : NULL;
+    if (selection) {
+        const size_t selection_bytes = selection_byte_count(input_count);
+        if (selection_bytes > state->selection_capacity) return false;
+        memset(selection, 0xff, selection_bytes);
+        if (!eval_fused_filters(plan, impl, input_bytes, input_count,
+                                selection, &selected_count, stats))
+            return false;
+    }
+
+    current_type_size = plan->input_type->size;
+    for (size_t pc = impl->fused_filter_count; pc < impl->count; ++pc) {
+        const cflow_plan_inst *inst = &impl->code[pc];
+        for (size_t k = 0u; k < inst->fn_chain_count; ++k) {
+            const cflow_plan_call *call = &inst->fn_chain[k];
+            unsigned char *pending;
+            size_t next_bytes = 0u;
+            size_t output_count = selected_count;
+
+            if (!checked_bytes(selected_count, call->output_type->size, &next_bytes) ||
+                next_bytes > state->buffer_capacity)
+                return false;
+
+            if (current_data >= state->buffer_a &&
+                current_data < state->buffer_a + state->buffer_capacity)
+                pending = state->buffer_b;
+            else
+                pending = state->buffer_a;
+
+            if (!map_index && selection) {
+                if (!call->raw_batch(call, CFLOW_PLAN_BATCH_MAP, input_bytes, input_count,
+                                     selection, pending, &output_count))
+                    return false;
+            } else {
+                if (!call->raw_batch(call, CFLOW_PLAN_BATCH_MAP, current_data,
+                                     selected_count, NULL, pending, &output_count))
+                    return false;
+            }
+            if (output_count != selected_count) return false;
+            if (stats && !stats_increment(&stats->raw_batch_stage_calls)) return false;
+            if (stats) {
+                if (map_index + 1u == impl->fused_map_call_count)
+                    stats->result_bytes = next_bytes;
+                else if (!checked_add(stats->intermediate_bytes, next_bytes,
+                                      &stats->intermediate_bytes))
+                    return false;
+            }
+            current_buffer = pending;
+            current_data = current_buffer;
+            current_type_size = call->output_type->size;
+            ++map_index;
+        }
+    }
+
+    if (map_index != impl->fused_map_call_count) return false;
+    if (!map_index) {
+        size_t output_index = 0u;
+        for (size_t input_index = 0u; input_index < input_count; ++input_index) {
+            if (selection && !selection_contains(selection, input_index)) continue;
+            memmove(state->buffer_a + output_index * plan->output_type->size,
+                    input_bytes + input_index * plan->input_type->size,
+                    plan->output_type->size);
+            ++output_index;
+        }
+        if (output_index != selected_count) return false;
+        current_data = state->buffer_a;
+        current_buffer = state->buffer_a;
+        current_type_size = plan->output_type->size;
+        if (stats &&
+            !checked_bytes(selected_count, plan->output_type->size,
+                           &stats->result_bytes))
+            return false;
+    }
+
+    if (!current_buffer || current_type_size != plan->output_type->size) return false;
+    out->data = current_data;
+    out->count = selected_count;
+    out->type = plan->output_type;
+    return true;
+}
+
+bool cflow_plan_eval_array_workspace(const cflow_plan *plan,
+                                     const void *inputs,
+                                     size_t input_count,
+                                     cflow_plan_batch_workspace *workspace,
+                                     cflow_plan_batch_result *out) {
+    return cflow_plan_eval_array_workspace_profile(
+        plan, inputs, input_count, workspace, out, NULL);
 }
 
 bool cflow_plan_eval_array_profile(const cflow_plan *plan,
