@@ -24,6 +24,10 @@ static_assert(std::is_standard_layout<cflow_status_result>::value,
               "status result must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_collect_result>::value,
               "collect result must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_plan_batch_workspace>::value,
+              "plan batch workspace must remain a C-compatible opaque handle");
+static_assert(std::is_standard_layout<cflow_plan_batch_result>::value,
+              "plan batch result must remain a C-compatible borrowed view");
 static_assert(std::is_standard_layout<cflow_eval_options>::value,
               "evaluation options must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_set_state_ops>::value,
