@@ -73,6 +73,14 @@ static cmeta_properties node_props_rec(const cflow_graph *g,
         return COMPOSABLE;
 
     cmeta_properties p = COMPOSABLE;
+    if (node->param_kind == CFLOW_NODE_PARAM_TYPED_ADAPTER) {
+        p &= node->fn.meta.properties & COMPOSABLE;
+        if (cmeta_type_equal(node->input_type, node->output_type) &&
+            cmeta_properties_include(
+                node->fn.meta.properties, CMETA_PROP_IDEMPOTENT))
+            p |= CMETA_PROP_IDEMPOTENT;
+        return p;
+    }
     if (node->fn_chain_count) {
         if (!node->fn_chain) return CMETA_PROP_NONE;
         for (size_t i = 0; i < node->fn_chain_count; ++i)
