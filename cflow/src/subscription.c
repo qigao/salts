@@ -446,15 +446,29 @@ static node_action semantic_map(run_impl *r, cflow_node_id i, const cflow_node *
     size_t count = n->fn_chain_count ? n->fn_chain_count : 1u;
     const cmeta_type_desc *type = *cur_type;
     for (size_t k = 0; k < count; ++k) {
-        const cmeta_sig_desc *sig = cmeta_callable_signature(chain[k]);
-        if (!sig || sig->param_count != 1u || !cmeta_type_equal(sig->params[0], type))
-            return NODE_FAIL;
-        const cmeta_type_desc *next_type =
-            k + 1u == count ? n->output_type : sig->return_type;
+        const bool explicit_adapter =
+            count == 1u && k == 0u &&
+            cflow_typed_adapter_callable_valid(chain[k]);
+        const cmeta_sig_desc *sig =
+            explicit_adapter ? NULL : cmeta_callable_signature(chain[k]);
+        const cmeta_type_desc *next_type;
         cflow_value_slot next = {0};
         const void *args[1] = { owned->storage };
+
+        if (explicit_adapter) {
+            if (!cmeta_type_equal(type, n->input_type))
+                return NODE_FAIL;
+            next_type = n->output_type;
+        } else {
+            if (!sig || sig->param_count != 1u ||
+                !cmeta_type_equal(sig->params[0], type))
+                return NODE_FAIL;
+            next_type = k + 1u == count ? n->output_type : sig->return_type;
+        }
         if (!cflow_value_slot_init(&next, next_type)) return NODE_FAIL;
-        if (!cmeta_callable_invoke(&chain[k], next.storage, args)) {
+        if (explicit_adapter
+                ? !chain[k].invoke(&chain[k], next.storage, args)
+                : !cmeta_callable_invoke(&chain[k], next.storage, args)) {
             cflow_value_slot_destroy(&next);
             return NODE_FAIL;
         }
