@@ -246,6 +246,25 @@ suite("CSTL hash ownership") {
         counted_destroy(&set_key);
     }
 
+    it("rolls a failed first MultiMap put back to the exact typed zero") {
+        multimap_t map =
+            SALTS_STL_MULTIMAP_INITIALIZER_WITH_TYPES(
+                int, counted_value, &cmeta_type_int, &counted_type);
+        multimap_t before = map;
+        const int key = 5;
+        counted_value value;
+
+        reset_counts();
+        value = counted_make(50);
+        fail_copy_on = 1u;
+        check_equal(multimap_put(&map, &key, &value), STL_OUT_OF_MEMORY);
+        check_equal(memcmp(&map, &before, sizeof(map)), 0);
+        check_null(map.impl);
+
+        fail_copy_on = 0u;
+        counted_destroy(&value);
+    }
+
     it("keeps replacement transactional including self aliases") {
         hash_map_t map = {0};
         counted_value key;
