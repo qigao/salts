@@ -129,6 +129,25 @@ static bool prepare_unary_call(cflow_plan_call *out, cmeta_callable fn) {
     return true;
 }
 
+static bool prepare_typed_adapter_call(
+    cflow_plan_call *out,
+    cmeta_callable fn,
+    const cmeta_type_desc *input_type,
+    const cmeta_type_desc *output_type) {
+    cflow_plan_call prepared = {0};
+    if (!out || !cflow_typed_adapter_callable_valid(fn) ||
+        !cmeta_type_desc_valid(input_type) || input_type->size == 0u ||
+        !cmeta_type_desc_valid(output_type) || output_type->size == 0u)
+        return false;
+    prepared.fn = fn;
+    prepared.invoke = fn.invoke;
+    prepared.raw_batch = NULL;
+    prepared.input_type = input_type;
+    prepared.output_type = output_type;
+    *out = prepared;
+    return true;
+}
+
 static bool checked_add(size_t left, size_t right, size_t *sum) {
     if (!sum || left > SIZE_MAX - right) return false;
     *sum = left + right;
@@ -426,10 +445,21 @@ bool cflow_plan_compile(cflow_plan *plan,
                 if (!inst.fn_chain) return plan_compile_fail(plan, &index, "allocation failed");
                 const cmeta_type_desc *expected_input = n->input_type;
                 for (size_t k = 0; k < count; ++k) {
-                    if (!prepare_unary_call(&inst.fn_chain[k], src[k]) ||
-                        !cmeta_type_equal(inst.fn_chain[k].input_type, expected_input)) {
+                    const bool explicit_adapter =
+                        count == 1u && k == 0u &&
+                        cflow_typed_adapter_callable_valid(src[k]);
+                    const bool prepared =
+                        explicit_adapter
+                            ? prepare_typed_adapter_call(
+                                  &inst.fn_chain[k], src[k],
+                                  n->input_type, n->output_type)
+                            : prepare_unary_call(&inst.fn_chain[k], src[k]);
+                    if (!prepared ||
+                        !cmeta_type_equal(
+                            inst.fn_chain[k].input_type, expected_input)) {
                         inst_destroy(&inst);
-                        return plan_compile_fail(plan, &index, "map callable predecode failed");
+                        return plan_compile_fail(
+                            plan, &index, "map callable predecode failed");
                     }
                     expected_input = inst.fn_chain[k].output_type;
                 }
