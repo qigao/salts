@@ -112,6 +112,26 @@ bool cflow_graph_add_function_typed_adapter_projection(
     cflow_graph *graph,
     const cflow_function_typed_adapter_projection *projection);
 
+/*
+ * Explicit typed FILTER adapter. Reuses the ABI-stable typed-adapter
+ * projection artifact: input_type/output_type are both the preserved Graph
+ * element type, while function->return_type is canonical bool.
+ */
+cflow_function_projection_status
+cflow_function_typed_filter_projection_admit(
+    const cmeta_function_desc *function,
+    const cmeta_function_abi_desc *abi,
+    cmeta_callable adapter,
+    const cmeta_type_desc *input_type,
+    cflow_function_typed_adapter_projection *out);
+
+bool cflow_function_typed_filter_projection_valid(
+    const cflow_function_typed_adapter_projection *projection);
+
+bool cflow_graph_add_function_typed_filter_projection(
+    cflow_graph *graph,
+    const cflow_function_typed_adapter_projection *projection);
+
 cflow_function_projection_status cflow_function_action_projection_admit(
     const cmeta_function_desc *function,
     const cmeta_function_abi_desc *abi,
