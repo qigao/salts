@@ -2,6 +2,7 @@
 #include <cflow/adapters.h>
 #include <cflow/effect.h>
 #include <cflow/plan.h>
+#include <cflow/verify.h>
 
 #include "tinytest.h"
 
@@ -208,6 +209,7 @@ suite("CFlow reflected function projection") {
         cflow_result mock_result = {0};
         cflow_result local_compiled = {0};
         cflow_result mock_compiled = {0};
+        cflow_verify_report verify = {0};
         const cflow_subgraph *local_root;
         const cflow_subgraph *mock_root;
         const cflow_service_request input[] = {{1}, {2}, {3}};
@@ -298,6 +300,11 @@ suite("CFlow reflected function projection") {
             local_compiled.data, expected_local, sizeof(expected_local));
         check_equal(
             mock_compiled.data, expected_mock, sizeof(expected_mock));
+
+        check_true(cflow_verify_pipeline(
+            &local_graph, input, 3u, &verify));
+        check_true(verify.compiled_plan_checked);
+        check_equal(verify.opt_stats.map_nodes_fused, (size_t)0u);
 
         cflow_result_destroy(&local_result);
         cflow_result_destroy(&mock_result);
