@@ -40,6 +40,24 @@ typed(map, value, int, cflow_test_increment_int, (int value)) {
     return value + 1;
 }
 
+static bool cflow_test_reject_raw_batch(
+    const cflow_plan_call *call,
+    cflow_plan_unary_batch_mode mode,
+    const unsigned char *input,
+    size_t input_count,
+    unsigned char *selection,
+    unsigned char *output,
+    size_t *output_count) {
+    (void)call;
+    (void)mode;
+    (void)input;
+    (void)input_count;
+    (void)selection;
+    (void)output;
+    if (output_count) *output_count = 0u;
+    return false;
+}
+
 lambda1(map, value, long, cflow_test_captured_add,
         int, value, long, increment) {
     return (long)value + increment;
@@ -370,6 +388,64 @@ suite("CFlow pipeline") {
         check_equal(stats.staged_input_copy_bytes, (size_t)0u);
         check_equal(stats.raw_batch_stage_calls, (size_t)4u);
         check_equal(stats.adapter_item_calls, (size_t)0u);
+        check_equal(result.count, sizeof(expected) / sizeof(expected[0]));
+        check_true(cmeta_type_equal(result.type, &cmeta_type_int));
+        check_equal(result.data, expected, sizeof(expected));
+
+        cflow_result_destroy(&result);
+        cflow_plan_destroy(&plan);
+        cflow_stream_destroy(&stream);
+    }
+
+    it("cleans reused fused map slots when a later raw batch fails") {
+        cflow_stream stream = {0};
+        cflow_plan plan = {0};
+        cflow_result result = {0};
+        cflow_plan_eval_stats stats = {0};
+        cflow_plan_impl *impl;
+        cflow_plan_call *failing_call = NULL;
+        cflow_plan_unary_batch_fn original_raw_batch = NULL;
+        const int input[] = {1, 2, 3, 4};
+        const int expected[] = {5, 6, 7, 8};
+        size_t map_call_index = 0u;
+
+        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
+        check_not_null(stream.map(&stream, cflow_test_increment_int));
+        check_not_null(stream.map(&stream, cflow_test_increment_int));
+        check_not_null(stream.map(&stream, cflow_test_increment_int));
+        check_not_null(stream.map(&stream, cflow_test_increment_int));
+        check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
+
+        impl = (cflow_plan_impl *)plan.impl;
+        check_not_null(impl);
+        for (size_t pc = 0u; impl && pc < impl->count; ++pc) {
+            cflow_plan_inst *inst = &impl->code[pc];
+            for (size_t k = 0u; k < inst->fn_chain_count; ++k) {
+                if (map_call_index == 2u)
+                    failing_call = &inst->fn_chain[k];
+                ++map_call_index;
+            }
+        }
+        check_equal(map_call_index, (size_t)4u);
+        check_not_null(failing_call);
+        original_raw_batch = failing_call ? failing_call->raw_batch : NULL;
+        check_not_null(original_raw_batch);
+
+        if (failing_call)
+            failing_call->raw_batch = cflow_test_reject_raw_batch;
+        check_false(cflow_plan_eval_array_profile(
+            &plan, input, sizeof(input) / sizeof(input[0]), &result, &stats));
+        check_true(stats.fused_value_path);
+        check_equal(stats.raw_batch_stage_calls, (size_t)2u);
+        check_equal(result.count, (size_t)0u);
+        check_null(result.data);
+        check_null(result.type);
+
+        if (failing_call)
+            failing_call->raw_batch = original_raw_batch;
+        memset(&stats, 0, sizeof(stats));
+        check_true(cflow_plan_eval_array_profile(
+            &plan, input, sizeof(input) / sizeof(input[0]), &result, &stats));
         check_equal(result.count, sizeof(expected) / sizeof(expected[0]));
         check_true(cmeta_type_equal(result.type, &cmeta_type_int));
         check_equal(result.data, expected, sizeof(expected));
