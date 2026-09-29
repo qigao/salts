@@ -1424,3 +1424,300 @@ bool cflow_graph_relation(cflow_graph *g,
         return fail(g, validation_error ? validation_error : "relation graph validation failed");
     }
     cflow_graph_destroy(g);
+    *g = work;
+    return true;
+}
+
+static bool validate_map_chain(const cflow_node *node, const char **error) {
+    if (!node || node->fn_chain_count == 0u) return true;
+    if (node->op != CFLOW_OP_MAP || !node->fn_chain) {
+        if (error) *error = "only MAP may carry a fused function chain";
+        return false;
+    }
+    const cmeta_type_desc *cur = node->input_type;
+    for (size_t i = 0; i < node->fn_chain_count; ++i) {
+        const cmeta_sig_desc *sig = cmeta_callable_signature(node->fn_chain[i]);
+        if (!cmeta_callable_contract_valid(node->fn_chain[i]) ||
+            !cmeta_effects_are_pure(node->fn_chain[i].meta.effects)) {
+            if (error) *error = "fused MAP chains require valid PURE callback contracts";
+            return false;
+        }
+        if (!sig || sig->protocol != CMETA_FN_PROTOCOL_VALUE || sig->param_count != 1u ||
+            !cmeta_type_equal(sig->params[0], cur)) {
+            if (error) *error = "fused MAP function chain type mismatch";
+            return false;
+        }
+        cur = sig->return_type;
+    }
+    if (!cmeta_type_equal(cur, node->output_type)) {
+        if (error) *error = "fused MAP output type metadata is inconsistent";
+        return false;
+    }
+    return true;
+}
+
+static bool validate_subgraph_nodes(const cflow_graph *g,
+                                    const cflow_subgraph *sg,
+                                    const cflow_dense_successor_index *index,
+                                    const char **error) {
+    for (size_t n = 0; n < sg->node_count; ++n) {
+        const cflow_node *node = &sg->nodes[n];
+        const bool is_slice = node->op == CFLOW_OP_TAKE ||
+                              node->op == CFLOW_OP_SKIP;
+        const bool is_distinct = node->op == CFLOW_OP_DISTINCT;
+        const bool is_sorted = node->op == CFLOW_OP_SORTED;
+        if (is_slice) {
+            if (!node->has_size_parameter || node->has_fn ||
+                node->fn_chain_count != 0u || node->has_relation ||
+                node->subgraph_count != 0u ||
+                node->param_kind != (node->op == CFLOW_OP_TAKE
+                    ? CFLOW_NODE_PARAM_TAKE : CFLOW_NODE_PARAM_SKIP) ||
+                node->size_parameter != (node->op == CFLOW_OP_TAKE
+                    ? node->params.take.count : node->params.skip.count) ||
+                !cmeta_type_equal(node->input_type, node->output_type)) {
+                if (error) *error = "slice node metadata is inconsistent";
+                return false;
+            }
+        } else if (node->has_size_parameter) {
+            if (error) *error = "non-slice node carries a size parameter";
+            return false;
+        } else if (is_distinct) {
+            if (node->param_kind != CFLOW_NODE_PARAM_DISTINCT ||
+                node->params.distinct.max_unique == 0u || node->has_fn ||
+                node->fn_chain_count != 0u || node->has_relation ||
+                node->subgraph_count != 0u ||
+                cmeta_type_require_traits(
+                    node->input_type,
+                    CMETA_TRAIT_HASH | CMETA_TRAIT_EQUAL) != CMETA_OK ||
+                !cmeta_type_equal(node->input_type, node->output_type)) {
+                if (error) *error = "distinct node metadata is inconsistent";
+                return false;
+            }
+        } else if (is_sorted) {
+            const cmeta_trait_flags required = CMETA_TRAIT_COMPARE |
+                CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY;
+            if (node->param_kind != CFLOW_NODE_PARAM_SORTED ||
+                node->params.sorted.max_elements == 0u || node->has_fn ||
+                node->fn_chain_count != 0u || node->has_relation ||
+                node->subgraph_count != 0u ||
+                cmeta_type_require_traits(node->input_type, required) !=
+                    CMETA_OK ||
+                !cmeta_type_equal(node->input_type, node->output_type)) {
+                if (error) *error = "sorted node metadata is inconsistent";
+                return false;
+            }
+        } else if (node->op == CFLOW_OP_REDUCE &&
+                   node->param_kind == CFLOW_NODE_PARAM_REDUCE_SEED) {
+            const cflow_value_slot *seed_slot = node_reduce_seed_slot(node);
+            if (!node->has_fn || node->fn_chain_count != 0u ||
+                node->has_relation || node->subgraph_count != 0u ||
+                !seed_slot || !seed_slot->live ||
+                !cmeta_type_equal(seed_slot->type, node->input_type) ||
+                !cmeta_type_equal(node->input_type, node->output_type) ||
+                cmeta_type_require_traits(node->input_type,
+                                          CMETA_TRAIT_EQUAL) != CMETA_OK) {
+                if (error) *error = "seeded reduce metadata is inconsistent";
+                return false;
+            }
+        } else if (node->param_kind == CFLOW_NODE_PARAM_TYPED_ADAPTER) {
+            if ((node->op != CFLOW_OP_MAP &&
+                 node->op != CFLOW_OP_FILTER) ||
+                !node->has_fn ||
+                node->fn_chain_count != 0u || node->has_relation ||
+                node->subgraph_count != 0u ||
+                !cmeta_type_desc_valid(node->input_type) ||
+                node->input_type->size == 0u ||
+                !cmeta_type_desc_valid(node->output_type) ||
+                node->output_type->size == 0u ||
+                (node->op == CFLOW_OP_FILTER &&
+                 !cmeta_type_equal(
+                     node->input_type, node->output_type)) ||
+                !cflow_graph_explicit_adapter_callable_valid(node->fn)) {
+                if (error) *error =
+                    "explicit typed adapter metadata is inconsistent";
+                return false;
+            }
+        } else if (node->param_kind != CFLOW_NODE_PARAM_NONE) {
+            if (error) *error = "operator carries an unexpected typed parameter";
+            return false;
+        }
+        if (node->has_fn &&
+            node->param_kind != CFLOW_NODE_PARAM_TYPED_ADAPTER &&
+            !cmeta_callable_contract_valid(node->fn)) {
+            if (error) *error = "callable effect/property contract is invalid";
+            return false;
+        }
+        if (!validate_map_chain(node, error)) return false;
+        if (index->has_fanout && index->first_fanout == n) {
+            if (error) *error = "naked DATA fan-out is forbidden; use an explicit RELATION node";
+            return false;
+        }
+        if (node->op == CFLOW_OP_RELATION) {
+            if (!node->has_relation || node->subgraph_count == 0u) {
+                if (error) *error = "RELATION requires a schema and at least one subgraph";
+                return false;
+            }
+            if (!relation_schema_valid(NULL, node->relation)) {
+                if (error) *error = "RELATION schema is invalid";
+                return false;
+            }
+            const cmeta_sig_desc *rsig = node->has_fn ? cmeta_callable_signature(node->fn) : NULL;
+            const cmeta_type_desc *homogeneous = NULL;
+            for (size_t k = 0; k < node->subgraph_count; ++k) {
+                cflow_subgraph_id bid = node->subgraphs[k];
+                if (bid >= g->subgraph_count ||
+                    !cmeta_type_equal(cflow_subgraph_input_type(g, bid), node->input_type)) {
+                    if (error) *error = "RELATION branch source contract is inconsistent";
+                    return false;
+                }
+                const cmeta_type_desc *bout = cflow_subgraph_output_type(g, bid);
+                if (node->relation.result == CFLOW_REL_RESULT_INVOKE) {
+                    if (!rsig || rsig->param_count != node->subgraph_count ||
+                        k >= rsig->param_count || !cmeta_type_equal(rsig->params[k], bout)) {
+                        if (error) *error = "RELATION INVOKE branch/function type metadata is inconsistent";
+                        return false;
+                    }
+                } else {
+                    if (!homogeneous) homogeneous = bout;
+                    if (!cmeta_type_equal(homogeneous, bout)) {
+                        if (error) *error = "RELATION branches must have homogeneous output type";
+                        return false;
+                    }
+                }
+            }
+            if (node->relation.result == CFLOW_REL_RESULT_INVOKE) {
+                if (!rsig || rsig->protocol != CMETA_FN_PROTOCOL_VALUE ||
+                    rsig->param_count != 2u || !cmeta_type_equal(node->output_type, rsig->return_type)) {
+                    if (error) *error = "RELATION INVOKE output/function metadata is inconsistent";
+                    return false;
+                }
+            } else {
+                if (!cmeta_type_equal(node->output_type, homogeneous)) {
+                    if (error) *error = "RELATION output type metadata is inconsistent";
+                    return false;
+                }
+                if (node->relation.result == CFLOW_REL_RESULT_FOLD) {
+                    if (!rsig || rsig->param_count != 2u ||
+                        !cmeta_type_equal(rsig->params[0], homogeneous) ||
+                        !cmeta_type_equal(rsig->params[1], homogeneous) ||
+                        !cmeta_type_equal(rsig->return_type, homogeneous)) {
+                        if (error) *error = "RELATION FOLD reducer/type metadata is inconsistent";
+                        return false;
+                    }
+                } else if (node->has_fn) {
+                    if (error) *error = "RELATION SELECT must not carry a reducer";
+                    return false;
+                }
+            }
+        }
+        for (size_t k = 0; k < node->subgraph_count; ++k) {
+            if (node->subgraphs[k] >= g->subgraph_count) {
+                if (error) *error = "node references invalid subgraph";
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool validate_linear_topology(const cflow_dense_successor_index *index,
+                                     cflow_node_id entry,
+                                     const char **error) {
+    cflow_node_id node = entry;
+    size_t visited = 0u;
+
+    for (;;) {
+        cflow_node_id successor;
+        if (visited == index->node_count) {
+            if (error) *error = "subgraph contains a topology cycle";
+            return false;
+        }
+        ++visited;
+        if (!cflow_dense_successor_index_successor(index, node, &successor)) break;
+        node = successor;
+    }
+    if (visited != index->node_count) {
+        if (error) *error = "subgraph contains unreachable nodes";
+        return false;
+    }
+    return true;
+}
+
+static bool validate_subgraph(const cflow_graph *g, cflow_subgraph_id sgid, const char **error) {
+    const cflow_subgraph *sg = cflow_graph_subgraph(g, sgid);
+    cflow_dense_successor_index index = {0};
+    if (!sg || sg->entry >= sg->node_count || sg->tail >= sg->node_count) {
+        if (error) *error = "subgraph entry/tail is invalid";
+        return false;
+    }
+    if (sg->nodes[sg->entry].op != CFLOW_OP_INPUT) {
+        if (error) *error = "subgraph entry must be SOURCE";
+        return false;
+    }
+    if (!cmeta_type_equal(sg->input_type, sg->nodes[sg->entry].input_type) ||
+        !cmeta_type_equal(sg->output_type, sg->nodes[sg->tail].output_type)) {
+        if (error) *error = "subgraph boundary type metadata is inconsistent";
+        return false;
+    }
+    for (size_t i = 0; i < sg->edge_count; ++i) {
+        const cflow_edge *e = &sg->edges[i];
+        if (e->from >= sg->node_count || e->to >= sg->node_count) {
+            if (error) *error = "edge references invalid node";
+            return false;
+        }
+        if (!cmeta_type_equal(sg->nodes[e->from].output_type, sg->nodes[e->to].input_type)) {
+            if (error) *error = "data edge type mismatch";
+            return false;
+        }
+    }
+    cflow_dense_successor_index_status index_status =
+        cflow_dense_successor_index_build(&index, sg);
+    if (index_status != CFLOW_DENSE_SUCCESSOR_INDEX_OK) {
+        if (error) {
+            *error = index_status == CFLOW_DENSE_SUCCESSOR_INDEX_ALLOCATION_FAILED
+                         ? "graph validation allocation failed"
+                         : "subgraph topology index is invalid";
+        }
+        return false;
+    }
+    if (cflow_dense_successor_index_has_successor(&index, sg->tail)) {
+        if (error) *error = "subgraph exit must not have outgoing data edges";
+        cflow_dense_successor_index_destroy(&index);
+        return false;
+    }
+    bool ok = validate_subgraph_nodes(g, sg, &index, error) &&
+              validate_linear_topology(&index, sg->entry, error);
+    cflow_dense_successor_index_destroy(&index);
+    return ok;
+}
+
+
+bool cflow_graph_validate(const cflow_graph *g, const char **error) {
+    if (error) *error = NULL;
+    if (!g || g->root >= g->subgraph_count) {
+        if (error) *error = "graph root is invalid";
+        return false;
+    }
+    for (size_t i = 0; i < g->subgraph_count; ++i)
+        if (!validate_subgraph(g, (cflow_subgraph_id)i, error)) return false;
+    return true;
+}
+
+#define CMETA_GRAPH_IMPL_1(E, method) \
+    bool cflow_graph_##method(cflow_graph *g, cmeta_callable fn) { \
+        return cflow_graph_add(g, CFLOW_OP_##E, fn, NULL); \
+    }
+#define CMETA_GRAPH_IMPL_2(E, method) \
+    bool cflow_graph_##method(cflow_graph *g, const cflow_graph *other, cmeta_callable fn) { \
+        return cflow_graph_add(g, CFLOW_OP_##E, fn, other); \
+    }
+#define CMETA_GRAPH_IMPL_I(n, E, method) CMETA_GRAPH_IMPL_##n(E, method)
+#define CMETA_GRAPH_IMPL(n, E, method) CMETA_GRAPH_IMPL_I(n, E, method)
+#define CFLOW_OP_ROW(E, method, margc, fnarg, subgrapharg, farity, p0, p1, p2, ret, out, card, subgraphrule, semantic, intrinsic_effects) \
+    CMETA_GRAPH_IMPL(margc, E, method)
+Replay(CFlowOperators, CFLOW_OP_ROW)
+#undef CFLOW_OP_ROW
+#undef CMETA_GRAPH_IMPL
+#undef CMETA_GRAPH_IMPL_I
+#undef CMETA_GRAPH_IMPL_1
+#undef CMETA_GRAPH_IMPL_2
