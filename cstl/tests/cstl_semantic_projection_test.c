@@ -498,6 +498,37 @@ spec("CSTL semantic projection") {
     hash_map_destroy(&map);
   }
 
+  it("materializes MultiMap typed zero on first put") {
+    multimap_t map =
+        SALTS_STL_MULTIMAP_INITIALIZER_WITH_TYPES(
+            int, long, &cmeta_type_int, &cmeta_type_long);
+    multimap_t raw = {0};
+    int key = 4;
+    long first = 40L;
+    long second = 41L;
+
+    check_true(multimap_empty(&map));
+    check_null(map.impl);
+    check_equal(multimap_put(&map, &key, &first), STL_OK);
+    check_not_null(map.impl);
+    check_equal(multimap_element_limit(&map), (size_t)SIZE_MAX);
+    check_true(map.cmeta.descriptor == &stl_multimap_container_desc);
+    check_equal(multimap_count(&map, &key), (size_t)1u);
+    check_equal(multimap_put(&map, &key, &second), STL_OK);
+    check_equal(multimap_count(&map, &key), (size_t)2u);
+
+    multimap_destroy(&map);
+    check_null(map.impl);
+    check_true(map.cmeta.descriptor == &stl_multimap_container_desc);
+    check_true(map.key_type == &cmeta_type_int);
+    check_true(map.value_type == &cmeta_type_long);
+
+    check_equal(multimap_put(&map, &key, &first), STL_OK);
+    check_equal(multimap_count(&map, &key), (size_t)1u);
+    check_equal(multimap_put(&raw, &key, &first), STL_INVALID_ARGUMENT);
+    multimap_destroy(&map);
+  }
+
   it("materializes Deque Stack Queue and Heap typed zero on first mutation") {
     deque_t deque =
         SALTS_STL_DEQUE_INITIALIZER_WITH_TYPE(int, &cmeta_type_int);
