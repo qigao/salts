@@ -19,6 +19,10 @@ permissions:
   contents: read
   packages: read
 
+concurrency:
+  group: salts-native-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   metadata:
     name: Release metadata
@@ -70,6 +74,29 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$expected_tag" >> "$GITHUB_OUTPUT"
           echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Reject duplicate manual publication before building SDKs
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_SHA: ${{ steps.version.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $TAG is already published; refusing duplicate workflow_dispatch" >&2
+            exit 1
+          fi
+
+          if tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha 2>/dev/null)"; then
+            if [ "$tag_sha" != "$RELEASE_SHA" ]; then
+              echo "tag $TAG resolves to $tag_sha, not requested release SHA $RELEASE_SHA" >&2
+              exit 1
+            fi
+            echo "tag $TAG already exists at requested SHA; retry is allowed because no GitHub Release exists yet"
+          fi
 
   linux:
     name: Linux x64 SDK
