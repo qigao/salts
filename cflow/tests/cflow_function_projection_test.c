@@ -139,10 +139,18 @@ FunctionDeclAsAbi(fallible, int, &cmeta_type_int, CMETA_ABI_SCALAR,
     (cflow_service_response *, response, CMETA_PARAM_OUT,
      &cflow_service_response_ptr_type, CMETA_ABI_OBJECT_POINTER));
 
+static const void *cflow_service_expected_output = NULL;
+static size_t cflow_service_direct_output_calls = 0u;
+static size_t cflow_service_alias_calls = 0u;
+
 int cflow_projection_service(
     cflow_service_request *request,
     cflow_service_response *response) {
     if (request == NULL || response == NULL) return -1;
+    if ((const void *)request == (const void *)response)
+        ++cflow_service_alias_calls;
+    if ((const void *)response == cflow_service_expected_output)
+        ++cflow_service_direct_output_calls;
     response->value = request->value + 7;
     return 0;
 }
@@ -151,16 +159,22 @@ static bool cflow_service_local_invoke(
     const cmeta_callable *self,
     void *out,
     const void *const *args) {
-    cflow_service_response response = {0};
     int status;
     (void)self;
     if (out == NULL || args == NULL || args[0] == NULL)
         return false;
+
+    /*
+     * out is CFlow-owned destination storage for the logical Response.
+     * Bind the native OUT parameter directly to that slot: no temporary
+     * response object and no post-call copy are involved.
+     */
+    cflow_service_expected_output = out;
     status = cflow_projection_service(
-        (cflow_service_request *)args[0], &response);
-    if (status != 0) return false;
-    *(cflow_service_response *)out = response;
-    return true;
+        (cflow_service_request *)args[0],
+        (cflow_service_response *)out);
+    cflow_service_expected_output = NULL;
+    return status == 0;
 }
 
 static bool cflow_service_mock_invoke(
@@ -215,6 +229,10 @@ suite("CFlow reflected function projection") {
         const cflow_service_request input[] = {{1}, {2}, {3}};
         const cflow_service_response expected_local[] = {{8}, {9}, {10}};
         const cflow_service_response expected_mock[] = {{101}, {102}, {103}};
+
+        cflow_service_expected_output = NULL;
+        cflow_service_direct_output_calls = 0u;
+        cflow_service_alias_calls = 0u;
 
         check_equal(
             cflow_function_typed_adapter_projection_admit(
@@ -300,6 +318,11 @@ suite("CFlow reflected function projection") {
             local_compiled.data, expected_local, sizeof(expected_local));
         check_equal(
             mock_compiled.data, expected_mock, sizeof(expected_mock));
+
+        /* Three interpreted + three compiled local calls all write directly. */
+        check_equal(cflow_service_direct_output_calls, (size_t)6u);
+        check_equal(cflow_service_alias_calls, (size_t)0u);
+        check_null(cflow_service_expected_output);
 
         check_true(cflow_verify_pipeline(
             &local_graph, input, 3u, &verify));
