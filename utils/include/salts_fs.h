@@ -38,6 +38,17 @@ typedef struct {
 // Opaque directory enumeration handle
 typedef struct salts_fs_dir_s salts_fs_dir_t;
 
+/*
+ * Secure root-relative filesystem capabilities.
+ *
+ * These identities intentionally hide native fd/HANDLE values. The admitted
+ * host root is resolved once; all subsequent path operations are relative to
+ * that retained capability and never to process cwd.
+ */
+typedef struct salts_fs_root_s salts_fs_root_t;
+typedef struct salts_fs_root_file_s salts_fs_root_file_t;
+typedef struct salts_fs_root_dir_s salts_fs_root_dir_t;
+
 typedef enum {
   SALTS_FS_DIRENT_UNKNOWN = 0,
   SALTS_FS_DIRENT_FILE,
@@ -505,6 +516,90 @@ SALTS_C_API int64_t salts_fs_tell(salts_file_t fd);
  * @return New position, or negative error code
  */
 SALTS_C_API int64_t salts_fs_seek(salts_file_t fd, int64_t offset, int whence);
+
+// =============================================================================
+// Secure root-relative filesystem capability
+// =============================================================================
+
+/*
+ * Root-relative paths use '/' or '\\' as separators on every platform and
+ * must consist only of non-empty ordinary components. Absolute paths, ".",
+ * "..", repeated/trailing separators and Windows drive/ADS ':' components are
+ * rejected. V1 never follows symlinks/reparse points below the admitted root:
+ * lstat may observe a final link, while stat/open reject it.
+ *
+ * Component traversal is handle/fd-relative. This is a security boundary; do
+ * not emulate it with root + relative_path string concatenation.
+ */
+#define SALTS_FS_ROOT_COMPONENT_MAX 1024u
+#define SALTS_FS_ROOT_DEPTH_MAX 64u
+#define SALTS_FS_ROOT_DIRENT_NAME_MAX 1024u
+
+typedef struct salts_fs_root_dirent_s {
+  uint64_t next_cookie;
+  size_t name_length;
+  salts_fs_dirent_type_t type;
+} salts_fs_root_dirent_t;
+
+/* Admit one host directory as an opaque capability. */
+SALTS_C_API int salts_fs_root_open(
+    const char *host_root, salts_fs_root_t **out_root);
+SALTS_C_API int salts_fs_root_close(salts_fs_root_t *root);
+
+/* Inspect the admitted root itself. */
+SALTS_C_API int salts_fs_root_fstat(
+    const salts_fs_root_t *root, salts_fs_stat_t *out_stat);
+
+/* Open/operate on a regular file without exposing a native handle. */
+SALTS_C_API int salts_fs_root_file_open(
+    const salts_fs_root_t *root, const char *relative_path,
+    int flags, int mode, salts_fs_root_file_t **out_file);
+SALTS_C_API int salts_fs_root_file_close(salts_fs_root_file_t *file);
+SALTS_C_API int salts_fs_root_file_read(
+    salts_fs_root_file_t *file, char *buffer, size_t length);
+SALTS_C_API int salts_fs_root_file_write(
+    salts_fs_root_file_t *file, const char *data, size_t length);
+SALTS_C_API int64_t salts_fs_root_file_seek(
+    salts_fs_root_file_t *file, int64_t offset, int whence);
+SALTS_C_API int64_t salts_fs_root_file_tell(salts_fs_root_file_t *file);
+SALTS_C_API int salts_fs_root_file_stat(
+    const salts_fs_root_file_t *file, salts_fs_stat_t *out_stat);
+
+/*
+ * stat is secure no-follow in capability v1: a final symlink/reparse point
+ * returns -ELOOP. lstat reports the final link itself. Intermediate links are
+ * always rejected.
+ */
+SALTS_C_API int salts_fs_root_stat(
+    const salts_fs_root_t *root, const char *relative_path,
+    salts_fs_stat_t *out_stat);
+SALTS_C_API int salts_fs_root_lstat(
+    const salts_fs_root_t *root, const char *relative_path,
+    salts_fs_stat_t *out_stat);
+
+SALTS_C_API int salts_fs_root_mkdir(
+    const salts_fs_root_t *root, const char *relative_path, int mode);
+SALTS_C_API int salts_fs_root_rmdir(
+    const salts_fs_root_t *root, const char *relative_path);
+SALTS_C_API int salts_fs_root_unlink(
+    const salts_fs_root_t *root, const char *relative_path);
+
+/*
+ * Bounded directory enumeration. Names are copied into caller-owned storage.
+ * cookie 0 starts/restarts enumeration; next_cookie resumes from the returned
+ * entry. Cookies are stable only while the directory contents are unchanged.
+ */
+/* Enumerate the admitted root directory itself without inventing "." syntax. */
+SALTS_C_API int salts_fs_root_opendir_self(
+    const salts_fs_root_t *root, salts_fs_root_dir_t **out_dir);
+SALTS_C_API int salts_fs_root_opendir(
+    const salts_fs_root_t *root, const char *relative_path,
+    salts_fs_root_dir_t **out_dir);
+SALTS_C_API int salts_fs_root_readdir(
+    salts_fs_root_dir_t *dir, uint64_t cookie,
+    char *name_buffer, size_t name_buffer_size,
+    salts_fs_root_dirent_t *out_entry);
+SALTS_C_API int salts_fs_root_closedir(salts_fs_root_dir_t *dir);
 
 #ifdef __cplusplus
 }
