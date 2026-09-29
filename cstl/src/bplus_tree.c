@@ -1,4 +1,5 @@
 #include <cstl/bplus_tree.h>
+#include <cstl/detail/instance_meta.h>
 
 #include "sequence_internal.h"
 
@@ -8,6 +9,52 @@ static bool bplus_valid(const bplus_tree_t *tree) {
   return tree != NULL && tree->initialized && tree->key_size != 0u &&
          tree->value_size != 0u && tree->min_degree >= 2u &&
          (tree->key_type != NULL || tree->compare != NULL);
+}
+
+static bool bplus_is_typed_semantic_zero(const bplus_tree_t *tree) {
+  return tree != NULL && !tree->initialized && tree->root == NULL &&
+         tree->key_size == 0u && tree->key_align == 0u &&
+         tree->key_stride == 0u && tree->value_size == 0u &&
+         tree->value_align == 0u && tree->value_stride == 0u &&
+         tree->min_degree == 0u && tree->max_keys == 0u &&
+         tree->max_children == 0u && tree->entry_limit == 0u &&
+         tree->size == 0u && tree->first == NULL && tree->last == NULL &&
+         tree->cmeta.descriptor == &stl_bplus_tree_container_desc &&
+         tree->key_type != NULL && tree->value_type != NULL &&
+         cmeta_type_desc_valid(tree->key_type) &&
+         cmeta_type_desc_valid(tree->value_type) &&
+         tree->compare == NULL && tree->compare_ctx == NULL &&
+         tree->maintenance_node_visits == 0u;
+}
+
+static stl_status bplus_materialize_for_mutation(
+    bplus_tree_t *tree, bplus_tree_t *zero_snapshot, bool *materialized) {
+  stl_status status;
+  if (zero_snapshot == NULL || materialized == NULL)
+    return STL_INVALID_ARGUMENT;
+  *materialized = false;
+  if (bplus_valid(tree)) return STL_OK;
+  if (!bplus_is_typed_semantic_zero(tree)) return STL_INVALID_ARGUMENT;
+
+  *zero_snapshot = *tree;
+  status = bplus_tree_raw_init(
+      tree, zero_snapshot->key_type, zero_snapshot->value_type, SIZE_MAX);
+  if (status != STL_OK) {
+    *tree = *zero_snapshot;
+    return status;
+  }
+  tree->cmeta.descriptor = zero_snapshot->cmeta.descriptor;
+  tree->generation = zero_snapshot->generation;
+  *materialized = true;
+  return STL_OK;
+}
+
+static void bplus_rollback_materialization(
+    bplus_tree_t *tree, const bplus_tree_t *zero_snapshot,
+    bool materialized) {
+  if (!materialized) return;
+  bplus_tree_raw_destroy_storage(tree);
+  *tree = *zero_snapshot;
 }
 
 static int bplus_compare_key(const bplus_tree_t *tree,
@@ -500,7 +547,7 @@ static const void *bplus_find_value(const bplus_tree_t *tree,
   return leaf->values[index];
 }
 
-stl_status bplus_tree_put(bplus_tree_t *tree,
+static stl_status bplus_tree_put_materialized(bplus_tree_t *tree,
                                       const void *key, const void *value) {
   bplus_node_pool pool = {0};
   bplus_tree_node_t *leaf;
@@ -556,6 +603,22 @@ stl_status bplus_tree_put(bplus_tree_t *tree,
   bplus_pool_destroy(&pool);
   ++tree->generation;
   return STL_OK;
+}
+
+stl_status bplus_tree_put(bplus_tree_t *tree,
+                          const void *key, const void *value) {
+  bplus_tree_t zero_snapshot = {0};
+  bool materialized = false;
+  stl_status status;
+  if (tree == NULL || key == NULL || value == NULL)
+    return STL_INVALID_ARGUMENT;
+  status = bplus_materialize_for_mutation(
+      tree, &zero_snapshot, &materialized);
+  if (status != STL_OK) return status;
+  status = bplus_tree_put_materialized(tree, key, value);
+  if (status != STL_OK)
+    bplus_rollback_materialization(tree, &zero_snapshot, materialized);
+  return status;
 }
 
 void *bplus_tree_get(bplus_tree_t *tree, const void *key) {
@@ -802,9 +865,21 @@ void bplus_tree_raw_destroy_storage(bplus_tree_t *tree) {
 
 stl_status bplus_tree_reserve(bplus_tree_t *tree,
                                           size_t min_capacity) {
-  if (!bplus_valid(tree)) return STL_INVALID_ARGUMENT;
-  return min_capacity <= tree->entry_limit ? STL_OK
-                                            : STL_CAPACITY_EXCEEDED;
+  bplus_tree_t zero_snapshot = {0};
+  bool materialized = false;
+  stl_status status;
+  if (tree == NULL) return STL_INVALID_ARGUMENT;
+  if (!bplus_valid(tree) && bplus_is_typed_semantic_zero(tree) &&
+      min_capacity == 0u)
+    return STL_OK;
+  status = bplus_materialize_for_mutation(
+      tree, &zero_snapshot, &materialized);
+  if (status != STL_OK) return status;
+  status = min_capacity <= tree->entry_limit ? STL_OK
+                                              : STL_CAPACITY_EXCEEDED;
+  if (status != STL_OK)
+    bplus_rollback_materialization(tree, &zero_snapshot, materialized);
+  return status;
 }
 
 size_t bplus_tree_size(const bplus_tree_t *tree) {
