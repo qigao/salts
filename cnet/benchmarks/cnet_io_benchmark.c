@@ -622,13 +622,14 @@ static int io_bench_native_flatten_exchange(io_bench_native *fixture,
                                             unsigned char *received, size_t length,
                                             size_t segment_count,
                                             unsigned char *flatten_buffer) {
-  cnet_const_buffer segments[CNET_RETAINED_VECTOR_MAX];
+  native_io_buffer_span segments[NATIVE_IO_VECTOR_MAX];
   size_t offset = 0u;
-  const size_t count = io_bench_cnet_segments(sent, length, segment_count, segments);
+  const size_t count =
+      io_bench_native_segments(sent, length, 0u, segment_count, segments);
   if (flatten_buffer == NULL || count == 0u) return SALTS_EINVAL;
   for (size_t index = 0u; index < count; ++index) {
-    memcpy(flatten_buffer + offset, segments[index].data, segments[index].size);
-    offset += segments[index].size;
+    memcpy(flatten_buffer + offset, segments[index].data, segments[index].length);
+    offset += segments[index].length;
   }
   if (offset != length) return SALTS_EPROTO;
   return io_bench_native_exchange(fixture, flatten_buffer, received, length);
