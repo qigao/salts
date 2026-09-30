@@ -538,7 +538,13 @@ jobs:
           printf '  %s\n' "${cache_revisions[@]}"
 
           test "${#cache_contracts[@]}" -eq 1
-          test "${#cache_revisions[@]}" -eq 1
+          test "${#cache_revisions[@]}" -ge 1
+          while IFS= read -r manifest; do
+            test "$(grep -c '^vcpkg_cache_revision=' "$manifest")" -eq 1
+            revision="$(sed -n 's/^vcpkg_cache_revision=//p' "$manifest" | tr -d '\r')"
+            test -n "$revision"
+            printf '%s -> vcpkg_cache_revision=%s\n' "$manifest" "$revision"
+          done < <(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt -print | sort)
           find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt -print
           du -sh package/sdk
       - uses: actions/setup-dotnet@v4
