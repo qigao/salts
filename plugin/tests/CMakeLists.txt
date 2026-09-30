@@ -169,3 +169,48 @@ set_target_properties(salts_plugin_lifecycle_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+
+
+if(WIN32)
+  set(SALTS_PLUGIN_PRIVATE_DEPENDENCY_DIR
+      "${CMAKE_CURRENT_BINARY_DIR}/private_dependency")
+
+  add_library(salts_plugin_fixture_private_dependency_helper SHARED
+    fixture_plugin_private_dependency_helper.c)
+  set_target_properties(salts_plugin_fixture_private_dependency_helper PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    RUNTIME_OUTPUT_DIRECTORY "${SALTS_PLUGIN_PRIVATE_DEPENDENCY_DIR}"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/private_dependency_import"
+    FOLDER "plugin/tests/fixtures")
+
+  add_library(salts_plugin_fixture_private_dependency SHARED
+    fixture_plugin_private_dependency.c)
+  target_include_directories(salts_plugin_fixture_private_dependency PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include)
+  target_link_libraries(salts_plugin_fixture_private_dependency PRIVATE
+    Salts::CMeta
+    salts_plugin_fixture_private_dependency_helper)
+  set_target_properties(salts_plugin_fixture_private_dependency PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    RUNTIME_OUTPUT_DIRECTORY "${SALTS_PLUGIN_PRIVATE_DEPENDENCY_DIR}"
+    FOLDER "plugin/tests/fixtures")
+
+  cmake_add_test(salts_plugin_windows_dependency_test
+    SOURCES plugin_windows_dependency_test.c
+    LIBS Salts::Plugin Salts::TinyTest
+    DEFS
+      "PLUGIN_PRIVATE_DEPENDENCY_PATH=\"$<TARGET_FILE:salts_plugin_fixture_private_dependency>\""
+    FOLDER "plugin/tests")
+
+  add_dependencies(salts_plugin_windows_dependency_test
+    salts_plugin_fixture_private_dependency
+    salts_plugin_fixture_private_dependency_helper)
+  set_target_properties(salts_plugin_windows_dependency_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF)
+endif()
