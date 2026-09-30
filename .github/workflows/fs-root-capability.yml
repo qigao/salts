@@ -100,7 +100,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset "${{ matrix.configure_preset }}" -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF "-DVCPKG_INSTALL_OPTIONS=--only-binarycaching"
+          cmake --preset "${{ matrix.configure_preset }}" -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DVCPKG_TARGET_TRIPLET=x64-windows -DVCPKG_HOST_TRIPLET=x64-windows "-DVCPKG_INSTALL_OPTIONS=--only-binarycaching"
 
       - name: Build root capability test
         if: runner.os != 'Windows'
