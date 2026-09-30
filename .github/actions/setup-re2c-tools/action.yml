@@ -1,5 +1,5 @@
 name: Set up shared build dependencies
-description: Prepare host build tools, restore the versioned re2c binary, and configure the canonical shared vcpkg cache.
+description: Prepare host build tools, restore the latest re2c binary, and configure the canonical shared vcpkg cache.
 
 outputs:
   contract_version:
