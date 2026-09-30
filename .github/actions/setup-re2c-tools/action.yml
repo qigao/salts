@@ -1,12 +1,6 @@
 name: Set up shared build dependencies
 description: Prepare host build tools, restore the versioned re2c binary, and configure the canonical shared vcpkg cache.
 
-inputs:
-  version:
-    description: Qigao.Re2c.Binary package version
-    required: false
-    default: "4.6.3"
-
 outputs:
   contract_version:
     description: Shared vcpkg cache contract version.
@@ -47,8 +41,6 @@ runs:
 
     - name: Restore centralized re2c binary
       uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
-      with:
-        version: ${{ inputs.version }}
 
     - name: Configure shared vcpkg binary cache
       id: vcpkg_cache
