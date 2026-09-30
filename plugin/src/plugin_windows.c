@@ -24,12 +24,48 @@ salts_plugin_status salts_plugin_platform_close(
     return SALTS_PLUGIN_OK;
 }
 
+static bool salts_plugin_windows_explicit_path(const wchar_t *path) {
+    const wchar_t *cursor;
+    if (path == NULL)
+        return false;
+    for (cursor = path; *cursor != L'\0'; ++cursor) {
+        if (*cursor == L'\\' || *cursor == L'/')
+            return true;
+    }
+    return false;
+}
+
+static wchar_t *salts_plugin_windows_absolute_path(const wchar_t *path) {
+    DWORD required;
+    DWORD written;
+    wchar_t *absolute;
+
+    if (path == NULL)
+        return NULL;
+
+    required = GetFullPathNameW(path, 0u, NULL, NULL);
+    if (required == 0u)
+        return NULL;
+
+    absolute = (wchar_t *)malloc((size_t)required * sizeof(*absolute));
+    if (absolute == NULL)
+        return NULL;
+
+    written = GetFullPathNameW(path, required, absolute, NULL);
+    if (written == 0u || written >= required) {
+        free(absolute);
+        return NULL;
+    }
+    return absolute;
+}
+
 salts_plugin_status salts_plugin_platform_open(
     const char *path,
     salts_plugin_library *out_library,
     salts_plugin_query_fn *out_query) {
     int wide_length;
     wchar_t *wide_path;
+    wchar_t *absolute_path = NULL;
     HMODULE module;
     FARPROC symbol;
 
@@ -55,7 +91,21 @@ salts_plugin_status salts_plugin_platform_open(
         return SALTS_PLUGIN_INVALID_ARGUMENT;
     }
 
-    module = LoadLibraryW(wide_path);
+    if (salts_plugin_windows_explicit_path(wide_path)) {
+        absolute_path = salts_plugin_windows_absolute_path(wide_path);
+        if (absolute_path == NULL) {
+            free(wide_path);
+            return SALTS_PLUGIN_LOAD_FAILED;
+        }
+        module = LoadLibraryExW(
+            absolute_path, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+        free(absolute_path);
+    } else {
+        /* Preserve the historical bare-name search semantics. Explicit paths
+         * use LOAD_WITH_ALTERED_SEARCH_PATH so private dependent DLLs are
+         * resolved relative to the plugin module, not the process cwd/PATH. */
+        module = LoadLibraryW(wide_path);
+    }
     free(wide_path);
     if (module == NULL)
         return SALTS_PLUGIN_LOAD_FAILED;
