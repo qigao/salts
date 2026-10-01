@@ -1251,9 +1251,12 @@ static int cnet_owner_start_transport(cnet_owner_impl *impl, cnet_owner_session 
     break;
   case CNET_URI_TCP:
   case CNET_URI_TLS:
-    status = cnet_transport_tcp_prepare_connect(
-        &session->transport, &impl->backend, impl->backend_kind, session->peer.address,
-        session->peer.address_length, &session->peer.socket_options, 0u, &operation);
+    status = cnet_transport_tcp_prepare_connect_bound(
+        &session->transport, &impl->backend, impl->backend_kind,
+        session->peer.address, session->peer.address_length,
+        session->peer.local_address_length != 0u ? session->peer.local_address : NULL,
+        session->peer.local_address_length,
+        &session->peer.socket_options, 0u, &operation);
     break;
   case CNET_URI_VSOCK:
     status = cnet_transport_vsock_prepare_connect(
