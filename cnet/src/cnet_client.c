@@ -28,6 +28,7 @@ typedef struct cnet_client_record {
   cnet_uri_scheme scheme;
   size_t negotiated_alpn_size;
   size_t receive_pending;
+  uint8_t tcp_shutdown_mask;
   char negotiated_alpn[CNET_TLS_ALPN_NAME_MAX_BYTES + 1u];
   /* Public-handle/observer slot occupancy; not CNet session lifecycle truth. */
   bool active;
@@ -478,9 +479,10 @@ static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_pa
   record->scheme = scheme;
   record->active = true;
   record->pending_writes = 0u;
+  record->receive_pending = 0u;
+  record->tcp_shutdown_mask = 0u;
   record->close_command_pending = false;
   record->tls_command_pending = false;
-  record->receive_pending = 0u;
   ++impl->active_count;
   status = cnet_dispatcher_register(&impl->dispatcher, internal, cnet_client_observe, record);
   if (status == SALTS_OK) {
@@ -656,7 +658,14 @@ int cnet_connection_shutdown(cnet_client *client,
       ((how & CNET_TCP_SHUTDOWN_RECEIVE) != 0 &&
        record->receive_pending != 0u))
     return SALTS_EBUSY;
-  return cnet_shards_tcp_shutdown(&impl->shards, internal, how);
+  {
+    int status = cnet_shards_tcp_shutdown(
+        &impl->shards, internal, how);
+    if (status == SALTS_OK)
+      record->tcp_shutdown_mask =
+          (uint8_t)(record->tcp_shutdown_mask | (uint8_t)how);
+    return status;
+  }
 }
 
 int cnet_connection_tcp_option_get(cnet_client *client, cnet_connection connection,
@@ -1029,6 +1038,10 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
     if (record == NULL) status = SALTS_ENOENT;
     else if (record->close_command_pending || record->tls_command_pending)
       status = SALTS_EBUSY;
+    else if (record->scheme == CNET_URI_TCP &&
+             (record->tcp_shutdown_mask &
+              (uint8_t)CNET_TCP_SHUTDOWN_SEND) != 0u)
+      status = SALTS_ESHUTDOWN;
     else if (record->pending_writes == SIZE_MAX)
       status = SALTS_ERANGE;
     else {
@@ -1200,6 +1213,10 @@ int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand)
         status = SALTS_EINVAL;
       else if (record->close_command_pending || record->tls_command_pending)
         status = SALTS_EBUSY;
+      else if (record->scheme == CNET_URI_TCP &&
+               (record->tcp_shutdown_mask &
+                (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE) != 0u)
+        status = SALTS_ESHUTDOWN;
       else if (demand > SIZE_MAX - record->receive_pending) {
         cnet_session_state session_state = CNET_SESSION_FREE;
         status = cnet_client_record_session_state(impl, record, &session_state);
@@ -1219,6 +1236,10 @@ int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand)
   if (record->observer.on_receive == NULL && record->receive_slice_handler == NULL)
     return SALTS_EINVAL;
   if (record->close_command_pending || record->tls_command_pending) return SALTS_EBUSY;
+  if (record->scheme == CNET_URI_TCP &&
+      (record->tcp_shutdown_mask &
+       (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE) != 0u)
+    return SALTS_ESHUTDOWN;
   if (demand > SIZE_MAX - record->receive_pending) {
     cnet_session_state session_state = CNET_SESSION_FREE;
     status = cnet_client_record_session_state(impl, record, &session_state);
