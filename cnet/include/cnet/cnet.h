@@ -692,6 +692,20 @@ int cnet_connection_local_peer(cnet_client *client, cnet_connection connection,
 int cnet_connection_remote_peer(cnet_client *client, cnet_connection connection,
                                 cnet_stream_peer *out_peer);
 
+typedef enum cnet_tcp_shutdown {
+  CNET_TCP_SHUTDOWN_RECEIVE = 1,
+  CNET_TCP_SHUTDOWN_SEND = 2,
+  CNET_TCP_SHUTDOWN_BOTH = 3
+} cnet_tcp_shutdown;
+
+/**
+ * Performs a generation-safe TCP half-shutdown. Repeating a direction that is
+ * already shut down is idempotent. This does not drop the connection handle.
+ */
+int cnet_connection_shutdown(cnet_client *client,
+                             cnet_connection connection,
+                             cnet_tcp_shutdown how);
+
 /**
  * Reads or mutates one live TCP property through the generation-checked CNet
  * owner. These calls obey the same single-owner thread rule as client progress.
@@ -996,6 +1010,20 @@ int cnet_listener_options_validate(const cnet_listener_options *options);
 int cnet_listener_bind(cnet_listener *listener, const cnet_listener_config *config);
 int cnet_listener_bind_ex(cnet_listener *listener, const cnet_listener_config *config,
                           const cnet_listener_options *options);
+
+/**
+ * Binds directly from one numeric portable peer. Port zero requests an
+ * ephemeral port. The peer is copied synchronously; no text parsing or DNS is
+ * involved.
+ */
+int cnet_listener_bind_peer(cnet_listener *listener,
+                            native_io_backend_kind backend,
+                            const cnet_stream_peer *local_peer);
+int cnet_listener_bind_peer_ex(cnet_listener *listener,
+                               native_io_backend_kind backend,
+                               const cnet_stream_peer *local_peer,
+                               const cnet_listener_options *options);
+
 int cnet_listener_listen(cnet_listener *listener, size_t backlog);
 
 /**
