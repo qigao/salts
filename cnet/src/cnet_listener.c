@@ -494,8 +494,9 @@ int cnet_listener_tcp_option_get(cnet_listener *listener,
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->closed) return SALTS_ESHUTDOWN;
   if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
-  return cnet_transport_tcp_native_option_get(
-      (uintptr_t)impl->socket_value, option, out_value);
+  return cnet_transport_tcp_native_option_get_family(
+      (uintptr_t)impl->socket_value, impl->native_family,
+      option, out_value);
 }
 
 int cnet_listener_tcp_option_set(cnet_listener *listener,
@@ -506,8 +507,9 @@ int cnet_listener_tcp_option_set(cnet_listener *listener,
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->closed) return SALTS_ESHUTDOWN;
   if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
-  status = cnet_transport_tcp_native_option_set(
-      (uintptr_t)impl->socket_value, option, value);
+  status = cnet_transport_tcp_native_option_set_family(
+      (uintptr_t)impl->socket_value, impl->native_family,
+      option, value);
   if (status == SALTS_OK &&
       option >= CNET_TCP_SOCKET_KEEPALIVE_ENABLED &&
       option <= CNET_TCP_SOCKET_SEND_BUFFER_BYTES) {
@@ -531,8 +533,8 @@ static int cnet_listener_apply_tcp_options(
     if ((impl->tcp_option_set_mask &
          (uint8_t)(1u << option)) == 0u)
       continue;
-    status = cnet_transport_tcp_native_option_set(
-        (uintptr_t)socket_value,
+    status = cnet_transport_tcp_native_option_set_family(
+        (uintptr_t)socket_value, impl->native_family,
         (cnet_tcp_socket_option)option,
         impl->tcp_option_values[option]);
     if (status != SALTS_OK) return status;
