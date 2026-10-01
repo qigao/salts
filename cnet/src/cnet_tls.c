@@ -648,6 +648,37 @@ int cnet_tls_get_negotiated_alpn(const cnet_tls_state *state, const unsigned cha
   return SALTS_OK;
 }
 
+static int cnet_tls_state_copy_session_string(const cnet_tls_state *state, const char *value,
+                                              char *buffer, size_t capacity, size_t *out_size) {
+  size_t size;
+  if (out_size == NULL) return SALTS_EINVAL;
+  *out_size = 0u;
+  if (state == NULL || buffer == NULL || capacity == 0u) return SALTS_EINVAL;
+  buffer[0] = '\0';
+  if (state->ssl == NULL || !state->handshake_complete) return SALTS_ENOTCONN;
+  if (value == NULL || value[0] == '\0') return SALTS_ENOENT;
+  size = strlen(value);
+  if (capacity <= size) return SALTS_EMSGSIZE;
+  memcpy(buffer, value, size + 1u);
+  *out_size = size;
+  return SALTS_OK;
+}
+
+int cnet_tls_state_negotiated_version(const cnet_tls_state *state, char *buffer, size_t capacity,
+                                      size_t *out_size) {
+  const char *version =
+      state != NULL && state->ssl != NULL ? SSL_get_version((const SSL *)state->ssl) : NULL;
+  return cnet_tls_state_copy_session_string(state, version, buffer, capacity, out_size);
+}
+
+int cnet_tls_state_negotiated_cipher(const cnet_tls_state *state, char *buffer, size_t capacity,
+                                     size_t *out_size) {
+  const SSL_CIPHER *cipher =
+      state != NULL && state->ssl != NULL ? SSL_get_current_cipher((const SSL *)state->ssl) : NULL;
+  const char *name = cipher != NULL ? SSL_CIPHER_get_name(cipher) : NULL;
+  return cnet_tls_state_copy_session_string(state, name, buffer, capacity, out_size);
+}
+
 int cnet_tls_state_peer_certificate_sha256(
     const cnet_tls_state *state,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]) {
