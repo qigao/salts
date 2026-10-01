@@ -209,6 +209,10 @@ int cnet_owner_tcp_option_get(cnet_owner *owner, cnet_session_handle session,
 int cnet_owner_tcp_option_set(cnet_owner *owner, cnet_session_handle session,
                               cnet_tcp_socket_option option, uint64_t value);
 
+int cnet_owner_tls_negotiated_version(cnet_owner *owner, cnet_session_handle session, char *buffer,
+                                      size_t capacity, size_t *out_size);
+int cnet_owner_tls_negotiated_cipher(cnet_owner *owner, cnet_session_handle session, char *buffer,
+                                     size_t capacity, size_t *out_size);
 int cnet_owner_tls_peer_certificate_sha256(
     cnet_owner *owner, cnet_session_handle session,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
