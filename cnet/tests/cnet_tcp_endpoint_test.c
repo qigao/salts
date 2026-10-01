@@ -62,6 +62,18 @@ static void on_owned_receive(void *user, cnet_connection connection,
   (void)kind;
 }
 
+static int send_one_byte(cnet_client *client,
+                         cnet_connection connection) {
+  mem_buffer_t *buffer = mem_get_buffer(mem_global(), 1u);
+  int status;
+  if (buffer == NULL) return SALTS_ENOMEM;
+  mem_buffer_data(buffer)[0] = 'x';
+  mem_set_used(buffer, 1u);
+  status = cnet_send_buffer(client, connection, buffer);
+  mem_buffer_release(buffer);
+  return status;
+}
+
 static int peer_is_loopback_v4(const cnet_stream_peer *peer) {
   return peer != NULL &&
          peer->family == CNET_DATAGRAM_ADDRESS_IPV4 &&
@@ -411,15 +423,23 @@ int main(void) {
              &accepted_client, accepted,
              CNET_TCP_SHUTDOWN_RECEIVE) == SALTS_EBUSY);
 
+  assert(cnet_set_receive_slice_handler(
+             &client, connection, on_owned_receive, NULL) == SALTS_OK);
   assert(cnet_connection_shutdown(
              &client, connection,
              CNET_TCP_SHUTDOWN_RECEIVE) == SALTS_OK);
   assert(cnet_connection_shutdown(
              &client, connection,
              CNET_TCP_SHUTDOWN_RECEIVE) == SALTS_OK);
+  assert(cnet_receive(
+             &client, connection, 1u) == SALTS_ESHUTDOWN);
+
   assert(cnet_connection_shutdown(
              &client, connection,
              CNET_TCP_SHUTDOWN_SEND) == SALTS_OK);
+  assert(send_one_byte(
+             &client, connection) == SALTS_ESHUTDOWN);
+
   assert(cnet_connection_shutdown(
              &client, connection,
              CNET_TCP_SHUTDOWN_BOTH) == SALTS_OK);
