@@ -13,8 +13,8 @@ if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
 }
 
 $rows = @(Import-Csv -LiteralPath $Path)
-if ($rows.Count -ne 7) {
-  throw "expected seven owner-mailbox window rows, got $($rows.Count)"
+if ($rows.Count -ne 11) {
+  throw "expected eleven owner-mailbox window rows, got $($rows.Count)"
 }
 
 $required = @(
