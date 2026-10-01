@@ -703,6 +703,13 @@ int cnet_connect_peer(cnet_client *client, const cnet_stream_peer *remote_peer,
                       const cnet_observer *observer,
                       cnet_connection *out_connection);
 
+/** Lossless IPv6-flow-info counterpart of cnet_connect_peer(). */
+int cnet_connect_endpoint(cnet_client *client,
+                          const cnet_stream_endpoint *remote_endpoint,
+                          const cnet_stream_endpoint *local_endpoint,
+                          const cnet_observer *observer,
+                          cnet_connection *out_connection);
+
 /**
  * Copies the current local or remote TCP endpoint for one live generation-
  * checked connection. No native descriptor is exposed.
@@ -711,6 +718,13 @@ int cnet_connection_local_peer(cnet_client *client, cnet_connection connection,
                                cnet_stream_peer *out_peer);
 int cnet_connection_remote_peer(cnet_client *client, cnet_connection connection,
                                 cnet_stream_peer *out_peer);
+
+int cnet_connection_local_endpoint(cnet_client *client,
+                                   cnet_connection connection,
+                                   cnet_stream_endpoint *out_endpoint);
+int cnet_connection_remote_endpoint(cnet_client *client,
+                                    cnet_connection connection,
+                                    cnet_stream_endpoint *out_endpoint);
 
 typedef enum cnet_tcp_shutdown {
   CNET_TCP_SHUTDOWN_RECEIVE = 1,
@@ -721,8 +735,9 @@ typedef enum cnet_tcp_shutdown {
 /**
  * Performs a generation-safe TCP half-shutdown. Repeating a direction that is
  * already shut down is idempotent. This does not drop the connection handle.
- * Returns SALTS_EBUSY while that direction still owns admitted CNet I/O so the
- * caller can preserve ordered data before retrying shutdown.
+ * Receive shutdown cancels/discards already-admitted receive work. Send
+ * shutdown rejects new writes immediately and defers the native FIN until
+ * already-admitted writes have drained.
  */
 int cnet_connection_shutdown(cnet_client *client,
                              cnet_connection connection,
@@ -1043,6 +1058,10 @@ int cnet_listener_open_ex(cnet_listener *listener,
 int cnet_listener_bind_open_peer(cnet_listener *listener,
                                  const cnet_stream_peer *local_peer);
 
+int cnet_listener_bind_open_endpoint(
+    cnet_listener *listener,
+    const cnet_stream_endpoint *local_endpoint);
+
 /**
  * Two-phase TCP listener lifecycle. bind[_ex] owns a nonblocking bound socket
  * but does not call listen(). listen() transitions that bound owner to
@@ -1065,6 +1084,16 @@ int cnet_listener_bind_peer_ex(cnet_listener *listener,
                                native_io_backend_kind backend,
                                const cnet_stream_peer *local_peer,
                                const cnet_listener_options *options);
+
+int cnet_listener_bind_endpoint(
+    cnet_listener *listener,
+    native_io_backend_kind backend,
+    const cnet_stream_endpoint *local_endpoint);
+int cnet_listener_bind_endpoint_ex(
+    cnet_listener *listener,
+    native_io_backend_kind backend,
+    const cnet_stream_endpoint *local_endpoint,
+    const cnet_listener_options *options);
 
 int cnet_listener_listen(cnet_listener *listener, size_t backlog);
 
@@ -1093,12 +1122,21 @@ int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
                                const cnet_observer *observer,
                                cnet_connection *out_connection);
 
+int cnet_listener_connect_endpoint(
+    cnet_listener *listener, cnet_client *client,
+    const cnet_stream_endpoint *remote_endpoint,
+    const cnet_observer *observer,
+    cnet_connection *out_connection);
+
 /** Creates and listens in one call; equivalent to bind_ex + listen. */
 int cnet_listener_init_ex(cnet_listener *listener, const cnet_listener_config *config,
                           const cnet_listener_options *options);
 
 /** Copies the currently bound numeric TCP endpoint. */
 int cnet_listener_local(const cnet_listener *listener, cnet_stream_peer *out_local);
+
+int cnet_listener_local_endpoint(const cnet_listener *listener,
+                                 cnet_stream_endpoint *out_local);
 
 /**
  * Creates a nonblocking Linux AF_VSOCK listener. Unsupported platforms or
