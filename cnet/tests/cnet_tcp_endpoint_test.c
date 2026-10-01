@@ -438,14 +438,17 @@ int main(void) {
 
   assert(cnet_set_receive_slice_handler(
              &accepted_client, accepted,
-             on_owned_receive, NULL) == SALTS_OK);
+             on_owned_receive, &accepted_probe) == SALTS_OK);
   assert(cnet_receive(&accepted_client, accepted, 1u) == SALTS_OK);
   assert(cnet_connection_shutdown(
              &accepted_client, accepted,
-             CNET_TCP_SHUTDOWN_RECEIVE) == SALTS_EBUSY);
+             CNET_TCP_SHUTDOWN_RECEIVE) == SALTS_OK);
+  assert(cnet_receive(
+             &accepted_client, accepted, 1u) == SALTS_ESHUTDOWN);
 
   assert(cnet_set_receive_slice_handler(
-             &client, connection, on_owned_receive, NULL) == SALTS_OK);
+             &client, connection,
+             on_owned_receive, &client_probe) == SALTS_OK);
   assert(cnet_connection_shutdown(
              &client, connection,
              CNET_TCP_SHUTDOWN_RECEIVE) == SALTS_OK);
@@ -455,12 +458,30 @@ int main(void) {
   assert(cnet_receive(
              &client, connection, 1u) == SALTS_ESHUTDOWN);
 
+  assert(send_one_byte(&client, connection) == SALTS_OK);
   assert(cnet_connection_shutdown(
              &client, connection,
              CNET_TCP_SHUTDOWN_SEND) == SALTS_OK);
   assert(send_one_byte(
              &client, connection) == SALTS_ESHUTDOWN);
 
+  deadline = salts_monotonic_ms() + TEST_TIMEOUT_MS;
+  while (atomic_load_explicit(
+             &client_probe.sent, memory_order_acquire) == 0) {
+    size_t events = 0u;
+    assert(cnet_client_poll(&client, 1u, &events) == SALTS_OK);
+    assert(cnet_client_poll(
+               &accepted_client, 0u, &events) == SALTS_OK);
+    assert(salts_monotonic_ms() < deadline);
+  }
+  assert(atomic_load_explicit(
+             &client_probe.failed, memory_order_acquire) == 0);
+  assert(atomic_load_explicit(
+             &accepted_probe.received, memory_order_acquire) == 0);
+
+  assert(cnet_connection_shutdown(
+             &client, connection,
+             CNET_TCP_SHUTDOWN_SEND) == SALTS_OK);
   assert(cnet_connection_shutdown(
              &client, connection,
              CNET_TCP_SHUTDOWN_BOTH) == SALTS_OK);
