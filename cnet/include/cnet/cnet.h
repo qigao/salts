@@ -1005,6 +1005,26 @@ int cnet_listener_init(cnet_listener *listener, const cnet_listener_config *conf
 int cnet_listener_options_validate(const cnet_listener_options *options);
 
 /**
+ * Creates a real nonblocking but unbound TCP socket owner. This permits
+ * per-socket options to be queried/mutated before bind/connect without
+ * exposing the native socket identity.
+ */
+int cnet_listener_open(cnet_listener *listener,
+                       native_io_backend_kind backend,
+                       cnet_datagram_address_family family);
+int cnet_listener_open_ex(cnet_listener *listener,
+                          native_io_backend_kind backend,
+                          cnet_datagram_address_family family,
+                          const cnet_listener_options *options);
+
+/**
+ * Binds an already-open unbound TCP owner to one numeric portable peer.
+ * Port zero requests an ephemeral port. The owner remains non-listening.
+ */
+int cnet_listener_bind_open_peer(cnet_listener *listener,
+                                 const cnet_stream_peer *local_peer);
+
+/**
  * Two-phase TCP listener lifecycle. bind[_ex] owns a nonblocking bound socket
  * but does not call listen(). listen() transitions that bound owner to
  * listening exactly once. This is useful for protocols that expose bind and
