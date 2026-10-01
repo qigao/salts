@@ -54,6 +54,14 @@ static void on_state(void *user, cnet_connection connection,
   }
 }
 
+static void on_owned_receive(void *user, cnet_connection connection,
+                             mem_slice_t slice, cnet_message_kind kind) {
+  (void)user;
+  (void)connection;
+  (void)slice;
+  (void)kind;
+}
+
 static int peer_is_loopback_v4(const cnet_stream_peer *peer) {
   return peer != NULL &&
          peer->family == CNET_DATAGRAM_ADDRESS_IPV4 &&
@@ -387,6 +395,14 @@ int main(void) {
                &client, connection,
                CNET_TCP_SOCKET_HOP_LIMIT, 0u) != SALTS_OK);
   }
+
+  assert(cnet_set_receive_slice_handler(
+             &accepted_client, accepted,
+             on_owned_receive, NULL) == SALTS_OK);
+  assert(cnet_receive(&accepted_client, accepted, 1u) == SALTS_OK);
+  assert(cnet_connection_shutdown(
+             &accepted_client, accepted,
+             CNET_TCP_SHUTDOWN_RECEIVE) == SALTS_EBUSY);
 
   assert(cnet_connection_shutdown(
              &client, connection,
