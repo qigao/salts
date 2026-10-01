@@ -754,8 +754,9 @@ int cnet_transport_adopt_pipe(cnet_transport *transport, native_io_backend *back
   return SALTS_OK;
 }
 
-static int cnet_transport_socket_peer(const cnet_transport *transport, bool remote,
-                                      cnet_stream_peer *out_peer) {
+static int cnet_transport_socket_endpoint(
+    const cnet_transport *transport, bool remote,
+    cnet_stream_endpoint *out_endpoint) {
   struct sockaddr_storage address;
 #if defined(_WIN32)
   int address_length = (int)sizeof(address);
@@ -763,10 +764,12 @@ static int cnet_transport_socket_peer(const cnet_transport *transport, bool remo
   socklen_t address_length = (socklen_t)sizeof(address);
 #endif
 
-  if (out_peer == NULL) return SALTS_EINVAL;
-  *out_peer = (cnet_stream_peer){0};
-  if (transport == NULL || transport->resource_kind != CNET_TRANSPORT_RESOURCE_SOCKET ||
-      !transport->native_open || transport->native_handle == UINTPTR_MAX)
+  if (out_endpoint == NULL) return SALTS_EINVAL;
+  *out_endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+  if (transport == NULL ||
+      transport->resource_kind != CNET_TRANSPORT_RESOURCE_SOCKET ||
+      !transport->native_open ||
+      transport->native_handle == UINTPTR_MAX)
     return SALTS_ENOENT;
 
   memset(&address, 0, sizeof(address));
@@ -779,31 +782,72 @@ static int cnet_transport_socket_peer(const cnet_transport *transport, bool remo
 
   if (address.ss_family == AF_INET &&
       (size_t)address_length >= sizeof(struct sockaddr_in)) {
-    const struct sockaddr_in *v4 = (const struct sockaddr_in *)&address;
-    out_peer->family = CNET_DATAGRAM_ADDRESS_IPV4;
-    out_peer->port = ntohs(v4->sin_port);
-    memcpy(out_peer->address, &v4->sin_addr, 4u);
+    const struct sockaddr_in *v4 =
+        (const struct sockaddr_in *)&address;
+    out_endpoint->family = CNET_DATAGRAM_ADDRESS_IPV4;
+    out_endpoint->port = ntohs(v4->sin_port);
+    memcpy(out_endpoint->address, &v4->sin_addr, 4u);
     return SALTS_OK;
   }
+
   if (address.ss_family == AF_INET6 &&
       (size_t)address_length >= sizeof(struct sockaddr_in6)) {
-    const struct sockaddr_in6 *v6 = (const struct sockaddr_in6 *)&address;
-    out_peer->family = CNET_DATAGRAM_ADDRESS_IPV6;
-    out_peer->port = ntohs(v6->sin6_port);
-    out_peer->flow_info = v6->sin6_flowinfo;
-    out_peer->scope_id = v6->sin6_scope_id;
-    memcpy(out_peer->address, &v6->sin6_addr, 16u);
+    const struct sockaddr_in6 *v6 =
+        (const struct sockaddr_in6 *)&address;
+    out_endpoint->family = CNET_DATAGRAM_ADDRESS_IPV6;
+    out_endpoint->port = ntohs(v6->sin6_port);
+    out_endpoint->flow_info = v6->sin6_flowinfo;
+    out_endpoint->scope_id = v6->sin6_scope_id;
+    memcpy(out_endpoint->address, &v6->sin6_addr, 16u);
     return SALTS_OK;
   }
+
   return SALTS_EAFNOSUPPORT;
 }
 
-int cnet_transport_tcp_local_peer(const cnet_transport *transport, cnet_stream_peer *out_peer) {
+static int cnet_transport_socket_peer(
+    const cnet_transport *transport, bool remote,
+    cnet_stream_peer *out_peer) {
+  cnet_stream_endpoint endpoint = CNET_STREAM_ENDPOINT_INIT;
+  int status;
+
+  if (out_peer == NULL) return SALTS_EINVAL;
+  *out_peer = (cnet_stream_peer){0};
+  status = cnet_transport_socket_endpoint(
+      transport, remote, &endpoint);
+  if (status != SALTS_OK) return status;
+
+  out_peer->family = endpoint.family;
+  out_peer->port = endpoint.port;
+  out_peer->scope_id = endpoint.scope_id;
+  memcpy(out_peer->address, endpoint.address, sizeof(out_peer->address));
+  return SALTS_OK;
+}
+
+int cnet_transport_tcp_local_peer(
+    const cnet_transport *transport,
+    cnet_stream_peer *out_peer) {
   return cnet_transport_socket_peer(transport, false, out_peer);
 }
 
-int cnet_transport_tcp_remote_peer(const cnet_transport *transport, cnet_stream_peer *out_peer) {
+int cnet_transport_tcp_remote_peer(
+    const cnet_transport *transport,
+    cnet_stream_peer *out_peer) {
   return cnet_transport_socket_peer(transport, true, out_peer);
+}
+
+int cnet_transport_tcp_local_endpoint(
+    const cnet_transport *transport,
+    cnet_stream_endpoint *out_endpoint) {
+  return cnet_transport_socket_endpoint(
+      transport, false, out_endpoint);
+}
+
+int cnet_transport_tcp_remote_endpoint(
+    const cnet_transport *transport,
+    cnet_stream_endpoint *out_endpoint) {
+  return cnet_transport_socket_endpoint(
+      transport, true, out_endpoint);
 }
 
 static int cnet_transport_tcp_socket(const cnet_transport *transport,
