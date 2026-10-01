@@ -502,7 +502,7 @@ jobs:
             exit 1
           fi
 
-          allowed="$(taskset -pc $ | sed 's/.*: //')"
+          allowed="$(taskset -pc "$BASHPID" | sed 's/.*: //')"
           first_segment="${allowed%%,*}"
           second=""
           if [[ "$first_segment" == *-* ]]; then
