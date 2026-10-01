@@ -1815,6 +1815,16 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
 
   if (role == CNET_OWNER_REQUEST_RECEIVE) {
     if (session->close_requested) return cnet_owner_finalize_session(impl, session);
+    if (session->peer.scheme == CNET_URI_TCP &&
+        (session->tcp_shutdown_mask &
+         (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE) != 0u) {
+      /*
+       * Receive shutdown owns cancellation/discard semantics. A completion may
+       * race cancellation on some backends; never republish data after the
+       * direction was synchronously shut down.
+       */
+      return SALTS_OK;
+    }
     if (completion->kind == NATIVE_IO_COMPLETION_OK) {
       cnet_event event;
       if (completion->bytes > mem_buffer_capacity(session->receive_buffer))
