@@ -334,7 +334,7 @@ jobs:
               cnet_vsock_integration_test \
               cnet_benchmark_stats_test cnet_io_benchmark_config_test \
               concurrency_deadline_queue_test native_io_queue_depth_benchmark \
-              native_io_idle_observe_benchmark native_io_sharded_routing_benchmark native_io_pipe_styles_benchmark \
+              native_io_idle_observe_benchmark native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_pipe_styles_benchmark \
               native_io_stream_styles_benchmark native_io_udp_styles_benchmark native_io_vsock_styles_benchmark cnet_scaling_benchmark \
               cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
 
@@ -486,6 +486,72 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
+      - name: Run NativeIO owner-to-owner handoff CPU-set sweep
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: bash
+        env:
+          NATIVE_IO_OWNER_HANDOFF_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_owner_handoff_benchmark
+          NATIVE_IO_OWNER_HANDOFF_BACKEND: ${{ matrix.backend }}
+        run: |
+          set -euo pipefail
+          result_dir="$GITHUB_WORKSPACE/native-io-results"
+          mkdir -p "$result_dir"
+          benchmark="$GITHUB_WORKSPACE/$NATIVE_IO_OWNER_HANDOFF_EXECUTABLE"
+          if [[ ! -x "$benchmark" ]]; then
+            echo "NativeIO owner-handoff benchmark executable not found: $benchmark" >&2
+            exit 1
+          fi
+
+          allowed="$(taskset -pc $ | sed 's/.*: //')"
+          first_segment="${allowed%%,*}"
+          second=""
+          if [[ "$first_segment" == *-* ]]; then
+            first="${first_segment%-*}"
+            segment_end="${first_segment#*-}"
+            if (( segment_end > first )); then
+              second="$((first + 1))"
+            fi
+          else
+            first="$first_segment"
+          fi
+          if [[ -z "$second" && "$allowed" == *,* ]]; then
+            rest="${allowed#*,}"
+            second_segment="${rest%%,*}"
+            second="${second_segment%-*}"
+          fi
+
+          run_case() {
+            local label="$1"
+            local cpuset="$2"
+            local prefix="$result_dir/native-io-owner-handoff-$label"
+            export NATIVE_IO_OWNER_HANDOFF_CPU_SET="$label"
+            export NATIVE_IO_OWNER_HANDOFF_OUTPUT="$prefix"
+            taskset -c "$cpuset" "$benchmark" 2>&1 | tee "$prefix.md"
+            pwsh ./native-io/benchmarks/verify_owner_handoff_benchmark.ps1 \
+              -Path "$prefix.csv" \
+              -Backend "$NATIVE_IO_OWNER_HANDOFF_BACKEND" \
+              -CpuSet "$label"
+            {
+              echo ""
+              echo "## NativeIO owner-to-owner handoff: $NATIVE_IO_OWNER_HANDOFF_BACKEND / $label ($cpuset)"
+              echo ""
+              cat "$prefix.md"
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          run_case one_cpu "$first"
+          if [[ -n "$second" && "$second" != "$first" ]]; then
+            run_case two_cpu "$first,$second"
+          else
+            echo "Runner exposes only one selectable CPU; two_cpu case skipped." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+          {
+            echo "backend=$NATIVE_IO_OWNER_HANDOFF_BACKEND"
+            echo "runner_allowed_cpu_set=$allowed"
+            echo "one_cpu=$first"
+            echo "two_cpu=${second:-unavailable}"
+          } > "$result_dir/native-io-owner-handoff-cpu-set.txt"
       - name: Run NativeIO PIPE execution-style benchmark
         if: steps.scope.outputs.adapted == 'true'
         shell: pwsh
