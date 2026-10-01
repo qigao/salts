@@ -32,6 +32,19 @@ typedef int cnet_api_test_socket;
 
 enum { CNET_API_TEST_TIMEOUT_MS = 5000, CNET_API_TEST_BATCH_DATAGRAMS = 256 };
 
+/* Lock the pre-1.8.10 public cnet_stream_peer ABI. */
+_Static_assert(offsetof(cnet_stream_peer, family) == 0u,
+               "cnet_stream_peer family ABI changed");
+_Static_assert(offsetof(cnet_stream_peer, port) == 4u,
+               "cnet_stream_peer port ABI changed");
+_Static_assert(offsetof(cnet_stream_peer, scope_id) == 8u,
+               "cnet_stream_peer scope_id ABI changed");
+_Static_assert(offsetof(cnet_stream_peer, address) == 12u,
+               "cnet_stream_peer address ABI changed");
+_Static_assert(sizeof(cnet_stream_peer) == 28u,
+               "cnet_stream_peer size ABI changed");
+
+
 static int cnet_api_test_send_bytes(cnet_client *client, cnet_connection connection,
                                     const void *data, size_t size) {
   mem_buffer_t *buffer;
