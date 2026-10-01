@@ -109,6 +109,23 @@ int main(void) {
   assert(peer_is_loopback_v4(&listener_local));
   assert(cnet_listener_wait(&listener, 0u, &ready) == SALTS_EBUSY);
   assert(cnet_listener_set_backlog(&listener, 16u) == SALTS_OK);
+  {
+    uint64_t listener_value = 0u;
+    assert(cnet_listener_tcp_option_set(
+               &listener, CNET_TCP_SOCKET_HOP_LIMIT, 51u) == SALTS_OK);
+    assert(cnet_listener_tcp_option_get(
+               &listener, CNET_TCP_SOCKET_HOP_LIMIT,
+               &listener_value) == SALTS_OK);
+    assert(listener_value == 51u);
+
+    assert(cnet_listener_tcp_option_set(
+               &listener, CNET_TCP_SOCKET_RECEIVE_BUFFER_BYTES,
+               16384u) == SALTS_OK);
+    assert(cnet_listener_tcp_option_get(
+               &listener, CNET_TCP_SOCKET_RECEIVE_BUFFER_BYTES,
+               &listener_value) == SALTS_OK);
+    assert(listener_value != 0u);
+  }
 
   assert(cnet_listener_listen(&listener, 16u) == SALTS_OK);
   assert(cnet_listener_listen(&listener, 16u) == SALTS_EALREADY);
