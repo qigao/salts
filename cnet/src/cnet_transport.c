@@ -974,6 +974,57 @@ int cnet_transport_tcp_native_option_set(uintptr_t native_socket,
   return cnet_transport_tcp_option_set(&transport, option, value);
 }
 
+int cnet_transport_tcp_native_option_get_family(
+    uintptr_t native_socket, int native_family,
+    cnet_tcp_socket_option option, uint64_t *out_value) {
+  cnet_native_socket socket_value = (cnet_native_socket)native_socket;
+  int value = 0;
+  int status;
+
+  if (native_socket == UINTPTR_MAX || out_value == NULL)
+    return SALTS_EINVAL;
+  if (native_family != AF_INET && native_family != AF_INET6)
+    return SALTS_EAFNOSUPPORT;
+  if (option != CNET_TCP_SOCKET_HOP_LIMIT)
+    return cnet_transport_tcp_native_option_get(
+        native_socket, option, out_value);
+
+  *out_value = 0u;
+  status = native_family == AF_INET
+               ? cnet_transport_get_socket_int(
+                     socket_value, IPPROTO_IP, IP_TTL, &value)
+               : cnet_transport_get_socket_int(
+                     socket_value, IPPROTO_IPV6,
+                     IPV6_UNICAST_HOPS, &value);
+  if (status != SALTS_OK) return status;
+  if (value < 0) return SALTS_EPROTO;
+  *out_value = (uint64_t)(unsigned int)value;
+  return SALTS_OK;
+}
+
+int cnet_transport_tcp_native_option_set_family(
+    uintptr_t native_socket, int native_family,
+    cnet_tcp_socket_option option, uint64_t value) {
+  cnet_native_socket socket_value = (cnet_native_socket)native_socket;
+
+  if (native_socket == UINTPTR_MAX)
+    return SALTS_EINVAL;
+  if (native_family != AF_INET && native_family != AF_INET6)
+    return SALTS_EAFNOSUPPORT;
+  if (option != CNET_TCP_SOCKET_HOP_LIMIT)
+    return cnet_transport_tcp_native_option_set(
+        native_socket, option, value);
+  if (value == 0u || value > UINT8_MAX)
+    return SALTS_ERANGE;
+
+  return native_family == AF_INET
+             ? cnet_transport_set_socket_int(
+                   socket_value, IPPROTO_IP, IP_TTL, (int)value)
+             : cnet_transport_set_socket_int(
+                   socket_value, IPPROTO_IPV6,
+                   IPV6_UNICAST_HOPS, (int)value);
+}
+
 int cnet_transport_tcp_shutdown(cnet_transport *transport,
                                 cnet_tcp_shutdown how) {
   cnet_native_socket socket_value;
