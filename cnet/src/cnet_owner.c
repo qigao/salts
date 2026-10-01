@@ -1584,6 +1584,10 @@ static int cnet_owner_receive(cnet_owner_impl *impl, cnet_command_view *command)
   status = cnet_session_table_state(impl->sessions, command->connection, &state);
   if (status != SALTS_OK || state != CNET_SESSION_OPEN || session->close_requested)
     return cnet_command_queue_release(impl->commands, command);
+  if (session->peer.scheme == CNET_URI_TCP &&
+      (session->tcp_shutdown_mask &
+       (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE) != 0u)
+    return cnet_command_queue_release(impl->commands, command);
   if (command->argument > SIZE_MAX - session->receive_demand)
     return cnet_owner_fail_accepted_command(impl, session, command, SALTS_ERANGE,
                                             CNET_SESSION_STAGE_READ);
