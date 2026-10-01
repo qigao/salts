@@ -503,22 +503,48 @@ jobs:
           fi
 
           allowed="$(taskset -pc "$BASHPID" | sed 's/.*: //')"
-          first_segment="${allowed%%,*}"
-          second=""
-          if [[ "$first_segment" == *-* ]]; then
-            first="${first_segment%-*}"
-            segment_end="${first_segment#*-}"
-            if (( segment_end > first )); then
-              second="$((first + 1))"
+          topology="$result_dir/native-io-owner-handoff-topology.csv"
+          lscpu -p=CPU,CORE,SOCKET > "$topology"
+
+          expand_cpuset() {
+            local spec="$1"
+            local part start end cpu
+            IFS=',' read -ra parts <<< "$spec"
+            for part in "${parts[@]}"; do
+              if [[ "$part" == *-* ]]; then
+                start="${part%-*}"
+                end="${part#*-}"
+                for ((cpu = start; cpu <= end; ++cpu)); do
+                  echo "$cpu"
+                done
+              else
+                echo "$part"
+              fi
+            done
+          }
+
+          mapfile -t cpus < <(expand_cpuset "$allowed")
+          if (( ${#cpus[@]} == 0 )); then
+            echo "No CPUs found in allowed set: $allowed" >&2
+            exit 1
+          fi
+          first="${cpus[0]}"
+          first_key="$(awk -F, -v cpu="$first" '$1 == cpu {print $2 ":" $3; exit}' "$topology")"
+          if [[ -z "$first_key" ]]; then
+            echo "CPU topology is unavailable for CPU $first" >&2
+            exit 1
+          fi
+          same_core=""
+          distinct_core=""
+          for cpu in "${cpus[@]:1}"; do
+            key="$(awk -F, -v wanted="$cpu" '$1 == wanted {print $2 ":" $3; exit}' "$topology")"
+            [[ -z "$key" ]] && continue
+            if [[ "$key" == "$first_key" && -z "$same_core" ]]; then
+              same_core="$cpu"
+            elif [[ "$key" != "$first_key" && -z "$distinct_core" ]]; then
+              distinct_core="$cpu"
             fi
-          else
-            first="$first_segment"
-          fi
-          if [[ -z "$second" && "$allowed" == *,* ]]; then
-            rest="${allowed#*,}"
-            second_segment="${rest%%,*}"
-            second="${second_segment%-*}"
-          fi
+          done
 
           run_case() {
             local label="$1"
@@ -540,17 +566,25 @@ jobs:
           }
 
           run_case one_cpu "$first"
-          if [[ -n "$second" && "$second" != "$first" ]]; then
-            run_case two_cpu "$first,$second"
+          if [[ -n "$same_core" ]]; then
+            run_case two_cpu_same_core "$first,$same_core"
           else
-            echo "Runner exposes only one selectable CPU; two_cpu case skipped." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "No second logical CPU on the first physical core; SMT-pair case skipped." |
+              tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ -n "$distinct_core" ]]; then
+            run_case two_cpu_distinct_core "$first,$distinct_core"
+          else
+            echo "No CPU on a distinct physical core; distinct-core case skipped." |
+              tee -a "$GITHUB_STEP_SUMMARY"
           fi
 
           {
             echo "backend=$NATIVE_IO_OWNER_HANDOFF_BACKEND"
             echo "runner_allowed_cpu_set=$allowed"
-            echo "one_cpu=$first"
-            echo "two_cpu=${second:-unavailable}"
+            echo "one_cpu_set=$first"
+            echo "two_cpu_same_core_set=$([[ -n "$same_core" ]] && echo "$first,$same_core" || echo unavailable)"
+            echo "two_cpu_distinct_core_set=$([[ -n "$distinct_core" ]] && echo "$first,$distinct_core" || echo unavailable)"
           } > "$result_dir/native-io-owner-handoff-cpu-set.txt"
       - name: Run NativeIO PIPE execution-style benchmark
         if: steps.scope.outputs.adapted == 'true'
