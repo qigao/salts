@@ -277,6 +277,21 @@ set_target_properties(
              C_EXTENSIONS OFF)
 
 cmake_add_test(
+  cnet_tcp_endpoint_test
+  SOURCES
+  cnet_tcp_endpoint_test.c
+  LIBS
+  cnet
+  Salts::Core
+  FOLDER
+  "cnet/tests")
+set_target_properties(
+  cnet_tcp_endpoint_test
+  PROPERTIES C_STANDARD 11
+             C_STANDARD_REQUIRED ON
+             C_EXTENSIONS OFF)
+
+cmake_add_test(
   cnet_api_test
   SOURCES
   cnet_api_test.c
