@@ -678,6 +678,42 @@ int cnet_connection_remote_peer(cnet_client *client, cnet_connection connection,
   return cnet_shards_tcp_remote_peer(&impl->shards, internal, out_peer);
 }
 
+int cnet_connection_local_endpoint(
+    cnet_client *client, cnet_connection connection,
+    cnet_stream_endpoint *out_endpoint) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_shard_connection internal = {0};
+  cnet_client_record *record;
+
+  if (out_endpoint == NULL) return SALTS_EINVAL;
+  *out_endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+  if (impl == NULL) return SALTS_EINVAL;
+  record = cnet_client_find_record(impl, connection, &internal);
+  if (record == NULL) return SALTS_ENOENT;
+  if (record->scheme != CNET_URI_TCP && record->scheme != CNET_URI_TLS)
+    return SALTS_ENOTSUP;
+  return cnet_shards_tcp_local_endpoint(
+      &impl->shards, internal, out_endpoint);
+}
+
+int cnet_connection_remote_endpoint(
+    cnet_client *client, cnet_connection connection,
+    cnet_stream_endpoint *out_endpoint) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_shard_connection internal = {0};
+  cnet_client_record *record;
+
+  if (out_endpoint == NULL) return SALTS_EINVAL;
+  *out_endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+  if (impl == NULL) return SALTS_EINVAL;
+  record = cnet_client_find_record(impl, connection, &internal);
+  if (record == NULL) return SALTS_ENOENT;
+  if (record->scheme != CNET_URI_TCP && record->scheme != CNET_URI_TLS)
+    return SALTS_ENOTSUP;
+  return cnet_shards_tcp_remote_endpoint(
+      &impl->shards, internal, out_endpoint);
+}
+
 int cnet_connection_shutdown(cnet_client *client,
                              cnet_connection connection,
                              cnet_tcp_shutdown how) {
