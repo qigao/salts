@@ -171,6 +171,14 @@ int cnet_transport_tcp_native_option_get(uintptr_t native_socket,
 int cnet_transport_tcp_native_option_set(uintptr_t native_socket,
                                          cnet_tcp_socket_option option,
                                          uint64_t value);
+/* Family-aware variants are for unbound internal TCP owners where
+ * getsockname() cannot portably recover the socket family yet. */
+int cnet_transport_tcp_native_option_get_family(
+    uintptr_t native_socket, int native_family,
+    cnet_tcp_socket_option option, uint64_t *out_value);
+int cnet_transport_tcp_native_option_set_family(
+    uintptr_t native_socket, int native_family,
+    cnet_tcp_socket_option option, uint64_t value);
 
 int cnet_transport_tcp_shutdown(cnet_transport *transport,
                                 cnet_tcp_shutdown how);
