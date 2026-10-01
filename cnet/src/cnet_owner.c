@@ -1915,6 +1915,11 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
       status = cnet_owner_queue_state_event(impl, session->handle, CNET_EVENT_STATE_CLOSING,
                                             SALTS_OK, CNET_SESSION_STAGE_NONE);
       if (status != SALTS_OK) return status;
+    } else if (role == CNET_OWNER_REQUEST_SEND && !session->close_requested) {
+      status = cnet_owner_progress_tcp_shutdown(impl, session);
+      if (status != SALTS_OK)
+        return cnet_owner_fail_session(
+            impl, session, status, CNET_SESSION_STAGE_SHUTDOWN);
     }
   } else if (close_after_send || !session->close_requested) {
     cnet_owner_record_failure(session,
