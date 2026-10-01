@@ -105,8 +105,8 @@ jobs:
             configure_preset: linux-release-user
             build_preset: linux-release-user
             build_dir: build/linux-gcc-release
-          - host: IOCP / Windows 2022 MSVC
-            runner: windows-2022
+          - host: IOCP / Windows 2025 MSVC v145
+            runner: windows-2025
             family: windows
             backend: iocp
             artifact: windows-iocp
@@ -345,7 +345,8 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
+          set "PKGCONF=%GITHUB_WORKSPACE%\vcpkg_installed\%QIGAO_VCPKG_WINDOWS_HOST_TRIPLET%\tools\pkgconf\pkgconf.exe"
+          cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON -DPKG_CONFIG_EXECUTABLE="%PKGCONF%"
 
       - name: Build Windows Release
         if: matrix.family == 'windows'
@@ -412,7 +413,8 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset win-release-user -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF
+          set "BASELINE_PKGCONF=%BASELINE_SOURCE%\vcpkg_installed\%QIGAO_VCPKG_WINDOWS_HOST_TRIPLET%\tools\pkgconf\pkgconf.exe"
+          cmake --preset win-release-user -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DPKG_CONFIG_EXECUTABLE="%BASELINE_PKGCONF%"
           if errorlevel 1 exit /b 1
           cmake --build --preset win-release-user --target cnet
           if errorlevel 1 exit /b 1

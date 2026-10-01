@@ -15,6 +15,16 @@
 int cnet_client_adopt_tcp(cnet_client *client, uintptr_t native_socket,
                           const cnet_observer *observer, cnet_connection *out_connection);
 
+/**
+ * Consumes one already-bound TCP socket and starts an asynchronous connect to
+ * the copied portable peer on that same socket.
+ */
+int cnet_client_adopt_bound_tcp_connect(
+    cnet_client *client, uintptr_t native_socket,
+    const cnet_stream_peer *remote_peer,
+    const cnet_observer *observer,
+    cnet_connection *out_connection);
+
 /** Consumes one connected VSOCK stream, closing it on immediate admission failure. */
 int cnet_client_adopt_vsock(cnet_client *client, uintptr_t native_socket,
                             const cnet_observer *observer, cnet_connection *out_connection);

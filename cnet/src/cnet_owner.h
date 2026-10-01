@@ -20,6 +20,8 @@ typedef struct cnet_owner_connect_payload {
   uintptr_t adopted_socket;
   size_t address_length;
   unsigned char address[CNET_OWNER_ADDRESS_CAPACITY];
+  size_t local_address_length;
+  unsigned char local_address[CNET_OWNER_ADDRESS_CAPACITY];
   char host[CNET_RESOLVER_HOST_CAPACITY];
   uint16_t port;
   char pipe_name[CNET_URI_PATH_CAPACITY];
@@ -35,6 +37,7 @@ typedef struct cnet_owner_connect_payload {
   size_t tls_io_buffer_bytes;
   cnet_stream_socket_options socket_options;
   bool adopted;
+  bool adopted_connect;
   bool tls_server;
 } cnet_owner_connect_payload;
 
@@ -196,6 +199,11 @@ int cnet_owner_test_set_send_chunk_bytes(cnet_owner *owner, size_t bytes);
 int cnet_owner_profile_begin(cnet_owner *owner);
 int cnet_owner_profile_take(cnet_owner *owner, cnet_owner_profile *out_profile);
 #endif
+int cnet_owner_tcp_local_peer(cnet_owner *owner, cnet_session_handle session,
+                              cnet_stream_peer *out_peer);
+int cnet_owner_tcp_remote_peer(cnet_owner *owner, cnet_session_handle session,
+                               cnet_stream_peer *out_peer);
+
 int cnet_owner_tls_peer_certificate_sha256(
     cnet_owner *owner, cnet_session_handle session,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);

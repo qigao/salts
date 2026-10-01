@@ -1251,9 +1251,12 @@ static int cnet_owner_start_transport(cnet_owner_impl *impl, cnet_owner_session 
     break;
   case CNET_URI_TCP:
   case CNET_URI_TLS:
-    status = cnet_transport_tcp_prepare_connect(
-        &session->transport, &impl->backend, impl->backend_kind, session->peer.address,
-        session->peer.address_length, &session->peer.socket_options, 0u, &operation);
+    status = cnet_transport_tcp_prepare_connect_bound(
+        &session->transport, &impl->backend, impl->backend_kind,
+        session->peer.address, session->peer.address_length,
+        session->peer.local_address_length != 0u ? session->peer.local_address : NULL,
+        session->peer.local_address_length,
+        &session->peer.socket_options, 0u, &operation);
     break;
   case CNET_URI_VSOCK:
     status = cnet_transport_vsock_prepare_connect(
@@ -1297,11 +1300,16 @@ static bool cnet_owner_connect_endpoint_valid(const cnet_owner_connect_payload *
                                               bool has_adopted, bool has_address,
                                               bool host_present, bool has_host,
                                               bool pipe_present, bool has_pipe) {
-  if (payload->adopted)
+  if (payload->adopted) {
+    if (payload->adopted_connect)
+      return payload->scheme == CNET_URI_TCP && has_adopted && has_address &&
+             !host_present && payload->port == 0u && !pipe_present;
     return (payload->scheme == CNET_URI_TCP || payload->scheme == CNET_URI_TLS ||
             payload->scheme == CNET_URI_VSOCK) &&
            has_adopted && payload->address_length == 0u && !host_present && payload->port == 0u &&
            !pipe_present && payload->connect_timeout_ms == 0u;
+  }
+  if (payload->adopted_connect) return false;
 
   switch (payload->scheme) {
   case CNET_URI_PIPE:
@@ -1430,6 +1438,23 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
                                             CNET_SESSION_STAGE_CONNECT);
 
   if (has_adopted) {
+    if (session->peer.adopted_connect) {
+      native_io_operation operation = {0};
+      status = cnet_transport_adopt_tcp_prepare_connect(
+          &session->transport, &impl->backend, session->peer.adopted_socket,
+          session->peer.address, session->peer.address_length,
+          &session->peer.socket_options, 0u, &operation);
+      session->peer.adopted_socket = UINTPTR_MAX;
+      session->peer.adopted = false;
+      session->peer.adopted_connect = false;
+      if (status != SALTS_OK)
+        return cnet_owner_fail_accepted_command(
+            impl, session, command, status, CNET_SESSION_STAGE_CONNECT);
+      return cnet_owner_start_request(
+          impl, session, command, NULL, CNET_OWNER_REQUEST_CONNECT,
+          &operation, false, false);
+    }
+
     status = session->peer.scheme == CNET_URI_VSOCK
                  ? cnet_transport_adopt_vsock(&session->transport, &impl->backend,
                                               session->peer.adopted_socket,
@@ -2554,6 +2579,36 @@ int cnet_owner_profile_take(cnet_owner *owner, cnet_owner_profile *out_profile) 
   return SALTS_OK;
 }
 #endif
+
+static bool cnet_owner_tcp_scheme(cnet_uri_scheme scheme) {
+  return scheme == CNET_URI_TCP || scheme == CNET_URI_TLS;
+}
+
+int cnet_owner_tcp_local_peer(cnet_owner *owner, cnet_session_handle session_handle,
+                              cnet_stream_peer *out_peer) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  if (out_peer == NULL) return SALTS_EINVAL;
+  *out_peer = (cnet_stream_peer){0};
+  if (impl == NULL) return SALTS_EINVAL;
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (!cnet_owner_tcp_scheme(session->peer.scheme)) return SALTS_ENOTSUP;
+  return cnet_transport_tcp_local_peer(&session->transport, out_peer);
+}
+
+int cnet_owner_tcp_remote_peer(cnet_owner *owner, cnet_session_handle session_handle,
+                               cnet_stream_peer *out_peer) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  if (out_peer == NULL) return SALTS_EINVAL;
+  *out_peer = (cnet_stream_peer){0};
+  if (impl == NULL) return SALTS_EINVAL;
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (!cnet_owner_tcp_scheme(session->peer.scheme)) return SALTS_ENOTSUP;
+  return cnet_transport_tcp_remote_peer(&session->transport, out_peer);
+}
 
 int cnet_owner_tls_peer_certificate_sha256(
     cnet_owner *owner, cnet_session_handle session_handle,

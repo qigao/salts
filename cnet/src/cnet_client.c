@@ -556,6 +556,77 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
   return status;
 }
 
+int cnet_connect_peer(cnet_client *client, const cnet_stream_peer *remote_peer,
+                      const cnet_stream_peer *local_peer,
+                      const cnet_observer *observer,
+                      cnet_connection *out_connection) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_owner_connect_payload payload = {0};
+  bool transferred = false;
+  int status;
+
+  if (out_connection == NULL) return SALTS_EINVAL;
+  *out_connection = (cnet_connection){0};
+  if (impl == NULL || remote_peer == NULL || observer == NULL ||
+      observer->on_state == NULL)
+    return SALTS_EINVAL;
+  if (local_peer != NULL && local_peer->family != remote_peer->family)
+    return SALTS_EAFNOSUPPORT;
+
+  payload.scheme = CNET_URI_TCP;
+  payload.connect_timeout_ms = impl->connect_timeout_ms;
+  payload.read_timeout_ms = impl->read_timeout_ms;
+  payload.write_timeout_ms = impl->write_timeout_ms;
+
+  status = cnet_transport_stream_peer_address(
+      remote_peer, false, payload.address, sizeof(payload.address),
+      &payload.address_length);
+  if (status != SALTS_OK) return status;
+
+  if (local_peer != NULL) {
+    status = cnet_transport_stream_peer_address(
+        local_peer, true, payload.local_address, sizeof(payload.local_address),
+        &payload.local_address_length);
+    if (status != SALTS_OK) return status;
+  }
+
+  status = cnet_client_admit(
+      impl, &payload, CNET_URI_TCP, observer, out_connection, &transferred);
+  return status;
+}
+
+int cnet_connection_local_peer(cnet_client *client, cnet_connection connection,
+                               cnet_stream_peer *out_peer) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_shard_connection internal = {0};
+  cnet_client_record *record;
+
+  if (out_peer == NULL) return SALTS_EINVAL;
+  *out_peer = (cnet_stream_peer){0};
+  if (impl == NULL) return SALTS_EINVAL;
+  record = cnet_client_find_record(impl, connection, &internal);
+  if (record == NULL) return SALTS_ENOENT;
+  if (record->scheme != CNET_URI_TCP && record->scheme != CNET_URI_TLS)
+    return SALTS_ENOTSUP;
+  return cnet_shards_tcp_local_peer(&impl->shards, internal, out_peer);
+}
+
+int cnet_connection_remote_peer(cnet_client *client, cnet_connection connection,
+                                cnet_stream_peer *out_peer) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_shard_connection internal = {0};
+  cnet_client_record *record;
+
+  if (out_peer == NULL) return SALTS_EINVAL;
+  *out_peer = (cnet_stream_peer){0};
+  if (impl == NULL) return SALTS_EINVAL;
+  record = cnet_client_find_record(impl, connection, &internal);
+  if (record == NULL) return SALTS_ENOENT;
+  if (record->scheme != CNET_URI_TCP && record->scheme != CNET_URI_TLS)
+    return SALTS_ENOTSUP;
+  return cnet_shards_tcp_remote_peer(&impl->shards, internal, out_peer);
+}
+
 static bool cnet_client_tls_server_name_valid(const char *server_name) {
   return server_name != NULL && server_name[0] != '\0' &&
          memchr(server_name, '\0', CNET_TLS_SERVER_NAME_CAPACITY) != NULL;
@@ -689,6 +760,51 @@ int cnet_client_adopt_tcp(cnet_client *client, uintptr_t native_socket,
   payload.write_timeout_ms = impl->write_timeout_ms;
   payload.adopted = true;
   status = cnet_client_admit(impl, &payload, CNET_URI_TCP, observer, out_connection, &transferred);
+  if (!transferred) cnet_transport_close_socket(native_socket);
+  return status;
+}
+
+int cnet_client_adopt_bound_tcp_connect(
+    cnet_client *client, uintptr_t native_socket,
+    const cnet_stream_peer *remote_peer,
+    const cnet_observer *observer,
+    cnet_connection *out_connection) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_owner_connect_payload payload = {0};
+  bool transferred = false;
+  int status;
+
+  if (out_connection == NULL) {
+    cnet_transport_close_socket(native_socket);
+    return SALTS_EINVAL;
+  }
+  *out_connection = (cnet_connection){0};
+  if (impl == NULL || remote_peer == NULL ||
+      observer == NULL || observer->on_state == NULL ||
+      native_socket == UINTPTR_MAX) {
+    cnet_transport_close_socket(native_socket);
+    return SALTS_EINVAL;
+  }
+
+  payload.scheme = CNET_URI_TCP;
+  payload.adopted_socket = native_socket;
+  payload.adopted = true;
+  payload.adopted_connect = true;
+  payload.connect_timeout_ms = impl->connect_timeout_ms;
+  payload.read_timeout_ms = impl->read_timeout_ms;
+  payload.write_timeout_ms = impl->write_timeout_ms;
+
+  status = cnet_transport_stream_peer_address(
+      remote_peer, false, payload.address, sizeof(payload.address),
+      &payload.address_length);
+  if (status != SALTS_OK) {
+    cnet_transport_close_socket(native_socket);
+    return status;
+  }
+
+  status = cnet_client_admit(
+      impl, &payload, CNET_URI_TCP, observer,
+      out_connection, &transferred);
   if (!transferred) cnet_transport_close_socket(native_socket);
   return status;
 }

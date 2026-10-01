@@ -657,6 +657,28 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
                  cnet_connection *out_connection);
 
 /**
+ * Connects directly to one numeric portable TCP peer without URI parsing or
+ * DNS. `local_peer == NULL` leaves local address selection to the OS; a
+ * non-NULL local peer is bound before the asynchronous connect begins.
+ *
+ * The observer is copied synchronously. Both peer values are copied before
+ * return and never retained by pointer. Address families must match.
+ */
+int cnet_connect_peer(cnet_client *client, const cnet_stream_peer *remote_peer,
+                      const cnet_stream_peer *local_peer,
+                      const cnet_observer *observer,
+                      cnet_connection *out_connection);
+
+/**
+ * Copies the current local or remote TCP endpoint for one live generation-
+ * checked connection. No native descriptor is exposed.
+ */
+int cnet_connection_local_peer(cnet_client *client, cnet_connection connection,
+                               cnet_stream_peer *out_peer);
+int cnet_connection_remote_peer(cnet_client *client, cnet_connection connection,
+                                cnet_stream_peer *out_peer);
+
+/**
  * Transfers one connected Linux AF_VSOCK SOCK_STREAM socket to `client`.
  * The socket is consumed on every call except when it equals `UINTPTR_MAX`.
  * Unsupported platforms/backends close the socket and return `SALTS_ENOTSUP`
@@ -940,9 +962,33 @@ int cnet_listener_init(cnet_listener *listener, const cnet_listener_config *conf
 /** Validates the versioned listener policy without creating a socket. */
 int cnet_listener_options_validate(const cnet_listener_options *options);
 
-/** Creates a listener with an explicit, synchronously copied socket policy. */
+/**
+ * Two-phase TCP listener lifecycle. bind[_ex] owns a nonblocking bound socket
+ * but does not call listen(). listen() transitions that bound owner to
+ * listening exactly once. This is useful for protocols that expose bind and
+ * listen as distinct semantic states.
+ */
+int cnet_listener_bind(cnet_listener *listener, const cnet_listener_config *config);
+int cnet_listener_bind_ex(cnet_listener *listener, const cnet_listener_config *config,
+                          const cnet_listener_options *options);
+int cnet_listener_listen(cnet_listener *listener, size_t backlog);
+
+/**
+ * Consumes one bound, not-yet-listening TCP owner and starts an asynchronous
+ * CNet client connect on that exact native socket. The listener wrapper is
+ * empty after the call once ownership transfer begins; no raw socket escapes.
+ */
+int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
+                               const cnet_stream_peer *remote_peer,
+                               const cnet_observer *observer,
+                               cnet_connection *out_connection);
+
+/** Creates and listens in one call; equivalent to bind_ex + listen. */
 int cnet_listener_init_ex(cnet_listener *listener, const cnet_listener_config *config,
                           const cnet_listener_options *options);
+
+/** Copies the currently bound numeric TCP endpoint. */
+int cnet_listener_local(const cnet_listener *listener, cnet_stream_peer *out_local);
 
 /**
  * Creates a nonblocking Linux AF_VSOCK listener. Unsupported platforms or
