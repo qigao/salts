@@ -519,6 +519,27 @@ int cnet_listener_tcp_option_set(cnet_listener *listener,
   return status;
 }
 
+static int cnet_listener_apply_tcp_options(
+    const cnet_listener_impl *impl,
+    cnet_listener_socket socket_value) {
+  unsigned int option;
+  if (impl == NULL) return SALTS_EINVAL;
+  for (option = (unsigned int)CNET_TCP_SOCKET_KEEPALIVE_ENABLED;
+       option <= (unsigned int)CNET_TCP_SOCKET_SEND_BUFFER_BYTES;
+       ++option) {
+    int status;
+    if ((impl->tcp_option_set_mask &
+         (uint8_t)(1u << option)) == 0u)
+      continue;
+    status = cnet_transport_tcp_native_option_set(
+        (uintptr_t)socket_value,
+        (cnet_tcp_socket_option)option,
+        impl->tcp_option_values[option]);
+    if (status != SALTS_OK) return status;
+  }
+  return SALTS_OK;
+}
+
 int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
                                const cnet_stream_peer *remote_peer,
                                const cnet_observer *observer,
@@ -773,24 +794,11 @@ int cnet_listener_accept_peer(cnet_listener *listener, cnet_client *client,
     cnet_transport_close_socket((uintptr_t)accepted);
     return status;
   }
-  {
-    unsigned int option;
-    for (option = (unsigned int)CNET_TCP_SOCKET_KEEPALIVE_ENABLED;
-         option <= (unsigned int)CNET_TCP_SOCKET_SEND_BUFFER_BYTES;
-         ++option) {
-      if ((impl->tcp_option_set_mask &
-           (uint8_t)(1u << option)) == 0u)
-        continue;
-      status = cnet_transport_tcp_native_option_set(
-          (uintptr_t)accepted,
-          (cnet_tcp_socket_option)option,
-          impl->tcp_option_values[option]);
-      if (status != SALTS_OK) {
-        cnet_transport_close_socket((uintptr_t)accepted);
-        *out_peer = (cnet_stream_peer){0};
-        return status;
-      }
-    }
+  status = cnet_listener_apply_tcp_options(impl, accepted);
+  if (status != SALTS_OK) {
+    cnet_transport_close_socket((uintptr_t)accepted);
+    *out_peer = (cnet_stream_peer){0};
+    return status;
   }
 #if !defined(_WIN32)
   {
@@ -902,6 +910,12 @@ int cnet_listener_accept_tls_peer(cnet_listener *listener, cnet_client *client,
   status = cnet_listener_stream_peer(&native_peer, (size_t)native_peer_size, out_peer);
   if (status != SALTS_OK) {
     cnet_transport_close_socket((uintptr_t)accepted);
+    return status;
+  }
+  status = cnet_listener_apply_tcp_options(impl, accepted);
+  if (status != SALTS_OK) {
+    cnet_transport_close_socket((uintptr_t)accepted);
+    *out_peer = (cnet_stream_peer){0};
     return status;
   }
 #if !defined(_WIN32)
