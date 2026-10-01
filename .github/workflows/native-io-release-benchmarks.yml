@@ -105,8 +105,8 @@ jobs:
             configure_preset: linux-release-user
             build_preset: linux-release-user
             build_dir: build/linux-gcc-release
-          - host: IOCP / Windows 2022 MSVC
-            runner: windows-2022
+          - host: IOCP / Windows 2025 MSVC v145
+            runner: windows-2025
             family: windows
             backend: iocp
             artifact: windows-iocp
