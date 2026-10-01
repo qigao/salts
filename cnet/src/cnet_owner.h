@@ -204,6 +204,13 @@ int cnet_owner_tcp_local_peer(cnet_owner *owner, cnet_session_handle session,
 int cnet_owner_tcp_remote_peer(cnet_owner *owner, cnet_session_handle session,
                                cnet_stream_peer *out_peer);
 
+int cnet_owner_tcp_local_endpoint(
+    cnet_owner *owner, cnet_session_handle session,
+    cnet_stream_endpoint *out_endpoint);
+int cnet_owner_tcp_remote_endpoint(
+    cnet_owner *owner, cnet_session_handle session,
+    cnet_stream_endpoint *out_endpoint);
+
 int cnet_owner_tcp_option_get(cnet_owner *owner, cnet_session_handle session,
                               cnet_tcp_socket_option option, uint64_t *out_value);
 int cnet_owner_tcp_option_set(cnet_owner *owner, cnet_session_handle session,
