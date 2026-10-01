@@ -643,6 +643,12 @@ int cnet_connection_shutdown(cnet_client *client,
   record = cnet_client_find_record(impl, connection, &internal);
   if (record == NULL) return SALTS_ENOENT;
   if (record->scheme != CNET_URI_TCP) return SALTS_ENOTSUP;
+  if (record->close_command_pending) return SALTS_EBUSY;
+  if (((how & CNET_TCP_SHUTDOWN_SEND) != 0 &&
+       record->pending_writes != 0u) ||
+      ((how & CNET_TCP_SHUTDOWN_RECEIVE) != 0 &&
+       record->receive_pending != 0u))
+    return SALTS_EBUSY;
   return cnet_shards_tcp_shutdown(&impl->shards, internal, how);
 }
 
