@@ -856,6 +856,30 @@ int cnet_transport_tcp_option_set(cnet_transport *transport,
   return SALTS_EINVAL;
 }
 
+int cnet_transport_tcp_native_option_get(uintptr_t native_socket,
+                                         cnet_tcp_socket_option option,
+                                         uint64_t *out_value) {
+  cnet_transport transport = {0};
+  if (native_socket == UINTPTR_MAX) return SALTS_EINVAL;
+  transport.native_handle = native_socket;
+  transport.write_native_handle = UINTPTR_MAX;
+  transport.resource_kind = CNET_TRANSPORT_RESOURCE_SOCKET;
+  transport.native_open = true;
+  return cnet_transport_tcp_option_get(&transport, option, out_value);
+}
+
+int cnet_transport_tcp_native_option_set(uintptr_t native_socket,
+                                         cnet_tcp_socket_option option,
+                                         uint64_t value) {
+  cnet_transport transport = {0};
+  if (native_socket == UINTPTR_MAX) return SALTS_EINVAL;
+  transport.native_handle = native_socket;
+  transport.write_native_handle = UINTPTR_MAX;
+  transport.resource_kind = CNET_TRANSPORT_RESOURCE_SOCKET;
+  transport.native_open = true;
+  return cnet_transport_tcp_option_set(&transport, option, value);
+}
+
 native_io_endpoint cnet_transport_read_endpoint(const cnet_transport *transport) {
   return transport != NULL && transport->attached ? transport->endpoint : (native_io_endpoint){0};
 }
