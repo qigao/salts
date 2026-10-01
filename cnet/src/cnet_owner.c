@@ -373,6 +373,9 @@ static int cnet_owner_finish_write_admission(cnet_owner_impl *impl,
 static int cnet_owner_discard_queued_writes(cnet_owner_impl *impl, cnet_owner_session *session,
                                             bool keep_active_head);
 
+static int cnet_owner_progress_tcp_shutdown(cnet_owner_impl *impl,
+                                            cnet_owner_session *session);
+
 static int cnet_owner_flush_state_events(cnet_owner_impl *impl, bool *out_blocked) {
   size_t published = 0u;
 
