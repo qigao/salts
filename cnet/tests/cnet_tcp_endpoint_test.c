@@ -77,8 +77,11 @@ static int peer_equal(const cnet_stream_peer *left,
 
 int main(void) {
   cnet_listener listener = {0};
+  cnet_listener outbound = {0};
   cnet_listener_config listener_config = {
       test_backend(), "127.0.0.1", 0u, 8u};
+  cnet_listener_config outbound_config = {
+      test_backend(), "127.0.0.1", 0u, 1u};
   cnet_client client = {0};
   cnet_client accepted_client = {0};
   cnet_client_config client_config = test_client_config();
@@ -90,7 +93,7 @@ int main(void) {
   cnet_observer accepted_observer = {
       on_state, NULL, &accepted_probe, NULL};
   cnet_stream_peer listener_local = {0};
-  cnet_stream_peer requested_local = {0};
+  cnet_stream_peer outbound_local = {0};
   cnet_stream_peer accepted_remote = {0};
   cnet_stream_peer client_local = {0};
   cnet_stream_peer client_remote = {0};
@@ -115,14 +118,15 @@ int main(void) {
   assert(cnet_client_init(&client, &client_config) == SALTS_OK);
   assert(cnet_client_init(&accepted_client, &client_config) == SALTS_OK);
 
-  requested_local.family = CNET_DATAGRAM_ADDRESS_IPV4;
-  requested_local.port = 0u;
-  requested_local.address[0] = 127u;
-  requested_local.address[3] = 1u;
+  assert(cnet_listener_bind(&outbound, &outbound_config) == SALTS_OK);
+  assert(cnet_listener_local(&outbound, &outbound_local) == SALTS_OK);
+  assert(peer_is_loopback_v4(&outbound_local));
+  assert(outbound_local.port != 0u);
 
-  assert(cnet_connect_peer(
-             &client, &listener_local, &requested_local,
+  assert(cnet_listener_connect_peer(
+             &outbound, &client, &listener_local,
              &client_observer, &connection) == SALTS_OK);
+  assert(outbound.impl == NULL);
 
   deadline = salts_monotonic_ms() + TEST_TIMEOUT_MS;
   while (!accepted_done ||
@@ -167,6 +171,7 @@ int main(void) {
 
   assert(peer_is_loopback_v4(&client_local));
   assert(client_local.port != 0u);
+  assert(peer_equal(&client_local, &outbound_local));
   assert(peer_equal(&client_remote, &listener_local));
   assert(peer_equal(&server_remote, &client_local));
   assert(server_local.port == listener_local.port);
