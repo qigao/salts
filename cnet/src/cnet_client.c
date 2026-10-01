@@ -939,6 +939,52 @@ int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, ch
   return status;
 }
 
+int cnet_tls_negotiated_version(cnet_client *client, cnet_connection connection, char *buffer,
+                                size_t capacity, size_t *out_size) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_shard_connection internal = {0};
+  cnet_client_record *record;
+  cnet_session_state session_state = CNET_SESSION_FREE;
+  int status;
+  if (out_size == NULL) return SALTS_EINVAL;
+  *out_size = 0u;
+  if (impl == NULL || buffer == NULL || capacity == 0u) return SALTS_EINVAL;
+  buffer[0] = '\0';
+  record = cnet_client_find_record(impl, connection, &internal);
+  if (record == NULL) status = SALTS_ENOENT;
+  else if (record->scheme != CNET_URI_TLS) status = SALTS_ENOTSUP;
+  else if (cnet_client_record_session_state(impl, record, &session_state) != SALTS_OK ||
+           session_state != CNET_SESSION_OPEN)
+    status = SALTS_ENOTCONN;
+  else
+    status = cnet_shards_tls_negotiated_version(&impl->shards, internal, buffer, capacity,
+                                                out_size);
+  return status;
+}
+
+int cnet_tls_negotiated_cipher(cnet_client *client, cnet_connection connection, char *buffer,
+                               size_t capacity, size_t *out_size) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_shard_connection internal = {0};
+  cnet_client_record *record;
+  cnet_session_state session_state = CNET_SESSION_FREE;
+  int status;
+  if (out_size == NULL) return SALTS_EINVAL;
+  *out_size = 0u;
+  if (impl == NULL || buffer == NULL || capacity == 0u) return SALTS_EINVAL;
+  buffer[0] = '\0';
+  record = cnet_client_find_record(impl, connection, &internal);
+  if (record == NULL) status = SALTS_ENOENT;
+  else if (record->scheme != CNET_URI_TLS) status = SALTS_ENOTSUP;
+  else if (cnet_client_record_session_state(impl, record, &session_state) != SALTS_OK ||
+           session_state != CNET_SESSION_OPEN)
+    status = SALTS_ENOTCONN;
+  else
+    status =
+        cnet_shards_tls_negotiated_cipher(&impl->shards, internal, buffer, capacity, out_size);
+  return status;
+}
+
 int cnet_tls_peer_certificate_sha256(cnet_client *client, cnet_connection connection,
                                      char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]) {
   cnet_client_impl *impl = cnet_client_get(client);
