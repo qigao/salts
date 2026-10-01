@@ -557,6 +557,38 @@ int cnet_shards_tcp_option_set(cnet_shards *shards, cnet_shard_connection connec
              : SALTS_ENOENT;
 }
 
+int cnet_shards_tls_negotiated_version(cnet_shards *shards, cnet_shard_connection connection,
+                                       char *buffer, size_t capacity, size_t *out_size) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_shard_record *record;
+  if (out_size == NULL) return SALTS_EINVAL;
+  *out_size = 0u;
+  if (buffer == NULL || capacity == 0u) return SALTS_EINVAL;
+  buffer[0] = '\0';
+  if (impl == NULL || !cnet_shard_connection_valid(connection)) return SALTS_ENOENT;
+  record = cnet_shards_get_record(impl, connection.shard);
+  return record != NULL
+             ? cnet_owner_tls_negotiated_version(&record->owner, connection.session, buffer,
+                                                 capacity, out_size)
+             : SALTS_ENOENT;
+}
+
+int cnet_shards_tls_negotiated_cipher(cnet_shards *shards, cnet_shard_connection connection,
+                                      char *buffer, size_t capacity, size_t *out_size) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_shard_record *record;
+  if (out_size == NULL) return SALTS_EINVAL;
+  *out_size = 0u;
+  if (buffer == NULL || capacity == 0u) return SALTS_EINVAL;
+  buffer[0] = '\0';
+  if (impl == NULL || !cnet_shard_connection_valid(connection)) return SALTS_ENOENT;
+  record = cnet_shards_get_record(impl, connection.shard);
+  return record != NULL
+             ? cnet_owner_tls_negotiated_cipher(&record->owner, connection.session, buffer,
+                                                capacity, out_size)
+             : SALTS_ENOENT;
+}
+
 int cnet_shards_tls_peer_certificate_sha256(
     cnet_shards *shards, cnet_shard_connection connection,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]) {
