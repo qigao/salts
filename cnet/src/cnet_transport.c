@@ -309,6 +309,7 @@ int cnet_transport_stream_peer_address(const cnet_stream_peer *peer, bool allow_
     memset(&address, 0, sizeof(address));
     address.sin6_family = AF_INET6;
     address.sin6_port = htons(peer->port);
+    address.sin6_flowinfo = peer->flow_info;
     address.sin6_scope_id = peer->scope_id;
     memcpy(&address.sin6_addr, peer->address, 16u);
     memcpy(out_address, &address, sizeof(address));
@@ -760,6 +761,7 @@ static int cnet_transport_socket_peer(const cnet_transport *transport, bool remo
     const struct sockaddr_in6 *v6 = (const struct sockaddr_in6 *)&address;
     out_peer->family = CNET_DATAGRAM_ADDRESS_IPV6;
     out_peer->port = ntohs(v6->sin6_port);
+    out_peer->flow_info = v6->sin6_flowinfo;
     out_peer->scope_id = v6->sin6_scope_id;
     memcpy(out_peer->address, &v6->sin6_addr, 16u);
     return SALTS_OK;
