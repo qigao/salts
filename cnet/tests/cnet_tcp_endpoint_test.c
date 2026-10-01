@@ -92,6 +92,8 @@ int main(void) {
   cnet_client client = {0};
   cnet_client accepted_client = {0};
   cnet_client_config client_config = test_client_config();
+  cnet_stream_socket_options accepted_future_options =
+      CNET_STREAM_SOCKET_OPTIONS_INIT;
   cnet_connection connection = {0};
   cnet_connection accepted = {0};
   endpoint_probe client_probe = {0};
@@ -198,6 +200,10 @@ int main(void) {
 
   assert(cnet_client_init(&client, &client_config) == SALTS_OK);
   assert(cnet_client_init(&accepted_client, &client_config) == SALTS_OK);
+  accepted_future_options.receive_buffer_bytes = 4096u;
+  accepted_future_options.send_buffer_bytes = 4096u;
+  assert(cnet_client_set_stream_socket_options(
+             &accepted_client, &accepted_future_options) == SALTS_OK);
 
   assert(cnet_listener_bind_peer(
              &outbound, test_backend(), &outbound_bind) == SALTS_OK);
