@@ -2588,6 +2588,30 @@ int cnet_owner_tcp_remote_peer(cnet_owner *owner, cnet_session_handle session_ha
   return cnet_transport_tcp_remote_peer(&session->transport, out_peer);
 }
 
+int cnet_owner_tcp_option_get(cnet_owner *owner, cnet_session_handle session_handle,
+                              cnet_tcp_socket_option option, uint64_t *out_value) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  if (out_value == NULL) return SALTS_EINVAL;
+  *out_value = 0u;
+  if (impl == NULL) return SALTS_EINVAL;
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (!cnet_owner_tcp_scheme(session->peer.scheme)) return SALTS_ENOTSUP;
+  return cnet_transport_tcp_option_get(&session->transport, option, out_value);
+}
+
+int cnet_owner_tcp_option_set(cnet_owner *owner, cnet_session_handle session_handle,
+                              cnet_tcp_socket_option option, uint64_t value) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  if (impl == NULL) return SALTS_EINVAL;
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (!cnet_owner_tcp_scheme(session->peer.scheme)) return SALTS_ENOTSUP;
+  return cnet_transport_tcp_option_set(&session->transport, option, value);
+}
+
 int cnet_owner_tls_peer_certificate_sha256(
     cnet_owner *owner, cnet_session_handle session_handle,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]) {
