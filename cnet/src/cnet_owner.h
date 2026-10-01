@@ -198,6 +198,11 @@ int cnet_owner_test_set_send_chunk_bytes(cnet_owner *owner, size_t bytes);
 int cnet_owner_profile_begin(cnet_owner *owner);
 int cnet_owner_profile_take(cnet_owner *owner, cnet_owner_profile *out_profile);
 #endif
+int cnet_owner_tcp_local_peer(cnet_owner *owner, cnet_session_handle session,
+                              cnet_stream_peer *out_peer);
+int cnet_owner_tcp_remote_peer(cnet_owner *owner, cnet_session_handle session,
+                               cnet_stream_peer *out_peer);
+
 int cnet_owner_tls_peer_certificate_sha256(
     cnet_owner *owner, cnet_session_handle session,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
