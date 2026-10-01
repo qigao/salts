@@ -326,9 +326,11 @@ set_target_properties(
   PROPERTIES C_STANDARD 11
              C_STANDARD_REQUIRED ON
              C_EXTENSIONS OFF)
-# The release workflow explicitly builds cnet_api_test. Keep the upper-layer
-# NativeIO sharded ownership conformance in the same build closure.
-add_dependencies(cnet_api_test cnet_native_io_sharded_ownership_test)
+# The release workflow explicitly builds cnet_api_test. Keep upper-layer
+# CNet/NativeIO conformance in the same build closure.
+add_dependencies(cnet_api_test
+  cnet_native_io_sharded_ownership_test
+  cnet_tcp_endpoint_test)
 
 cmake_add_test(
   cnet_api_profile_test
