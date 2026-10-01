@@ -111,9 +111,28 @@ int main(void) {
   assert(listener_local.port == port);
   assert(peer_is_loopback_v4(&listener_local));
   assert(cnet_listener_wait(&listener, 0u, &ready) == SALTS_EBUSY);
+  assert(cnet_listener_set_backlog(&listener, 16u) == SALTS_OK);
+  {
+    uint64_t listener_value = 0u;
+    assert(cnet_listener_tcp_option_set(
+               &listener, CNET_TCP_SOCKET_HOP_LIMIT, 51u) == SALTS_OK);
+    assert(cnet_listener_tcp_option_get(
+               &listener, CNET_TCP_SOCKET_HOP_LIMIT,
+               &listener_value) == SALTS_OK);
+    assert(listener_value == 51u);
 
-  assert(cnet_listener_listen(&listener, 8u) == SALTS_OK);
-  assert(cnet_listener_listen(&listener, 8u) == SALTS_EALREADY);
+    assert(cnet_listener_tcp_option_set(
+               &listener, CNET_TCP_SOCKET_RECEIVE_BUFFER_BYTES,
+               16384u) == SALTS_OK);
+    assert(cnet_listener_tcp_option_get(
+               &listener, CNET_TCP_SOCKET_RECEIVE_BUFFER_BYTES,
+               &listener_value) == SALTS_OK);
+    assert(listener_value != 0u);
+  }
+
+  assert(cnet_listener_listen(&listener, 16u) == SALTS_OK);
+  assert(cnet_listener_listen(&listener, 16u) == SALTS_EALREADY);
+  assert(cnet_listener_set_backlog(&listener, 32u) == SALTS_OK);
 
   assert(cnet_client_init(&client, &client_config) == SALTS_OK);
   assert(cnet_client_init(&accepted_client, &client_config) == SALTS_OK);
@@ -122,6 +141,10 @@ int main(void) {
   assert(cnet_listener_local(&outbound, &outbound_local) == SALTS_OK);
   assert(peer_is_loopback_v4(&outbound_local));
   assert(outbound_local.port != 0u);
+  assert(cnet_listener_tcp_option_set(
+             &outbound, CNET_TCP_SOCKET_KEEPALIVE_ENABLED, 1u) == SALTS_OK);
+  assert(cnet_listener_tcp_option_set(
+             &outbound, CNET_TCP_SOCKET_HOP_LIMIT, 54u) == SALTS_OK);
 
   assert(cnet_listener_connect_peer(
              &outbound, &client, &listener_local,
@@ -178,6 +201,89 @@ int main(void) {
   assert(peer_is_loopback_v4(&server_local));
   assert(peer_equal(&accepted_remote, &client_local));
 
+  {
+    uint64_t value = 0u;
+    int status;
+
+    assert(cnet_connection_tcp_option_get(
+               &client, connection,
+               CNET_TCP_SOCKET_KEEPALIVE_ENABLED, &value) == SALTS_OK);
+    assert(value == 1u);
+    assert(cnet_connection_tcp_option_get(
+               &client, connection,
+               CNET_TCP_SOCKET_HOP_LIMIT, &value) == SALTS_OK);
+    assert(value == 54u);
+
+    assert(cnet_connection_tcp_option_set(
+               &client, connection,
+               CNET_TCP_SOCKET_KEEPALIVE_ENABLED, 1u) == SALTS_OK);
+    assert(cnet_connection_tcp_option_get(
+               &client, connection,
+               CNET_TCP_SOCKET_KEEPALIVE_ENABLED, &value) == SALTS_OK);
+    assert(value == 1u);
+
+    assert(cnet_connection_tcp_option_set(
+               &client, connection,
+               CNET_TCP_SOCKET_HOP_LIMIT, 55u) == SALTS_OK);
+    assert(cnet_connection_tcp_option_get(
+               &client, connection,
+               CNET_TCP_SOCKET_HOP_LIMIT, &value) == SALTS_OK);
+    assert(value == 55u);
+
+    assert(cnet_connection_tcp_option_set(
+               &client, connection,
+               CNET_TCP_SOCKET_RECEIVE_BUFFER_BYTES, 8192u) == SALTS_OK);
+    assert(cnet_connection_tcp_option_get(
+               &client, connection,
+               CNET_TCP_SOCKET_RECEIVE_BUFFER_BYTES, &value) == SALTS_OK);
+    assert(value != 0u);
+
+    assert(cnet_connection_tcp_option_set(
+               &client, connection,
+               CNET_TCP_SOCKET_SEND_BUFFER_BYTES, 8192u) == SALTS_OK);
+    assert(cnet_connection_tcp_option_get(
+               &client, connection,
+               CNET_TCP_SOCKET_SEND_BUFFER_BYTES, &value) == SALTS_OK);
+    assert(value != 0u);
+
+    status = cnet_connection_tcp_option_set(
+        &client, connection,
+        CNET_TCP_SOCKET_KEEPALIVE_IDLE_MS, 2000u);
+    assert(status == SALTS_OK || status == SALTS_ENOTSUP);
+    if (status == SALTS_OK) {
+      assert(cnet_connection_tcp_option_get(
+                 &client, connection,
+                 CNET_TCP_SOCKET_KEEPALIVE_IDLE_MS, &value) == SALTS_OK);
+      assert(value != 0u);
+    }
+
+    status = cnet_connection_tcp_option_set(
+        &client, connection,
+        CNET_TCP_SOCKET_KEEPALIVE_INTERVAL_MS, 2000u);
+    assert(status == SALTS_OK || status == SALTS_ENOTSUP);
+    if (status == SALTS_OK) {
+      assert(cnet_connection_tcp_option_get(
+                 &client, connection,
+                 CNET_TCP_SOCKET_KEEPALIVE_INTERVAL_MS, &value) == SALTS_OK);
+      assert(value != 0u);
+    }
+
+    status = cnet_connection_tcp_option_set(
+        &client, connection,
+        CNET_TCP_SOCKET_KEEPALIVE_COUNT, 3u);
+    assert(status == SALTS_OK || status == SALTS_ENOTSUP);
+    if (status == SALTS_OK) {
+      assert(cnet_connection_tcp_option_get(
+                 &client, connection,
+                 CNET_TCP_SOCKET_KEEPALIVE_COUNT, &value) == SALTS_OK);
+      assert(value != 0u);
+    }
+
+    assert(cnet_connection_tcp_option_set(
+               &client, connection,
+               CNET_TCP_SOCKET_HOP_LIMIT, 0u) != SALTS_OK);
+  }
+
   assert(cnet_close(&client, connection) == SALTS_OK);
   assert(cnet_close(&accepted_client, accepted) == SALTS_OK);
 
@@ -197,6 +303,15 @@ int main(void) {
              &client, connection, &client_local) == SALTS_ENOENT);
   assert(cnet_connection_remote_peer(
              &client, connection, &client_remote) == SALTS_ENOENT);
+  {
+    uint64_t stale_value = 0u;
+    assert(cnet_connection_tcp_option_get(
+               &client, connection,
+               CNET_TCP_SOCKET_HOP_LIMIT, &stale_value) == SALTS_ENOENT);
+    assert(cnet_connection_tcp_option_set(
+               &client, connection,
+               CNET_TCP_SOCKET_HOP_LIMIT, 32u) == SALTS_ENOENT);
+  }
 
   assert(cnet_client_stop(&client, TEST_TIMEOUT_MS) == SALTS_OK);
   assert(cnet_client_destroy(&client) == SALTS_OK);

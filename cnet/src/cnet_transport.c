@@ -48,6 +48,22 @@ int cnet_stream_socket_options_validate(const cnet_stream_socket_options *option
   return SALTS_OK;
 }
 
+static int cnet_transport_socket_option_error(void) {
+#if defined(_WIN32)
+  const int error = WSAGetLastError();
+  if (error == WSAENOPROTOOPT || error == WSAEOPNOTSUPP ||
+      error == WSAEPROTONOSUPPORT)
+    return SALTS_ENOTSUP;
+  if (error == WSAEINVAL) return SALTS_EINVAL;
+#else
+  const int error = errno;
+  if (error == ENOPROTOOPT || error == EOPNOTSUPP || error == ENOTSUP)
+    return SALTS_ENOTSUP;
+  if (error == EINVAL) return SALTS_EINVAL;
+#endif
+  return cnet_transport_native_error();
+}
+
 static int cnet_transport_set_socket_int(cnet_native_socket socket_value, int level, int option,
                                          int value) {
 #if defined(_WIN32)
@@ -55,7 +71,54 @@ static int cnet_transport_set_socket_int(cnet_native_socket socket_value, int le
 #else
   if (setsockopt(socket_value, level, option, &value, (socklen_t)sizeof(value)) != 0)
 #endif
+    return cnet_transport_socket_option_error();
+  return SALTS_OK;
+}
+
+static int cnet_transport_get_socket_int(cnet_native_socket socket_value, int level, int option,
+                                         int *out_value) {
+#if defined(_WIN32)
+  int size = (int)sizeof(*out_value);
+#else
+  socklen_t size = (socklen_t)sizeof(*out_value);
+#endif
+  if (out_value == NULL) return SALTS_EINVAL;
+  *out_value = 0;
+#if defined(_WIN32)
+  if (getsockopt(socket_value, level, option, (char *)out_value, &size) != 0)
+#else
+  if (getsockopt(socket_value, level, option, out_value, &size) != 0)
+#endif
+    return cnet_transport_socket_option_error();
+  return size > 0 && (size_t)size <= sizeof(*out_value)
+             ? SALTS_OK
+             : SALTS_EPROTO;
+}
+
+static int cnet_transport_socket_family(cnet_native_socket socket_value, int *out_family) {
+  struct sockaddr_storage address;
+#if defined(_WIN32)
+  int size = (int)sizeof(address);
+#else
+  socklen_t size = (socklen_t)sizeof(address);
+#endif
+  if (out_family == NULL) return SALTS_EINVAL;
+  *out_family = AF_UNSPEC;
+  memset(&address, 0, sizeof(address));
+  if (getsockname(socket_value, (struct sockaddr *)&address, &size) != 0)
     return cnet_transport_native_error();
+  if (address.ss_family != AF_INET && address.ss_family != AF_INET6)
+    return SALTS_EAFNOSUPPORT;
+  *out_family = address.ss_family;
+  return SALTS_OK;
+}
+
+static int cnet_transport_ms_to_seconds(uint64_t milliseconds, int *out_seconds) {
+  uint64_t seconds;
+  if (out_seconds == NULL || milliseconds == 0u) return SALTS_EINVAL;
+  seconds = (milliseconds + UINT64_C(999)) / UINT64_C(1000);
+  if (seconds == 0u || seconds > (uint64_t)INT_MAX) return SALTS_ERANGE;
+  *out_seconds = (int)seconds;
   return SALTS_OK;
 }
 
@@ -710,6 +773,203 @@ int cnet_transport_tcp_local_peer(const cnet_transport *transport, cnet_stream_p
 
 int cnet_transport_tcp_remote_peer(const cnet_transport *transport, cnet_stream_peer *out_peer) {
   return cnet_transport_socket_peer(transport, true, out_peer);
+}
+
+static int cnet_transport_tcp_socket(const cnet_transport *transport,
+                                     cnet_native_socket *out_socket) {
+  if (out_socket == NULL) return SALTS_EINVAL;
+  *out_socket = CNET_INVALID_SOCKET;
+  if (transport == NULL ||
+      transport->resource_kind != CNET_TRANSPORT_RESOURCE_SOCKET ||
+      !transport->native_open || transport->native_handle == UINTPTR_MAX)
+    return SALTS_ENOENT;
+  *out_socket = (cnet_native_socket)transport->native_handle;
+  return SALTS_OK;
+}
+
+int cnet_transport_tcp_option_get(const cnet_transport *transport,
+                                  cnet_tcp_socket_option option,
+                                  uint64_t *out_value) {
+  cnet_native_socket socket_value;
+  int family;
+  int value;
+  int status;
+
+  if (out_value == NULL) return SALTS_EINVAL;
+  *out_value = 0u;
+  status = cnet_transport_tcp_socket(transport, &socket_value);
+  if (status != SALTS_OK) return status;
+
+  switch (option) {
+  case CNET_TCP_SOCKET_KEEPALIVE_ENABLED:
+    status = cnet_transport_get_socket_int(socket_value, SOL_SOCKET, SO_KEEPALIVE, &value);
+    if (status == SALTS_OK) *out_value = value != 0 ? 1u : 0u;
+    return status;
+
+  case CNET_TCP_SOCKET_KEEPALIVE_IDLE_MS:
+#if defined(TCP_KEEPIDLE)
+    status = cnet_transport_get_socket_int(socket_value, IPPROTO_TCP, TCP_KEEPIDLE, &value);
+#elif !defined(_WIN32) && defined(TCP_KEEPALIVE)
+    status = cnet_transport_get_socket_int(socket_value, IPPROTO_TCP, TCP_KEEPALIVE, &value);
+#else
+    return SALTS_ENOTSUP;
+#endif
+    if (status == SALTS_OK) {
+      if (value < 0) return SALTS_EPROTO;
+      *out_value = (uint64_t)(unsigned int)value * UINT64_C(1000);
+    }
+    return status;
+
+  case CNET_TCP_SOCKET_KEEPALIVE_INTERVAL_MS:
+#if defined(TCP_KEEPINTVL)
+    status = cnet_transport_get_socket_int(socket_value, IPPROTO_TCP, TCP_KEEPINTVL, &value);
+    if (status == SALTS_OK) {
+      if (value < 0) return SALTS_EPROTO;
+      *out_value = (uint64_t)(unsigned int)value * UINT64_C(1000);
+    }
+    return status;
+#else
+    return SALTS_ENOTSUP;
+#endif
+
+  case CNET_TCP_SOCKET_KEEPALIVE_COUNT:
+#if defined(TCP_KEEPCNT)
+    status = cnet_transport_get_socket_int(socket_value, IPPROTO_TCP, TCP_KEEPCNT, &value);
+    if (status == SALTS_OK) {
+      if (value < 0) return SALTS_EPROTO;
+      *out_value = (uint64_t)(unsigned int)value;
+    }
+    return status;
+#else
+    return SALTS_ENOTSUP;
+#endif
+
+  case CNET_TCP_SOCKET_HOP_LIMIT:
+    status = cnet_transport_socket_family(socket_value, &family);
+    if (status != SALTS_OK) return status;
+    status = family == AF_INET
+                 ? cnet_transport_get_socket_int(socket_value, IPPROTO_IP, IP_TTL, &value)
+                 : cnet_transport_get_socket_int(socket_value, IPPROTO_IPV6,
+                                                 IPV6_UNICAST_HOPS, &value);
+    if (status == SALTS_OK) {
+      if (value < 0) return SALTS_EPROTO;
+      *out_value = (uint64_t)(unsigned int)value;
+    }
+    return status;
+
+  case CNET_TCP_SOCKET_RECEIVE_BUFFER_BYTES:
+    status = cnet_transport_get_socket_int(socket_value, SOL_SOCKET, SO_RCVBUF, &value);
+    if (status == SALTS_OK) {
+      if (value < 0) return SALTS_EPROTO;
+      *out_value = (uint64_t)(unsigned int)value;
+    }
+    return status;
+
+  case CNET_TCP_SOCKET_SEND_BUFFER_BYTES:
+    status = cnet_transport_get_socket_int(socket_value, SOL_SOCKET, SO_SNDBUF, &value);
+    if (status == SALTS_OK) {
+      if (value < 0) return SALTS_EPROTO;
+      *out_value = (uint64_t)(unsigned int)value;
+    }
+    return status;
+  }
+
+  return SALTS_EINVAL;
+}
+
+int cnet_transport_tcp_option_set(cnet_transport *transport,
+                                  cnet_tcp_socket_option option,
+                                  uint64_t option_value) {
+  cnet_native_socket socket_value;
+  int family;
+  int value;
+  int status;
+
+  status = cnet_transport_tcp_socket(transport, &socket_value);
+  if (status != SALTS_OK) return status;
+
+  switch (option) {
+  case CNET_TCP_SOCKET_KEEPALIVE_ENABLED:
+    if (option_value > 1u) return SALTS_EINVAL;
+    return cnet_transport_set_socket_int(
+        socket_value, SOL_SOCKET, SO_KEEPALIVE, (int)option_value);
+
+  case CNET_TCP_SOCKET_KEEPALIVE_IDLE_MS:
+    status = cnet_transport_ms_to_seconds(option_value, &value);
+    if (status != SALTS_OK) return status;
+#if defined(TCP_KEEPIDLE)
+    return cnet_transport_set_socket_int(socket_value, IPPROTO_TCP, TCP_KEEPIDLE, value);
+#elif !defined(_WIN32) && defined(TCP_KEEPALIVE)
+    return cnet_transport_set_socket_int(socket_value, IPPROTO_TCP, TCP_KEEPALIVE, value);
+#else
+    return SALTS_ENOTSUP;
+#endif
+
+  case CNET_TCP_SOCKET_KEEPALIVE_INTERVAL_MS:
+    status = cnet_transport_ms_to_seconds(option_value, &value);
+    if (status != SALTS_OK) return status;
+#if defined(TCP_KEEPINTVL)
+    return cnet_transport_set_socket_int(socket_value, IPPROTO_TCP, TCP_KEEPINTVL, value);
+#else
+    return SALTS_ENOTSUP;
+#endif
+
+  case CNET_TCP_SOCKET_KEEPALIVE_COUNT:
+    if (option_value == 0u || option_value > (uint64_t)INT_MAX) return SALTS_ERANGE;
+#if defined(TCP_KEEPCNT)
+    return cnet_transport_set_socket_int(
+        socket_value, IPPROTO_TCP, TCP_KEEPCNT, (int)option_value);
+#else
+    return SALTS_ENOTSUP;
+#endif
+
+  case CNET_TCP_SOCKET_HOP_LIMIT:
+    if (option_value == 0u || option_value > UINT8_MAX) return SALTS_ERANGE;
+    status = cnet_transport_socket_family(socket_value, &family);
+    if (status != SALTS_OK) return status;
+    return family == AF_INET
+               ? cnet_transport_set_socket_int(
+                     socket_value, IPPROTO_IP, IP_TTL, (int)option_value)
+               : cnet_transport_set_socket_int(
+                     socket_value, IPPROTO_IPV6, IPV6_UNICAST_HOPS,
+                     (int)option_value);
+
+  case CNET_TCP_SOCKET_RECEIVE_BUFFER_BYTES:
+    if (option_value == 0u || option_value > (uint64_t)INT_MAX) return SALTS_ERANGE;
+    return cnet_transport_set_socket_int(
+        socket_value, SOL_SOCKET, SO_RCVBUF, (int)option_value);
+
+  case CNET_TCP_SOCKET_SEND_BUFFER_BYTES:
+    if (option_value == 0u || option_value > (uint64_t)INT_MAX) return SALTS_ERANGE;
+    return cnet_transport_set_socket_int(
+        socket_value, SOL_SOCKET, SO_SNDBUF, (int)option_value);
+  }
+
+  return SALTS_EINVAL;
+}
+
+int cnet_transport_tcp_native_option_get(uintptr_t native_socket,
+                                         cnet_tcp_socket_option option,
+                                         uint64_t *out_value) {
+  cnet_transport transport = {0};
+  if (native_socket == UINTPTR_MAX) return SALTS_EINVAL;
+  transport.native_handle = native_socket;
+  transport.write_native_handle = UINTPTR_MAX;
+  transport.resource_kind = CNET_TRANSPORT_RESOURCE_SOCKET;
+  transport.native_open = true;
+  return cnet_transport_tcp_option_get(&transport, option, out_value);
+}
+
+int cnet_transport_tcp_native_option_set(uintptr_t native_socket,
+                                         cnet_tcp_socket_option option,
+                                         uint64_t value) {
+  cnet_transport transport = {0};
+  if (native_socket == UINTPTR_MAX) return SALTS_EINVAL;
+  transport.native_handle = native_socket;
+  transport.write_native_handle = UINTPTR_MAX;
+  transport.resource_kind = CNET_TRANSPORT_RESOURCE_SOCKET;
+  transport.native_open = true;
+  return cnet_transport_tcp_option_set(&transport, option, value);
 }
 
 native_io_endpoint cnet_transport_read_endpoint(const cnet_transport *transport) {

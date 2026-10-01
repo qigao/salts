@@ -51,6 +51,7 @@ typedef struct cnet_listener_impl {
   native_io_backend_kind backend;
   cnet_listener_kind kind;
   uint16_t port;
+  size_t backlog;
   bool listening;
   bool closed;
 } cnet_listener_impl;
@@ -261,6 +262,7 @@ int cnet_listener_bind_ex(cnet_listener *listener, const cnet_listener_config *c
   impl->socket_value = CNET_LISTENER_INVALID_SOCKET;
   impl->backend = config->backend;
   impl->kind = CNET_LISTENER_KIND_TCP;
+  impl->backlog = config->backlog;
 #if defined(_WIN32)
   if (config->backend != NATIVE_IO_BACKEND_IOCP) status = SALTS_ENOTSUP;
   else {
@@ -317,8 +319,44 @@ int cnet_listener_listen(cnet_listener *listener, size_t backlog) {
   if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
   if (impl->listening) return SALTS_EALREADY;
   if (listen(impl->socket_value, (int)backlog) != 0) return cnet_listener_native_error();
+  impl->backlog = backlog;
   impl->listening = true;
   return SALTS_OK;
+}
+
+int cnet_listener_set_backlog(cnet_listener *listener, size_t backlog) {
+  cnet_listener_impl *impl = cnet_listener_get(listener);
+  if (impl == NULL || backlog == 0u || backlog > (size_t)INT_MAX) return SALTS_EINVAL;
+  if (impl->closed) return SALTS_ESHUTDOWN;
+  if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
+  if (impl->listening && listen(impl->socket_value, (int)backlog) != 0)
+    return cnet_listener_native_error();
+  impl->backlog = backlog;
+  return SALTS_OK;
+}
+
+int cnet_listener_tcp_option_get(cnet_listener *listener,
+                                 cnet_tcp_socket_option option,
+                                 uint64_t *out_value) {
+  cnet_listener_impl *impl = cnet_listener_get(listener);
+  if (out_value == NULL) return SALTS_EINVAL;
+  *out_value = 0u;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->closed) return SALTS_ESHUTDOWN;
+  if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
+  return cnet_transport_tcp_native_option_get(
+      (uintptr_t)impl->socket_value, option, out_value);
+}
+
+int cnet_listener_tcp_option_set(cnet_listener *listener,
+                                 cnet_tcp_socket_option option,
+                                 uint64_t value) {
+  cnet_listener_impl *impl = cnet_listener_get(listener);
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->closed) return SALTS_ESHUTDOWN;
+  if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
+  return cnet_transport_tcp_native_option_set(
+      (uintptr_t)impl->socket_value, option, value);
 }
 
 int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
