@@ -335,6 +335,30 @@ int cnet_listener_set_backlog(cnet_listener *listener, size_t backlog) {
   return SALTS_OK;
 }
 
+int cnet_listener_tcp_option_get(cnet_listener *listener,
+                                 cnet_tcp_socket_option option,
+                                 uint64_t *out_value) {
+  cnet_listener_impl *impl = cnet_listener_get(listener);
+  if (out_value == NULL) return SALTS_EINVAL;
+  *out_value = 0u;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->closed) return SALTS_ESHUTDOWN;
+  if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
+  return cnet_transport_tcp_native_option_get(
+      (uintptr_t)impl->socket_value, option, out_value);
+}
+
+int cnet_listener_tcp_option_set(cnet_listener *listener,
+                                 cnet_tcp_socket_option option,
+                                 uint64_t value) {
+  cnet_listener_impl *impl = cnet_listener_get(listener);
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->closed) return SALTS_ESHUTDOWN;
+  if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
+  return cnet_transport_tcp_native_option_set(
+      (uintptr_t)impl->socket_value, option, value);
+}
+
 int cnet_listener_init_ex(cnet_listener *listener, const cnet_listener_config *config,
                           const cnet_listener_options *options) {
   int status = cnet_listener_bind_ex(listener, config, options);
