@@ -471,6 +471,8 @@ static int cnet_owner_process_session_work(cnet_owner_impl *impl) {
     }
     status = cnet_owner_start_queued_write(impl, session);
     if (status != SALTS_OK) return status;
+    status = cnet_owner_progress_tcp_shutdown(impl, session);
+    if (status != SALTS_OK) return status;
     if (session->peer.scheme == CNET_URI_TLS && session->receive_demand == 0u &&
         !session->close_requested) {
       status = cnet_owner_tls_background_progress(impl, session);
