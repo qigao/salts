@@ -20,6 +20,8 @@ typedef struct cnet_owner_connect_payload {
   uintptr_t adopted_socket;
   size_t address_length;
   unsigned char address[CNET_OWNER_ADDRESS_CAPACITY];
+  size_t local_address_length;
+  unsigned char local_address[CNET_OWNER_ADDRESS_CAPACITY];
   char host[CNET_RESOLVER_HOST_CAPACITY];
   uint16_t port;
   char pipe_name[CNET_URI_PATH_CAPACITY];
