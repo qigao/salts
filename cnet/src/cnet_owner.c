@@ -535,6 +535,41 @@ static int cnet_owner_cancel_receive_requests(cnet_owner_impl *impl, cnet_sessio
   return first_error;
 }
 
+static int cnet_owner_progress_tcp_shutdown(cnet_owner_impl *impl,
+                                            cnet_owner_session *session) {
+  size_t queued_writes = 0u;
+  int status;
+
+  if (impl == NULL || session == NULL ||
+      session->peer.scheme != CNET_URI_TCP)
+    return SALTS_OK;
+
+  if ((session->tcp_shutdown_mask &
+       (uint8_t)CNET_TCP_SHUTDOWN_SEND) == 0u ||
+      (session->tcp_shutdown_applied_mask &
+       (uint8_t)CNET_TCP_SHUTDOWN_SEND) != 0u)
+    return SALTS_OK;
+
+  if (session->write_active)
+    return SALTS_OK;
+
+  status = cnet_write_queue_count(
+      &impl->writes, session->handle, &queued_writes);
+  if (status != SALTS_OK)
+    return status;
+  if (queued_writes != 0u)
+    return SALTS_OK;
+
+  status = cnet_transport_tcp_shutdown(
+      &session->transport, CNET_TCP_SHUTDOWN_SEND);
+  if (status != SALTS_OK)
+    return status;
+  session->tcp_shutdown_applied_mask =
+      (uint8_t)(session->tcp_shutdown_applied_mask |
+                (uint8_t)CNET_TCP_SHUTDOWN_SEND);
+  return SALTS_OK;
+}
+
 static int cnet_owner_release_tls_send(cnet_owner_impl *impl, cnet_owner_session *session) {
   int status;
   if (!cnet_write_handle_valid(session->tls_send_write.handle)) return SALTS_OK;
