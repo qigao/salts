@@ -15,6 +15,8 @@ typedef struct endpoint_probe {
   atomic_int connected;
   atomic_int terminal;
   atomic_int failed;
+  atomic_int sent;
+  atomic_int received;
 } endpoint_probe;
 
 static native_io_backend_kind test_backend(void) {
@@ -56,10 +58,20 @@ static void on_state(void *user, cnet_connection connection,
 
 static void on_owned_receive(void *user, cnet_connection connection,
                              mem_slice_t slice, cnet_message_kind kind) {
-  (void)user;
+  endpoint_probe *probe = (endpoint_probe *)user;
   (void)connection;
-  (void)slice;
   (void)kind;
+  if (probe != NULL)
+    atomic_fetch_add_explicit(&probe->received, 1, memory_order_acq_rel);
+  mem_slice_release(&slice);
+}
+
+static void on_send(void *user, cnet_connection connection, size_t size) {
+  endpoint_probe *probe = (endpoint_probe *)user;
+  (void)connection;
+  assert(size != 0u);
+  if (probe != NULL)
+    atomic_fetch_add_explicit(&probe->sent, 1, memory_order_acq_rel);
 }
 
 static int send_one_byte(cnet_client *client,
@@ -109,9 +121,9 @@ int main(void) {
   cnet_connection accepted = {0};
   endpoint_probe client_probe = {0};
   endpoint_probe accepted_probe = {0};
-  cnet_observer client_observer = {on_state, NULL, &client_probe, NULL};
+  cnet_observer client_observer = {on_state, NULL, &client_probe, on_send};
   cnet_observer accepted_observer = {
-      on_state, NULL, &accepted_probe, NULL};
+      on_state, NULL, &accepted_probe, on_send};
   cnet_stream_peer listener_local = {0};
   cnet_stream_peer accepted_remote = {0};
   cnet_stream_peer client_local = {0};
