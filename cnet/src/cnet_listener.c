@@ -52,6 +52,8 @@ typedef struct cnet_listener_impl {
   cnet_listener_kind kind;
   uint16_t port;
   size_t backlog;
+  uint64_t tcp_option_values[8];
+  uint8_t tcp_option_set_mask;
   bool listening;
   bool closed;
 } cnet_listener_impl;
@@ -392,11 +394,21 @@ int cnet_listener_tcp_option_set(cnet_listener *listener,
                                  cnet_tcp_socket_option option,
                                  uint64_t value) {
   cnet_listener_impl *impl = cnet_listener_get(listener);
+  int status;
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->closed) return SALTS_ESHUTDOWN;
   if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
-  return cnet_transport_tcp_native_option_set(
+  status = cnet_transport_tcp_native_option_set(
       (uintptr_t)impl->socket_value, option, value);
+  if (status == SALTS_OK &&
+      option >= CNET_TCP_SOCKET_KEEPALIVE_ENABLED &&
+      option <= CNET_TCP_SOCKET_SEND_BUFFER_BYTES) {
+    impl->tcp_option_values[(unsigned int)option] = value;
+    impl->tcp_option_set_mask =
+        (uint8_t)(impl->tcp_option_set_mask |
+                  (uint8_t)(1u << (unsigned int)option));
+  }
+  return status;
 }
 
 int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
@@ -641,6 +653,25 @@ int cnet_listener_accept_peer(cnet_listener *listener, cnet_client *client,
   if (status != SALTS_OK) {
     cnet_transport_close_socket((uintptr_t)accepted);
     return status;
+  }
+  {
+    unsigned int option;
+    for (option = (unsigned int)CNET_TCP_SOCKET_KEEPALIVE_ENABLED;
+         option <= (unsigned int)CNET_TCP_SOCKET_SEND_BUFFER_BYTES;
+         ++option) {
+      if ((impl->tcp_option_set_mask &
+           (uint8_t)(1u << option)) == 0u)
+        continue;
+      status = cnet_transport_tcp_native_option_set(
+          (uintptr_t)accepted,
+          (cnet_tcp_socket_option)option,
+          impl->tcp_option_values[option]);
+      if (status != SALTS_OK) {
+        cnet_transport_close_socket((uintptr_t)accepted);
+        *out_peer = (cnet_stream_peer){0};
+        return status;
+      }
+    }
   }
 #if !defined(_WIN32)
   {
