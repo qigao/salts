@@ -100,7 +100,6 @@ int main(void) {
   cnet_listener listener = {0};
   cnet_listener outbound = {0};
   cnet_stream_peer listener_bind = {0};
-  cnet_stream_peer outbound_bind = {0};
   cnet_client client = {0};
   cnet_client accepted_client = {0};
   cnet_client_config client_config = test_client_config();
@@ -137,7 +136,6 @@ int main(void) {
   listener_bind.family = CNET_DATAGRAM_ADDRESS_IPV4;
   listener_bind.address[0] = 127u;
   listener_bind.address[3] = 1u;
-  outbound_bind = listener_bind;
 
   assert(cnet_listener_open(
              &listener, test_backend(),
