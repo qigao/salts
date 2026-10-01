@@ -701,6 +701,8 @@ typedef enum cnet_tcp_shutdown {
 /**
  * Performs a generation-safe TCP half-shutdown. Repeating a direction that is
  * already shut down is idempotent. This does not drop the connection handle.
+ * Returns SALTS_EBUSY while that direction still owns admitted CNet I/O so the
+ * caller can preserve ordered data before retrying shutdown.
  */
 int cnet_connection_shutdown(cnet_client *client,
                              cnet_connection connection,
