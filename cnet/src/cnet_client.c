@@ -209,12 +209,23 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
   if (view->kind == CNET_EVENT_RECEIVE) {
     const cnet_message_kind kind =
         record->scheme == CNET_URI_UDP ? CNET_MESSAGE_DATAGRAM : CNET_MESSAGE_BYTES;
+    const bool receive_shutdown =
+        record->scheme == CNET_URI_TCP &&
+        (record->tcp_shutdown_mask &
+         (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE) != 0u;
     if (record->active && record->internal.session.slot == view->session.slot &&
         record->internal.session.generation == view->session.generation) {
-      if (record->receive_pending == 0u) cnet_client_record_error(impl, SALTS_EPROTO);
-      else --record->receive_pending;
+      if (!receive_shutdown) {
+        if (record->receive_pending == 0u) cnet_client_record_error(impl, SALTS_EPROTO);
+        else --record->receive_pending;
+      }
     }
-    if (record->receive_slice_handler != NULL) {
+    if (receive_shutdown) {
+      /*
+       * WASI-style receive shutdown discards already-queued receive data.
+       * Dispatcher-owned backing is released after this observer returns.
+       */
+    } else if (record->receive_slice_handler != NULL) {
       mem_slice_t slice = {0};
       const int materialize_status = cnet_client_materialize_receive(view, &slice);
       if (materialize_status != SALTS_OK) {
