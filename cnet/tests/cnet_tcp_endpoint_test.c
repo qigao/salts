@@ -114,7 +114,6 @@ int main(void) {
   cnet_observer accepted_observer = {
       on_state, NULL, &accepted_probe, NULL};
   cnet_stream_peer listener_local = {0};
-  cnet_stream_peer outbound_local = {0};
   cnet_stream_peer accepted_remote = {0};
   cnet_stream_peer client_local = {0};
   cnet_stream_peer client_remote = {0};
@@ -140,15 +139,17 @@ int main(void) {
   listener_bind.address[3] = 1u;
   outbound_bind = listener_bind;
 
-  assert(cnet_listener_bind_peer(
-             &listener, test_backend(), &listener_bind) == SALTS_OK);
-  assert(cnet_listener_port(&listener, &port) == SALTS_OK);
-  assert(port != 0u);
-  assert(cnet_listener_local(&listener, &listener_local) == SALTS_OK);
-  assert(listener_local.port == port);
-  assert(peer_is_loopback_v4(&listener_local));
-  assert(cnet_listener_wait(&listener, 0u, &ready) == SALTS_EBUSY);
+  assert(cnet_listener_open(
+             &listener, test_backend(),
+             CNET_DATAGRAM_ADDRESS_IPV4) == SALTS_OK);
+  assert(cnet_listener_local(
+             &listener, &listener_local) == SALTS_EBUSY);
+  assert(cnet_listener_port(
+             &listener, &port) == SALTS_EBUSY);
+  assert(cnet_listener_listen(
+             &listener, 16u) == SALTS_EBUSY);
   assert(cnet_listener_set_backlog(&listener, 16u) == SALTS_OK);
+
   assert(cnet_listener_tcp_option_set(
              &listener, CNET_TCP_SOCKET_KEEPALIVE_ENABLED, 1u) == SALTS_OK);
   assert(cnet_listener_tcp_option_get(
@@ -206,6 +207,17 @@ int main(void) {
                &listener, CNET_TCP_SOCKET_KEEPALIVE_COUNT,
                &listener_keepalive_count) == SALTS_OK);
 
+  assert(cnet_listener_bind_open_peer(
+             &listener, &listener_bind) == SALTS_OK);
+  assert(cnet_listener_bind_open_peer(
+             &listener, &listener_bind) == SALTS_EALREADY);
+  assert(cnet_listener_port(&listener, &port) == SALTS_OK);
+  assert(port != 0u);
+  assert(cnet_listener_local(&listener, &listener_local) == SALTS_OK);
+  assert(listener_local.port == port);
+  assert(peer_is_loopback_v4(&listener_local));
+  assert(cnet_listener_wait(&listener, 0u, &ready) == SALTS_EBUSY);
+
   assert(cnet_listener_listen(&listener, 16u) == SALTS_OK);
   assert(cnet_listener_listen(&listener, 16u) == SALTS_EALREADY);
   assert(cnet_listener_set_backlog(&listener, 32u) == SALTS_OK);
@@ -217,15 +229,15 @@ int main(void) {
   assert(cnet_client_set_stream_socket_options(
              &accepted_client, &accepted_future_options) == SALTS_OK);
 
-  assert(cnet_listener_bind_peer(
-             &outbound, test_backend(), &outbound_bind) == SALTS_OK);
-  assert(cnet_listener_local(&outbound, &outbound_local) == SALTS_OK);
-  assert(peer_is_loopback_v4(&outbound_local));
-  assert(outbound_local.port != 0u);
+  assert(cnet_listener_open(
+             &outbound, test_backend(),
+             CNET_DATAGRAM_ADDRESS_IPV4) == SALTS_OK);
   assert(cnet_listener_tcp_option_set(
              &outbound, CNET_TCP_SOCKET_KEEPALIVE_ENABLED, 1u) == SALTS_OK);
   assert(cnet_listener_tcp_option_set(
              &outbound, CNET_TCP_SOCKET_HOP_LIMIT, 54u) == SALTS_OK);
+  assert(cnet_listener_local(
+             &outbound, &client_local) == SALTS_EBUSY);
 
   assert(cnet_listener_connect_peer(
              &outbound, &client, &listener_local,
@@ -275,7 +287,6 @@ int main(void) {
 
   assert(peer_is_loopback_v4(&client_local));
   assert(client_local.port != 0u);
-  assert(peer_equal(&client_local, &outbound_local));
   assert(peer_equal(&client_remote, &listener_local));
   assert(peer_equal(&server_remote, &client_local));
   assert(server_local.port == listener_local.port);
