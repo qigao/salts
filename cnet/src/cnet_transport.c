@@ -579,6 +579,80 @@ int cnet_transport_adopt_tcp(cnet_transport *transport, native_io_backend *backe
   return cnet_transport_adopt_stream(transport, backend, native_socket, true, socket_options);
 }
 
+int cnet_transport_adopt_tcp_prepare_connect(
+    cnet_transport *transport, native_io_backend *backend,
+    uintptr_t native_socket, const void *remote_address,
+    size_t remote_address_length,
+    const cnet_stream_socket_options *socket_options,
+    uintptr_t user_data, native_io_operation *out_operation) {
+  cnet_native_socket socket_value = (cnet_native_socket)native_socket;
+  struct sockaddr_storage local_address;
+#if defined(_WIN32)
+  int local_length = (int)sizeof(local_address);
+#else
+  socklen_t local_length = (socklen_t)sizeof(local_address);
+#endif
+  int remote_family = 0;
+  int status;
+
+  if (transport == NULL || out_operation == NULL) {
+    cnet_transport_close_socket(native_socket);
+    return SALTS_EINVAL;
+  }
+  cnet_transport_reset(transport);
+  *out_operation = (native_io_operation){0};
+  if (backend == NULL || native_socket == UINTPTR_MAX) {
+    cnet_transport_close_socket(native_socket);
+    return SALTS_EINVAL;
+  }
+
+  status = cnet_transport_address_family(
+      remote_address, remote_address_length, &remote_family);
+  if (status != SALTS_OK || (remote_family != AF_INET && remote_family != AF_INET6)) {
+    cnet_transport_close_socket(native_socket);
+    return status != SALTS_OK ? status : SALTS_EINVAL;
+  }
+
+  memset(&local_address, 0, sizeof(local_address));
+  if (getsockname(socket_value, (struct sockaddr *)&local_address, &local_length) != 0) {
+    status = cnet_transport_native_error();
+    cnet_transport_close_socket(native_socket);
+    return status;
+  }
+  if (local_address.ss_family != remote_family) {
+    cnet_transport_close_socket(native_socket);
+    return SALTS_EAFNOSUPPORT;
+  }
+
+  status = cnet_stream_socket_options_validate(socket_options);
+  if (status == SALTS_OK)
+    status = cnet_transport_apply_stream_socket_options(native_socket, socket_options);
+  if (status != SALTS_OK) {
+    cnet_transport_close_socket(native_socket);
+    return status;
+  }
+
+  transport->native_handle = native_socket;
+  transport->resource_kind = CNET_TRANSPORT_RESOURCE_SOCKET;
+  transport->native_open = true;
+  status = native_io_backend_attach_socket(
+      backend, native_socket, &transport->endpoint);
+  if (status != SALTS_OK) {
+    cnet_transport_close_native(transport);
+    cnet_transport_reset(transport);
+    return status;
+  }
+  transport->attached = true;
+  *out_operation = (native_io_operation){
+      .kind = NATIVE_IO_OPERATION_STREAM_CONNECT,
+      .endpoint = transport->endpoint,
+      .user_data = user_data,
+      .address = (void *)remote_address,
+      .address_capacity = remote_address_length,
+      .address_length = remote_address_length};
+  return SALTS_OK;
+}
+
 int cnet_transport_udp_connect(cnet_transport *transport, native_io_backend *backend,
                                native_io_backend_kind backend_kind, const void *address,
                                size_t address_length) {
