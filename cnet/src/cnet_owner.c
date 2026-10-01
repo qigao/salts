@@ -1300,11 +1300,16 @@ static bool cnet_owner_connect_endpoint_valid(const cnet_owner_connect_payload *
                                               bool has_adopted, bool has_address,
                                               bool host_present, bool has_host,
                                               bool pipe_present, bool has_pipe) {
-  if (payload->adopted)
+  if (payload->adopted) {
+    if (payload->adopted_connect)
+      return payload->scheme == CNET_URI_TCP && has_adopted && has_address &&
+             !host_present && payload->port == 0u && !pipe_present;
     return (payload->scheme == CNET_URI_TCP || payload->scheme == CNET_URI_TLS ||
             payload->scheme == CNET_URI_VSOCK) &&
            has_adopted && payload->address_length == 0u && !host_present && payload->port == 0u &&
            !pipe_present && payload->connect_timeout_ms == 0u;
+  }
+  if (payload->adopted_connect) return false;
 
   switch (payload->scheme) {
   case CNET_URI_PIPE:
@@ -1433,6 +1438,23 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
                                             CNET_SESSION_STAGE_CONNECT);
 
   if (has_adopted) {
+    if (session->peer.adopted_connect) {
+      native_io_operation operation = {0};
+      status = cnet_transport_adopt_tcp_prepare_connect(
+          &session->transport, &impl->backend, session->peer.adopted_socket,
+          session->peer.address, session->peer.address_length,
+          &session->peer.socket_options, 0u, &operation);
+      session->peer.adopted_socket = UINTPTR_MAX;
+      session->peer.adopted = false;
+      session->peer.adopted_connect = false;
+      if (status != SALTS_OK)
+        return cnet_owner_fail_accepted_command(
+            impl, session, command, status, CNET_SESSION_STAGE_CONNECT);
+      return cnet_owner_start_request(
+          impl, session, command, NULL, CNET_OWNER_REQUEST_CONNECT,
+          &operation, false, false);
+    }
+
     status = session->peer.scheme == CNET_URI_VSOCK
                  ? cnet_transport_adopt_vsock(&session->transport, &impl->backend,
                                               session->peer.adopted_socket,
