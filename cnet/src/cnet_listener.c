@@ -153,27 +153,93 @@ static bool cnet_listener_would_block(void) {
 #endif
 }
 
-static int cnet_listener_stream_peer(const struct sockaddr_storage *native_peer,
-                                     size_t native_size, cnet_stream_peer *peer) {
-  if (native_peer == NULL || peer == NULL) return SALTS_EINVAL;
-  *peer = (cnet_stream_peer){0};
-  if (native_peer->ss_family == AF_INET && native_size >= sizeof(struct sockaddr_in)) {
-    const struct sockaddr_in *address = (const struct sockaddr_in *)native_peer;
-    peer->family = CNET_DATAGRAM_ADDRESS_IPV4;
-    peer->port = ntohs(address->sin_port);
-    memcpy(peer->address, &address->sin_addr, 4u);
+static int cnet_listener_stream_endpoint(
+    const struct sockaddr_storage *native_peer,
+    size_t native_size,
+    cnet_stream_endpoint *endpoint) {
+  if (native_peer == NULL || endpoint == NULL)
+    return SALTS_EINVAL;
+  *endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+
+  if (native_peer->ss_family == AF_INET &&
+      native_size >= sizeof(struct sockaddr_in)) {
+    const struct sockaddr_in *address =
+        (const struct sockaddr_in *)native_peer;
+    endpoint->family = CNET_DATAGRAM_ADDRESS_IPV4;
+    endpoint->port = ntohs(address->sin_port);
+    memcpy(endpoint->address, &address->sin_addr, 4u);
     return SALTS_OK;
   }
-  if (native_peer->ss_family == AF_INET6 && native_size >= sizeof(struct sockaddr_in6)) {
-    const struct sockaddr_in6 *address = (const struct sockaddr_in6 *)native_peer;
-    peer->family = CNET_DATAGRAM_ADDRESS_IPV6;
-    peer->port = ntohs(address->sin6_port);
-    peer->flow_info = address->sin6_flowinfo;
-    peer->scope_id = address->sin6_scope_id;
-    memcpy(peer->address, &address->sin6_addr, 16u);
+
+  if (native_peer->ss_family == AF_INET6 &&
+      native_size >= sizeof(struct sockaddr_in6)) {
+    const struct sockaddr_in6 *address =
+        (const struct sockaddr_in6 *)native_peer;
+    endpoint->family = CNET_DATAGRAM_ADDRESS_IPV6;
+    endpoint->port = ntohs(address->sin6_port);
+    endpoint->flow_info = address->sin6_flowinfo;
+    endpoint->scope_id = address->sin6_scope_id;
+    memcpy(endpoint->address, &address->sin6_addr, 16u);
     return SALTS_OK;
   }
+
   return SALTS_EAFNOSUPPORT;
+}
+
+static int cnet_listener_stream_peer(
+    const struct sockaddr_storage *native_peer,
+    size_t native_size,
+    cnet_stream_peer *peer) {
+  cnet_stream_endpoint endpoint = CNET_STREAM_ENDPOINT_INIT;
+  int status;
+
+  if (peer == NULL) return SALTS_EINVAL;
+  *peer = (cnet_stream_peer){0};
+  status = cnet_listener_stream_endpoint(
+      native_peer, native_size, &endpoint);
+  if (status != SALTS_OK) return status;
+
+  peer->family = endpoint.family;
+  peer->port = endpoint.port;
+  peer->scope_id = endpoint.scope_id;
+  memcpy(peer->address, endpoint.address, sizeof(peer->address));
+  return SALTS_OK;
+}
+
+static int cnet_listener_local_endpoint(
+    cnet_listener_socket socket_value,
+    cnet_stream_endpoint *out_endpoint) {
+  struct sockaddr_storage address;
+#if defined(_WIN32)
+  int address_length = (int)sizeof(address);
+#else
+  socklen_t address_length = (socklen_t)sizeof(address);
+#endif
+  if (out_endpoint == NULL) return SALTS_EINVAL;
+  *out_endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+  memset(&address, 0, sizeof(address));
+  if (getsockname(
+          socket_value, (struct sockaddr *)&address,
+          &address_length) != 0)
+    return cnet_listener_native_error();
+  return cnet_listener_stream_endpoint(
+      &address, (size_t)address_length, out_endpoint);
+}
+
+static int cnet_listener_local_peer(cnet_listener_socket socket_value,
+                                    cnet_stream_peer *out_peer) {
+  cnet_stream_endpoint endpoint = CNET_STREAM_ENDPOINT_INIT;
+  int status;
+
+  if (out_peer == NULL) return SALTS_EINVAL;
+  *out_peer = (cnet_stream_peer){0};
+  status = cnet_listener_local_endpoint(socket_value, &endpoint);
+  if (status != SALTS_OK) return status;
+  out_peer->family = endpoint.family;
+  out_peer->port = endpoint.port;
+  out_peer->scope_id = endpoint.scope_id;
+  memcpy(out_peer->address, endpoint.address, sizeof(out_peer->address));
+  return SALTS_OK;
 }
 
 static void cnet_listener_close_native(cnet_listener_impl *impl) {
