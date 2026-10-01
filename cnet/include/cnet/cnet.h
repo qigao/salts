@@ -1056,7 +1056,7 @@ int cnet_listener_listen(cnet_listener *listener, size_t backlog);
  */
 int cnet_listener_set_backlog(cnet_listener *listener, size_t backlog);
 
-/** Live TCP options on one bound/listening listener-owned socket. */
+/** Live TCP options on one unbound/bound/listening TCP owner. */
 int cnet_listener_tcp_option_get(cnet_listener *listener,
                                  cnet_tcp_socket_option option,
                                  uint64_t *out_value);
@@ -1065,8 +1065,9 @@ int cnet_listener_tcp_option_set(cnet_listener *listener,
                                  uint64_t value);
 
 /**
- * Consumes one bound, not-yet-listening TCP owner and starts an asynchronous
- * client connect on that exact socket.
+ * Consumes one unbound or bound, not-yet-listening TCP owner and starts an
+ * asynchronous client connect on that exact socket. An unbound owner receives
+ * an implicit same-family ephemeral bind before ConnectEx/connect admission.
  */
 int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
                                const cnet_stream_peer *remote_peer,
