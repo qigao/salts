@@ -7,7 +7,6 @@
 #endif
 #include <assert.h>
 #include <stdatomic.h>
-#include <stdio.h>
 #include <string.h>
 
 enum { TEST_TIMEOUT_MS = 5000 };
@@ -206,12 +205,9 @@ int main(void) {
     uint64_t value = 0u;
     int status;
 
-    status = cnet_connection_tcp_option_get(
-        &client, connection,
-        CNET_TCP_SOCKET_KEEPALIVE_ENABLED, &value);
-    if (status != SALTS_OK)
-      fprintf(stderr, "keepalive get status=%d\n", status);
-    assert(status == SALTS_OK);
+    assert(cnet_connection_tcp_option_get(
+               &client, connection,
+               CNET_TCP_SOCKET_KEEPALIVE_ENABLED, &value) == SALTS_OK);
     assert(value == 1u);
     assert(cnet_connection_tcp_option_get(
                &client, connection,
