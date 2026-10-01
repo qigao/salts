@@ -110,7 +110,12 @@ static int peer_equal(const cnet_stream_peer *left,
 int main(void) {
   cnet_listener listener = {0};
   cnet_listener outbound = {0};
-  cnet_stream_peer listener_bind = {0};
+  cnet_stream_endpoint listener_bind = CNET_STREAM_ENDPOINT_INIT;
+  cnet_stream_endpoint listener_endpoint = CNET_STREAM_ENDPOINT_INIT;
+  cnet_stream_endpoint client_local_endpoint = CNET_STREAM_ENDPOINT_INIT;
+  cnet_stream_endpoint client_remote_endpoint = CNET_STREAM_ENDPOINT_INIT;
+  cnet_stream_endpoint server_local_endpoint = CNET_STREAM_ENDPOINT_INIT;
+  cnet_stream_endpoint server_remote_endpoint = CNET_STREAM_ENDPOINT_INIT;
   cnet_client client = {0};
   cnet_client accepted_client = {0};
   cnet_client_config client_config = test_client_config();
@@ -216,14 +221,20 @@ int main(void) {
                &listener, CNET_TCP_SOCKET_KEEPALIVE_COUNT,
                &listener_keepalive_count) == SALTS_OK);
 
-  assert(cnet_listener_bind_open_peer(
+  assert(cnet_listener_bind_open_endpoint(
              &listener, &listener_bind) == SALTS_OK);
-  assert(cnet_listener_bind_open_peer(
+  assert(cnet_listener_bind_open_endpoint(
              &listener, &listener_bind) == SALTS_EALREADY);
   assert(cnet_listener_port(&listener, &port) == SALTS_OK);
   assert(port != 0u);
   assert(cnet_listener_local(&listener, &listener_local) == SALTS_OK);
+  assert(cnet_listener_local_endpoint(
+             &listener, &listener_endpoint) == SALTS_OK);
   assert(listener_local.port == port);
+  assert(listener_endpoint.port == port);
+  assert(listener_endpoint.family == CNET_DATAGRAM_ADDRESS_IPV4);
+  assert(listener_endpoint.flow_info == 0u);
+  assert(listener_endpoint.scope_id == 0u);
   assert(peer_is_loopback_v4(&listener_local));
   assert(cnet_listener_wait(&listener, 0u, &ready) == SALTS_EBUSY);
 
@@ -248,8 +259,8 @@ int main(void) {
   assert(cnet_listener_local(
              &outbound, &client_local) == SALTS_EBUSY);
 
-  assert(cnet_listener_connect_peer(
-             &outbound, &client, &listener_local,
+  assert(cnet_listener_connect_endpoint(
+             &outbound, &client, &listener_endpoint,
              &client_observer, &connection) == SALTS_OK);
   assert(outbound.impl == NULL);
 
@@ -293,6 +304,24 @@ int main(void) {
              &accepted_client, accepted, &server_local) == SALTS_OK);
   assert(cnet_connection_remote_peer(
              &accepted_client, accepted, &server_remote) == SALTS_OK);
+  assert(cnet_connection_local_endpoint(
+             &client, connection, &client_local_endpoint) == SALTS_OK);
+  assert(cnet_connection_remote_endpoint(
+             &client, connection, &client_remote_endpoint) == SALTS_OK);
+  assert(cnet_connection_local_endpoint(
+             &accepted_client, accepted, &server_local_endpoint) == SALTS_OK);
+  assert(cnet_connection_remote_endpoint(
+             &accepted_client, accepted, &server_remote_endpoint) == SALTS_OK);
+
+  assert(client_local_endpoint.family == CNET_DATAGRAM_ADDRESS_IPV4);
+  assert(client_local_endpoint.port == client_local.port);
+  assert(client_remote_endpoint.port == listener_endpoint.port);
+  assert(server_local_endpoint.port == listener_endpoint.port);
+  assert(server_remote_endpoint.port == client_local_endpoint.port);
+  assert(client_local_endpoint.flow_info == 0u);
+  assert(client_remote_endpoint.flow_info == 0u);
+  assert(server_local_endpoint.flow_info == 0u);
+  assert(server_remote_endpoint.flow_info == 0u);
 
   assert(peer_is_loopback_v4(&client_local));
   assert(client_local.port != 0u);
