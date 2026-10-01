@@ -126,6 +126,7 @@ typedef struct cnet_datagram_peer {
 typedef struct cnet_stream_peer {
   cnet_datagram_address_family family;
   uint16_t port;
+  uint32_t flow_info;
   uint32_t scope_id;
   uint8_t address[16];
 } cnet_stream_peer;
