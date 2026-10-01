@@ -76,6 +76,7 @@ static int peer_equal(const cnet_stream_peer *left,
   if (left == NULL || right == NULL ||
       left->family != right->family ||
       left->port != right->port ||
+      left->flow_info != right->flow_info ||
       left->scope_id != right->scope_id)
     return 0;
   return memcmp(
