@@ -482,6 +482,22 @@ int cnet_listener_bind_open_peer(
       listener, address, address_length);
 }
 
+int cnet_listener_bind_open_endpoint(
+    cnet_listener *listener,
+    const cnet_stream_endpoint *local_endpoint) {
+  unsigned char address[CNET_LISTENER_ADDRESS_CAPACITY];
+  size_t address_length = 0u;
+  int status;
+
+  status = cnet_transport_stream_endpoint_address(
+      local_endpoint, true, address, sizeof(address),
+      &address_length);
+  if (status != SALTS_OK)
+    return status;
+  return cnet_listener_bind_existing_address(
+      listener, address, address_length);
+}
+
 int cnet_listener_bind_ex(cnet_listener *listener, const cnet_listener_config *config,
                           const cnet_listener_options *options) {
   unsigned char address[CNET_LISTENER_ADDRESS_CAPACITY];
