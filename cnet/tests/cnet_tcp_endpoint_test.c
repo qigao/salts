@@ -256,6 +256,56 @@ int main(void) {
   assert(peer_equal(&accepted_remote, &client_local));
 
   {
+    uint64_t inherited = 0u;
+
+    assert(cnet_connection_tcp_option_get(
+               &accepted_client, accepted,
+               CNET_TCP_SOCKET_KEEPALIVE_ENABLED,
+               &inherited) == SALTS_OK);
+    assert(inherited == listener_keepalive);
+
+    assert(cnet_connection_tcp_option_get(
+               &accepted_client, accepted,
+               CNET_TCP_SOCKET_HOP_LIMIT,
+               &inherited) == SALTS_OK);
+    assert(inherited == listener_hop_limit);
+
+    assert(cnet_connection_tcp_option_get(
+               &accepted_client, accepted,
+               CNET_TCP_SOCKET_RECEIVE_BUFFER_BYTES,
+               &inherited) == SALTS_OK);
+    assert(inherited == listener_receive_buffer);
+
+    assert(cnet_connection_tcp_option_get(
+               &accepted_client, accepted,
+               CNET_TCP_SOCKET_SEND_BUFFER_BYTES,
+               &inherited) == SALTS_OK);
+    assert(inherited == listener_send_buffer);
+
+    if (listener_keepalive_idle_status == SALTS_OK) {
+      assert(cnet_connection_tcp_option_get(
+                 &accepted_client, accepted,
+                 CNET_TCP_SOCKET_KEEPALIVE_IDLE_MS,
+                 &inherited) == SALTS_OK);
+      assert(inherited == listener_keepalive_idle);
+    }
+    if (listener_keepalive_interval_status == SALTS_OK) {
+      assert(cnet_connection_tcp_option_get(
+                 &accepted_client, accepted,
+                 CNET_TCP_SOCKET_KEEPALIVE_INTERVAL_MS,
+                 &inherited) == SALTS_OK);
+      assert(inherited == listener_keepalive_interval);
+    }
+    if (listener_keepalive_count_status == SALTS_OK) {
+      assert(cnet_connection_tcp_option_get(
+                 &accepted_client, accepted,
+                 CNET_TCP_SOCKET_KEEPALIVE_COUNT,
+                 &inherited) == SALTS_OK);
+      assert(inherited == listener_keepalive_count);
+    }
+  }
+
+  {
     uint64_t value = 0u;
     int status;
 
@@ -338,6 +388,19 @@ int main(void) {
                CNET_TCP_SOCKET_HOP_LIMIT, 0u) != SALTS_OK);
   }
 
+  assert(cnet_connection_shutdown(
+             &client, connection,
+             CNET_TCP_SHUTDOWN_RECEIVE) == SALTS_OK);
+  assert(cnet_connection_shutdown(
+             &client, connection,
+             CNET_TCP_SHUTDOWN_RECEIVE) == SALTS_OK);
+  assert(cnet_connection_shutdown(
+             &client, connection,
+             CNET_TCP_SHUTDOWN_SEND) == SALTS_OK);
+  assert(cnet_connection_shutdown(
+             &client, connection,
+             CNET_TCP_SHUTDOWN_BOTH) == SALTS_OK);
+
   assert(cnet_close(&client, connection) == SALTS_OK);
   assert(cnet_close(&accepted_client, accepted) == SALTS_OK);
 
@@ -365,6 +428,9 @@ int main(void) {
     assert(cnet_connection_tcp_option_set(
                &client, connection,
                CNET_TCP_SOCKET_HOP_LIMIT, 32u) == SALTS_ENOENT);
+    assert(cnet_connection_shutdown(
+               &client, connection,
+               CNET_TCP_SHUTDOWN_BOTH) == SALTS_ENOENT);
   }
 
   assert(cnet_client_stop(&client, TEST_TIMEOUT_MS) == SALTS_OK);
