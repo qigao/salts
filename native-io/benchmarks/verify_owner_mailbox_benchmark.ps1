@@ -100,7 +100,7 @@ foreach ($row in $rows) {
   }
 }
 
-foreach ($window in @(1, 2, 4, 8, 16, 32, 64)) {
+foreach ($window in @(1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024)) {
   if (-not $byWindow.ContainsKey([UInt64]$window)) {
     throw "missing owner-mailbox window: $window"
   }
