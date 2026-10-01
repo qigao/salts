@@ -37,6 +37,7 @@ typedef struct cnet_owner_connect_payload {
   size_t tls_io_buffer_bytes;
   cnet_stream_socket_options socket_options;
   bool adopted;
+  bool adopted_connect;
   bool tls_server;
 } cnet_owner_connect_payload;
 
