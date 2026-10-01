@@ -172,6 +172,9 @@ int cnet_transport_tcp_native_option_set(uintptr_t native_socket,
                                          cnet_tcp_socket_option option,
                                          uint64_t value);
 
+int cnet_transport_tcp_shutdown(cnet_transport *transport,
+                                cnet_tcp_shutdown how);
+
 bool cnet_transport_active(const cnet_transport *transport);
 
 /** Closes owned native resources, then releases drained NativeIO metadata. */

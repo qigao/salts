@@ -126,6 +126,7 @@ typedef struct cnet_datagram_peer {
 typedef struct cnet_stream_peer {
   cnet_datagram_address_family family;
   uint16_t port;
+  uint32_t flow_info;
   uint32_t scope_id;
   uint8_t address[16];
 } cnet_stream_peer;
@@ -692,6 +693,22 @@ int cnet_connection_local_peer(cnet_client *client, cnet_connection connection,
 int cnet_connection_remote_peer(cnet_client *client, cnet_connection connection,
                                 cnet_stream_peer *out_peer);
 
+typedef enum cnet_tcp_shutdown {
+  CNET_TCP_SHUTDOWN_RECEIVE = 1,
+  CNET_TCP_SHUTDOWN_SEND = 2,
+  CNET_TCP_SHUTDOWN_BOTH = 3
+} cnet_tcp_shutdown;
+
+/**
+ * Performs a generation-safe TCP half-shutdown. Repeating a direction that is
+ * already shut down is idempotent. This does not drop the connection handle.
+ * Returns SALTS_EBUSY while that direction still owns admitted CNet I/O so the
+ * caller can preserve ordered data before retrying shutdown.
+ */
+int cnet_connection_shutdown(cnet_client *client,
+                             cnet_connection connection,
+                             cnet_tcp_shutdown how);
+
 /**
  * Reads or mutates one live TCP property through the generation-checked CNet
  * owner. These calls obey the same single-owner thread rule as client progress.
@@ -988,6 +1005,26 @@ int cnet_listener_init(cnet_listener *listener, const cnet_listener_config *conf
 int cnet_listener_options_validate(const cnet_listener_options *options);
 
 /**
+ * Creates a real nonblocking but unbound TCP socket owner. This permits
+ * per-socket options to be queried/mutated before bind/connect without
+ * exposing the native socket identity.
+ */
+int cnet_listener_open(cnet_listener *listener,
+                       native_io_backend_kind backend,
+                       cnet_datagram_address_family family);
+int cnet_listener_open_ex(cnet_listener *listener,
+                          native_io_backend_kind backend,
+                          cnet_datagram_address_family family,
+                          const cnet_listener_options *options);
+
+/**
+ * Binds an already-open unbound TCP owner to one numeric portable peer.
+ * Port zero requests an ephemeral port. The owner remains non-listening.
+ */
+int cnet_listener_bind_open_peer(cnet_listener *listener,
+                                 const cnet_stream_peer *local_peer);
+
+/**
  * Two-phase TCP listener lifecycle. bind[_ex] owns a nonblocking bound socket
  * but does not call listen(). listen() transitions that bound owner to
  * listening exactly once. This is useful for protocols that expose bind and
@@ -996,6 +1033,20 @@ int cnet_listener_options_validate(const cnet_listener_options *options);
 int cnet_listener_bind(cnet_listener *listener, const cnet_listener_config *config);
 int cnet_listener_bind_ex(cnet_listener *listener, const cnet_listener_config *config,
                           const cnet_listener_options *options);
+
+/**
+ * Binds directly from one numeric portable peer. Port zero requests an
+ * ephemeral port. The peer is copied synchronously; no text parsing or DNS is
+ * involved.
+ */
+int cnet_listener_bind_peer(cnet_listener *listener,
+                            native_io_backend_kind backend,
+                            const cnet_stream_peer *local_peer);
+int cnet_listener_bind_peer_ex(cnet_listener *listener,
+                               native_io_backend_kind backend,
+                               const cnet_stream_peer *local_peer,
+                               const cnet_listener_options *options);
+
 int cnet_listener_listen(cnet_listener *listener, size_t backlog);
 
 /**
@@ -1005,7 +1056,7 @@ int cnet_listener_listen(cnet_listener *listener, size_t backlog);
  */
 int cnet_listener_set_backlog(cnet_listener *listener, size_t backlog);
 
-/** Live TCP options on one bound/listening listener-owned socket. */
+/** Live TCP options on one unbound/bound/listening TCP owner. */
 int cnet_listener_tcp_option_get(cnet_listener *listener,
                                  cnet_tcp_socket_option option,
                                  uint64_t *out_value);
@@ -1014,8 +1065,9 @@ int cnet_listener_tcp_option_set(cnet_listener *listener,
                                  uint64_t value);
 
 /**
- * Consumes one bound, not-yet-listening TCP owner and starts an asynchronous
- * client connect on that exact socket.
+ * Consumes one unbound or bound, not-yet-listening TCP owner and starts an
+ * asynchronous client connect on that exact socket. An unbound owner receives
+ * an implicit same-family ephemeral bind before ConnectEx/connect admission.
  */
 int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
                                const cnet_stream_peer *remote_peer,

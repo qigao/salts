@@ -306,6 +306,32 @@ spec("CNet NativeIO transport ownership") {
     cnet_test_stream_socket_options();
   }
 
+  it("round-trips portable IPv6 TCP flow and scope fields") {
+    cnet_stream_peer peer = {0};
+    struct sockaddr_storage address;
+    const struct sockaddr_in6 *v6;
+    size_t address_length = SIZE_MAX;
+
+    peer.family = CNET_DATAGRAM_ADDRESS_IPV6;
+    peer.port = UINT16_C(43124);
+    peer.flow_info = UINT32_C(0x00123456);
+    peer.scope_id = UINT32_C(7);
+    peer.address[15] = 1u;
+
+    memset(&address, 0xa5, sizeof(address));
+    check_equal(cnet_transport_stream_peer_address(
+                    &peer, false, &address, sizeof(address),
+                    &address_length),
+                SALTS_OK);
+    check_equal(address_length, sizeof(struct sockaddr_in6));
+    v6 = (const struct sockaddr_in6 *)&address;
+    check_equal(v6->sin6_family, AF_INET6);
+    check_equal(v6->sin6_port, htons(peer.port));
+    check_equal(v6->sin6_flowinfo, peer.flow_info);
+    check_equal(v6->sin6_scope_id, peer.scope_id);
+    check_equal(v6->sin6_addr.s6_addr[15], 1u);
+  }
+
   it("converts numeric IPv4 and IPv6 endpoints without resolver state") {
     struct sockaddr_storage address;
     size_t address_length = SIZE_MAX;

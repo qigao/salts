@@ -90,7 +90,9 @@ static int cnet_transport_get_socket_int(cnet_native_socket socket_value, int le
   if (getsockopt(socket_value, level, option, out_value, &size) != 0)
 #endif
     return cnet_transport_socket_option_error();
-  return size == sizeof(*out_value) ? SALTS_OK : SALTS_EPROTO;
+  return size > 0 && (size_t)size <= sizeof(*out_value)
+             ? SALTS_OK
+             : SALTS_EPROTO;
 }
 
 static int cnet_transport_socket_family(cnet_native_socket socket_value, int *out_family) {
@@ -307,6 +309,7 @@ int cnet_transport_stream_peer_address(const cnet_stream_peer *peer, bool allow_
     memset(&address, 0, sizeof(address));
     address.sin6_family = AF_INET6;
     address.sin6_port = htons(peer->port);
+    address.sin6_flowinfo = peer->flow_info;
     address.sin6_scope_id = peer->scope_id;
     memcpy(&address.sin6_addr, peer->address, 16u);
     memcpy(out_address, &address, sizeof(address));
@@ -758,6 +761,7 @@ static int cnet_transport_socket_peer(const cnet_transport *transport, bool remo
     const struct sockaddr_in6 *v6 = (const struct sockaddr_in6 *)&address;
     out_peer->family = CNET_DATAGRAM_ADDRESS_IPV6;
     out_peer->port = ntohs(v6->sin6_port);
+    out_peer->flow_info = v6->sin6_flowinfo;
     out_peer->scope_id = v6->sin6_scope_id;
     memcpy(out_peer->address, &v6->sin6_addr, 16u);
     return SALTS_OK;
@@ -968,6 +972,44 @@ int cnet_transport_tcp_native_option_set(uintptr_t native_socket,
   transport.resource_kind = CNET_TRANSPORT_RESOURCE_SOCKET;
   transport.native_open = true;
   return cnet_transport_tcp_option_set(&transport, option, value);
+}
+
+int cnet_transport_tcp_shutdown(cnet_transport *transport,
+                                cnet_tcp_shutdown how) {
+  cnet_native_socket socket_value;
+  int native_how;
+  int status = cnet_transport_tcp_socket(transport, &socket_value);
+  if (status != SALTS_OK) return status;
+
+  switch (how) {
+  case CNET_TCP_SHUTDOWN_RECEIVE:
+#if defined(_WIN32)
+    native_how = SD_RECEIVE;
+#else
+    native_how = SHUT_RD;
+#endif
+    break;
+  case CNET_TCP_SHUTDOWN_SEND:
+#if defined(_WIN32)
+    native_how = SD_SEND;
+#else
+    native_how = SHUT_WR;
+#endif
+    break;
+  case CNET_TCP_SHUTDOWN_BOTH:
+#if defined(_WIN32)
+    native_how = SD_BOTH;
+#else
+    native_how = SHUT_RDWR;
+#endif
+    break;
+  default:
+    return SALTS_EINVAL;
+  }
+
+  if (shutdown(socket_value, native_how) != 0)
+    return cnet_transport_native_error();
+  return SALTS_OK;
 }
 
 native_io_endpoint cnet_transport_read_endpoint(const cnet_transport *transport) {
