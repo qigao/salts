@@ -457,7 +457,14 @@ static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_pa
   if (!impl->admission_open) return SALTS_ESHUTDOWN;
   if (impl->active_count >= impl->connection_capacity) return SALTS_ENOBUFS;
   admitted_payload = *payload;
-  admitted_payload.socket_options = impl->socket_options;
+  /*
+   * Fresh client-created sockets inherit the client's future-connection
+   * policy. Adopted sockets already carry their live policy (for example an
+   * accepted listener child or a bound socket transferred into connect) and
+   * must not be rewritten here.
+   */
+  if (!admitted_payload.adopted)
+    admitted_payload.socket_options = impl->socket_options;
   status = cnet_shards_connect(&impl->shards, &admitted_payload, &internal);
   if (status != SALTS_OK) return status;
   if (out_transferred != NULL) *out_transferred = true;
