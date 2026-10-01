@@ -642,6 +642,7 @@ int cnet_connection_shutdown(cnet_client *client,
   cnet_client_impl *impl = cnet_client_get(client);
   cnet_shard_connection internal = {0};
   cnet_client_record *record;
+  int status;
 
   if (impl == NULL ||
       (how != CNET_TCP_SHUTDOWN_RECEIVE &&
@@ -653,19 +654,17 @@ int cnet_connection_shutdown(cnet_client *client,
   if (record == NULL) return SALTS_ENOENT;
   if (record->scheme != CNET_URI_TCP) return SALTS_ENOTSUP;
   if (record->close_command_pending) return SALTS_EBUSY;
-  if (((how & CNET_TCP_SHUTDOWN_SEND) != 0 &&
-       record->pending_writes != 0u) ||
-      ((how & CNET_TCP_SHUTDOWN_RECEIVE) != 0 &&
-       record->receive_pending != 0u))
-    return SALTS_EBUSY;
-  {
-    int status = cnet_shards_tcp_shutdown(
-        &impl->shards, internal, how);
-    if (status == SALTS_OK)
-      record->tcp_shutdown_mask =
-          (uint8_t)(record->tcp_shutdown_mask | (uint8_t)how);
+
+  status = cnet_shards_tcp_shutdown(
+      &impl->shards, internal, how);
+  if (status != SALTS_OK)
     return status;
-  }
+
+  record->tcp_shutdown_mask =
+      (uint8_t)(record->tcp_shutdown_mask | (uint8_t)how);
+  if ((how & CNET_TCP_SHUTDOWN_RECEIVE) != 0)
+    record->receive_pending = 0u;
+  return SALTS_OK;
 }
 
 int cnet_connection_tcp_option_get(cnet_client *client, cnet_connection connection,
