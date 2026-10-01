@@ -2558,6 +2558,36 @@ int cnet_owner_profile_take(cnet_owner *owner, cnet_owner_profile *out_profile) 
 }
 #endif
 
+static bool cnet_owner_tcp_scheme(cnet_uri_scheme scheme) {
+  return scheme == CNET_URI_TCP || scheme == CNET_URI_TLS;
+}
+
+int cnet_owner_tcp_local_peer(cnet_owner *owner, cnet_session_handle session_handle,
+                              cnet_stream_peer *out_peer) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  if (out_peer == NULL) return SALTS_EINVAL;
+  *out_peer = (cnet_stream_peer){0};
+  if (impl == NULL) return SALTS_EINVAL;
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (!cnet_owner_tcp_scheme(session->peer.scheme)) return SALTS_ENOTSUP;
+  return cnet_transport_tcp_local_peer(&session->transport, out_peer);
+}
+
+int cnet_owner_tcp_remote_peer(cnet_owner *owner, cnet_session_handle session_handle,
+                               cnet_stream_peer *out_peer) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  if (out_peer == NULL) return SALTS_EINVAL;
+  *out_peer = (cnet_stream_peer){0};
+  if (impl == NULL) return SALTS_EINVAL;
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (!cnet_owner_tcp_scheme(session->peer.scheme)) return SALTS_ENOTSUP;
+  return cnet_transport_tcp_remote_peer(&session->transport, out_peer);
+}
+
 int cnet_owner_tls_peer_certificate_sha256(
     cnet_owner *owner, cnet_session_handle session_handle,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]) {
