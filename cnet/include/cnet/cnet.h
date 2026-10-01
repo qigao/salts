@@ -973,6 +973,16 @@ int cnet_listener_bind_ex(cnet_listener *listener, const cnet_listener_config *c
                           const cnet_listener_options *options);
 int cnet_listener_listen(cnet_listener *listener, size_t backlog);
 
+/**
+ * Consumes one bound, not-yet-listening TCP owner and starts an asynchronous
+ * CNet client connect on that exact native socket. The listener wrapper is
+ * empty after the call once ownership transfer begins; no raw socket escapes.
+ */
+int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
+                               const cnet_stream_peer *remote_peer,
+                               const cnet_observer *observer,
+                               cnet_connection *out_connection);
+
 /** Creates and listens in one call; equivalent to bind_ex + listen. */
 int cnet_listener_init_ex(cnet_listener *listener, const cnet_listener_config *config,
                           const cnet_listener_options *options);
