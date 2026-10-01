@@ -360,6 +360,13 @@ After CONNECTED, `cnet_tls_negotiated_alpn()` copies the selected protocol. It
 can be called from the CONNECTED callback because CNet records ALPN before
 invoking user code. No overlap returns `SALTS_ENOENT`; protocol layers such as
 HTTP/2 must treat that result as a policy decision rather than assume `h2`.
+
+The TLS protocol version and cipher suite remain automatically negotiated.
+`cnet_tls_negotiated_version()` and `cnet_tls_negotiated_cipher()` expose the
+effective session metadata after CONNECTED without exposing the underlying TLS
+implementation. The policy remains TLS 1.2 minimum with no maximum cap, so a
+TLS 1.3-capable peer is negotiated automatically while TLS 1.2 peers remain
+supported.
 `cnet_tls_peer_certificate_sha256()` copies the verified peer leaf certificate
 fingerprint while the TLS connection remains open; a server session whose peer
 did not present a client certificate returns `SALTS_ENOENT`.
