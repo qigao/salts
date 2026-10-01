@@ -164,6 +164,7 @@ static int cnet_listener_stream_peer(const struct sockaddr_storage *native_peer,
     const struct sockaddr_in6 *address = (const struct sockaddr_in6 *)native_peer;
     peer->family = CNET_DATAGRAM_ADDRESS_IPV6;
     peer->port = ntohs(address->sin6_port);
+    peer->flow_info = address->sin6_flowinfo;
     peer->scope_id = address->sin6_scope_id;
     memcpy(peer->address, &address->sin6_addr, 16u);
     return SALTS_OK;
