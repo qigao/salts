@@ -90,7 +90,9 @@ static int cnet_transport_get_socket_int(cnet_native_socket socket_value, int le
   if (getsockopt(socket_value, level, option, out_value, &size) != 0)
 #endif
     return cnet_transport_socket_option_error();
-  return size == sizeof(*out_value) ? SALTS_OK : SALTS_EPROTO;
+  return size > 0 && (size_t)size <= sizeof(*out_value)
+             ? SALTS_OK
+             : SALTS_EPROTO;
 }
 
 static int cnet_transport_socket_family(cnet_native_socket socket_value, int *out_family) {
