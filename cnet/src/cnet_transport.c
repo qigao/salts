@@ -283,41 +283,70 @@ int cnet_transport_parse_bind_address(const char *host, uint16_t port, void *out
                                       out_address_length);
 }
 
-int cnet_transport_stream_peer_address(const cnet_stream_peer *peer, bool allow_zero_port,
-                                       void *out_address, size_t address_capacity,
-                                       size_t *out_address_length) {
+static bool cnet_stream_endpoint_valid(
+    const cnet_stream_endpoint *endpoint) {
+  return endpoint != NULL &&
+         endpoint->size >= sizeof(*endpoint) &&
+         endpoint->version == CNET_STREAM_ENDPOINT_API_VERSION &&
+         (endpoint->family == CNET_DATAGRAM_ADDRESS_IPV4 ||
+          endpoint->family == CNET_DATAGRAM_ADDRESS_IPV6);
+}
+
+int cnet_transport_stream_endpoint_address(
+    const cnet_stream_endpoint *endpoint, bool allow_zero_port,
+    void *out_address, size_t address_capacity,
+    size_t *out_address_length) {
   if (out_address_length == NULL) return SALTS_EINVAL;
   *out_address_length = 0u;
-  if (peer == NULL || out_address == NULL || (!allow_zero_port && peer->port == 0u))
+  if (!cnet_stream_endpoint_valid(endpoint) ||
+      out_address == NULL ||
+      (!allow_zero_port && endpoint->port == 0u))
     return SALTS_EINVAL;
 
-  if (peer->family == CNET_DATAGRAM_ADDRESS_IPV4) {
+  if (endpoint->family == CNET_DATAGRAM_ADDRESS_IPV4) {
     struct sockaddr_in address;
+    if (endpoint->flow_info != 0u || endpoint->scope_id != 0u)
+      return SALTS_EINVAL;
     if (address_capacity < sizeof(address)) return SALTS_ERANGE;
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
-    address.sin_port = htons(peer->port);
-    memcpy(&address.sin_addr, peer->address, 4u);
+    address.sin_port = htons(endpoint->port);
+    memcpy(&address.sin_addr, endpoint->address, 4u);
     memcpy(out_address, &address, sizeof(address));
     *out_address_length = sizeof(address);
     return SALTS_OK;
   }
 
-  if (peer->family == CNET_DATAGRAM_ADDRESS_IPV6) {
+  {
     struct sockaddr_in6 address;
     if (address_capacity < sizeof(address)) return SALTS_ERANGE;
     memset(&address, 0, sizeof(address));
     address.sin6_family = AF_INET6;
-    address.sin6_port = htons(peer->port);
-    address.sin6_flowinfo = peer->flow_info;
-    address.sin6_scope_id = peer->scope_id;
-    memcpy(&address.sin6_addr, peer->address, 16u);
+    address.sin6_port = htons(endpoint->port);
+    address.sin6_flowinfo = endpoint->flow_info;
+    address.sin6_scope_id = endpoint->scope_id;
+    memcpy(&address.sin6_addr, endpoint->address, 16u);
     memcpy(out_address, &address, sizeof(address));
     *out_address_length = sizeof(address);
     return SALTS_OK;
   }
+}
 
-  return SALTS_EAFNOSUPPORT;
+int cnet_transport_stream_peer_address(const cnet_stream_peer *peer, bool allow_zero_port,
+                                       void *out_address, size_t address_capacity,
+                                       size_t *out_address_length) {
+  cnet_stream_endpoint endpoint = CNET_STREAM_ENDPOINT_INIT;
+  if (peer == NULL) {
+    if (out_address_length != NULL) *out_address_length = 0u;
+    return SALTS_EINVAL;
+  }
+  endpoint.family = peer->family;
+  endpoint.port = peer->port;
+  endpoint.scope_id = peer->scope_id;
+  memcpy(endpoint.address, peer->address, sizeof(endpoint.address));
+  return cnet_transport_stream_endpoint_address(
+      &endpoint, allow_zero_port, out_address,
+      address_capacity, out_address_length);
 }
 
 static void cnet_transport_close_native(cnet_transport *transport) {
