@@ -2679,6 +2679,36 @@ int cnet_owner_tcp_remote_peer(cnet_owner *owner, cnet_session_handle session_ha
   return cnet_transport_tcp_remote_peer(&session->transport, out_peer);
 }
 
+int cnet_owner_tcp_local_endpoint(
+    cnet_owner *owner, cnet_session_handle session_handle,
+    cnet_stream_endpoint *out_endpoint) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  if (out_endpoint == NULL) return SALTS_EINVAL;
+  *out_endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+  if (impl == NULL) return SALTS_EINVAL;
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (!cnet_owner_tcp_scheme(session->peer.scheme)) return SALTS_ENOTSUP;
+  return cnet_transport_tcp_local_endpoint(
+      &session->transport, out_endpoint);
+}
+
+int cnet_owner_tcp_remote_endpoint(
+    cnet_owner *owner, cnet_session_handle session_handle,
+    cnet_stream_endpoint *out_endpoint) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  if (out_endpoint == NULL) return SALTS_EINVAL;
+  *out_endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+  if (impl == NULL) return SALTS_EINVAL;
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (!cnet_owner_tcp_scheme(session->peer.scheme)) return SALTS_ENOTSUP;
+  return cnet_transport_tcp_remote_endpoint(
+      &session->transport, out_endpoint);
+}
+
 int cnet_owner_tcp_option_get(cnet_owner *owner, cnet_session_handle session_handle,
                               cnet_tcp_socket_option option, uint64_t *out_value) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
