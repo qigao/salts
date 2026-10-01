@@ -413,7 +413,8 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset win-release-user -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF
+          set "BASELINE_PKGCONF=%BASELINE_SOURCE%\vcpkg_installed\%QIGAO_VCPKG_WINDOWS_HOST_TRIPLET%\tools\pkgconf\pkgconf.exe"
+          cmake --preset win-release-user -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DPKG_CONFIG_EXECUTABLE="%BASELINE_PKGCONF%"
           if errorlevel 1 exit /b 1
           cmake --build --preset win-release-user --target cnet
           if errorlevel 1 exit /b 1
