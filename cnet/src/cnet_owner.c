@@ -53,6 +53,7 @@ typedef struct cnet_owner_session {
   bool tls_send_accepted;
   bool tls_close_after_send;
   bool tls_shutdown_after_flush;
+  uint8_t tcp_shutdown_mask;
   salts_deadline_id connect_deadline;
 } cnet_owner_session;
 
