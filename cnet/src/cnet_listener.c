@@ -238,7 +238,7 @@ static int cnet_listener_bind_address(
 #endif
 
   if (listener == NULL || address == NULL ||
-      address_length < sizeof(sa_family_t) ||
+      address_length < sizeof(struct sockaddr) ||
       listener->impl != NULL ||
       !native_io_backend_kind_supported(backend))
     return SALTS_EINVAL;
