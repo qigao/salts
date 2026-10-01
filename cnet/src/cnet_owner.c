@@ -2692,7 +2692,6 @@ int cnet_owner_tcp_shutdown(cnet_owner *owner, cnet_session_handle session_handl
   cnet_session_state state = CNET_SESSION_FREE;
   uint8_t requested;
   uint8_t pending;
-  size_t queued_writes = 0u;
   int status;
 
   if (impl == NULL ||
@@ -2714,22 +2713,43 @@ int cnet_owner_tcp_shutdown(cnet_owner *owner, cnet_session_handle session_handl
   pending = (uint8_t)(requested & (uint8_t)~session->tcp_shutdown_mask);
   if (pending == 0u) return SALTS_OK;
 
-  if ((pending & (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE) != 0u &&
-      (session->receive_demand != 0u || session->read_active))
-    return SALTS_EBUSY;
-  if ((pending & (uint8_t)CNET_TCP_SHUTDOWN_SEND) != 0u) {
-    status = cnet_write_queue_count(
-        &impl->writes, session->handle, &queued_writes);
-    if (status != SALTS_OK) return status;
-    if (queued_writes != 0u || session->write_active)
-      return SALTS_EBUSY;
-  }
-
-  status = cnet_transport_tcp_shutdown(
-      &session->transport, (cnet_tcp_shutdown)pending);
-  if (status != SALTS_OK) return status;
+  /*
+   * Requested state is authoritative immediately: later receive/send
+   * admissions are rejected even when the native send-side FIN must wait for
+   * already accepted writes to drain.
+   */
   session->tcp_shutdown_mask =
       (uint8_t)(session->tcp_shutdown_mask | pending);
+
+  if ((pending & (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE) != 0u) {
+    session->receive_demand = 0u;
+    status = cnet_owner_cancel_receive_requests(
+        impl, session->handle);
+    if (status != SALTS_OK)
+      return status;
+
+    status = cnet_transport_tcp_shutdown(
+        &session->transport, CNET_TCP_SHUTDOWN_RECEIVE);
+    if (status != SALTS_OK)
+      return status;
+    session->tcp_shutdown_applied_mask =
+        (uint8_t)(session->tcp_shutdown_applied_mask |
+                  (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE);
+  }
+
+  if ((pending & (uint8_t)CNET_TCP_SHUTDOWN_SEND) != 0u) {
+    status = cnet_owner_progress_tcp_shutdown(impl, session);
+    if (status != SALTS_OK)
+      return status;
+    if ((session->tcp_shutdown_applied_mask &
+         (uint8_t)CNET_TCP_SHUTDOWN_SEND) == 0u) {
+      status = cnet_owner_queue_session_work(
+          impl, session->handle);
+      if (status != SALTS_OK)
+        return status;
+    }
+  }
+
   return SALTS_OK;
 }
 
