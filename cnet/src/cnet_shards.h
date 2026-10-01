@@ -94,6 +94,10 @@ int cnet_shards_close_direct(cnet_shards *shards, cnet_shard_connection connecti
 
 int cnet_shards_state(cnet_shards *shards, cnet_shard_connection connection,
                       cnet_session_state *out_state);
+int cnet_shards_tcp_local_peer(cnet_shards *shards, cnet_shard_connection connection,
+                               cnet_stream_peer *out_peer);
+int cnet_shards_tcp_remote_peer(cnet_shards *shards, cnet_shard_connection connection,
+                                cnet_stream_peer *out_peer);
 int cnet_shards_tls_peer_certificate_sha256(cnet_shards *shards, cnet_shard_connection connection,
                                             char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
 int cnet_shards_tls_export_channel_binding(cnet_shards *shards, cnet_shard_connection connection,
