@@ -231,30 +231,26 @@ int cnet_listener_options_validate(const cnet_listener_options *options) {
   return SALTS_OK;
 }
 
-static int cnet_listener_bind_address(
+static int cnet_listener_open_family(
     cnet_listener *listener, native_io_backend_kind backend,
-    const void *address, size_t address_length, size_t backlog_hint,
+    int family, size_t backlog_hint,
     const cnet_listener_options *options) {
   cnet_listener_impl *impl;
-  int family;
   int status;
 #if !defined(_WIN32)
   const int reuse_address = 1;
 #endif
 
-  if (listener == NULL || address == NULL ||
-      address_length < sizeof(struct sockaddr) ||
-      listener->impl != NULL ||
+  if (listener == NULL || listener->impl != NULL ||
       !native_io_backend_kind_supported(backend))
     return SALTS_EINVAL;
+  if (family != AF_INET && family != AF_INET6)
+    return SALTS_EAFNOSUPPORT;
   status = cnet_listener_options_validate(options);
   if (status != SALTS_OK) return status;
 #if !defined(SO_REUSEPORT)
   if (options->reuse_port) return SALTS_ENOTSUP;
 #endif
-  family = ((const struct sockaddr *)address)->sa_family;
-  if (family != AF_INET && family != AF_INET6)
-    return SALTS_EAFNOSUPPORT;
 
   status = cnet_module_init();
   if (status != SALTS_OK) return status;
@@ -263,6 +259,7 @@ static int cnet_listener_bind_address(
     (void)cnet_module_shutdown();
     return SALTS_ENOMEM;
   }
+
   impl->socket_value = CNET_LISTENER_INVALID_SOCKET;
   impl->backend = backend;
   impl->kind = CNET_LISTENER_KIND_TCP;
@@ -273,44 +270,150 @@ static int cnet_listener_bind_address(
   else {
     impl->socket_value =
         WSASocketW(family, SOCK_STREAM, IPPROTO_TCP, NULL, 0u, WSA_FLAG_OVERLAPPED);
-    status = impl->socket_value != CNET_LISTENER_INVALID_SOCKET ? SALTS_OK
-                                                                : cnet_listener_native_error();
+    status = impl->socket_value != CNET_LISTENER_INVALID_SOCKET
+                 ? SALTS_OK
+                 : cnet_listener_native_error();
   }
 #else
   impl->socket_value = socket(family, SOCK_STREAM, IPPROTO_TCP);
-  status =
-      impl->socket_value != CNET_LISTENER_INVALID_SOCKET ? SALTS_OK : cnet_listener_native_error();
-  if (status == SALTS_OK && setsockopt(impl->socket_value, SOL_SOCKET, SO_REUSEADDR, &reuse_address,
-                                       (socklen_t)sizeof(reuse_address)) != 0)
+  status = impl->socket_value != CNET_LISTENER_INVALID_SOCKET
+               ? SALTS_OK
+               : cnet_listener_native_error();
+  if (status == SALTS_OK &&
+      setsockopt(impl->socket_value, SOL_SOCKET, SO_REUSEADDR,
+                 &reuse_address, (socklen_t)sizeof(reuse_address)) != 0)
     status = cnet_listener_native_error();
 #endif
 #if defined(SO_REUSEPORT)
   if (status == SALTS_OK && options->reuse_port) {
     const int reuse_port = 1;
 #if defined(_WIN32)
-    if (setsockopt(impl->socket_value, SOL_SOCKET, SO_REUSEPORT, (const char *)&reuse_port,
+    if (setsockopt(impl->socket_value, SOL_SOCKET, SO_REUSEPORT,
+                   (const char *)&reuse_port,
                    (int)sizeof(reuse_port)) != 0)
 #else
-    if (setsockopt(impl->socket_value, SOL_SOCKET, SO_REUSEPORT, &reuse_port,
-                   (socklen_t)sizeof(reuse_port)) != 0)
+    if (setsockopt(impl->socket_value, SOL_SOCKET, SO_REUSEPORT,
+                   &reuse_port, (socklen_t)sizeof(reuse_port)) != 0)
 #endif
       status = cnet_listener_native_error();
   }
 #endif
-  if (status == SALTS_OK) status = cnet_listener_set_nonblocking(impl->socket_value);
-  if (status == SALTS_OK &&
-      bind(impl->socket_value, (const struct sockaddr *)address, (int)address_length) != 0)
-    status = cnet_listener_native_error();
-  if (status == SALTS_OK) status = cnet_listener_bound_port(impl->socket_value, &impl->port);
-  if (status == SALTS_OK) impl->bound = true;
+  if (status == SALTS_OK)
+    status = cnet_listener_set_nonblocking(impl->socket_value);
   if (status != SALTS_OK) {
     cnet_listener_close_native(impl);
     free(impl);
     (void)cnet_module_shutdown();
     return status;
   }
+
   listener->impl = impl;
   return SALTS_OK;
+}
+
+static int cnet_listener_bind_existing_address(
+    cnet_listener *listener,
+    const void *address,
+    size_t address_length) {
+  cnet_listener_impl *impl = cnet_listener_get(listener);
+  int family;
+  int status;
+
+  if (impl == NULL || address == NULL ||
+      address_length < sizeof(struct sockaddr))
+    return SALTS_EINVAL;
+  if (impl->closed) return SALTS_ESHUTDOWN;
+  if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
+  if (impl->bound || impl->listening) return SALTS_EALREADY;
+
+  family = ((const struct sockaddr *)address)->sa_family;
+  if (family != impl->native_family)
+    return SALTS_EAFNOSUPPORT;
+
+  if (bind(impl->socket_value, (const struct sockaddr *)address,
+           (int)address_length) != 0)
+    return cnet_listener_native_error();
+
+  status = cnet_listener_bound_port(
+      impl->socket_value, &impl->port);
+  if (status != SALTS_OK)
+    return status;
+  impl->bound = true;
+  return SALTS_OK;
+}
+
+static int cnet_listener_bind_address(
+    cnet_listener *listener, native_io_backend_kind backend,
+    const void *address, size_t address_length, size_t backlog_hint,
+    const cnet_listener_options *options) {
+  cnet_listener_impl *impl;
+  int family;
+  int status;
+
+  if (listener == NULL || address == NULL ||
+      address_length < sizeof(struct sockaddr) ||
+      listener->impl != NULL)
+    return SALTS_EINVAL;
+  family = ((const struct sockaddr *)address)->sa_family;
+
+  status = cnet_listener_open_family(
+      listener, backend, family, backlog_hint, options);
+  if (status != SALTS_OK)
+    return status;
+
+  status = cnet_listener_bind_existing_address(
+      listener, address, address_length);
+  if (status == SALTS_OK)
+    return SALTS_OK;
+
+  impl = cnet_listener_get(listener);
+  cnet_listener_close_native(impl);
+  free(impl);
+  listener->impl = NULL;
+  (void)cnet_module_shutdown();
+  return status;
+}
+
+int cnet_listener_open_ex(cnet_listener *listener,
+                          native_io_backend_kind backend,
+                          cnet_datagram_address_family family,
+                          const cnet_listener_options *options) {
+  int native_family;
+
+  if (family == CNET_DATAGRAM_ADDRESS_IPV4)
+    native_family = AF_INET;
+  else if (family == CNET_DATAGRAM_ADDRESS_IPV6)
+    native_family = AF_INET6;
+  else
+    return SALTS_EAFNOSUPPORT;
+
+  return cnet_listener_open_family(
+      listener, backend, native_family, 0u, options);
+}
+
+int cnet_listener_open(cnet_listener *listener,
+                       native_io_backend_kind backend,
+                       cnet_datagram_address_family family) {
+  const cnet_listener_options options =
+      CNET_LISTENER_OPTIONS_INIT;
+  return cnet_listener_open_ex(
+      listener, backend, family, &options);
+}
+
+int cnet_listener_bind_open_peer(
+    cnet_listener *listener,
+    const cnet_stream_peer *local_peer) {
+  unsigned char address[CNET_LISTENER_ADDRESS_CAPACITY];
+  size_t address_length = 0u;
+  int status;
+
+  status = cnet_transport_stream_peer_address(
+      local_peer, true, address, sizeof(address),
+      &address_length);
+  if (status != SALTS_OK)
+    return status;
+  return cnet_listener_bind_existing_address(
+      listener, address, address_length);
 }
 
 int cnet_listener_bind_ex(cnet_listener *listener, const cnet_listener_config *config,
