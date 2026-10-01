@@ -2635,6 +2635,42 @@ int cnet_owner_tcp_option_set(cnet_owner *owner, cnet_session_handle session_han
   return cnet_transport_tcp_option_set(&session->transport, option, value);
 }
 
+int cnet_owner_tcp_shutdown(cnet_owner *owner, cnet_session_handle session_handle,
+                            cnet_tcp_shutdown how) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  cnet_session_state state = CNET_SESSION_FREE;
+  uint8_t requested;
+  uint8_t pending;
+  int status;
+
+  if (impl == NULL ||
+      (how != CNET_TCP_SHUTDOWN_RECEIVE &&
+       how != CNET_TCP_SHUTDOWN_SEND &&
+       how != CNET_TCP_SHUTDOWN_BOTH))
+    return SALTS_EINVAL;
+
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (session->peer.scheme != CNET_URI_TCP) return SALTS_ENOTSUP;
+
+  status = cnet_session_table_state(
+      impl->sessions, session_handle, &state);
+  if (status != SALTS_OK) return status;
+  if (state != CNET_SESSION_OPEN) return SALTS_ENOTCONN;
+
+  requested = (uint8_t)how;
+  pending = (uint8_t)(requested & (uint8_t)~session->tcp_shutdown_mask);
+  if (pending == 0u) return SALTS_OK;
+
+  status = cnet_transport_tcp_shutdown(
+      &session->transport, (cnet_tcp_shutdown)pending);
+  if (status != SALTS_OK) return status;
+  session->tcp_shutdown_mask =
+      (uint8_t)(session->tcp_shutdown_mask | pending);
+  return SALTS_OK;
+}
+
 int cnet_owner_tls_peer_certificate_sha256(
     cnet_owner *owner, cnet_session_handle session_handle,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]) {
