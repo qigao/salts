@@ -206,7 +206,7 @@ static int cnet_listener_stream_peer(
   return SALTS_OK;
 }
 
-static int cnet_listener_local_endpoint(
+static int cnet_listener_native_local_endpoint(
     cnet_listener_socket socket_value,
     cnet_stream_endpoint *out_endpoint) {
   struct sockaddr_storage address;
@@ -233,7 +233,7 @@ static int cnet_listener_local_peer(cnet_listener_socket socket_value,
 
   if (out_peer == NULL) return SALTS_EINVAL;
   *out_peer = (cnet_stream_peer){0};
-  status = cnet_listener_local_endpoint(socket_value, &endpoint);
+  status = cnet_listener_native_local_endpoint(socket_value, &endpoint);
   if (status != SALTS_OK) return status;
   out_peer->family = endpoint.family;
   out_peer->port = endpoint.port;
@@ -686,7 +686,7 @@ int cnet_listener_connect_endpoint(
     if (impl == NULL) return SALTS_EPROTO;
   }
 
-  status = cnet_listener_local_endpoint(
+  status = cnet_listener_native_local_endpoint(
       impl->socket_value, &local);
   if (status != SALTS_OK) return status;
   if (local.family != remote_endpoint->family)
@@ -748,6 +748,20 @@ int cnet_listener_local(const cnet_listener *listener, cnet_stream_peer *out_loc
   if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
   if (!impl->bound) return SALTS_EBUSY;
   return cnet_listener_local_peer(impl->socket_value, out_local);
+}
+
+int cnet_listener_local_endpoint(
+    const cnet_listener *listener,
+    cnet_stream_endpoint *out_local) {
+  const cnet_listener_impl *impl = cnet_listener_const_get(listener);
+  if (out_local == NULL) return SALTS_EINVAL;
+  *out_local = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->closed) return SALTS_ESHUTDOWN;
+  if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
+  if (!impl->bound) return SALTS_EBUSY;
+  return cnet_listener_native_local_endpoint(
+      impl->socket_value, out_local);
 }
 
 int cnet_listener_init_vsock(cnet_listener *listener,
