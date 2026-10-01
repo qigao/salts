@@ -50,10 +50,12 @@ typedef struct cnet_listener_impl {
   cnet_listener_socket socket_value;
   native_io_backend_kind backend;
   cnet_listener_kind kind;
+  int native_family;
   uint16_t port;
   size_t backlog;
   uint64_t tcp_option_values[8];
   uint8_t tcp_option_set_mask;
+  bool bound;
   bool listening;
   bool closed;
 } cnet_listener_impl;
@@ -264,6 +266,7 @@ static int cnet_listener_bind_address(
   impl->socket_value = CNET_LISTENER_INVALID_SOCKET;
   impl->backend = backend;
   impl->kind = CNET_LISTENER_KIND_TCP;
+  impl->native_family = family;
   impl->backlog = backlog_hint;
 #if defined(_WIN32)
   if (backend != NATIVE_IO_BACKEND_IOCP) status = SALTS_ENOTSUP;
@@ -299,6 +302,7 @@ static int cnet_listener_bind_address(
       bind(impl->socket_value, (const struct sockaddr *)address, (int)address_length) != 0)
     status = cnet_listener_native_error();
   if (status == SALTS_OK) status = cnet_listener_bound_port(impl->socket_value, &impl->port);
+  if (status == SALTS_OK) impl->bound = true;
   if (status != SALTS_OK) {
     cnet_listener_close_native(impl);
     free(impl);
