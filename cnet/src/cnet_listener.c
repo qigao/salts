@@ -226,31 +226,30 @@ int cnet_listener_options_validate(const cnet_listener_options *options) {
   return SALTS_OK;
 }
 
-int cnet_listener_bind_ex(cnet_listener *listener, const cnet_listener_config *config,
-                          const cnet_listener_options *options) {
+static int cnet_listener_bind_address(
+    cnet_listener *listener, native_io_backend_kind backend,
+    const void *address, size_t address_length, size_t backlog_hint,
+    const cnet_listener_options *options) {
   cnet_listener_impl *impl;
-  unsigned char address[CNET_LISTENER_ADDRESS_CAPACITY];
-  size_t address_length = 0u;
   int family;
   int status;
 #if !defined(_WIN32)
   const int reuse_address = 1;
 #endif
 
-  if (listener == NULL || config == NULL) return SALTS_EINVAL;
-  if (listener->impl != NULL) return SALTS_EALREADY;
+  if (listener == NULL || address == NULL ||
+      address_length < sizeof(sa_family_t) ||
+      listener->impl != NULL ||
+      !native_io_backend_kind_supported(backend))
+    return SALTS_EINVAL;
   status = cnet_listener_options_validate(options);
   if (status != SALTS_OK) return status;
 #if !defined(SO_REUSEPORT)
   if (options->reuse_port) return SALTS_ENOTSUP;
 #endif
-  if (config->host == NULL || config->backlog == 0u || config->backlog > INT_MAX ||
-      !native_io_backend_kind_supported(config->backend))
-    return SALTS_EINVAL;
-  status = cnet_transport_parse_bind_address(config->host, config->port, address, sizeof(address),
-                                             &address_length);
-  if (status != SALTS_OK) return status;
   family = ((const struct sockaddr *)address)->sa_family;
+  if (family != AF_INET && family != AF_INET6)
+    return SALTS_EAFNOSUPPORT;
 
   status = cnet_module_init();
   if (status != SALTS_OK) return status;
@@ -260,11 +259,11 @@ int cnet_listener_bind_ex(cnet_listener *listener, const cnet_listener_config *c
     return SALTS_ENOMEM;
   }
   impl->socket_value = CNET_LISTENER_INVALID_SOCKET;
-  impl->backend = config->backend;
+  impl->backend = backend;
   impl->kind = CNET_LISTENER_KIND_TCP;
-  impl->backlog = config->backlog;
+  impl->backlog = backlog_hint;
 #if defined(_WIN32)
-  if (config->backend != NATIVE_IO_BACKEND_IOCP) status = SALTS_ENOTSUP;
+  if (backend != NATIVE_IO_BACKEND_IOCP) status = SALTS_ENOTSUP;
   else {
     impl->socket_value =
         WSASocketW(family, SOCK_STREAM, IPPROTO_TCP, NULL, 0u, WSA_FLAG_OVERLAPPED);
@@ -305,6 +304,46 @@ int cnet_listener_bind_ex(cnet_listener *listener, const cnet_listener_config *c
   }
   listener->impl = impl;
   return SALTS_OK;
+}
+
+int cnet_listener_bind_ex(cnet_listener *listener, const cnet_listener_config *config,
+                          const cnet_listener_options *options) {
+  unsigned char address[CNET_LISTENER_ADDRESS_CAPACITY];
+  size_t address_length = 0u;
+  int status;
+
+  if (listener == NULL || config == NULL || config->host == NULL ||
+      config->backlog == 0u || config->backlog > INT_MAX)
+    return SALTS_EINVAL;
+  status = cnet_transport_parse_bind_address(
+      config->host, config->port, address, sizeof(address), &address_length);
+  if (status != SALTS_OK) return status;
+  return cnet_listener_bind_address(
+      listener, config->backend, address, address_length,
+      config->backlog, options);
+}
+
+int cnet_listener_bind_peer_ex(cnet_listener *listener,
+                               native_io_backend_kind backend,
+                               const cnet_stream_peer *local_peer,
+                               const cnet_listener_options *options) {
+  unsigned char address[CNET_LISTENER_ADDRESS_CAPACITY];
+  size_t address_length = 0u;
+  int status;
+
+  status = cnet_transport_stream_peer_address(
+      local_peer, true, address, sizeof(address), &address_length);
+  if (status != SALTS_OK) return status;
+  return cnet_listener_bind_address(
+      listener, backend, address, address_length, 0u, options);
+}
+
+int cnet_listener_bind_peer(cnet_listener *listener,
+                            native_io_backend_kind backend,
+                            const cnet_stream_peer *local_peer) {
+  const cnet_listener_options options = CNET_LISTENER_OPTIONS_INIT;
+  return cnet_listener_bind_peer_ex(
+      listener, backend, local_peer, &options);
 }
 
 int cnet_listener_bind(cnet_listener *listener, const cnet_listener_config *config) {
