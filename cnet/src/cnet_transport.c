@@ -48,6 +48,22 @@ int cnet_stream_socket_options_validate(const cnet_stream_socket_options *option
   return SALTS_OK;
 }
 
+static int cnet_transport_socket_option_error(void) {
+#if defined(_WIN32)
+  const int error = WSAGetLastError();
+  if (error == WSAENOPROTOOPT || error == WSAEOPNOTSUPP ||
+      error == WSAEPROTONOSUPPORT)
+    return SALTS_ENOTSUP;
+  if (error == WSAEINVAL) return SALTS_EINVAL;
+#else
+  const int error = errno;
+  if (error == ENOPROTOOPT || error == EOPNOTSUPP || error == ENOTSUP)
+    return SALTS_ENOTSUP;
+  if (error == EINVAL) return SALTS_EINVAL;
+#endif
+  return cnet_transport_native_error();
+}
+
 static int cnet_transport_set_socket_int(cnet_native_socket socket_value, int level, int option,
                                          int value) {
 #if defined(_WIN32)
@@ -55,7 +71,7 @@ static int cnet_transport_set_socket_int(cnet_native_socket socket_value, int le
 #else
   if (setsockopt(socket_value, level, option, &value, (socklen_t)sizeof(value)) != 0)
 #endif
-    return cnet_transport_native_error();
+    return cnet_transport_socket_option_error();
   return SALTS_OK;
 }
 
@@ -73,7 +89,7 @@ static int cnet_transport_get_socket_int(cnet_native_socket socket_value, int le
 #else
   if (getsockopt(socket_value, level, option, out_value, &size) != 0)
 #endif
-    return cnet_transport_native_error();
+    return cnet_transport_socket_option_error();
   return size == sizeof(*out_value) ? SALTS_OK : SALTS_EPROTO;
 }
 
