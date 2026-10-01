@@ -119,10 +119,6 @@ int cnet_transport_adopt_tcp(cnet_transport *transport, native_io_backend *backe
                              uintptr_t native_socket,
                              const cnet_stream_socket_options *socket_options);
 
-/**
- * Consumes one already-bound TCP socket, attaches it to NativeIO, and
- * describes the asynchronous connect operation on that same socket.
- */
 int cnet_transport_adopt_tcp_prepare_connect(
     cnet_transport *transport, native_io_backend *backend,
     uintptr_t native_socket, const void *remote_address,
@@ -160,6 +156,21 @@ native_io_endpoint cnet_transport_write_endpoint(const cnet_transport *transport
 /** Copies portable endpoints for an attached/open TCP stream transport. */
 int cnet_transport_tcp_local_peer(const cnet_transport *transport, cnet_stream_peer *out_peer);
 int cnet_transport_tcp_remote_peer(const cnet_transport *transport, cnet_stream_peer *out_peer);
+
+int cnet_transport_tcp_option_get(const cnet_transport *transport,
+                                  cnet_tcp_socket_option option,
+                                  uint64_t *out_value);
+int cnet_transport_tcp_option_set(cnet_transport *transport,
+                                  cnet_tcp_socket_option option,
+                                  uint64_t value);
+
+/** Internal raw-owner helpers; native handles never cross the public CNet ABI. */
+int cnet_transport_tcp_native_option_get(uintptr_t native_socket,
+                                         cnet_tcp_socket_option option,
+                                         uint64_t *out_value);
+int cnet_transport_tcp_native_option_set(uintptr_t native_socket,
+                                         cnet_tcp_socket_option option,
+                                         uint64_t value);
 
 bool cnet_transport_active(const cnet_transport *transport);
 

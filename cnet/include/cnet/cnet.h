@@ -393,6 +393,20 @@ typedef struct cnet_stream_socket_options {
 #define CNET_STREAM_SOCKET_OPTIONS_INIT                                                            \
   {sizeof(cnet_stream_socket_options), 0u, 0u, 0u, 0u, 0u, 0u, 0, 0, 0}
 
+/**
+ * Live portable TCP socket properties. Values use the units named by each
+ * option and are read back from the platform after any clamp/rounding.
+ */
+typedef enum cnet_tcp_socket_option {
+  CNET_TCP_SOCKET_KEEPALIVE_ENABLED = 1,
+  CNET_TCP_SOCKET_KEEPALIVE_IDLE_MS,
+  CNET_TCP_SOCKET_KEEPALIVE_INTERVAL_MS,
+  CNET_TCP_SOCKET_KEEPALIVE_COUNT,
+  CNET_TCP_SOCKET_HOP_LIMIT,
+  CNET_TCP_SOCKET_RECEIVE_BUFFER_BYTES,
+  CNET_TCP_SOCKET_SEND_BUFFER_BYTES
+} cnet_tcp_socket_option;
+
 /** Optional listener policy consumed synchronously by `cnet_listener_init_ex()`. */
 typedef struct cnet_listener_options {
   size_t size;
@@ -677,6 +691,17 @@ int cnet_connection_local_peer(cnet_client *client, cnet_connection connection,
                                cnet_stream_peer *out_peer);
 int cnet_connection_remote_peer(cnet_client *client, cnet_connection connection,
                                 cnet_stream_peer *out_peer);
+
+/**
+ * Reads or mutates one live TCP property through the generation-checked CNet
+ * owner. These calls obey the same single-owner thread rule as client progress.
+ * No native descriptor is exposed. Unsupported host properties return
+ * SALTS_ENOTSUP.
+ */
+int cnet_connection_tcp_option_get(cnet_client *client, cnet_connection connection,
+                                   cnet_tcp_socket_option option, uint64_t *out_value);
+int cnet_connection_tcp_option_set(cnet_client *client, cnet_connection connection,
+                                   cnet_tcp_socket_option option, uint64_t value);
 
 /**
  * Transfers one connected Linux AF_VSOCK SOCK_STREAM socket to `client`.
@@ -974,9 +999,23 @@ int cnet_listener_bind_ex(cnet_listener *listener, const cnet_listener_config *c
 int cnet_listener_listen(cnet_listener *listener, size_t backlog);
 
 /**
+ * Updates the desired TCP listen backlog without changing bound/listening
+ * ownership. Before listen this only stores the hint; while listening it asks
+ * the platform to update the existing queue.
+ */
+int cnet_listener_set_backlog(cnet_listener *listener, size_t backlog);
+
+/** Live TCP options on one bound/listening listener-owned socket. */
+int cnet_listener_tcp_option_get(cnet_listener *listener,
+                                 cnet_tcp_socket_option option,
+                                 uint64_t *out_value);
+int cnet_listener_tcp_option_set(cnet_listener *listener,
+                                 cnet_tcp_socket_option option,
+                                 uint64_t value);
+
+/**
  * Consumes one bound, not-yet-listening TCP owner and starts an asynchronous
- * CNet client connect on that exact native socket. The listener wrapper is
- * empty after the call once ownership transfer begins; no raw socket escapes.
+ * client connect on that exact socket.
  */
 int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
                                const cnet_stream_peer *remote_peer,
