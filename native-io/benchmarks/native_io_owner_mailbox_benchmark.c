@@ -370,7 +370,7 @@ int main(void) {
     return 2;
   }
   if (messages < windows[sizeof(windows) / sizeof(windows[0]) - 1u]) {
-    fprintf(stderr, "owner-mailbox message count must be >= 64\n");
+    fprintf(stderr, "owner-mailbox message count must be >= 1024\n");
     return 2;
   }
 
