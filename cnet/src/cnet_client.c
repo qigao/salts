@@ -616,8 +616,14 @@ int cnet_connect_endpoint(cnet_client *client,
 
   if (out_connection == NULL) return SALTS_EINVAL;
   *out_connection = (cnet_connection){0};
-  if (impl == NULL || remote_endpoint == NULL || observer == NULL ||
-      observer->on_state == NULL)
+  if (impl == NULL || remote_endpoint == NULL ||
+      remote_endpoint->size < sizeof(*remote_endpoint) ||
+      remote_endpoint->version != CNET_STREAM_ENDPOINT_API_VERSION ||
+      observer == NULL || observer->on_state == NULL)
+    return SALTS_EINVAL;
+  if (local_endpoint != NULL &&
+      (local_endpoint->size < sizeof(*local_endpoint) ||
+       local_endpoint->version != CNET_STREAM_ENDPOINT_API_VERSION))
     return SALTS_EINVAL;
   if (local_endpoint != NULL &&
       local_endpoint->family != remote_endpoint->family)
