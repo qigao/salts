@@ -126,10 +126,29 @@ typedef struct cnet_datagram_peer {
 typedef struct cnet_stream_peer {
   cnet_datagram_address_family family;
   uint16_t port;
-  uint32_t flow_info;
   uint32_t scope_id;
   uint8_t address[16];
 } cnet_stream_peer;
+
+enum { CNET_STREAM_ENDPOINT_API_VERSION = 1 };
+
+/**
+ * Versioned lossless TCP endpoint for protocols that need the complete IPv6
+ * sockaddr surface, including sin6_flowinfo. Multi-byte scalar fields are
+ * carried as portable numeric values; native ABI representation stays private.
+ */
+typedef struct cnet_stream_endpoint {
+  size_t size;
+  uint32_t version;
+  cnet_datagram_address_family family;
+  uint16_t port;
+  uint32_t flow_info;
+  uint32_t scope_id;
+  uint8_t address[16];
+} cnet_stream_endpoint;
+
+#define CNET_STREAM_ENDPOINT_INIT \
+  {sizeof(cnet_stream_endpoint), CNET_STREAM_ENDPOINT_API_VERSION, 0, 0u, 0u, 0u, {0}}
 
 /** Portable Linux VSOCK address constants; ANY values are valid only for listeners. */
 #define CNET_VSOCK_CID_ANY UINT32_MAX
