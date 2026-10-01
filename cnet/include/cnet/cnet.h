@@ -1005,6 +1005,14 @@ int cnet_listener_listen(cnet_listener *listener, size_t backlog);
  */
 int cnet_listener_set_backlog(cnet_listener *listener, size_t backlog);
 
+/** Live TCP options on one bound/listening listener-owned socket. */
+int cnet_listener_tcp_option_get(cnet_listener *listener,
+                                 cnet_tcp_socket_option option,
+                                 uint64_t *out_value);
+int cnet_listener_tcp_option_set(cnet_listener *listener,
+                                 cnet_tcp_socket_option option,
+                                 uint64_t value);
+
 /** Creates and listens in one call; equivalent to bind_ex + listen. */
 int cnet_listener_init_ex(cnet_listener *listener, const cnet_listener_config *config,
                           const cnet_listener_options *options);
