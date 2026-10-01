@@ -466,6 +466,7 @@ int cnet_listener_listen(cnet_listener *listener, size_t backlog) {
   if (impl == NULL || backlog == 0u || backlog > (size_t)INT_MAX) return SALTS_EINVAL;
   if (impl->closed) return SALTS_ESHUTDOWN;
   if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
+  if (!impl->bound) return SALTS_EBUSY;
   if (impl->listening) return SALTS_EALREADY;
   if (listen(impl->socket_value, (int)backlog) != 0) return cnet_listener_native_error();
   impl->backlog = backlog;
@@ -541,6 +542,15 @@ int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
        remote_peer->family != CNET_DATAGRAM_ADDRESS_IPV6))
     return SALTS_EINVAL;
 
+  if (!impl->bound) {
+    cnet_stream_peer any = {0};
+    any.family = remote_peer->family;
+    status = cnet_listener_bind_open_peer(listener, &any);
+    if (status != SALTS_OK) return status;
+    impl = cnet_listener_get(listener);
+    if (impl == NULL) return SALTS_EPROTO;
+  }
+
   status = cnet_listener_local_peer(impl->socket_value, &local);
   if (status != SALTS_OK) return status;
   if (local.family != remote_peer->family) return SALTS_EAFNOSUPPORT;
@@ -580,6 +590,7 @@ int cnet_listener_local(const cnet_listener *listener, cnet_stream_peer *out_loc
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->closed) return SALTS_ESHUTDOWN;
   if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
+  if (!impl->bound) return SALTS_EBUSY;
   return cnet_listener_local_peer(impl->socket_value, out_local);
 }
 
@@ -644,6 +655,7 @@ int cnet_listener_port(const cnet_listener *listener, uint16_t *out_port) {
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->closed) return SALTS_ESHUTDOWN;
   if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
+  if (!impl->bound) return SALTS_EBUSY;
   *out_port = impl->port;
   return SALTS_OK;
 }
