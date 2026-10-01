@@ -538,6 +538,32 @@ int cnet_listener_bind_peer(cnet_listener *listener,
       listener, backend, local_peer, &options);
 }
 
+int cnet_listener_bind_endpoint_ex(
+    cnet_listener *listener,
+    native_io_backend_kind backend,
+    const cnet_stream_endpoint *local_endpoint,
+    const cnet_listener_options *options) {
+  unsigned char address[CNET_LISTENER_ADDRESS_CAPACITY];
+  size_t address_length = 0u;
+  int status;
+
+  status = cnet_transport_stream_endpoint_address(
+      local_endpoint, true, address, sizeof(address),
+      &address_length);
+  if (status != SALTS_OK) return status;
+  return cnet_listener_bind_address(
+      listener, backend, address, address_length, 0u, options);
+}
+
+int cnet_listener_bind_endpoint(
+    cnet_listener *listener,
+    native_io_backend_kind backend,
+    const cnet_stream_endpoint *local_endpoint) {
+  const cnet_listener_options options = CNET_LISTENER_OPTIONS_INIT;
+  return cnet_listener_bind_endpoint_ex(
+      listener, backend, local_endpoint, &options);
+}
+
 int cnet_listener_bind(cnet_listener *listener, const cnet_listener_config *config) {
   const cnet_listener_options options = CNET_LISTENER_OPTIONS_INIT;
   return cnet_listener_bind_ex(listener, config, &options);
