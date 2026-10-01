@@ -627,6 +627,25 @@ int cnet_connection_remote_peer(cnet_client *client, cnet_connection connection,
   return cnet_shards_tcp_remote_peer(&impl->shards, internal, out_peer);
 }
 
+int cnet_connection_shutdown(cnet_client *client,
+                             cnet_connection connection,
+                             cnet_tcp_shutdown how) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_shard_connection internal = {0};
+  cnet_client_record *record;
+
+  if (impl == NULL ||
+      (how != CNET_TCP_SHUTDOWN_RECEIVE &&
+       how != CNET_TCP_SHUTDOWN_SEND &&
+       how != CNET_TCP_SHUTDOWN_BOTH))
+    return SALTS_EINVAL;
+
+  record = cnet_client_find_record(impl, connection, &internal);
+  if (record == NULL) return SALTS_ENOENT;
+  if (record->scheme != CNET_URI_TCP) return SALTS_ENOTSUP;
+  return cnet_shards_tcp_shutdown(&impl->shards, internal, how);
+}
+
 int cnet_connection_tcp_option_get(cnet_client *client, cnet_connection connection,
                                    cnet_tcp_socket_option option, uint64_t *out_value) {
   cnet_client_impl *impl = cnet_client_get(client);
