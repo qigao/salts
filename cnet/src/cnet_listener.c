@@ -650,12 +650,13 @@ static int cnet_listener_apply_tcp_options(
   return SALTS_OK;
 }
 
-int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
-                               const cnet_stream_peer *remote_peer,
-                               const cnet_observer *observer,
-                               cnet_connection *out_connection) {
+int cnet_listener_connect_endpoint(
+    cnet_listener *listener, cnet_client *client,
+    const cnet_stream_endpoint *remote_endpoint,
+    const cnet_observer *observer,
+    cnet_connection *out_connection) {
   cnet_listener_impl *impl = cnet_listener_get(listener);
-  cnet_stream_peer local = {0};
+  cnet_stream_endpoint local = CNET_STREAM_ENDPOINT_INIT;
   uintptr_t native_socket;
   int status;
   int shutdown_status;
@@ -663,38 +664,62 @@ int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
   if (out_connection == NULL) return SALTS_EINVAL;
   *out_connection = (cnet_connection){0};
   if (impl == NULL || client == NULL || client->impl == NULL ||
-      remote_peer == NULL || observer == NULL || observer->on_state == NULL)
+      remote_endpoint == NULL ||
+      remote_endpoint->size < sizeof(*remote_endpoint) ||
+      remote_endpoint->version != CNET_STREAM_ENDPOINT_API_VERSION ||
+      observer == NULL || observer->on_state == NULL)
     return SALTS_EINVAL;
   if (impl->closed) return SALTS_ESHUTDOWN;
   if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
   if (impl->listening) return SALTS_EBUSY;
-  if (remote_peer->port == 0u ||
-      (remote_peer->family != CNET_DATAGRAM_ADDRESS_IPV4 &&
-       remote_peer->family != CNET_DATAGRAM_ADDRESS_IPV6))
+  if (remote_endpoint->port == 0u ||
+      (remote_endpoint->family != CNET_DATAGRAM_ADDRESS_IPV4 &&
+       remote_endpoint->family != CNET_DATAGRAM_ADDRESS_IPV6))
     return SALTS_EINVAL;
 
   if (!impl->bound) {
-    cnet_stream_peer any = {0};
-    any.family = remote_peer->family;
-    status = cnet_listener_bind_open_peer(listener, &any);
+    cnet_stream_endpoint any = CNET_STREAM_ENDPOINT_INIT;
+    any.family = remote_endpoint->family;
+    status = cnet_listener_bind_open_endpoint(listener, &any);
     if (status != SALTS_OK) return status;
     impl = cnet_listener_get(listener);
     if (impl == NULL) return SALTS_EPROTO;
   }
 
-  status = cnet_listener_local_peer(impl->socket_value, &local);
+  status = cnet_listener_local_endpoint(
+      impl->socket_value, &local);
   if (status != SALTS_OK) return status;
-  if (local.family != remote_peer->family) return SALTS_EAFNOSUPPORT;
+  if (local.family != remote_endpoint->family)
+    return SALTS_EAFNOSUPPORT;
 
   native_socket = (uintptr_t)impl->socket_value;
   impl->socket_value = CNET_LISTENER_INVALID_SOCKET;
   listener->impl = NULL;
   free(impl);
 
-  status = cnet_client_adopt_bound_tcp_connect(
-      client, native_socket, remote_peer, observer, out_connection);
+  status = cnet_client_adopt_bound_tcp_connect_endpoint(
+      client, native_socket, remote_endpoint,
+      observer, out_connection);
   shutdown_status = cnet_module_shutdown();
   return status != SALTS_OK ? status : shutdown_status;
+}
+
+int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
+                               const cnet_stream_peer *remote_peer,
+                               const cnet_observer *observer,
+                               cnet_connection *out_connection) {
+  cnet_stream_endpoint endpoint = CNET_STREAM_ENDPOINT_INIT;
+  if (remote_peer == NULL) {
+    if (out_connection != NULL)
+      *out_connection = (cnet_connection){0};
+    return SALTS_EINVAL;
+  }
+  endpoint.family = remote_peer->family;
+  endpoint.port = remote_peer->port;
+  endpoint.scope_id = remote_peer->scope_id;
+  memcpy(endpoint.address, remote_peer->address, sizeof(endpoint.address));
+  return cnet_listener_connect_endpoint(
+      listener, client, &endpoint, observer, out_connection);
 }
 
 int cnet_listener_init_ex(cnet_listener *listener, const cnet_listener_config *config,
