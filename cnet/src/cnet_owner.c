@@ -2336,6 +2336,10 @@ static int cnet_owner_send_direct_ready(cnet_owner_impl *impl,
   status = cnet_session_table_state(impl->sessions, session_handle, &state);
   if (status != SALTS_OK) return status;
   if (state != CNET_SESSION_OPEN || session->close_requested) return SALTS_EBUSY;
+  if (session->peer.scheme == CNET_URI_TCP &&
+      (session->tcp_shutdown_mask &
+       (uint8_t)CNET_TCP_SHUTDOWN_SEND) != 0u)
+    return SALTS_ESHUTDOWN;
   *out_session = session;
   return SALTS_OK;
 }
@@ -2440,6 +2444,10 @@ int cnet_owner_receive_direct(cnet_owner *owner, cnet_session_handle session_han
   status = cnet_session_table_state(impl->sessions, session_handle, &state);
   if (status != SALTS_OK) return status;
   if (state != CNET_SESSION_OPEN || session->close_requested) return SALTS_EBUSY;
+  if (session->peer.scheme == CNET_URI_TCP &&
+      (session->tcp_shutdown_mask &
+       (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE) != 0u)
+    return SALTS_ESHUTDOWN;
   if (demand > SIZE_MAX - session->receive_demand) return SALTS_ERANGE;
 
   queue_rearm = !session->read_active && session->receive_demand == 0u;
@@ -2642,6 +2650,7 @@ int cnet_owner_tcp_shutdown(cnet_owner *owner, cnet_session_handle session_handl
   cnet_session_state state = CNET_SESSION_FREE;
   uint8_t requested;
   uint8_t pending;
+  size_t queued_writes = 0u;
   int status;
 
   if (impl == NULL ||
@@ -2662,6 +2671,17 @@ int cnet_owner_tcp_shutdown(cnet_owner *owner, cnet_session_handle session_handl
   requested = (uint8_t)how;
   pending = (uint8_t)(requested & (uint8_t)~session->tcp_shutdown_mask);
   if (pending == 0u) return SALTS_OK;
+
+  if ((pending & (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE) != 0u &&
+      (session->receive_demand != 0u || session->read_active))
+    return SALTS_EBUSY;
+  if ((pending & (uint8_t)CNET_TCP_SHUTDOWN_SEND) != 0u) {
+    status = cnet_write_queue_count(
+        &impl->writes, session->handle, &queued_writes);
+    if (status != SALTS_OK) return status;
+    if (queued_writes != 0u || session->write_active)
+      return SALTS_EBUSY;
+  }
 
   status = cnet_transport_tcp_shutdown(
       &session->transport, (cnet_tcp_shutdown)pending);
