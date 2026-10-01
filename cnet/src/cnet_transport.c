@@ -972,6 +972,44 @@ int cnet_transport_tcp_native_option_set(uintptr_t native_socket,
   return cnet_transport_tcp_option_set(&transport, option, value);
 }
 
+int cnet_transport_tcp_shutdown(cnet_transport *transport,
+                                cnet_tcp_shutdown how) {
+  cnet_native_socket socket_value;
+  int native_how;
+  int status = cnet_transport_tcp_socket(transport, &socket_value);
+  if (status != SALTS_OK) return status;
+
+  switch (how) {
+  case CNET_TCP_SHUTDOWN_RECEIVE:
+#if defined(_WIN32)
+    native_how = SD_RECEIVE;
+#else
+    native_how = SHUT_RD;
+#endif
+    break;
+  case CNET_TCP_SHUTDOWN_SEND:
+#if defined(_WIN32)
+    native_how = SD_SEND;
+#else
+    native_how = SHUT_WR;
+#endif
+    break;
+  case CNET_TCP_SHUTDOWN_BOTH:
+#if defined(_WIN32)
+    native_how = SD_BOTH;
+#else
+    native_how = SHUT_RDWR;
+#endif
+    break;
+  default:
+    return SALTS_EINVAL;
+  }
+
+  if (shutdown(socket_value, native_how) != 0)
+    return cnet_transport_native_error();
+  return SALTS_OK;
+}
+
 native_io_endpoint cnet_transport_read_endpoint(const cnet_transport *transport) {
   return transport != NULL && transport->attached ? transport->endpoint : (native_io_endpoint){0};
 }
