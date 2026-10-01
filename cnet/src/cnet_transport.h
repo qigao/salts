@@ -42,6 +42,11 @@ int cnet_transport_parse_numeric_address(const char *host, uint16_t port, void *
 int cnet_transport_parse_bind_address(const char *host, uint16_t port, void *out_address,
                                       size_t address_capacity, size_t *out_address_length);
 
+/** Converts one portable TCP peer to native sockaddr storage. */
+int cnet_transport_stream_peer_address(const cnet_stream_peer *peer, bool allow_zero_port,
+                                       void *out_address, size_t address_capacity,
+                                       size_t *out_address_length);
+
 /** Creates and attaches a TCP socket, then describes its connect operation. */
 int cnet_transport_tcp_prepare_connect(cnet_transport *transport, native_io_backend *backend,
                                        native_io_backend_kind backend_kind, const void *address,
@@ -49,6 +54,18 @@ int cnet_transport_tcp_prepare_connect(cnet_transport *transport, native_io_back
                                        const cnet_stream_socket_options *socket_options,
                                        uintptr_t user_data,
                                        native_io_operation *out_operation);
+
+/**
+ * TCP connect variant that binds an optional numeric local endpoint before
+ * attaching/submitting the asynchronous connect.
+ */
+int cnet_transport_tcp_prepare_connect_bound(
+    cnet_transport *transport, native_io_backend *backend,
+    native_io_backend_kind backend_kind, const void *remote_address,
+    size_t remote_address_length, const void *local_address,
+    size_t local_address_length,
+    const cnet_stream_socket_options *socket_options,
+    uintptr_t user_data, native_io_operation *out_operation);
 
 /** Returns whether this build can drive Linux AF_VSOCK on the selected backend. */
 bool cnet_transport_vsock_supported(native_io_backend_kind backend_kind);
@@ -128,6 +145,11 @@ int cnet_transport_pipe_connect(cnet_transport *transport, native_io_backend *ba
 
 native_io_endpoint cnet_transport_read_endpoint(const cnet_transport *transport);
 native_io_endpoint cnet_transport_write_endpoint(const cnet_transport *transport);
+
+/** Copies portable endpoints for an attached/open TCP stream transport. */
+int cnet_transport_tcp_local_peer(const cnet_transport *transport, cnet_stream_peer *out_peer);
+int cnet_transport_tcp_remote_peer(const cnet_transport *transport, cnet_stream_peer *out_peer);
+
 bool cnet_transport_active(const cnet_transport *transport);
 
 /** Closes owned native resources, then releases drained NativeIO metadata. */
