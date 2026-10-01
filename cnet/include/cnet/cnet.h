@@ -1013,6 +1013,15 @@ int cnet_listener_tcp_option_set(cnet_listener *listener,
                                  cnet_tcp_socket_option option,
                                  uint64_t value);
 
+/**
+ * Consumes one bound, not-yet-listening TCP owner and starts an asynchronous
+ * client connect on that exact socket.
+ */
+int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
+                               const cnet_stream_peer *remote_peer,
+                               const cnet_observer *observer,
+                               cnet_connection *out_connection);
+
 /** Creates and listens in one call; equivalent to bind_ex + listen. */
 int cnet_listener_init_ex(cnet_listener *listener, const cnet_listener_config *config,
                           const cnet_listener_options *options);
