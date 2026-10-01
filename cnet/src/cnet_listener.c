@@ -359,6 +359,44 @@ int cnet_listener_tcp_option_set(cnet_listener *listener,
       (uintptr_t)impl->socket_value, option, value);
 }
 
+int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
+                               const cnet_stream_peer *remote_peer,
+                               const cnet_observer *observer,
+                               cnet_connection *out_connection) {
+  cnet_listener_impl *impl = cnet_listener_get(listener);
+  cnet_stream_peer local = {0};
+  uintptr_t native_socket;
+  int status;
+  int shutdown_status;
+
+  if (out_connection == NULL) return SALTS_EINVAL;
+  *out_connection = (cnet_connection){0};
+  if (impl == NULL || client == NULL || client->impl == NULL ||
+      remote_peer == NULL || observer == NULL || observer->on_state == NULL)
+    return SALTS_EINVAL;
+  if (impl->closed) return SALTS_ESHUTDOWN;
+  if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
+  if (impl->listening) return SALTS_EBUSY;
+  if (remote_peer->port == 0u ||
+      (remote_peer->family != CNET_DATAGRAM_ADDRESS_IPV4 &&
+       remote_peer->family != CNET_DATAGRAM_ADDRESS_IPV6))
+    return SALTS_EINVAL;
+
+  status = cnet_listener_local_peer(impl->socket_value, &local);
+  if (status != SALTS_OK) return status;
+  if (local.family != remote_peer->family) return SALTS_EAFNOSUPPORT;
+
+  native_socket = (uintptr_t)impl->socket_value;
+  impl->socket_value = CNET_LISTENER_INVALID_SOCKET;
+  listener->impl = NULL;
+  free(impl);
+
+  status = cnet_client_adopt_bound_tcp_connect(
+      client, native_socket, remote_peer, observer, out_connection);
+  shutdown_status = cnet_module_shutdown();
+  return status != SALTS_OK ? status : shutdown_status;
+}
+
 int cnet_listener_init_ex(cnet_listener *listener, const cnet_listener_config *config,
                           const cnet_listener_options *options) {
   int status = cnet_listener_bind_ex(listener, config, options);
