@@ -306,6 +306,48 @@ spec("CNet NativeIO transport ownership") {
     cnet_test_stream_socket_options();
   }
 
+  it("rejects malformed versioned TCP endpoints") {
+    cnet_stream_endpoint endpoint = CNET_STREAM_ENDPOINT_INIT;
+    struct sockaddr_storage address;
+    size_t address_length = SIZE_MAX;
+
+    endpoint.family = CNET_DATAGRAM_ADDRESS_IPV4;
+    endpoint.port = UINT16_C(43124);
+    endpoint.address[0] = 127u;
+    endpoint.address[3] = 1u;
+
+    endpoint.size = sizeof(endpoint) - 1u;
+    check_equal(cnet_transport_stream_endpoint_address(
+                    &endpoint, false, &address, sizeof(address),
+                    &address_length),
+                SALTS_EINVAL);
+    check_equal(address_length, 0u);
+
+    endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+    endpoint.family = CNET_DATAGRAM_ADDRESS_IPV4;
+    endpoint.port = UINT16_C(43124);
+    endpoint.address[0] = 127u;
+    endpoint.address[3] = 1u;
+    endpoint.version = CNET_STREAM_ENDPOINT_API_VERSION + 1u;
+    check_equal(cnet_transport_stream_endpoint_address(
+                    &endpoint, false, &address, sizeof(address),
+                    &address_length),
+                SALTS_EINVAL);
+    check_equal(address_length, 0u);
+
+    endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+    endpoint.family = CNET_DATAGRAM_ADDRESS_IPV4;
+    endpoint.port = UINT16_C(43124);
+    endpoint.flow_info = 1u;
+    endpoint.address[0] = 127u;
+    endpoint.address[3] = 1u;
+    check_equal(cnet_transport_stream_endpoint_address(
+                    &endpoint, false, &address, sizeof(address),
+                    &address_length),
+                SALTS_EINVAL);
+    check_equal(address_length, 0u);
+  }
+
   it("round-trips versioned IPv6 TCP flow and scope fields") {
     cnet_stream_endpoint endpoint = CNET_STREAM_ENDPOINT_INIT;
     struct sockaddr_storage address;
