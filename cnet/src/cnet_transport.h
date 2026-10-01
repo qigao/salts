@@ -119,6 +119,13 @@ int cnet_transport_adopt_tcp(cnet_transport *transport, native_io_backend *backe
                              uintptr_t native_socket,
                              const cnet_stream_socket_options *socket_options);
 
+int cnet_transport_adopt_tcp_prepare_connect(
+    cnet_transport *transport, native_io_backend *backend,
+    uintptr_t native_socket, const void *remote_address,
+    size_t remote_address_length,
+    const cnet_stream_socket_options *socket_options,
+    uintptr_t user_data, native_io_operation *out_operation);
+
 /** Closes one unattached native socket transferred through a failed command. */
 void cnet_transport_close_socket(uintptr_t native_socket);
 
