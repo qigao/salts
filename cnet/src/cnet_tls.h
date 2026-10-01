@@ -55,6 +55,10 @@ int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed,
 int cnet_tls_shutdown(cnet_tls_state *state, bool *out_notify_generated);
 int cnet_tls_get_negotiated_alpn(const cnet_tls_state *state, const unsigned char **out_data,
                                  size_t *out_size);
+int cnet_tls_state_negotiated_version(const cnet_tls_state *state, char *buffer, size_t capacity,
+                                      size_t *out_size);
+int cnet_tls_state_negotiated_cipher(const cnet_tls_state *state, char *buffer, size_t capacity,
+                                     size_t *out_size);
 int cnet_tls_state_peer_certificate_sha256(
     const cnet_tls_state *state,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
