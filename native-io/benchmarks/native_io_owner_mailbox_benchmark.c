@@ -359,7 +359,7 @@ int main(void) {
   const size_t messages =
       owner_mailbox_env_count("NATIVE_IO_OWNER_MAILBOX_MESSAGES",
                               OWNER_MAILBOX_DEFAULT_MESSAGES);
-  static const size_t windows[] = {1u, 2u, 4u, 8u, 16u, 32u, 64u};
+  static const size_t windows[] = {1u, 2u, 4u, 8u, 16u, 32u, 64u, 128u, 256u, 512u, 1024u};
   owner_mailbox_summary summaries[sizeof(windows) / sizeof(windows[0])] = {{0}};
   FILE *csv;
   int status;
