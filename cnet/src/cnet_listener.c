@@ -263,22 +263,6 @@ static int cnet_listener_set_nonblocking(cnet_listener_socket socket_value) {
   return cnet_listener_native_error();
 }
 
-static int cnet_listener_local_peer(cnet_listener_socket socket_value,
-                                    cnet_stream_peer *out_peer) {
-  struct sockaddr_storage address;
-#if defined(_WIN32)
-  int address_length = (int)sizeof(address);
-#else
-  socklen_t address_length = (socklen_t)sizeof(address);
-#endif
-  if (out_peer == NULL) return SALTS_EINVAL;
-  *out_peer = (cnet_stream_peer){0};
-  memset(&address, 0, sizeof(address));
-  if (getsockname(socket_value, (struct sockaddr *)&address, &address_length) != 0)
-    return cnet_listener_native_error();
-  return cnet_listener_stream_peer(&address, (size_t)address_length, out_peer);
-}
-
 static int cnet_listener_bound_port(cnet_listener_socket socket_value, uint16_t *out_port) {
   cnet_stream_peer peer = {0};
   int status;
