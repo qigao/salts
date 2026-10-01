@@ -24,6 +24,16 @@ set_target_properties(native_io_sharded_routing_benchmark PROPERTIES
   C_EXTENSIONS OFF)
 
 
+cmake_add_benchmark(native_io_owner_handoff_benchmark
+  SOURCES native_io_owner_handoff_benchmark.c
+  LIBS Salts::NativeIO Salts::Platform
+  FOLDER "native-io/benchmarks")
+set_target_properties(native_io_owner_handoff_benchmark PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+
 cmake_add_benchmark(native_io_pipe_styles_benchmark
   SOURCES native_io_pipe_styles_benchmark.c
   LIBS Salts::NativeIO Salts::Platform
