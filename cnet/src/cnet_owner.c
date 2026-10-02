@@ -53,6 +53,8 @@ typedef struct cnet_owner_session {
   bool tls_send_accepted;
   bool tls_close_after_send;
   bool tls_shutdown_after_flush;
+  uint8_t tcp_shutdown_mask;
+  uint8_t tcp_shutdown_applied_mask;
   salts_deadline_id connect_deadline;
 } cnet_owner_session;
 
@@ -371,6 +373,9 @@ static int cnet_owner_finish_write_admission(cnet_owner_impl *impl,
 static int cnet_owner_discard_queued_writes(cnet_owner_impl *impl, cnet_owner_session *session,
                                             bool keep_active_head);
 
+static int cnet_owner_progress_tcp_shutdown(cnet_owner_impl *impl,
+                                            cnet_owner_session *session);
+
 static int cnet_owner_flush_state_events(cnet_owner_impl *impl, bool *out_blocked) {
   size_t published = 0u;
 
@@ -469,6 +474,8 @@ static int cnet_owner_process_session_work(cnet_owner_impl *impl) {
     }
     status = cnet_owner_start_queued_write(impl, session);
     if (status != SALTS_OK) return status;
+    status = cnet_owner_progress_tcp_shutdown(impl, session);
+    if (status != SALTS_OK) return status;
     if (session->peer.scheme == CNET_URI_TLS && session->receive_demand == 0u &&
         !session->close_requested) {
       status = cnet_owner_tls_background_progress(impl, session);
@@ -531,6 +538,41 @@ static int cnet_owner_cancel_receive_requests(cnet_owner_impl *impl, cnet_sessio
       first_error = status;
   }
   return first_error;
+}
+
+static int cnet_owner_progress_tcp_shutdown(cnet_owner_impl *impl,
+                                            cnet_owner_session *session) {
+  size_t queued_writes = 0u;
+  int status;
+
+  if (impl == NULL || session == NULL ||
+      session->peer.scheme != CNET_URI_TCP)
+    return SALTS_OK;
+
+  if ((session->tcp_shutdown_mask &
+       (uint8_t)CNET_TCP_SHUTDOWN_SEND) == 0u ||
+      (session->tcp_shutdown_applied_mask &
+       (uint8_t)CNET_TCP_SHUTDOWN_SEND) != 0u)
+    return SALTS_OK;
+
+  if (session->write_active)
+    return SALTS_OK;
+
+  status = cnet_write_queue_count(
+      &impl->writes, session->handle, &queued_writes);
+  if (status != SALTS_OK)
+    return status;
+  if (queued_writes != 0u)
+    return SALTS_OK;
+
+  status = cnet_transport_tcp_shutdown(
+      &session->transport, CNET_TCP_SHUTDOWN_SEND);
+  if (status != SALTS_OK)
+    return status;
+  session->tcp_shutdown_applied_mask =
+      (uint8_t)(session->tcp_shutdown_applied_mask |
+                (uint8_t)CNET_TCP_SHUTDOWN_SEND);
+  return SALTS_OK;
 }
 
 static int cnet_owner_release_tls_send(cnet_owner_impl *impl, cnet_owner_session *session) {
@@ -1545,6 +1587,10 @@ static int cnet_owner_receive(cnet_owner_impl *impl, cnet_command_view *command)
   status = cnet_session_table_state(impl->sessions, command->connection, &state);
   if (status != SALTS_OK || state != CNET_SESSION_OPEN || session->close_requested)
     return cnet_command_queue_release(impl->commands, command);
+  if (session->peer.scheme == CNET_URI_TCP &&
+      (session->tcp_shutdown_mask &
+       (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE) != 0u)
+    return cnet_command_queue_release(impl->commands, command);
   if (command->argument > SIZE_MAX - session->receive_demand)
     return cnet_owner_fail_accepted_command(impl, session, command, SALTS_ERANGE,
                                             CNET_SESSION_STAGE_READ);
@@ -1772,6 +1818,16 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
 
   if (role == CNET_OWNER_REQUEST_RECEIVE) {
     if (session->close_requested) return cnet_owner_finalize_session(impl, session);
+    if (session->peer.scheme == CNET_URI_TCP &&
+        (session->tcp_shutdown_mask &
+         (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE) != 0u) {
+      /*
+       * Receive shutdown owns cancellation/discard semantics. A completion may
+       * race cancellation on some backends; never republish data after the
+       * direction was synchronously shut down.
+       */
+      return SALTS_OK;
+    }
     if (completion->kind == NATIVE_IO_COMPLETION_OK) {
       cnet_event event;
       if (completion->bytes > mem_buffer_capacity(session->receive_buffer))
@@ -1862,6 +1918,11 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
       status = cnet_owner_queue_state_event(impl, session->handle, CNET_EVENT_STATE_CLOSING,
                                             SALTS_OK, CNET_SESSION_STAGE_NONE);
       if (status != SALTS_OK) return status;
+    } else if (role == CNET_OWNER_REQUEST_SEND && !session->close_requested) {
+      status = cnet_owner_progress_tcp_shutdown(impl, session);
+      if (status != SALTS_OK)
+        return cnet_owner_fail_session(
+            impl, session, status, CNET_SESSION_STAGE_SHUTDOWN);
     }
   } else if (close_after_send || !session->close_requested) {
     cnet_owner_record_failure(session,
@@ -2335,6 +2396,10 @@ static int cnet_owner_send_direct_ready(cnet_owner_impl *impl,
   status = cnet_session_table_state(impl->sessions, session_handle, &state);
   if (status != SALTS_OK) return status;
   if (state != CNET_SESSION_OPEN || session->close_requested) return SALTS_EBUSY;
+  if (session->peer.scheme == CNET_URI_TCP &&
+      (session->tcp_shutdown_mask &
+       (uint8_t)CNET_TCP_SHUTDOWN_SEND) != 0u)
+    return SALTS_ESHUTDOWN;
   *out_session = session;
   return SALTS_OK;
 }
@@ -2439,6 +2504,10 @@ int cnet_owner_receive_direct(cnet_owner *owner, cnet_session_handle session_han
   status = cnet_session_table_state(impl->sessions, session_handle, &state);
   if (status != SALTS_OK) return status;
   if (state != CNET_SESSION_OPEN || session->close_requested) return SALTS_EBUSY;
+  if (session->peer.scheme == CNET_URI_TCP &&
+      (session->tcp_shutdown_mask &
+       (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE) != 0u)
+    return SALTS_ESHUTDOWN;
   if (demand > SIZE_MAX - session->receive_demand) return SALTS_ERANGE;
 
   queue_rearm = !session->read_active && session->receive_demand == 0u;
@@ -2610,6 +2679,36 @@ int cnet_owner_tcp_remote_peer(cnet_owner *owner, cnet_session_handle session_ha
   return cnet_transport_tcp_remote_peer(&session->transport, out_peer);
 }
 
+int cnet_owner_tcp_local_endpoint(
+    cnet_owner *owner, cnet_session_handle session_handle,
+    cnet_stream_endpoint *out_endpoint) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  if (out_endpoint == NULL) return SALTS_EINVAL;
+  *out_endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+  if (impl == NULL) return SALTS_EINVAL;
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (!cnet_owner_tcp_scheme(session->peer.scheme)) return SALTS_ENOTSUP;
+  return cnet_transport_tcp_local_endpoint(
+      &session->transport, out_endpoint);
+}
+
+int cnet_owner_tcp_remote_endpoint(
+    cnet_owner *owner, cnet_session_handle session_handle,
+    cnet_stream_endpoint *out_endpoint) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  if (out_endpoint == NULL) return SALTS_EINVAL;
+  *out_endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+  if (impl == NULL) return SALTS_EINVAL;
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (!cnet_owner_tcp_scheme(session->peer.scheme)) return SALTS_ENOTSUP;
+  return cnet_transport_tcp_remote_endpoint(
+      &session->transport, out_endpoint);
+}
+
 int cnet_owner_tcp_option_get(cnet_owner *owner, cnet_session_handle session_handle,
                               cnet_tcp_socket_option option, uint64_t *out_value) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
@@ -2632,6 +2731,74 @@ int cnet_owner_tcp_option_set(cnet_owner *owner, cnet_session_handle session_han
   if (session == NULL) return SALTS_ENOENT;
   if (!cnet_owner_tcp_scheme(session->peer.scheme)) return SALTS_ENOTSUP;
   return cnet_transport_tcp_option_set(&session->transport, option, value);
+}
+
+int cnet_owner_tcp_shutdown(cnet_owner *owner, cnet_session_handle session_handle,
+                            cnet_tcp_shutdown how) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  cnet_session_state state = CNET_SESSION_FREE;
+  uint8_t requested;
+  uint8_t pending;
+  int status;
+
+  if (impl == NULL ||
+      (how != CNET_TCP_SHUTDOWN_RECEIVE &&
+       how != CNET_TCP_SHUTDOWN_SEND &&
+       how != CNET_TCP_SHUTDOWN_BOTH))
+    return SALTS_EINVAL;
+
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (session->peer.scheme != CNET_URI_TCP) return SALTS_ENOTSUP;
+
+  status = cnet_session_table_state(
+      impl->sessions, session_handle, &state);
+  if (status != SALTS_OK) return status;
+  if (state != CNET_SESSION_OPEN) return SALTS_ENOTCONN;
+
+  requested = (uint8_t)how;
+  pending = (uint8_t)(requested & (uint8_t)~session->tcp_shutdown_mask);
+  if (pending == 0u) return SALTS_OK;
+
+  /*
+   * Requested state is authoritative immediately: later receive/send
+   * admissions are rejected even when the native send-side FIN must wait for
+   * already accepted writes to drain.
+   */
+  session->tcp_shutdown_mask =
+      (uint8_t)(session->tcp_shutdown_mask | pending);
+
+  if ((pending & (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE) != 0u) {
+    session->receive_demand = 0u;
+    status = cnet_owner_cancel_receive_requests(
+        impl, session->handle);
+    if (status != SALTS_OK)
+      return status;
+
+    status = cnet_transport_tcp_shutdown(
+        &session->transport, CNET_TCP_SHUTDOWN_RECEIVE);
+    if (status != SALTS_OK)
+      return status;
+    session->tcp_shutdown_applied_mask =
+        (uint8_t)(session->tcp_shutdown_applied_mask |
+                  (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE);
+  }
+
+  if ((pending & (uint8_t)CNET_TCP_SHUTDOWN_SEND) != 0u) {
+    status = cnet_owner_progress_tcp_shutdown(impl, session);
+    if (status != SALTS_OK)
+      return status;
+    if ((session->tcp_shutdown_applied_mask &
+         (uint8_t)CNET_TCP_SHUTDOWN_SEND) == 0u) {
+      status = cnet_owner_queue_session_work(
+          impl, session->handle);
+      if (status != SALTS_OK)
+        return status;
+    }
+  }
+
+  return SALTS_OK;
 }
 
 int cnet_owner_tls_negotiated_version(cnet_owner *owner, cnet_session_handle session_handle,

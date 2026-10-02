@@ -28,6 +28,7 @@ typedef struct cnet_client_record {
   cnet_uri_scheme scheme;
   size_t negotiated_alpn_size;
   size_t receive_pending;
+  uint8_t tcp_shutdown_mask;
   char negotiated_alpn[CNET_TLS_ALPN_NAME_MAX_BYTES + 1u];
   /* Public-handle/observer slot occupancy; not CNet session lifecycle truth. */
   bool active;
@@ -208,12 +209,23 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
   if (view->kind == CNET_EVENT_RECEIVE) {
     const cnet_message_kind kind =
         record->scheme == CNET_URI_UDP ? CNET_MESSAGE_DATAGRAM : CNET_MESSAGE_BYTES;
+    const bool receive_shutdown =
+        record->scheme == CNET_URI_TCP &&
+        (record->tcp_shutdown_mask &
+         (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE) != 0u;
     if (record->active && record->internal.session.slot == view->session.slot &&
         record->internal.session.generation == view->session.generation) {
-      if (record->receive_pending == 0u) cnet_client_record_error(impl, SALTS_EPROTO);
-      else --record->receive_pending;
+      if (!receive_shutdown) {
+        if (record->receive_pending == 0u) cnet_client_record_error(impl, SALTS_EPROTO);
+        else --record->receive_pending;
+      }
     }
-    if (record->receive_slice_handler != NULL) {
+    if (receive_shutdown) {
+      /*
+       * WASI-style receive shutdown discards already-queued receive data.
+       * Dispatcher-owned backing is released after this observer returns.
+       */
+    } else if (record->receive_slice_handler != NULL) {
       mem_slice_t slice = {0};
       const int materialize_status = cnet_client_materialize_receive(view, &slice);
       if (materialize_status != SALTS_OK) {
@@ -457,7 +469,14 @@ static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_pa
   if (!impl->admission_open) return SALTS_ESHUTDOWN;
   if (impl->active_count >= impl->connection_capacity) return SALTS_ENOBUFS;
   admitted_payload = *payload;
-  admitted_payload.socket_options = impl->socket_options;
+  /*
+   * Fresh client-created sockets inherit the client's future-connection
+   * policy. Adopted sockets already carry their live policy (for example an
+   * accepted listener child or a bound socket transferred into connect) and
+   * must not be rewritten here.
+   */
+  if (!admitted_payload.adopted)
+    admitted_payload.socket_options = impl->socket_options;
   status = cnet_shards_connect(&impl->shards, &admitted_payload, &internal);
   if (status != SALTS_OK) return status;
   if (out_transferred != NULL) *out_transferred = true;
@@ -471,9 +490,10 @@ static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_pa
   record->scheme = scheme;
   record->active = true;
   record->pending_writes = 0u;
+  record->receive_pending = 0u;
+  record->tcp_shutdown_mask = 0u;
   record->close_command_pending = false;
   record->tls_command_pending = false;
-  record->receive_pending = 0u;
   ++impl->active_count;
   status = cnet_dispatcher_register(&impl->dispatcher, internal, cnet_client_observe, record);
   if (status == SALTS_OK) {
@@ -595,6 +615,54 @@ int cnet_connect_peer(cnet_client *client, const cnet_stream_peer *remote_peer,
   return status;
 }
 
+int cnet_connect_endpoint(cnet_client *client,
+                          const cnet_stream_endpoint *remote_endpoint,
+                          const cnet_stream_endpoint *local_endpoint,
+                          const cnet_observer *observer,
+                          cnet_connection *out_connection) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_owner_connect_payload payload = {0};
+  bool transferred = false;
+  int status;
+
+  if (out_connection == NULL) return SALTS_EINVAL;
+  *out_connection = (cnet_connection){0};
+  if (impl == NULL || remote_endpoint == NULL ||
+      remote_endpoint->size < sizeof(*remote_endpoint) ||
+      remote_endpoint->version != CNET_STREAM_ENDPOINT_API_VERSION ||
+      observer == NULL || observer->on_state == NULL)
+    return SALTS_EINVAL;
+  if (local_endpoint != NULL &&
+      (local_endpoint->size < sizeof(*local_endpoint) ||
+       local_endpoint->version != CNET_STREAM_ENDPOINT_API_VERSION))
+    return SALTS_EINVAL;
+  if (local_endpoint != NULL &&
+      local_endpoint->family != remote_endpoint->family)
+    return SALTS_EAFNOSUPPORT;
+
+  payload.scheme = CNET_URI_TCP;
+  payload.connect_timeout_ms = impl->connect_timeout_ms;
+  payload.read_timeout_ms = impl->read_timeout_ms;
+  payload.write_timeout_ms = impl->write_timeout_ms;
+
+  status = cnet_transport_stream_endpoint_address(
+      remote_endpoint, false, payload.address, sizeof(payload.address),
+      &payload.address_length);
+  if (status != SALTS_OK) return status;
+
+  if (local_endpoint != NULL) {
+    status = cnet_transport_stream_endpoint_address(
+        local_endpoint, true, payload.local_address,
+        sizeof(payload.local_address),
+        &payload.local_address_length);
+    if (status != SALTS_OK) return status;
+  }
+
+  return cnet_client_admit(
+      impl, &payload, CNET_URI_TCP, observer,
+      out_connection, &transferred);
+}
+
 int cnet_connection_local_peer(cnet_client *client, cnet_connection connection,
                                cnet_stream_peer *out_peer) {
   cnet_client_impl *impl = cnet_client_get(client);
@@ -625,6 +693,73 @@ int cnet_connection_remote_peer(cnet_client *client, cnet_connection connection,
   if (record->scheme != CNET_URI_TCP && record->scheme != CNET_URI_TLS)
     return SALTS_ENOTSUP;
   return cnet_shards_tcp_remote_peer(&impl->shards, internal, out_peer);
+}
+
+int cnet_connection_local_endpoint(
+    cnet_client *client, cnet_connection connection,
+    cnet_stream_endpoint *out_endpoint) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_shard_connection internal = {0};
+  cnet_client_record *record;
+
+  if (out_endpoint == NULL) return SALTS_EINVAL;
+  *out_endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+  if (impl == NULL) return SALTS_EINVAL;
+  record = cnet_client_find_record(impl, connection, &internal);
+  if (record == NULL) return SALTS_ENOENT;
+  if (record->scheme != CNET_URI_TCP && record->scheme != CNET_URI_TLS)
+    return SALTS_ENOTSUP;
+  return cnet_shards_tcp_local_endpoint(
+      &impl->shards, internal, out_endpoint);
+}
+
+int cnet_connection_remote_endpoint(
+    cnet_client *client, cnet_connection connection,
+    cnet_stream_endpoint *out_endpoint) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_shard_connection internal = {0};
+  cnet_client_record *record;
+
+  if (out_endpoint == NULL) return SALTS_EINVAL;
+  *out_endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+  if (impl == NULL) return SALTS_EINVAL;
+  record = cnet_client_find_record(impl, connection, &internal);
+  if (record == NULL) return SALTS_ENOENT;
+  if (record->scheme != CNET_URI_TCP && record->scheme != CNET_URI_TLS)
+    return SALTS_ENOTSUP;
+  return cnet_shards_tcp_remote_endpoint(
+      &impl->shards, internal, out_endpoint);
+}
+
+int cnet_connection_shutdown(cnet_client *client,
+                             cnet_connection connection,
+                             cnet_tcp_shutdown how) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_shard_connection internal = {0};
+  cnet_client_record *record;
+  int status;
+
+  if (impl == NULL ||
+      (how != CNET_TCP_SHUTDOWN_RECEIVE &&
+       how != CNET_TCP_SHUTDOWN_SEND &&
+       how != CNET_TCP_SHUTDOWN_BOTH))
+    return SALTS_EINVAL;
+
+  record = cnet_client_find_record(impl, connection, &internal);
+  if (record == NULL) return SALTS_ENOENT;
+  if (record->scheme != CNET_URI_TCP) return SALTS_ENOTSUP;
+  if (record->close_command_pending) return SALTS_EBUSY;
+
+  status = cnet_shards_tcp_shutdown(
+      &impl->shards, internal, how);
+  if (status != SALTS_OK)
+    return status;
+
+  record->tcp_shutdown_mask =
+      (uint8_t)(record->tcp_shutdown_mask | (uint8_t)how);
+  if ((how & CNET_TCP_SHUTDOWN_RECEIVE) != 0)
+    record->receive_pending = 0u;
+  return SALTS_OK;
 }
 
 int cnet_connection_tcp_option_get(cnet_client *client, cnet_connection connection,
@@ -841,6 +976,51 @@ int cnet_client_adopt_bound_tcp_connect(
   return status;
 }
 
+int cnet_client_adopt_bound_tcp_connect_endpoint(
+    cnet_client *client, uintptr_t native_socket,
+    const cnet_stream_endpoint *remote_endpoint,
+    const cnet_observer *observer,
+    cnet_connection *out_connection) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_owner_connect_payload payload = {0};
+  bool transferred = false;
+  int status;
+
+  if (out_connection == NULL) {
+    cnet_transport_close_socket(native_socket);
+    return SALTS_EINVAL;
+  }
+  *out_connection = (cnet_connection){0};
+  if (impl == NULL || remote_endpoint == NULL ||
+      observer == NULL || observer->on_state == NULL ||
+      native_socket == UINTPTR_MAX) {
+    cnet_transport_close_socket(native_socket);
+    return SALTS_EINVAL;
+  }
+
+  payload.scheme = CNET_URI_TCP;
+  payload.adopted_socket = native_socket;
+  payload.adopted = true;
+  payload.adopted_connect = true;
+  payload.connect_timeout_ms = impl->connect_timeout_ms;
+  payload.read_timeout_ms = impl->read_timeout_ms;
+  payload.write_timeout_ms = impl->write_timeout_ms;
+
+  status = cnet_transport_stream_endpoint_address(
+      remote_endpoint, false, payload.address, sizeof(payload.address),
+      &payload.address_length);
+  if (status != SALTS_OK) {
+    cnet_transport_close_socket(native_socket);
+    return status;
+  }
+
+  status = cnet_client_admit(
+      impl, &payload, CNET_URI_TCP, observer,
+      out_connection, &transferred);
+  if (!transferred) cnet_transport_close_socket(native_socket);
+  return status;
+}
+
 int cnet_client_adopt_vsock(cnet_client *client, uintptr_t native_socket,
                             const cnet_observer *observer, cnet_connection *out_connection) {
   cnet_client_impl *impl = cnet_client_get(client);
@@ -1043,6 +1223,10 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
     if (record == NULL) status = SALTS_ENOENT;
     else if (record->close_command_pending || record->tls_command_pending)
       status = SALTS_EBUSY;
+    else if (record->scheme == CNET_URI_TCP &&
+             (record->tcp_shutdown_mask &
+              (uint8_t)CNET_TCP_SHUTDOWN_SEND) != 0u)
+      status = SALTS_ESHUTDOWN;
     else if (record->pending_writes == SIZE_MAX)
       status = SALTS_ERANGE;
     else {
@@ -1214,6 +1398,10 @@ int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand)
         status = SALTS_EINVAL;
       else if (record->close_command_pending || record->tls_command_pending)
         status = SALTS_EBUSY;
+      else if (record->scheme == CNET_URI_TCP &&
+               (record->tcp_shutdown_mask &
+                (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE) != 0u)
+        status = SALTS_ESHUTDOWN;
       else if (demand > SIZE_MAX - record->receive_pending) {
         cnet_session_state session_state = CNET_SESSION_FREE;
         status = cnet_client_record_session_state(impl, record, &session_state);
@@ -1233,6 +1421,10 @@ int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand)
   if (record->observer.on_receive == NULL && record->receive_slice_handler == NULL)
     return SALTS_EINVAL;
   if (record->close_command_pending || record->tls_command_pending) return SALTS_EBUSY;
+  if (record->scheme == CNET_URI_TCP &&
+      (record->tcp_shutdown_mask &
+       (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE) != 0u)
+    return SALTS_ESHUTDOWN;
   if (demand > SIZE_MAX - record->receive_pending) {
     cnet_session_state session_state = CNET_SESSION_FREE;
     status = cnet_client_record_session_state(impl, record, &session_state);

@@ -533,6 +533,38 @@ int cnet_shards_tcp_remote_peer(cnet_shards *shards, cnet_shard_connection conne
              : SALTS_ENOENT;
 }
 
+int cnet_shards_tcp_local_endpoint(
+    cnet_shards *shards, cnet_shard_connection connection,
+    cnet_stream_endpoint *out_endpoint) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_shard_record *record;
+  if (out_endpoint == NULL) return SALTS_EINVAL;
+  *out_endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+  if (impl == NULL || !cnet_shard_connection_valid(connection))
+    return SALTS_ENOENT;
+  record = cnet_shards_get_record(impl, connection.shard);
+  return record != NULL
+             ? cnet_owner_tcp_local_endpoint(
+                   &record->owner, connection.session, out_endpoint)
+             : SALTS_ENOENT;
+}
+
+int cnet_shards_tcp_remote_endpoint(
+    cnet_shards *shards, cnet_shard_connection connection,
+    cnet_stream_endpoint *out_endpoint) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_shard_record *record;
+  if (out_endpoint == NULL) return SALTS_EINVAL;
+  *out_endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+  if (impl == NULL || !cnet_shard_connection_valid(connection))
+    return SALTS_ENOENT;
+  record = cnet_shards_get_record(impl, connection.shard);
+  return record != NULL
+             ? cnet_owner_tcp_remote_endpoint(
+                   &record->owner, connection.session, out_endpoint)
+             : SALTS_ENOENT;
+}
+
 int cnet_shards_tcp_option_get(cnet_shards *shards, cnet_shard_connection connection,
                                cnet_tcp_socket_option option, uint64_t *out_value) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
@@ -554,6 +586,18 @@ int cnet_shards_tcp_option_set(cnet_shards *shards, cnet_shard_connection connec
   record = cnet_shards_get_record(impl, connection.shard);
   return record != NULL
              ? cnet_owner_tcp_option_set(&record->owner, connection.session, option, value)
+             : SALTS_ENOENT;
+}
+
+int cnet_shards_tcp_shutdown(cnet_shards *shards, cnet_shard_connection connection,
+                             cnet_tcp_shutdown how) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_shard_record *record;
+  if (impl == NULL || !cnet_shard_connection_valid(connection))
+    return SALTS_ENOENT;
+  record = cnet_shards_get_record(impl, connection.shard);
+  return record != NULL
+             ? cnet_owner_tcp_shutdown(&record->owner, connection.session, how)
              : SALTS_ENOENT;
 }
 

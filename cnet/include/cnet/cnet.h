@@ -130,6 +130,26 @@ typedef struct cnet_stream_peer {
   uint8_t address[16];
 } cnet_stream_peer;
 
+enum { CNET_STREAM_ENDPOINT_API_VERSION = 1 };
+
+/**
+ * Versioned lossless TCP endpoint for protocols that need the complete IPv6
+ * sockaddr surface, including sin6_flowinfo. Multi-byte scalar fields are
+ * carried as portable numeric values; native ABI representation stays private.
+ */
+typedef struct cnet_stream_endpoint {
+  size_t size;
+  uint32_t version;
+  cnet_datagram_address_family family;
+  uint16_t port;
+  uint32_t flow_info;
+  uint32_t scope_id;
+  uint8_t address[16];
+} cnet_stream_endpoint;
+
+#define CNET_STREAM_ENDPOINT_INIT \
+  {sizeof(cnet_stream_endpoint), CNET_STREAM_ENDPOINT_API_VERSION, 0, 0u, 0u, 0u, {0}}
+
 /** Portable Linux VSOCK address constants; ANY values are valid only for listeners. */
 #define CNET_VSOCK_CID_ANY UINT32_MAX
 #define CNET_VSOCK_PORT_ANY UINT32_MAX
@@ -683,6 +703,13 @@ int cnet_connect_peer(cnet_client *client, const cnet_stream_peer *remote_peer,
                       const cnet_observer *observer,
                       cnet_connection *out_connection);
 
+/** Lossless IPv6-flow-info counterpart of cnet_connect_peer(). */
+int cnet_connect_endpoint(cnet_client *client,
+                          const cnet_stream_endpoint *remote_endpoint,
+                          const cnet_stream_endpoint *local_endpoint,
+                          const cnet_observer *observer,
+                          cnet_connection *out_connection);
+
 /**
  * Copies the current local or remote TCP endpoint for one live generation-
  * checked connection. No native descriptor is exposed.
@@ -691,6 +718,30 @@ int cnet_connection_local_peer(cnet_client *client, cnet_connection connection,
                                cnet_stream_peer *out_peer);
 int cnet_connection_remote_peer(cnet_client *client, cnet_connection connection,
                                 cnet_stream_peer *out_peer);
+
+int cnet_connection_local_endpoint(cnet_client *client,
+                                   cnet_connection connection,
+                                   cnet_stream_endpoint *out_endpoint);
+int cnet_connection_remote_endpoint(cnet_client *client,
+                                    cnet_connection connection,
+                                    cnet_stream_endpoint *out_endpoint);
+
+typedef enum cnet_tcp_shutdown {
+  CNET_TCP_SHUTDOWN_RECEIVE = 1,
+  CNET_TCP_SHUTDOWN_SEND = 2,
+  CNET_TCP_SHUTDOWN_BOTH = 3
+} cnet_tcp_shutdown;
+
+/**
+ * Performs a generation-safe TCP half-shutdown. Repeating a direction that is
+ * already shut down is idempotent. This does not drop the connection handle.
+ * Receive shutdown cancels/discards already-admitted receive work. Send
+ * shutdown rejects new writes immediately and defers the native FIN until
+ * already-admitted writes have drained.
+ */
+int cnet_connection_shutdown(cnet_client *client,
+                             cnet_connection connection,
+                             cnet_tcp_shutdown how);
 
 /**
  * Reads or mutates one live TCP property through the generation-checked CNet
@@ -958,6 +1009,14 @@ int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, ch
                              size_t capacity, size_t *out_size);
 
 /**
+ * Copies the verified peer leaf certificate SHA-256 digest as 64 lowercase
+ * hexadecimal characters plus a trailing NUL. The query is valid only while
+ * the TLS connection remains open. A server connection without a presented
+ * client certificate returns `SALTS_ENOENT`; plaintext returns `SALTS_ENOTSUP`.
+ * Other errors are `SALTS_ENOTCONN` and the standard invalid/stale-handle
+ * statuses.
+ */
+/**
  * Copies the negotiated TLS protocol name (for example `TLSv1.3`) into
  * `buffer` after a TLS connection is open. `capacity` includes the trailing
  * NUL and `out_size` excludes it. Plaintext returns `SALTS_ENOTSUP`;
@@ -976,14 +1035,6 @@ int cnet_tls_negotiated_version(cnet_client *client, cnet_connection connection,
 int cnet_tls_negotiated_cipher(cnet_client *client, cnet_connection connection, char *buffer,
                                size_t capacity, size_t *out_size);
 
-/**
- * Copies the verified peer leaf certificate SHA-256 digest as 64 lowercase
- * hexadecimal characters plus a trailing NUL. The query is valid only while
- * the TLS connection remains open. A server connection without a presented
- * client certificate returns `SALTS_ENOENT`; plaintext returns `SALTS_ENOTSUP`.
- * Other errors are `SALTS_ENOTCONN` and the standard invalid/stale-handle
- * statuses.
- */
 int cnet_tls_peer_certificate_sha256(cnet_client *client, cnet_connection connection,
                                      char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
 
@@ -1007,6 +1058,30 @@ int cnet_listener_init(cnet_listener *listener, const cnet_listener_config *conf
 int cnet_listener_options_validate(const cnet_listener_options *options);
 
 /**
+ * Creates a real nonblocking but unbound TCP socket owner. This permits
+ * per-socket options to be queried/mutated before bind/connect without
+ * exposing the native socket identity.
+ */
+int cnet_listener_open(cnet_listener *listener,
+                       native_io_backend_kind backend,
+                       cnet_datagram_address_family family);
+int cnet_listener_open_ex(cnet_listener *listener,
+                          native_io_backend_kind backend,
+                          cnet_datagram_address_family family,
+                          const cnet_listener_options *options);
+
+/**
+ * Binds an already-open unbound TCP owner to one numeric portable peer.
+ * Port zero requests an ephemeral port. The owner remains non-listening.
+ */
+int cnet_listener_bind_open_peer(cnet_listener *listener,
+                                 const cnet_stream_peer *local_peer);
+
+int cnet_listener_bind_open_endpoint(
+    cnet_listener *listener,
+    const cnet_stream_endpoint *local_endpoint);
+
+/**
  * Two-phase TCP listener lifecycle. bind[_ex] owns a nonblocking bound socket
  * but does not call listen(). listen() transitions that bound owner to
  * listening exactly once. This is useful for protocols that expose bind and
@@ -1015,6 +1090,30 @@ int cnet_listener_options_validate(const cnet_listener_options *options);
 int cnet_listener_bind(cnet_listener *listener, const cnet_listener_config *config);
 int cnet_listener_bind_ex(cnet_listener *listener, const cnet_listener_config *config,
                           const cnet_listener_options *options);
+
+/**
+ * Binds directly from one numeric portable peer. Port zero requests an
+ * ephemeral port. The peer is copied synchronously; no text parsing or DNS is
+ * involved.
+ */
+int cnet_listener_bind_peer(cnet_listener *listener,
+                            native_io_backend_kind backend,
+                            const cnet_stream_peer *local_peer);
+int cnet_listener_bind_peer_ex(cnet_listener *listener,
+                               native_io_backend_kind backend,
+                               const cnet_stream_peer *local_peer,
+                               const cnet_listener_options *options);
+
+int cnet_listener_bind_endpoint(
+    cnet_listener *listener,
+    native_io_backend_kind backend,
+    const cnet_stream_endpoint *local_endpoint);
+int cnet_listener_bind_endpoint_ex(
+    cnet_listener *listener,
+    native_io_backend_kind backend,
+    const cnet_stream_endpoint *local_endpoint,
+    const cnet_listener_options *options);
+
 int cnet_listener_listen(cnet_listener *listener, size_t backlog);
 
 /**
@@ -1024,7 +1123,7 @@ int cnet_listener_listen(cnet_listener *listener, size_t backlog);
  */
 int cnet_listener_set_backlog(cnet_listener *listener, size_t backlog);
 
-/** Live TCP options on one bound/listening listener-owned socket. */
+/** Live TCP options on one unbound/bound/listening TCP owner. */
 int cnet_listener_tcp_option_get(cnet_listener *listener,
                                  cnet_tcp_socket_option option,
                                  uint64_t *out_value);
@@ -1033,13 +1132,20 @@ int cnet_listener_tcp_option_set(cnet_listener *listener,
                                  uint64_t value);
 
 /**
- * Consumes one bound, not-yet-listening TCP owner and starts an asynchronous
- * client connect on that exact socket.
+ * Consumes one unbound or bound, not-yet-listening TCP owner and starts an
+ * asynchronous client connect on that exact socket. An unbound owner receives
+ * an implicit same-family ephemeral bind before ConnectEx/connect admission.
  */
 int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
                                const cnet_stream_peer *remote_peer,
                                const cnet_observer *observer,
                                cnet_connection *out_connection);
+
+int cnet_listener_connect_endpoint(
+    cnet_listener *listener, cnet_client *client,
+    const cnet_stream_endpoint *remote_endpoint,
+    const cnet_observer *observer,
+    cnet_connection *out_connection);
 
 /** Creates and listens in one call; equivalent to bind_ex + listen. */
 int cnet_listener_init_ex(cnet_listener *listener, const cnet_listener_config *config,
@@ -1047,6 +1153,9 @@ int cnet_listener_init_ex(cnet_listener *listener, const cnet_listener_config *c
 
 /** Copies the currently bound numeric TCP endpoint. */
 int cnet_listener_local(const cnet_listener *listener, cnet_stream_peer *out_local);
+
+int cnet_listener_local_endpoint(const cnet_listener *listener,
+                                 cnet_stream_endpoint *out_local);
 
 /**
  * Creates a nonblocking Linux AF_VSOCK listener. Unsupported platforms or

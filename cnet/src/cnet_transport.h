@@ -47,6 +47,11 @@ int cnet_transport_stream_peer_address(const cnet_stream_peer *peer, bool allow_
                                        void *out_address, size_t address_capacity,
                                        size_t *out_address_length);
 
+int cnet_transport_stream_endpoint_address(
+    const cnet_stream_endpoint *endpoint, bool allow_zero_port,
+    void *out_address, size_t address_capacity,
+    size_t *out_address_length);
+
 /** Creates and attaches a TCP socket, then describes its connect operation. */
 int cnet_transport_tcp_prepare_connect(cnet_transport *transport, native_io_backend *backend,
                                        native_io_backend_kind backend_kind, const void *address,
@@ -157,6 +162,13 @@ native_io_endpoint cnet_transport_write_endpoint(const cnet_transport *transport
 int cnet_transport_tcp_local_peer(const cnet_transport *transport, cnet_stream_peer *out_peer);
 int cnet_transport_tcp_remote_peer(const cnet_transport *transport, cnet_stream_peer *out_peer);
 
+int cnet_transport_tcp_local_endpoint(
+    const cnet_transport *transport,
+    cnet_stream_endpoint *out_endpoint);
+int cnet_transport_tcp_remote_endpoint(
+    const cnet_transport *transport,
+    cnet_stream_endpoint *out_endpoint);
+
 int cnet_transport_tcp_option_get(const cnet_transport *transport,
                                   cnet_tcp_socket_option option,
                                   uint64_t *out_value);
@@ -171,6 +183,17 @@ int cnet_transport_tcp_native_option_get(uintptr_t native_socket,
 int cnet_transport_tcp_native_option_set(uintptr_t native_socket,
                                          cnet_tcp_socket_option option,
                                          uint64_t value);
+/* Family-aware variants are for unbound internal TCP owners where
+ * getsockname() cannot portably recover the socket family yet. */
+int cnet_transport_tcp_native_option_get_family(
+    uintptr_t native_socket, int native_family,
+    cnet_tcp_socket_option option, uint64_t *out_value);
+int cnet_transport_tcp_native_option_set_family(
+    uintptr_t native_socket, int native_family,
+    cnet_tcp_socket_option option, uint64_t value);
+
+int cnet_transport_tcp_shutdown(cnet_transport *transport,
+                                cnet_tcp_shutdown how);
 
 bool cnet_transport_active(const cnet_transport *transport);
 

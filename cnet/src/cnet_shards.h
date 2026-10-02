@@ -98,10 +98,18 @@ int cnet_shards_tcp_local_peer(cnet_shards *shards, cnet_shard_connection connec
                                cnet_stream_peer *out_peer);
 int cnet_shards_tcp_remote_peer(cnet_shards *shards, cnet_shard_connection connection,
                                 cnet_stream_peer *out_peer);
+int cnet_shards_tcp_local_endpoint(
+    cnet_shards *shards, cnet_shard_connection connection,
+    cnet_stream_endpoint *out_endpoint);
+int cnet_shards_tcp_remote_endpoint(
+    cnet_shards *shards, cnet_shard_connection connection,
+    cnet_stream_endpoint *out_endpoint);
 int cnet_shards_tcp_option_get(cnet_shards *shards, cnet_shard_connection connection,
                                cnet_tcp_socket_option option, uint64_t *out_value);
 int cnet_shards_tcp_option_set(cnet_shards *shards, cnet_shard_connection connection,
                                cnet_tcp_socket_option option, uint64_t value);
+int cnet_shards_tcp_shutdown(cnet_shards *shards, cnet_shard_connection connection,
+                             cnet_tcp_shutdown how);
 int cnet_shards_tls_negotiated_version(cnet_shards *shards, cnet_shard_connection connection,
                                        char *buffer, size_t capacity, size_t *out_size);
 int cnet_shards_tls_negotiated_cipher(cnet_shards *shards, cnet_shard_connection connection,

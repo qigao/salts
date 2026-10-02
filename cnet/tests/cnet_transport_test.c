@@ -306,6 +306,74 @@ spec("CNet NativeIO transport ownership") {
     cnet_test_stream_socket_options();
   }
 
+  it("rejects malformed versioned TCP endpoints") {
+    cnet_stream_endpoint endpoint = CNET_STREAM_ENDPOINT_INIT;
+    struct sockaddr_storage address;
+    size_t address_length = SIZE_MAX;
+
+    endpoint.family = CNET_DATAGRAM_ADDRESS_IPV4;
+    endpoint.port = UINT16_C(43124);
+    endpoint.address[0] = 127u;
+    endpoint.address[3] = 1u;
+
+    endpoint.size = sizeof(endpoint) - 1u;
+    check_equal(cnet_transport_stream_endpoint_address(
+                    &endpoint, false, &address, sizeof(address),
+                    &address_length),
+                SALTS_EINVAL);
+    check_equal(address_length, 0u);
+
+    endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+    endpoint.family = CNET_DATAGRAM_ADDRESS_IPV4;
+    endpoint.port = UINT16_C(43124);
+    endpoint.address[0] = 127u;
+    endpoint.address[3] = 1u;
+    endpoint.version = CNET_STREAM_ENDPOINT_API_VERSION + 1u;
+    check_equal(cnet_transport_stream_endpoint_address(
+                    &endpoint, false, &address, sizeof(address),
+                    &address_length),
+                SALTS_EINVAL);
+    check_equal(address_length, 0u);
+
+    endpoint = (cnet_stream_endpoint)CNET_STREAM_ENDPOINT_INIT;
+    endpoint.family = CNET_DATAGRAM_ADDRESS_IPV4;
+    endpoint.port = UINT16_C(43124);
+    endpoint.flow_info = 1u;
+    endpoint.address[0] = 127u;
+    endpoint.address[3] = 1u;
+    check_equal(cnet_transport_stream_endpoint_address(
+                    &endpoint, false, &address, sizeof(address),
+                    &address_length),
+                SALTS_EINVAL);
+    check_equal(address_length, 0u);
+  }
+
+  it("round-trips versioned IPv6 TCP flow and scope fields") {
+    cnet_stream_endpoint endpoint = CNET_STREAM_ENDPOINT_INIT;
+    struct sockaddr_storage address;
+    const struct sockaddr_in6 *v6;
+    size_t address_length = SIZE_MAX;
+
+    endpoint.family = CNET_DATAGRAM_ADDRESS_IPV6;
+    endpoint.port = UINT16_C(43124);
+    endpoint.flow_info = UINT32_C(0x00123456);
+    endpoint.scope_id = UINT32_C(7);
+    endpoint.address[15] = 1u;
+
+    memset(&address, 0xa5, sizeof(address));
+    check_equal(cnet_transport_stream_endpoint_address(
+                    &endpoint, false, &address, sizeof(address),
+                    &address_length),
+                SALTS_OK);
+    check_equal(address_length, sizeof(struct sockaddr_in6));
+    v6 = (const struct sockaddr_in6 *)&address;
+    check_equal(v6->sin6_family, AF_INET6);
+    check_equal(v6->sin6_port, htons(endpoint.port));
+    check_equal(v6->sin6_flowinfo, endpoint.flow_info);
+    check_equal(v6->sin6_scope_id, endpoint.scope_id);
+    check_equal(v6->sin6_addr.s6_addr[15], 1u);
+  }
+
   it("converts numeric IPv4 and IPv6 endpoints without resolver state") {
     struct sockaddr_storage address;
     size_t address_length = SIZE_MAX;

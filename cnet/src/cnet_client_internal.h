@@ -25,6 +25,12 @@ int cnet_client_adopt_bound_tcp_connect(
     const cnet_observer *observer,
     cnet_connection *out_connection);
 
+int cnet_client_adopt_bound_tcp_connect_endpoint(
+    cnet_client *client, uintptr_t native_socket,
+    const cnet_stream_endpoint *remote_endpoint,
+    const cnet_observer *observer,
+    cnet_connection *out_connection);
+
 /** Consumes one connected VSOCK stream, closing it on immediate admission failure. */
 int cnet_client_adopt_vsock(cnet_client *client, uintptr_t native_socket,
                             const cnet_observer *observer, cnet_connection *out_connection);
