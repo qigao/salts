@@ -455,9 +455,14 @@ static int central_event_sink(
       event->argument,
       retained};
 
-  (void)disruptor_publisher_publish(mailbox->ring, &cursor);
+  /*
+   * Reserve the pending count before publishing. The consumer may observe the
+   * reservation before the ring cursor becomes visible and retry briefly, but
+   * it can never claim a published entry and decrement pending from zero.
+   */
   atomic_fetch_add_explicit(
       &mailbox->pending, 1u, memory_order_release);
+  (void)disruptor_publisher_publish(mailbox->ring, &cursor);
   atomic_fetch_add_explicit(
       &mailbox->published, 1u, memory_order_relaxed);
 
