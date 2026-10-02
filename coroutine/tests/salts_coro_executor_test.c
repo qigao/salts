@@ -3,6 +3,7 @@
 #include <salts/error_codes.h>
 #include <salts/thread.h>
 #include <salts_coro_executor.h>
+#include "salts_coro_executor_internal.h"
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -109,6 +110,18 @@ typedef struct {
   size_t stride;
   int status;
 } await_completion_producer_state;
+
+typedef struct {
+  atomic_size_t next;
+  atomic_int order_errors;
+  atomic_int runs;
+  atomic_int finalizes;
+} batch_task_state;
+
+typedef struct {
+  batch_task_state *state;
+  size_t expected;
+} batch_task_arg;
 
 static int wait_atomic_at_least(atomic_int *value, int expected) {
   for (int round = 0; round < EXECUTOR_TEST_WAIT_ROUNDS; ++round) {
@@ -261,6 +274,21 @@ static void await_completion_producer(void *arg) {
         state->executor, state->tasks[index].await_handle, (int)(100u + index));
     if (state->status != SALTS_OK) return;
   }
+}
+
+static void batch_order_task(coro_t *coroutine, void *arg) {
+  batch_task_arg *task = (batch_task_arg *)arg;
+  const size_t seen =
+      atomic_fetch_add_explicit(&task->state->next, 1u, memory_order_relaxed);
+  (void)coroutine;
+  if (seen != task->expected)
+    atomic_fetch_add_explicit(&task->state->order_errors, 1, memory_order_relaxed);
+  atomic_fetch_add_explicit(&task->state->runs, 1, memory_order_release);
+}
+
+static void batch_order_finalize(void *arg) {
+  batch_task_arg *task = (batch_task_arg *)arg;
+  atomic_fetch_add_explicit(&task->state->finalizes, 1, memory_order_release);
 }
 
 static int wait_for_waiting_awaits(salts_coro_executor_t *executor, uint64_t expected) {
@@ -577,6 +605,91 @@ spec("Salts coroutine executor") {
     check_equal(salts_coro_executor_wait(executor), SALTS_OK);
     check_equal(atomic_load_explicit(&task_state.runs, memory_order_acquire),
                 EXECUTOR_TEST_PRODUCER_COUNT * EXECUTOR_TEST_TASKS_PER_PRODUCER);
+    check_equal(salts_coro_executor_destroy(executor), SALTS_OK);
+  }
+
+  it("admits an internal batch all-or-none and preserves FIFO lifecycle") {
+    salts_coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    salts_coro_executor_t *executor;
+    batch_task_state state = {0};
+    batch_task_arg args[4];
+    salts_coro_executor_task_t tasks[4];
+    salts_coro_executor_stats_t stats = {0};
+
+    config.worker_count = 1u;
+    config.queue_capacity_per_worker = 8u;
+    config.coroutine_pool.initial_capacity = 0u;
+    config.coroutine_pool.max_capacity = 1u;
+    executor = salts_coro_executor_create(&config);
+    check_not_null(executor);
+
+    for (size_t index = 0u; index < 4u; ++index) {
+      args[index] = (batch_task_arg){&state, index};
+      tasks[index] = (salts_coro_executor_task_t){
+          batch_order_task, NULL, batch_order_finalize, &args[index]};
+    }
+
+    check_equal(
+        salts_coro_executor_try_submit_batch_to_internal(executor, 0u, tasks, 4u),
+        SALTS_OK);
+    check_equal(salts_coro_executor_wait(executor), SALTS_OK);
+    salts_coro_executor_get_stats(executor, &stats);
+
+    check_equal(atomic_load_explicit(&state.runs, memory_order_acquire), 4);
+    check_equal(atomic_load_explicit(&state.finalizes, memory_order_acquire), 4);
+    check_equal(atomic_load_explicit(&state.order_errors, memory_order_acquire), 0);
+    check_equal(atomic_load_explicit(&state.next, memory_order_acquire), (size_t)4u);
+    check_equal(stats.submitted_tasks, (uint64_t)4u);
+    check_equal(stats.completed_tasks, (uint64_t)4u);
+    check_equal(stats.cancelled_tasks, (uint64_t)0u);
+    check_equal(stats.rejected_tasks, (uint64_t)0u);
+    check_equal(salts_coro_executor_destroy(executor), SALTS_OK);
+  }
+
+  it("rejects an internal batch atomically when bounded capacity is insufficient") {
+    salts_coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    salts_coro_executor_t *executor;
+    gated_task_state gate = {0};
+    salts_coro_executor_task_t gate_task = {gated_task, NULL, NULL, &gate};
+    lifecycle_task_state queued_state = {0};
+    salts_coro_executor_task_t queued_task = {
+        lifecycle_task, lifecycle_cancel, lifecycle_finalize, &queued_state};
+    batch_task_state batch_state = {0};
+    batch_task_arg args[4];
+    salts_coro_executor_task_t tasks[4];
+    salts_coro_executor_stats_t stats = {0};
+
+    config.worker_count = 1u;
+    config.queue_capacity_per_worker = 4u;
+    config.coroutine_pool.initial_capacity = 0u;
+    config.coroutine_pool.max_capacity = 1u;
+    executor = salts_coro_executor_create(&config);
+    check_not_null(executor);
+
+    check_equal(salts_coro_executor_submit_to(executor, 0u, &gate_task), SALTS_OK);
+    check_true(wait_atomic_at_least(&gate.started, 1));
+    check_equal(salts_coro_executor_try_submit_to(executor, 0u, &queued_task), SALTS_OK);
+
+    for (size_t index = 0u; index < 4u; ++index) {
+      args[index] = (batch_task_arg){&batch_state, index};
+      tasks[index] = (salts_coro_executor_task_t){
+          batch_order_task, NULL, batch_order_finalize, &args[index]};
+    }
+    check_equal(
+        salts_coro_executor_try_submit_batch_to_internal(executor, 0u, tasks, 4u),
+        SALTS_ENOBUFS);
+
+    atomic_store_explicit(&gate.gate, 1, memory_order_release);
+    check_equal(salts_coro_executor_wait(executor), SALTS_OK);
+    salts_coro_executor_get_stats(executor, &stats);
+
+    check_equal(atomic_load_explicit(&batch_state.runs, memory_order_acquire), 0);
+    check_equal(atomic_load_explicit(&batch_state.finalizes, memory_order_acquire), 0);
+    check_equal(atomic_load_explicit(&queued_state.runs, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&queued_state.finalizes, memory_order_acquire), 1);
+    check_equal(stats.submitted_tasks, (uint64_t)2u);
+    check_equal(stats.completed_tasks, (uint64_t)2u);
+    check_equal(stats.rejected_tasks, (uint64_t)4u);
     check_equal(salts_coro_executor_destroy(executor), SALTS_OK);
   }
 
