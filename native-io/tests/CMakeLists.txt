@@ -47,6 +47,17 @@ endif()
 
 if(WIN32)
   target_link_libraries(native_io_test PRIVATE ws2_32)
+
+  cmake_add_test(native_io_iocp_accept_test
+    SOURCES native_io_iocp_accept_test.c
+    LIBS Salts::NativeIO ws2_32
+    FOLDER "native-io/tests")
+  target_include_directories(native_io_iocp_accept_test
+    PRIVATE "${PROJECT_SOURCE_DIR}/native-io/src")
+  set_target_properties(native_io_iocp_accept_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF)
 endif()
 
 cmake_add_test(native_io_header_cpp_test
