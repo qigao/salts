@@ -40,12 +40,30 @@ typedef int (*cnet_shards_event_sink_fn)(void *context, uint32_t shard, const cn
 
 bool cnet_shard_connection_valid(cnet_shard_connection connection);
 
-/** Initializes bounded owners without creating a worker thread. */
+/** Initializes the production single-owner layout without creating a worker thread. */
 int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config);
+
+#if defined(CNET_INTERNAL_MULTI_OWNER_POC)
+/**
+ * Internal Phase-B1 POC only. Allows more than one bounded owner while keeping
+ * the production cnet_shards_init() single-owner contract unchanged.
+ */
+int cnet_shards_init_multi_owner_experimental(cnet_shards *shards,
+                                              const cnet_shards_config *config);
+/** Initializes one deferred owner/backend on its final owner thread. */
+int cnet_shards_init_owner_experimental(cnet_shards *shards, uint32_t shard);
+#endif
+
 bool cnet_shards_get_layout(const cnet_shards *shards, cnet_shards_layout *out_layout);
 
-/** Advances the single owner on the calling thread. */
+/** Advances the production single owner on the calling thread. */
 int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms);
+
+#if defined(CNET_INTERNAL_MULTI_OWNER_POC)
+/** Internal Phase-B1 owner-specific progress; exactly one caller owns each shard. */
+int cnet_shards_poll_owner(cnet_shards *shards, uint32_t shard,
+                           uint32_t timeout_ms);
+#endif
 
 #if defined(CNET_INTERNAL_PROFILING)
 /** Internal diagnostic sampling; caller must exclude concurrent poll/stop operations. */
@@ -53,8 +71,13 @@ int cnet_shards_profile_begin(cnet_shards *shards);
 int cnet_shards_profile_take(cnet_shards *shards, cnet_owner_profile *out_profile);
 #endif
 
-/** Thread-safe advisory wake for the single owner blocked in poll. */
+/** Thread-safe advisory wake for the production single owner blocked in poll. */
 int cnet_shards_wake(cnet_shards *shards);
+
+#if defined(CNET_INTERNAL_MULTI_OWNER_POC)
+/** Internal Phase-B1 advisory wake for one fixed owner. */
+int cnet_shards_wake_owner(cnet_shards *shards, uint32_t shard);
+#endif
 
 /**
  * Binds the single event sink called directly by the caller-owned progress loop. The sink
