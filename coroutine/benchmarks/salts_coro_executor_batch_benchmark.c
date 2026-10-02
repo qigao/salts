@@ -12,7 +12,8 @@
 #include <string.h>
 
 enum {
-  BATCH_BENCH_QUEUE_CAPACITY = 2048,
+  BATCH_BENCH_QUEUE_CAPACITY = 4096,
+  BATCH_BENCH_MEASURED_TASKS = 1024,
   BATCH_BENCH_REPLICATES = 11,
   BATCH_BENCH_MAX_BATCH = 128,
   BATCH_BENCH_WAIT_ROUNDS = 2000
@@ -140,7 +141,7 @@ static int batch_bench_run_case(const char *style, const char *occupancy,
     }
 
     if (near_capacity)
-      prefill = BATCH_BENCH_QUEUE_CAPACITY - batch_size;
+      prefill = BATCH_BENCH_QUEUE_CAPACITY - BATCH_BENCH_MEASURED_TASKS;
     status = batch_bench_prefill(executor, &tasks[0], prefill);
     if (status != SALTS_OK) {
       atomic_store_explicit(&gate.release, 1, memory_order_release);
@@ -151,11 +152,16 @@ static int batch_bench_run_case(const char *style, const char *occupancy,
     salts_coro_executor_get_stats(executor, &before);
     started = salts_hrtime();
     if (use_batch) {
-      status = salts_coro_executor_try_submit_batch_to_internal(
-          executor, 0u, tasks, batch_size);
+      for (size_t base = 0u;
+           base < BATCH_BENCH_MEASURED_TASKS && status == SALTS_OK;
+           base += batch_size) {
+        status = salts_coro_executor_try_submit_batch_to_internal(
+            executor, 0u, tasks, batch_size);
+      }
     } else {
-      for (size_t index = 0u; index < batch_size && status == SALTS_OK; ++index)
-        status = salts_coro_executor_try_submit_to(executor, 0u, &tasks[index]);
+      for (size_t index = 0u;
+           index < BATCH_BENCH_MEASURED_TASKS && status == SALTS_OK; ++index)
+        status = salts_coro_executor_try_submit_to(executor, 0u, &tasks[0]);
     }
     elapsed = salts_hrtime() - started;
     salts_coro_executor_get_stats(executor, &after);
@@ -164,15 +170,19 @@ static int batch_bench_run_case(const char *style, const char *occupancy,
     if (status == SALTS_OK) status = salts_coro_executor_wait(executor);
     if (status != SALTS_OK) break;
 
-    if (after.submitted_tasks - before.submitted_tasks != (uint64_t)batch_size ||
+    if (after.submitted_tasks - before.submitted_tasks !=
+            (uint64_t)BATCH_BENCH_MEASURED_TASKS ||
         after.rejected_tasks != before.rejected_tasks) {
       status = SALTS_EPROTO;
       break;
     }
 
-    latency[replicate] = (double)elapsed / (double)batch_size;
+    latency[replicate] =
+        (double)elapsed / (double)BATCH_BENCH_MEASURED_TASKS;
     rate[replicate] =
-        elapsed == 0u ? 0.0 : (double)batch_size * 1.0e9 / (double)elapsed;
+        elapsed == 0u
+            ? 0.0
+            : (double)BATCH_BENCH_MEASURED_TASKS * 1.0e9 / (double)elapsed;
     submitted += after.submitted_tasks - before.submitted_tasks;
     rejected += after.rejected_tasks - before.rejected_tasks;
   }
@@ -246,7 +256,7 @@ int main(void) {
   }
 
   printf("# Coroutine Executor producer-side batch admission POC\n\n");
-  printf("Worker dequeue remains per-item. Timed admission runs while one gate coroutine keeps the worker from consuming the task queue.\n\n");
+  printf("Worker dequeue remains per-item. Each timed replicate admits 1024 tasks while one gate coroutine keeps the worker from consuming the task queue; batch_size controls the claim range only.\n\n");
   printf("| style | occupancy | batch | replicates | p50 ns/task | p95 ns/task | median admission tasks/s | locks/task | signals/task | submitted | rejected |\n");
   printf("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < row_count; ++index) {
