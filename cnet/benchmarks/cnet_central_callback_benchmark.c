@@ -699,6 +699,7 @@ static int central_handle_event(
     bool measuring,
     uint64_t *event_hops) {
   central_lane *lane;
+  (void)event_hops;
 
   if (event->shard >= CENTRAL_LANES) return SALTS_EPROTO;
   lane = &lanes[event->shard];
@@ -722,10 +723,8 @@ static int central_handle_event(
     if (event->argument != lane->payload_size)
       return SALTS_EPROTO;
     lane->send_done = true;
-    if (measuring) {
+    if (measuring)
       ++lane->send_terminals;
-      ++*event_hops;
-    }
   } else if (event->kind == CNET_EVENT_RECEIVE) {
     const unsigned char *data;
     if (event->backing == NULL ||
@@ -747,10 +746,8 @@ static int central_handle_event(
             salts_hrtime() - lane->started_ns;
       lane->receive_done = true;
       lane->receive_offset = 0u;
-      if (measuring) {
+      if (measuring)
         ++lane->receive_terminals;
-        ++*event_hops;
-      }
     }
   } else {
     return SALTS_EPROTO;
@@ -1212,14 +1209,17 @@ static int central_run_repeat(
       combined[combined_count++] = latencies[lane][sample];
   }
 
+  event_hops = atomic_load_explicit(
+      &events.published, memory_order_acquire);
   stage = "measured_accounting";
   if (combined_count != CENTRAL_LANES * CENTRAL_SAMPLES ||
       command_hops != combined_count ||
-      event_hops != UINT64_C(2) * combined_count ||
+      event_hops < UINT64_C(2) * combined_count ||
       command_rejects != 0u ||
-      atomic_load_explicit(&events.published, memory_order_acquire) !=
-          UINT64_C(2) * combined_count ||
+      atomic_load_explicit(&events.rejected, memory_order_acquire) != 0u ||
       atomic_load_explicit(&events.pending, memory_order_acquire) != 0u ||
+      lanes[0].send_terminals + lanes[1].send_terminals != combined_count ||
+      lanes[0].receive_terminals + lanes[1].receive_terminals != combined_count ||
       wall_ns == 0u || central_cpu_ns == 0u) {
     status = SALTS_EPROTO;
     goto cleanup;
@@ -1503,9 +1503,10 @@ int main(void) {
          "RTT publishes one bounded retained SEND descriptor to the fixed "
          "owner (pointer retain only, no payload copy); receive demand is "
          "pre-admitted before timing to match the owner-affine baseline. "
-         "The central thread then drains a "
-         "bounded MPSC event aggregation where SEND+RECEIVE are callback-"
-         "equivalent events. This measures the compatibility tax of keeping "
+         "The central thread then drains bounded per-owner event rings. "
+         "event hops count every physical SEND/RECEIVE event; a stream "
+         "receive may fragment one logical RTT into multiple RECEIVE events. "
+         "This measures the compatibility tax of keeping "
          "one central callback thread over multiple owners.\n\n");
   printf("| payload | ops/s median | MiB/s median | p50 us | p99 us | "
          "owner CPU us/op | central CPU us/op | cmd hops/op | event hops/op | "
