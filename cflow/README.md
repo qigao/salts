@@ -148,10 +148,11 @@ for one path is evidence for that implementation, not a public constant that
 must be copied into another layer.
 
 The retained machine-readable Direct → IO Actor → IO Publisher control-path
-baseline is tracked by #673 and runs in the unified NativeIO release benchmark
-matrix. It exists to measure abstraction ratios and p50/p95/p99/CPU-efficiency
-regressions; it is not a backend leaderboard. Android runtime parity remains
-separately gated by #70.
+baseline is completed by #673/#674 (`40d0e4e8377732fcd34fd95685764f253be02574`;
+qualification run 36957639727) and runs in the unified NativeIO release
+benchmark matrix. It exists to measure abstraction ratios and
+p50/p95/p99/CPU-efficiency regressions; it is not a backend leaderboard.
+Android runtime parity remains separately gated by #70.
 
 ### Public API layers
 
