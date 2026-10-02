@@ -30,6 +30,87 @@ Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
 - `cnet_client_poll` to advance I/O and invoke callbacks on the caller;
 - `cnet_client_stop` followed by `cnet_client_destroy` for shutdown.
 
+## Execution ownership and multicore composition
+
+One `cnet_client` is one connection/progress owner. The ordinary
+`cnet_client_init()` + `cnet_client_poll()` mode remains caller-driven:
+callbacks execute inline on that one poll owner and CNet creates no hidden
+worker pool.
+
+Multicore execution is **host-composed**, not an implicit multi-shard mode
+inside one client. A runtime that already owns NativeIO progress lanes creates
+one backend/client pair per owner lane with `cnet_client_init_external()`:
+
+```text
+owner lane 0
+  NativeIO backend 0
+      |
+  cnet_client_init_external(client 0)
+      |
+  fixed connections + callbacks on lane 0
+
+owner lane 1
+  NativeIO backend 1
+      |
+  cnet_client_init_external(client 1)
+      |
+  fixed connections + callbacks on lane 1
+```
+
+The host selects the client/owner when a connection is admitted. That
+connection never migrates. The existing data-plane calls stay unchanged:
+
+```c
+cnet_connect(client, ...);
+cnet_send_buffer(client, connection, ...);
+cnet_receive(client, connection, ...);
+cnet_close(client, connection);
+```
+
+There is deliberately no public shard id, `shard_count`, CNet worker pool,
+work stealing, or connection migration. CNet also does not need
+`native_io_sharded` merely to obtain multicore scaling; independent fixed CNet
+owners over direct NativeIO backends are sufficient.
+
+For external-progress clients, the embedding owner performs the canonical host
+loop:
+
+```text
+cnet_client_advance_external()
+cnet_client_external_timeout()
+native_io_backend_observe()
+cnet_client_route_external_completion() for the observed batch
+return to the host loop
+```
+
+Do not add a second `advance_external()` immediately after routing a successful
+batch; the next loop iteration already performs the next control/session/deadline
+pass.
+
+The retained-TCP topology evidence behind this policy is:
+
+- #680: two independent ordinary CNet owners scale real TCP work; 64 KiB
+  distinct-core throughput reached about 2x the one-owner serial baseline;
+- #684: one private shared multi-owner engine retained that owner-local scaling,
+  proving the engine itself is not the bottleneck;
+- #690: a hidden central-callback compatibility facade was rejected. Requiring
+  each logical operation to cross a command hop and then return through central
+  event hops retained only about 0.63-0.73x of the owner-affine distinct-core
+  throughput and increased tail/CPU cost;
+- #695/#713: host-driven external progress preserves the owner-affine class when
+  the host loop is shaped correctly. Repeated epoll 64 KiB external/ordinary
+  throughput was about 0.99x on one CPU/SMT and 1.04x on distinct cores;
+  io_uring remained similarly near parity.
+
+Therefore multicore CNet is a **throughput/concurrency execution policy**, not a
+universal low-latency default. Small-message latency and CPU efficiency must
+still be measured for the workload.
+
+An io_uring-backed owner must create its NativeIO backend on the final owner
+thread. NativeIO uses `IORING_SETUP_SINGLE_ISSUER`, and backend initialization
+arms the wake poll; constructing the ring on one thread and later driving it
+from another violates the kernel single-issuer contract.
+
 `command_capacity` bounds the generic control/deferred command mailbox. `command_buffer_bytes`
 bounds copied payloads that still belong to that control plane; stream data-plane sends do not
 copy payload bytes into this mailbox. `max_send_bytes` remains the per-logical-send bound, while
