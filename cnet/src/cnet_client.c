@@ -1598,6 +1598,40 @@ int cnet_client_external_timeout(cnet_client *client,
   return status;
 }
 
+int cnet_client_external_requests(cnet_client *client,
+                                  cnet_connection connection,
+                                  native_io_request *out_requests,
+                                  size_t capacity,
+                                  size_t *out_count) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_shard_connection internal = {0};
+  cnet_client_record *record;
+  int status;
+
+  if (out_count == NULL) return SALTS_EINVAL;
+  *out_count = 0u;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (!impl->external_progress) return SALTS_ENOTSUP;
+  if (cnet_active_callback_client == impl) return SALTS_EBUSY;
+
+  salts_mutex_lock(&impl->control_lock);
+  if (impl->stopped)
+    status = SALTS_ESHUTDOWN;
+  else if (impl->poll_active || impl->stop_active)
+    status = SALTS_EBUSY;
+  else {
+    record = cnet_client_find_record(
+        impl, connection, &internal);
+    status = record == NULL
+        ? SALTS_ENOENT
+        : cnet_shards_external_requests(
+              &impl->shards, internal,
+              out_requests, capacity, out_count);
+  }
+  salts_mutex_unlock(&impl->control_lock);
+  return status;
+}
+
 int cnet_client_stop_external(cnet_client *client) {
   cnet_client_impl *impl = cnet_client_get(client);
   bool fully_stopped;
