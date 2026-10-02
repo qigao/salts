@@ -972,6 +972,22 @@ int cnet_client_external_timeout(cnet_client *client,
                                  uint32_t *out_timeout_ms);
 
 /**
+ * Copies the currently active NativeIO request identities for one live
+ * connection. The snapshot contains only NativeIO slot/generation identities;
+ * endpoint/native-handle state remains private to CNet/NativeIO.
+ *
+ * The snapshot is transient and must be refreshed after any admission,
+ * external advance, routed completion or cancellation. If capacity is too
+ * small, SALTS_ENOBUFS reports the required count in out_count without writing
+ * a partial snapshot.
+ */
+int cnet_client_external_requests(cnet_client *client,
+                                  cnet_connection connection,
+                                  native_io_request *out_requests,
+                                  size_t capacity,
+                                  size_t *out_count);
+
+/**
  * Completes teardown for an external-progress client only after every live
  * connection has reached its terminal callback. It never observes NativeIO.
  * SALTS_EBUSY means the embedding runtime must continue routing/advancing.
