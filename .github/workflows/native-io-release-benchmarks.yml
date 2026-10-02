@@ -104,6 +104,10 @@ jobs:
       adapted: ${{ steps.scope.outputs.adapted }}
       evidence: ${{ steps.scope.outputs.evidence }}
       contracts: ${{ steps.scope.outputs.contracts }}
+      native_contracts: ${{ steps.scope.outputs.native_contracts }}
+      cnet_contracts: ${{ steps.scope.outputs.cnet_contracts }}
+      coroutine_contracts: ${{ steps.scope.outputs.coroutine_contracts }}
+      cflow_contracts: ${{ steps.scope.outputs.cflow_contracts }}
       work: ${{ steps.scope.outputs.work }}
       cnet_compare: ${{ steps.scope.outputs.cnet_compare }}
       asan: ${{ steps.scope.outputs.asan }}
@@ -142,6 +146,10 @@ jobs:
             $runCflow = $true
             $runNativeUring = $true
             $runForensic = $true
+            $runNativeContracts = $true
+            $runCnetContracts = $true
+            $runCoroutineContracts = $true
+            $runCflowContracts = $true
             $runContracts = $true
             $runAsan = $true
           } else {
@@ -158,6 +166,10 @@ jobs:
               $runCflow = $true
               $runNativeUring = $true
               $runForensic = $true
+              $runNativeContracts = $true
+              $runCnetContracts = $true
+              $runCoroutineContracts = $true
+              $runCflowContracts = $true
               $runContracts = $true
               $runAsan = $true
             } else {
@@ -282,11 +294,18 @@ jobs:
                 $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
                 $buildChanged -or $dependencyChanged
 
-              $runContracts = $nativeRuntime -or $cnetRuntime -or
-                $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
-                $nativeTestsChanged -or $cnetTestsChanged -or
-                $coroutineTestsChanged -or $cflowContractsChanged -or
+              $runNativeContracts = $nativeRuntime -or $nativeTestsChanged -or
+                $concurrencyRuntime -or $platformRuntime -or
                 $buildChanged -or $dependencyChanged
+              $runCnetContracts = $cnetRuntime -or $cnetTestsChanged -or
+                $nativeRuntime -or $concurrencyRuntime -or $platformRuntime -or
+                $buildChanged -or $dependencyChanged
+              $runCoroutineContracts = $coroutineRuntime -or $coroutineTestsChanged -or
+                $concurrencyRuntime -or $buildChanged -or $dependencyChanged
+              $runCflowContracts = $cflowContractsChanged -or $nativeRuntime -or
+                $cnetRuntime -or $buildChanged -or $dependencyChanged
+              $runContracts = $runNativeContracts -or $runCnetContracts -or
+                $runCoroutineContracts -or $runCflowContracts
 
               $runAsan = $cnetRuntime -or $nativeRuntime -or
                 $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
@@ -308,6 +327,10 @@ jobs:
           "adapted=$($runAdapted.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "evidence=$($runEvidence.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "contracts=$($runContracts.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "native_contracts=$($runNativeContracts.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "cnet_contracts=$($runCnetContracts.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "coroutine_contracts=$($runCoroutineContracts.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "cflow_contracts=$($runCflowContracts.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "work=$($runWork.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "cnet_compare=$($runCnetCompare.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "asan=$($runAsan.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
@@ -335,6 +358,10 @@ jobs:
             @("native_uring", "${{ steps.scope.outputs.native_uring }}"),
             @("forensic", "${{ steps.scope.outputs.forensic }}"),
             @("contracts", "${{ steps.scope.outputs.contracts }}"),
+            @("native_contracts", "${{ steps.scope.outputs.native_contracts }}"),
+            @("cnet_contracts", "${{ steps.scope.outputs.cnet_contracts }}"),
+            @("coroutine_contracts", "${{ steps.scope.outputs.coroutine_contracts }}"),
+            @("cflow_contracts", "${{ steps.scope.outputs.cflow_contracts }}"),
             @("work", "${{ steps.scope.outputs.work }}"),
             @("cnet_compare", "${{ steps.scope.outputs.cnet_compare }}"),
             @("asan", "${{ steps.scope.outputs.asan }}")
@@ -624,21 +651,21 @@ jobs:
               concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark salts_coro_executor_test salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_control_path_benchmark cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
 
       - name: Run NativeIO and NativeIPC contract tests
-        if: needs.scope.outputs.contracts == 'true'
+        if: needs.scope.outputs.native_contracts == 'true'
         shell: pwsh
         run: |
           ctest --test-dir "${{ matrix.build_dir }}" -R '^(native_(io|ipc)_(test|header_cpp_test)|native_io_sharded_test|native_io_uring_batch_test|native_io_architecture_contract_test|native_io_accept_escrow_test|native_io_internal_accept_test|native_io_iocp_accept_test|native_io_readiness_accept_test|native_io_uring_accept_test)$' --timeout 30 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run CFlow contract tests
-        if: needs.scope.outputs.contracts == 'true'
+        if: needs.scope.outputs.cflow_contracts == 'true'
         shell: pwsh
         run: |
           ctest --test-dir "${{ matrix.build_dir }}" -R '^(cflow_seeded_reduce_test|cflow_pipeline_test|cflow_plan_managed_test|cflow_io_native_test|cflow_io_native(_sharded)?_adapter_test|cflow_io_cnet_adapter_test|cflow_header_cpp_test|cflow_cnet_header_cpp_test|cflow_cnet_dependency_contract_test|cflow_pipe_data_plane_contract_test)$' --timeout 60 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run CNet contract tests
-        if: needs.scope.outputs.contracts == 'true'
+        if: needs.scope.outputs.cnet_contracts == 'true'
         shell: pwsh
         run: |
           ctest --test-dir "${{ matrix.build_dir }}" -R '^(cnet_.*_test|concurrency_deadline_queue_test)$' --timeout 60 --output-on-failure
@@ -1262,7 +1289,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run Coroutine Executor batch/private contracts
-        if: needs.scope.outputs.coroutine == 'true'
+        if: needs.scope.outputs.coroutine == 'true' || needs.scope.outputs.coroutine_contracts == 'true'
         shell: pwsh
         run: |
           ctest --test-dir "${{ matrix.build_dir }}" -R '^(salts_coro_executor_test|coroutine_executor_private_batch_contract_test)$' --timeout 60 --output-on-failure
