@@ -585,7 +585,7 @@ static int control_actor_replicate(
       measured != CONTROL_MEASURED_VALUES ||
       released != CONTROL_WARMUP_VALUES + CONTROL_MEASURED_VALUES) {
     fprintf(stderr,
-            "actor accounting mismatch: measured=%zu released=%zu accepted=%zu acknowledged=%zu stale=%zu adapter_stale=%" PRIu64 "\n",
+            "actor accounting mismatch: measured=%zu released=%zu accepted=%" PRIu64 " acknowledged=%" PRIu64 " stale=%" PRIu64 " adapter_stale=%" PRIu64 "\n",
             measured, released, actor_stats.accepted,
             actor_stats.acknowledged, actor_stats.stale_completions,
             adapter_stats.stale_actor_completions);
@@ -888,7 +888,7 @@ static int control_publisher_replicate(
       released != total_operations ||
       fixture.errors != 0u) {
     fprintf(stderr,
-            "publisher accounting mismatch: prepared=%zu encoded=%zu values=%zu released=%zu errors=%zu dones=%zu accepted=%zu acknowledged=%zu stale=%zu adapter_stale=%" PRIu64 "\n",
+            "publisher accounting mismatch: prepared=%zu encoded=%zu values=%zu released=%zu errors=%zu dones=%zu accepted=%" PRIu64 " acknowledged=%" PRIu64 " stale=%" PRIu64 " adapter_stale=%" PRIu64 "\n",
             fixture.prepared, fixture.encoded, fixture.values, released,
             fixture.errors, fixture.dones, publisher_stats.actor.accepted,
             publisher_stats.actor.acknowledged,
@@ -1093,7 +1093,9 @@ int main(void) {
   printf("Backend: %s\n\n", backend);
   printf("Each timed chunk consumes prefilled one-byte PIPE completions; "
          "raw peer writes happen outside the timed interval. Publisher "
-         "window is fixed at 1.\n\n");
+         "window is fixed at 1. A zero observed percentile means the single "
+         "completion fell below the host monotonic-clock sampling resolution; "
+         "no synthetic latency is substituted.\n\n");
   printf("| layer | p50 ns | p95 ns | p99 ns | median values/s | "
          "median CPU %% | median values/CPU-s | accepted | completed | "
          "rejected | stale |\n");
