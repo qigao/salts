@@ -38,7 +38,8 @@ enum {
   CONTROL_CHUNK_VALUES = 256,
   CONTROL_REPLICATES = 7,
   CONTROL_MAX_STEPS = 64,
-  CONTROL_MAX_DRIVE_ROUNDS = 100000
+  CONTROL_MAX_DRIVE_ROUNDS = 100000,
+  CONTROL_ACTOR_LEASE_ID = 1
 };
 
 typedef struct control_layer_summary {
@@ -488,7 +489,8 @@ static int control_actor_submit_one(
   operation.status = SALTS_EIO;
   token = (cflow_io_operation){&operation, control_actor_release};
   operation.started_ns = salts_hrtime();
-  submitted = cflow_io_actor_try_submit(actor, 0u, &token);
+  submitted = cflow_io_actor_try_submit(
+      actor, CONTROL_ACTOR_LEASE_ID, &token);
   if (submitted.status != CFLOW_IO_SUBMIT_ACCEPTED)
     return submitted.status == CFLOW_IO_SUBMIT_FULL
         ? SALTS_ENOBUFS : SALTS_EPROTO;
