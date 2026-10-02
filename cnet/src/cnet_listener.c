@@ -3,6 +3,7 @@
 #include "cnet_client_internal.h"
 #include "cnet_module.h"
 #include "cnet_transport.h"
+#include "native_io_internal_accept.h"
 
 #include <salts/clock.h>
 
@@ -55,6 +56,15 @@ typedef struct cnet_listener_impl {
   size_t backlog;
   uint64_t tcp_option_values[8];
   uint8_t tcp_option_set_mask;
+
+  native_io_backend *external_backend;
+  native_io_endpoint external_endpoint;
+  native_io_request external_accept_request;
+  uintptr_t external_accepted_socket;
+  int external_accept_status;
+  bool external_attached;
+  bool external_accept_active;
+
   bool bound;
   bool listening;
   bool closed;
@@ -226,6 +236,26 @@ static int cnet_listener_native_local_endpoint(
       &address, (size_t)address_length, out_endpoint);
 }
 
+static int cnet_listener_remote_peer(
+    cnet_listener_socket socket_value,
+    cnet_stream_peer *out_peer) {
+  struct sockaddr_storage address;
+#if defined(_WIN32)
+  int address_length = (int)sizeof(address);
+#else
+  socklen_t address_length = (socklen_t)sizeof(address);
+#endif
+  if (out_peer == NULL) return SALTS_EINVAL;
+  *out_peer = (cnet_stream_peer){0};
+  memset(&address, 0, sizeof(address));
+  if (getpeername(
+          socket_value, (struct sockaddr *)&address,
+          &address_length) != 0)
+    return cnet_listener_native_error();
+  return cnet_listener_stream_peer(
+      &address, (size_t)address_length, out_peer);
+}
+
 static int cnet_listener_local_peer(cnet_listener_socket socket_value,
                                     cnet_stream_peer *out_peer) {
   cnet_stream_endpoint endpoint = CNET_STREAM_ENDPOINT_INIT;
@@ -311,6 +341,8 @@ static int cnet_listener_open_family(
   }
 
   impl->socket_value = CNET_LISTENER_INVALID_SOCKET;
+  impl->external_accepted_socket = UINTPTR_MAX;
+  impl->external_accept_status = SALTS_OK;
   impl->backend = backend;
   impl->kind = CNET_LISTENER_KIND_TCP;
   impl->native_family = family;
@@ -838,6 +870,155 @@ int cnet_listener_vsock_local(const cnet_listener *listener, cnet_vsock_peer *ou
 #endif
 }
 
+int cnet_listener_attach_external(
+    cnet_listener *listener,
+    native_io_backend *borrowed_backend) {
+  cnet_listener_impl *impl = cnet_listener_get(listener);
+  native_io_backend_config backend_config = {0};
+  native_io_endpoint endpoint = {0};
+  int status;
+
+  if (impl == NULL || borrowed_backend == NULL ||
+      borrowed_backend->impl == NULL)
+    return SALTS_EINVAL;
+  if (impl->closed) return SALTS_ESHUTDOWN;
+  if (impl->kind != CNET_LISTENER_KIND_TCP)
+    return SALTS_ENOTSUP;
+  if (!impl->listening) return SALTS_EBUSY;
+  if (impl->external_attached)
+    return impl->external_backend == borrowed_backend
+               ? SALTS_EALREADY
+               : SALTS_EBUSY;
+  if (!native_io_backend_get_config(
+          borrowed_backend, &backend_config) ||
+      backend_config.kind != impl->backend)
+    return SALTS_EINVAL;
+
+  status = native_io_backend_attach_socket(
+      borrowed_backend, (uintptr_t)impl->socket_value,
+      &endpoint);
+  if (status != SALTS_OK)
+    return status;
+
+  impl->external_backend = borrowed_backend;
+  impl->external_endpoint = endpoint;
+  impl->external_accept_request = (native_io_request){0};
+  impl->external_accepted_socket = UINTPTR_MAX;
+  impl->external_accept_status = SALTS_OK;
+  impl->external_accept_active = false;
+  impl->external_attached = true;
+  return SALTS_OK;
+}
+
+int cnet_listener_submit_external_accept(
+    cnet_listener *listener,
+    native_io_request *out_request) {
+  cnet_listener_impl *impl = cnet_listener_get(listener);
+  native_io_request request = {0};
+  int status;
+
+  if (out_request == NULL)
+    return SALTS_EINVAL;
+  *out_request = (native_io_request){0};
+  if (impl == NULL)
+    return SALTS_EINVAL;
+  if (impl->closed)
+    return SALTS_ESHUTDOWN;
+  if (!impl->external_attached ||
+      impl->external_backend == NULL)
+    return SALTS_ENOTSUP;
+  if (!impl->listening)
+    return SALTS_EBUSY;
+
+  if (impl->external_accept_active) {
+    *out_request = impl->external_accept_request;
+    return SALTS_OK;
+  }
+  if (impl->external_accepted_socket != UINTPTR_MAX ||
+      impl->external_accept_status != SALTS_OK)
+    return SALTS_EALREADY;
+
+  status = native_io_internal_submit_stream_accept(
+      impl->external_backend,
+      impl->external_endpoint,
+      &request);
+  if (status != SALTS_OK)
+    return status;
+
+  impl->external_accept_request = request;
+  impl->external_accept_active = true;
+  *out_request = request;
+  return SALTS_OK;
+}
+
+int cnet_listener_route_external_completion(
+    cnet_listener *listener,
+    const native_io_completion *completion,
+    bool *out_consumed) {
+  cnet_listener_impl *impl = cnet_listener_get(listener);
+  uintptr_t accepted = UINTPTR_MAX;
+  int status;
+
+  if (out_consumed == NULL || completion == NULL)
+    return SALTS_EINVAL;
+  *out_consumed = false;
+  if (impl == NULL)
+    return SALTS_EINVAL;
+  if (!impl->external_attached ||
+      !impl->external_accept_active)
+    return SALTS_OK;
+  if (completion->request.slot !=
+          impl->external_accept_request.slot ||
+      completion->request.generation !=
+          impl->external_accept_request.generation)
+    return SALTS_OK;
+  if (completion->endpoint.slot !=
+          impl->external_endpoint.slot ||
+      completion->endpoint.generation !=
+          impl->external_endpoint.generation)
+    return SALTS_EPROTO;
+
+  *out_consumed = true;
+  impl->external_accept_active = false;
+  impl->external_accept_request = (native_io_request){0};
+
+  if (completion->kind == NATIVE_IO_COMPLETION_OK &&
+      completion->status == SALTS_OK) {
+    status = native_io_internal_take_stream_accept(
+        impl->external_backend,
+        completion->request,
+        &accepted);
+    if (status != SALTS_OK)
+      return status;
+    if (accepted == UINTPTR_MAX)
+      return SALTS_EPROTO;
+    if (impl->external_accepted_socket != UINTPTR_MAX) {
+      cnet_transport_close_socket(accepted);
+      return SALTS_EPROTO;
+    }
+    impl->external_accepted_socket = accepted;
+    impl->external_accept_status = SALTS_OK;
+    return SALTS_OK;
+  }
+
+  /*
+   * Cancellation belongs to the logical subscription lifetime, not to the
+   * listener's next accept result. It simply retires this request so another
+   * subscribe may submit a fresh one.
+   */
+  if (completion->kind == NATIVE_IO_COMPLETION_CANCELLED ||
+      completion->status == SALTS_ECANCELED) {
+    impl->external_accept_status = SALTS_OK;
+    return SALTS_OK;
+  }
+
+  impl->external_accept_status =
+      completion->status != SALTS_OK
+          ? completion->status
+          : SALTS_EIO;
+  return SALTS_OK;
+}
+
 int cnet_listener_wait(cnet_listener *listener, uint32_t timeout_ms, int *out_ready) {
   cnet_listener_impl *impl = cnet_listener_get(listener);
   int native_timeout = timeout_ms > (uint32_t)INT_MAX ? INT_MAX : (int)timeout_ms;
@@ -846,6 +1027,7 @@ int cnet_listener_wait(cnet_listener *listener, uint32_t timeout_ms, int *out_re
   *out_ready = 0;
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->closed) return SALTS_ESHUTDOWN;
+  if (impl->external_attached) return SALTS_ENOTSUP;
   if (impl->kind == CNET_LISTENER_KIND_TCP && !impl->listening) return SALTS_EBUSY;
 #if defined(_WIN32)
   {
@@ -912,21 +1094,41 @@ int cnet_listener_accept_peer(cnet_listener *listener, cnet_client *client,
   if (impl->closed) return SALTS_ESHUTDOWN;
   if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
   if (!impl->listening) return SALTS_EBUSY;
-  memset(&native_peer, 0, sizeof(native_peer));
-  do {
-    accepted = accept(impl->socket_value, (struct sockaddr *)&native_peer, &native_peer_size);
+
+  if (impl->external_attached) {
+    if (impl->external_accept_status != SALTS_OK) {
+      status = impl->external_accept_status;
+      impl->external_accept_status = SALTS_OK;
+      return status;
+    }
+    if (impl->external_accepted_socket == UINTPTR_MAX)
+      return SALTS_ETIMEDOUT;
+
+    accepted = (cnet_listener_socket)impl->external_accepted_socket;
+    impl->external_accepted_socket = UINTPTR_MAX;
+    status = cnet_listener_remote_peer(accepted, out_peer);
+    if (status != SALTS_OK) {
+      cnet_transport_close_socket((uintptr_t)accepted);
+      return status;
+    }
+  } else {
+    memset(&native_peer, 0, sizeof(native_peer));
+    do {
+      accepted = accept(impl->socket_value, (struct sockaddr *)&native_peer, &native_peer_size);
 #if defined(_WIN32)
-  } while (false);
+    } while (false);
 #else
-  } while (accepted == CNET_LISTENER_INVALID_SOCKET && errno == EINTR);
+    } while (accepted == CNET_LISTENER_INVALID_SOCKET && errno == EINTR);
 #endif
-  if (accepted == CNET_LISTENER_INVALID_SOCKET)
-    return cnet_listener_would_block() ? SALTS_ETIMEDOUT : cnet_listener_native_error();
-  status = cnet_listener_stream_peer(&native_peer, (size_t)native_peer_size, out_peer);
-  if (status != SALTS_OK) {
-    cnet_transport_close_socket((uintptr_t)accepted);
-    return status;
+    if (accepted == CNET_LISTENER_INVALID_SOCKET)
+      return cnet_listener_would_block() ? SALTS_ETIMEDOUT : cnet_listener_native_error();
+    status = cnet_listener_stream_peer(&native_peer, (size_t)native_peer_size, out_peer);
+    if (status != SALTS_OK) {
+      cnet_transport_close_socket((uintptr_t)accepted);
+      return status;
+    }
   }
+
   status = cnet_listener_apply_tcp_options(impl, accepted);
   if (status != SALTS_OK) {
     cnet_transport_close_socket((uintptr_t)accepted);
@@ -1068,10 +1270,46 @@ int cnet_listener_accept_tls_peer(cnet_listener *listener, cnet_client *client,
 
 int cnet_listener_close(cnet_listener *listener) {
   cnet_listener_impl *impl = cnet_listener_get(listener);
+  int status;
+
   if (impl == NULL) return SALTS_EINVAL;
-  if (impl->closed) return SALTS_EALREADY;
+
+  if (impl->closed) {
+    if (!impl->external_attached)
+      return SALTS_EALREADY;
+    status = native_io_backend_release_socket(
+        impl->external_backend, impl->external_endpoint);
+    if (status != SALTS_OK)
+      return status;
+    impl->external_attached = false;
+    impl->external_backend = NULL;
+    impl->external_endpoint = (native_io_endpoint){0};
+    return SALTS_OK;
+  }
+
+  if (impl->external_accept_active) {
+    status = native_io_backend_cancel(
+        impl->external_backend,
+        impl->external_accept_request);
+    if (status == SALTS_OK ||
+        status == SALTS_EALREADY ||
+        status == SALTS_ENOENT)
+      return SALTS_EBUSY;
+    return status;
+  }
+
   cnet_listener_close_native(impl);
   impl->closed = true;
+
+  if (impl->external_attached) {
+    status = native_io_backend_release_socket(
+        impl->external_backend, impl->external_endpoint);
+    if (status != SALTS_OK)
+      return status;
+    impl->external_attached = false;
+    impl->external_backend = NULL;
+    impl->external_endpoint = (native_io_endpoint){0};
+  }
   return SALTS_OK;
 }
 
@@ -1080,7 +1318,16 @@ int cnet_listener_destroy(cnet_listener *listener) {
   int status;
   if (listener == NULL) return SALTS_EINVAL;
   if (impl == NULL) return SALTS_OK;
-  if (!impl->closed) return SALTS_EBUSY;
+  if (!impl->closed || impl->external_attached ||
+      impl->external_accept_active)
+    return SALTS_EBUSY;
+
+  if (impl->external_accepted_socket != UINTPTR_MAX) {
+    cnet_transport_close_socket(
+        impl->external_accepted_socket);
+    impl->external_accepted_socket = UINTPTR_MAX;
+  }
+
   free(impl);
   listener->impl = NULL;
   status = cnet_module_shutdown();
