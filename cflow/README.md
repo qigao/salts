@@ -102,6 +102,57 @@ transition state.
 
 NativeIO execution style is an orthogonal mechanism dimension. Direct/Coroutine and the planned Sharded/SMP style share NativeIO request/completion truth; Reactive and Actor remain CFlow semantic models above thin adapters. See [NativeIO execution and endpoint architecture](../native-io/ARCHITECTURE.md).
 
+### I/O portability and execution-policy boundary
+
+CFlow unifies **ownership, lifecycle, completion, cancellation, bounds, and
+errors**. It does not promise that every host uses the same kernel mechanism,
+wait policy, or native carrier.
+
+| Surface | Classification | Portable promise |
+|---|---|---|
+| `cflow_io_actor` and `cflow_io_publisher` admission, ownership transfer, authoritative terminal completion, cancellation request, delivery, acknowledge/release, close and quiescence | **portable semantic contract** | Same state-machine meaning across declared backends. Backend/syscall details are not observable semantics. |
+| Platform readiness registration/wake ownership | **portable mechanism contract** | Readiness remains readiness; it is not re-described as a fake completion packet model. |
+| `cflow_io_native_backend_kind` and explicit backend construction | **advanced execution capability** | Selection is explicit; unsupported selection fails with `SALTS_ENOTSUP`; no silent backend fallback. |
+| Native socket/pipe/file handles and endpoint carriers | **advanced/native surface** | Borrow/close/release rules are documented, but the carrier itself is host-native. |
+| Native socket-address storage and host sockaddr representation | **platform-native surface** | The address representation follows the host ABI; CFlow does not define a serialized cross-platform sockaddr ABI. |
+| Windows overlapped/async-capable handle declaration | **platform precondition** | The caller must supply a handle created with the required Windows asynchronous semantics; CFlow does not emulate it with a worker fallback. |
+| Bounded vector operations | **advanced additive capability** | Capability is queried independently; unsupported vectors fail explicitly and are never flattened into a scalar-copy fallback. |
+| blocking vs polling wait, completion batch size, Publisher window, Actor/driver quantum, shard/worker topology | **execution policy** | Measurable implementation/configuration choices, not portable semantic guarantees. |
+
+Backend selection therefore has no universal ranking. In particular, neither
+"newer backend is always faster" nor "busy wait is always faster" is a CFlow
+contract. Choose execution policy from the actual capability and workload:
+
+```text
+OS capability
++ resource type
++ concurrency / queue depth
++ payload and workload shape
++ latency vs throughput objective
++ wait strategy
+```
+
+The intended backend roles remain explicit:
+
+- `poll` is a portable/reference readiness backend where supported, not an
+  automatic fallback;
+- epoll is a Linux readiness backend;
+- io_uring is a Linux completion backend used where its completion/file/batch
+  properties fit the workload;
+- IOCP is the Windows native completion backend;
+- kqueue is the macOS/BSD readiness backend.
+
+Blocking/event-driven waits, busy/polling waits, and any future hybrid policy
+remain backend/workload choices. Likewise, a useful batching window measured
+for one path is evidence for that implementation, not a public constant that
+must be copied into another layer.
+
+The retained machine-readable Direct → IO Actor → IO Publisher control-path
+baseline is tracked by #673 and runs in the unified NativeIO release benchmark
+matrix. It exists to measure abstraction ratios and p50/p95/p99/CPU-efficiency
+regressions; it is not a backend leaderboard. Android runtime parity remains
+separately gated by #70.
+
 ### Public API layers
 
 Start with the narrowest layer that expresses the application contract. These
