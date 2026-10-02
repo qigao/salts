@@ -1,6 +1,7 @@
 #include <cnet/cnet.h>
 
 #include <salts/error_codes.h>
+#include <salts/clock.h>
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -123,9 +124,11 @@ static int drive_shared_once(cnet_listener *listener,
     bool consumed = false;
     size_t routed_events = 0u;
 
-    status = cnet_listener_route_external_completion(
-        listener, &completions[index], &consumed);
-    if (status != SALTS_OK) return status;
+    if (listener != NULL && listener->impl != NULL) {
+      status = cnet_listener_route_external_completion(
+          listener, &completions[index], &consumed);
+      if (status != SALTS_OK) return status;
+    }
     if (consumed) {
       if (out_listener_consumed != NULL)
         *out_listener_consumed = true;
