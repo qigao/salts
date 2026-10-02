@@ -1,0 +1,117 @@
+name: Windows native SDK package check
+
+on:
+  pull_request:
+    paths:
+      - "cnet/**"
+      - "cmake/ci/stage-windows-cnet-runtime.ps1"
+      - ".github/workflows/native-nuget-release.yml"
+      - ".github/workflows/windows-native-sdk-package-check.yml"
+      - ".github/actions/setup-re2c-tools/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "CMakeUserPresets.json"
+      - "vcpkg.json"
+      - "vcpkg-configuration.json"
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  windows-package:
+    name: Windows x64 self-contained SDK
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up shared build dependencies
+        id: shared_deps
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Resolve build environment
+        id: env
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:VCPKG_ROOT)) {
+            throw "VCPKG_ROOT is unavailable"
+          }
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ([string]::IsNullOrWhiteSpace($vsInstall)) {
+            throw "Visual Studio x64 C++ toolchain was not found"
+          }
+          $cache = Join-Path $env:GITHUB_WORKSPACE "build\vcpkg-binary-cache"
+          New-Item -ItemType Directory -Force -Path $cache | Out-Null
+          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+          "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
+          "triplet=x64-windows" >> $env:GITHUB_OUTPUT
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg-binary-cache
+          key: vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: |
+            vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
+
+      - name: Configure release SDK
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
+          cmake --preset win-release-user -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+
+      - name: Build release SDK
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
+          cmake --build --preset win-release-user --parallel 2
+
+      - name: Install and qualify runtime payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $prefix = Join-Path $env:GITHUB_WORKSPACE "stage\sdk\windows-x64"
+          cmake --install build/Msvc-Release --prefix $prefix --config Release
+          ./cmake/ci/stage-windows-cnet-runtime.ps1 -Prefix $prefix
+
+          foreach ($relative in @(
+            "bin\cnet.dll",
+            "bin\salts.dll",
+            "bin\ssl.dll",
+            "bin\crypto.dll",
+            "lib\cmake\Salts\SaltsConfig.cmake",
+            "lib\cmake\Salts\SaltsTargets.cmake"
+          )) {
+            $path = Join-Path $prefix $relative
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "missing Windows SDK payload: $path"
+            }
+          }
+
+          $targets = Get-Content -LiteralPath (Join-Path $prefix "lib\cmake\Salts\SaltsTargets.cmake") -Raw
+          if ($targets -match "OpenSSL::SSL|OpenSSL::Crypto") {
+            throw "private TLS implementation dependency leaked into Salts public CMake targets"
+          }
+
+          Write-Host "Windows SDK runtime payload is self-contained."
+
+      - name: Verify CNet PE runtime contract
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          dumpbin /dependents stage\sdk\windows-x64\bin\cnet.dll > build\cnet-runtime-deps.txt
+          if errorlevel 1 exit /b 1
+          type build\cnet-runtime-deps.txt
+          findstr /i /c:"salts.dll" build\cnet-runtime-deps.txt >nul
+          if errorlevel 1 exit /b 1
+          findstr /i /c:"ssl.dll" build\cnet-runtime-deps.txt >nul
+          if errorlevel 1 exit /b 1
+          findstr /i /c:"crypto.dll" build\cnet-runtime-deps.txt >nul
+          if errorlevel 1 exit /b 1

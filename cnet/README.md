@@ -344,7 +344,11 @@ connections. Leaving both zero preserves a TLS-free client and makes a
 
 The repository manifest selects BoringSSL. CMake consumes its conventional
 `find_package(OpenSSL REQUIRED)` compatibility targets only as private build
-dependencies; Salts neither exports those targets nor installs BoringSSL.
+dependencies; Salts never exports those targets in CNet's public CMake link
+interface. The Windows native SDK uses the dynamic `x64-windows` vcpkg
+triplet, so its package bundles the private `ssl.dll` and `crypto.dll`
+runtime artifacts beside `cnet.dll`. They remain implementation details, not
+public SDK link dependencies.
 
 `cnet_connect()` accepts either a one-shot `cnet_tls_client_config` or a reusable
 `cnet_tls_client`; the two fields are mutually exclusive. NULL uses the platform
