@@ -113,10 +113,13 @@ static void test_external_native_io_progress(void) {
   cnet_connection connection = {0};
   external_probe probe = {0};
   native_io_completion unrelated = {0};
+  native_io_request interests[TEST_BATCH] = {{0}};
   uint64_t deadline;
   uint32_t wait_ms = 0u;
   bool consumed = true;
   size_t events = 0u;
+  size_t interest_count = 0u;
+  size_t i;
 
   assert(native_io_backend_init(
              &backend, &backend_config) == SALTS_OK);
@@ -170,6 +173,24 @@ static void test_external_native_io_progress(void) {
   /* A live connection prevents external stop until terminal completion. */
   assert(cnet_client_stop_external(&client) == SALTS_EBUSY);
 
+  /*
+   * Advance submits the connect request without observing it. The embedding
+   * runtime can then snapshot only the request slot/generation identities that
+   * W4 needs to arm its existing NativeIO poll route.
+   */
+  assert(cnet_client_advance_external(
+             &client, &events) == SALTS_OK);
+  assert(cnet_client_external_requests(
+             &client, connection, NULL, 0u,
+             &interest_count) == SALTS_ENOBUFS);
+  assert(interest_count > 0u);
+  assert(interest_count <= TEST_BATCH);
+  assert(cnet_client_external_requests(
+             &client, connection, interests, TEST_BATCH,
+             &interest_count) == SALTS_OK);
+  for (i = 0u; i < interest_count; ++i)
+    assert(native_io_request_valid(interests[i]));
+
   deadline = salts_monotonic_ms() + TEST_TIMEOUT_MS;
   while (!probe.connected && !probe.failed) {
     assert(cnet_client_external_timeout(
@@ -181,6 +202,12 @@ static void test_external_native_io_progress(void) {
   }
   assert(probe.connected);
   assert(!probe.failed);
+
+  interest_count = SIZE_MAX;
+  assert(cnet_client_external_requests(
+             &client, connection, interests, TEST_BATCH,
+             &interest_count) == SALTS_OK);
+  assert(interest_count == 0u);
 
   assert(cnet_close(&client, connection) == SALTS_OK);
   deadline = salts_monotonic_ms() + TEST_TIMEOUT_MS;
