@@ -11,6 +11,7 @@ on:
       - "CMakeLists.txt"
       - "cmake/ci/benchmark-policy.json"
       - "cmake/ci/verify-benchmark-policy.ps1"
+      - "cmake/ci/render-benchmark-verdicts.ps1"
       - "cflow/include/cflow/io_native_sharded_adapter.h"
       - "cflow/src/io_native_sharded_adapter.c"
       - "cflow/include/cflow/io_actor.h"
@@ -50,6 +51,7 @@ on:
       - "CMakeLists.txt"
       - "cmake/ci/benchmark-policy.json"
       - "cmake/ci/verify-benchmark-policy.ps1"
+      - "cmake/ci/render-benchmark-verdicts.ps1"
       - "cflow/include/cflow/io_native_sharded_adapter.h"
       - "cflow/src/io_native_sharded_adapter.c"
       - "cflow/include/cflow/io_actor.h"
@@ -1702,6 +1704,19 @@ jobs:
           ./cnet/benchmarks/summarize_io_trace.ps1 -Directory native-io-results/syscalls |
             Tee-Object -FilePath native-io-results/syscalls/summary.txt |
             Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Render benchmark verdicts
+        if: always() && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          BENCHMARK_JOB_STATUS: ${{ job.status }}
+        run: |
+          ./cmake/ci/render-benchmark-verdicts.ps1 `
+            -PolicyPath cmake/ci/benchmark-policy.json `
+            -EvidenceDir native-io-results `
+            -Backend "${{ matrix.backend }}" `
+            -JobStatus "$env:BENCHMARK_JOB_STATUS" `
+            -WriteSummary
 
       - name: Upload I/O benchmark evidence
         if: always() && steps.scope.outputs.adapted == 'true'
