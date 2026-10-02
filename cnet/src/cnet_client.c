@@ -62,6 +62,7 @@ struct cnet_client_impl {
   atomic_int external_wake_pending;
   size_t poll_callback_count;
   bool admission_open;
+  bool external_progress;
   bool poll_active;
   bool stop_active;
   bool stopped;
@@ -310,7 +311,9 @@ static void cnet_client_cleanup_init(cnet_client_impl *impl) {
   (void)cnet_module_shutdown();
 }
 
-int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
+static int cnet_client_init_impl(cnet_client *client,
+                                 const cnet_client_config *config,
+                                 native_io_backend *borrowed_backend) {
   cnet_client_impl *impl;
   cnet_shards_config shards_config;
   size_t max_command_payload_bytes;
@@ -338,6 +341,7 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   impl->max_send_bytes = config->max_send_bytes;
   impl->tls_io_buffer_bytes = config->tls_io_buffer_bytes;
   impl->backend_kind = config->backend;
+  impl->external_progress = borrowed_backend != NULL;
   impl->connect_timeout_ms = config->connect_timeout_ms;
   impl->read_timeout_ms = config->read_timeout_ms;
   impl->write_timeout_ms = config->write_timeout_ms;
@@ -391,6 +395,7 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
                            : config->event_capacity * max_event_payload_bytes;
   shards_config = (cnet_shards_config){
       .backend_kind = config->backend,
+      .borrowed_backend = borrowed_backend,
       .shard_count = 1u,
       .connection_capacity_per_shard = impl->capacity_per_shard,
       .command_capacity_per_shard = config->command_capacity,
@@ -419,6 +424,17 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   }
   client->impl = impl;
   return SALTS_OK;
+}
+
+int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
+  return cnet_client_init_impl(client, config, NULL);
+}
+
+int cnet_client_init_external(cnet_client *client,
+                              const cnet_client_config *config,
+                              native_io_backend *borrowed_backend) {
+  if (borrowed_backend == NULL) return SALTS_EINVAL;
+  return cnet_client_init_impl(client, config, borrowed_backend);
 }
 
 int cnet_client_set_stream_socket_options(cnet_client *client,
@@ -1483,6 +1499,150 @@ int cnet_close(cnet_client *client, cnet_connection connection) {
   return status;
 }
 
+static int cnet_client_external_progress_begin(cnet_client_impl *impl) {
+  int status;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (!impl->external_progress) return SALTS_ENOTSUP;
+  if (cnet_active_callback_client == impl) return SALTS_EBUSY;
+
+  salts_mutex_lock(&impl->control_lock);
+  if (!impl->admission_open || impl->stopped)
+    status = SALTS_ESHUTDOWN;
+  else if (impl->poll_active || impl->stop_active)
+    status = SALTS_EBUSY;
+  else {
+    impl->poll_active = true;
+    impl->poll_callback_count = 0u;
+    status = SALTS_OK;
+  }
+  salts_mutex_unlock(&impl->control_lock);
+  return status;
+}
+
+static int cnet_client_external_progress_finish(
+    cnet_client_impl *impl,
+    int status,
+    size_t *out_events) {
+  int callback_status;
+
+  salts_mutex_lock(&impl->control_lock);
+  if (out_events != NULL)
+    *out_events = impl->poll_callback_count;
+  callback_status =
+      atomic_load_explicit(&impl->callback_error, memory_order_acquire);
+  impl->poll_active = false;
+  salts_mutex_unlock(&impl->control_lock);
+
+  return status == SALTS_OK && callback_status != SALTS_OK
+      ? callback_status
+      : status;
+}
+
+int cnet_client_advance_external(cnet_client *client, size_t *out_events) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  int status;
+
+  if (out_events == NULL) return SALTS_EINVAL;
+  *out_events = 0u;
+  status = cnet_client_external_progress_begin(impl);
+  if (status != SALTS_OK) return status;
+
+  status = cnet_shards_advance_external(&impl->shards);
+  return cnet_client_external_progress_finish(
+      impl, status, out_events);
+}
+
+int cnet_client_route_external_completion(
+    cnet_client *client,
+    const native_io_completion *completion,
+    bool *out_consumed,
+    size_t *out_events) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  int status;
+
+  if (completion == NULL || out_consumed == NULL ||
+      out_events == NULL)
+    return SALTS_EINVAL;
+  *out_consumed = false;
+  *out_events = 0u;
+  status = cnet_client_external_progress_begin(impl);
+  if (status != SALTS_OK) return status;
+
+  status = cnet_shards_route_external_completion(
+      &impl->shards, completion, out_consumed);
+  return cnet_client_external_progress_finish(
+      impl, status, out_events);
+}
+
+int cnet_client_external_timeout(cnet_client *client,
+                                 uint32_t max_wait_ms,
+                                 uint32_t *out_timeout_ms) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  int status;
+
+  if (out_timeout_ms == NULL) return SALTS_EINVAL;
+  *out_timeout_ms = 0u;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (!impl->external_progress) return SALTS_ENOTSUP;
+  if (cnet_active_callback_client == impl) return SALTS_EBUSY;
+
+  salts_mutex_lock(&impl->control_lock);
+  if (impl->stopped)
+    status = SALTS_ESHUTDOWN;
+  else if (impl->poll_active || impl->stop_active)
+    status = SALTS_EBUSY;
+  else
+    status = cnet_shards_external_timeout(
+        &impl->shards, max_wait_ms, out_timeout_ms);
+  salts_mutex_unlock(&impl->control_lock);
+  return status;
+}
+
+int cnet_client_stop_external(cnet_client *client) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  bool fully_stopped;
+  int first_status = SALTS_OK;
+  int status;
+
+  if (impl == NULL) return SALTS_EINVAL;
+  if (!impl->external_progress) return SALTS_ENOTSUP;
+  if (cnet_active_callback_client == impl) return SALTS_EBUSY;
+
+  salts_mutex_lock(&impl->control_lock);
+  if (impl->stopped) {
+    salts_mutex_unlock(&impl->control_lock);
+    return SALTS_EALREADY;
+  }
+  if (impl->poll_active || impl->stop_active ||
+      impl->active_count != 0u) {
+    salts_mutex_unlock(&impl->control_lock);
+    return SALTS_EBUSY;
+  }
+  impl->stop_active = true;
+  impl->admission_open = false;
+  salts_mutex_unlock(&impl->control_lock);
+
+  status = cnet_dispatcher_drain(&impl->dispatcher, 0u);
+  if (status == SALTS_EALREADY) status = SALTS_OK;
+  if (status != SALTS_OK) first_status = status;
+
+  if (cnet_dispatcher_drained(&impl->dispatcher)) {
+    status = cnet_shards_stop(&impl->shards, 0u);
+    if (status == SALTS_EALREADY) status = SALTS_OK;
+    if (first_status == SALTS_OK && status != SALTS_OK)
+      first_status = status;
+  }
+
+  fully_stopped =
+      cnet_dispatcher_drained(&impl->dispatcher) &&
+      cnet_shards_stopped(&impl->shards);
+  salts_mutex_lock(&impl->control_lock);
+  impl->stop_active = false;
+  if (fully_stopped) impl->stopped = true;
+  salts_mutex_unlock(&impl->control_lock);
+  return first_status;
+}
+
 int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_events) {
   cnet_client_impl *impl = cnet_client_get(client);
   const uint64_t started_ms = salts_monotonic_ms();
@@ -1494,6 +1654,7 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
   if (out_events == NULL) return SALTS_EINVAL;
   *out_events = 0u;
   if (impl == NULL) return SALTS_EINVAL;
+  if (impl->external_progress) return SALTS_ENOTSUP;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
   salts_mutex_lock(&impl->control_lock);
   if (!impl->admission_open || impl->stopped) status = SALTS_ESHUTDOWN;
@@ -1624,6 +1785,7 @@ int cnet_client_stop(cnet_client *client, uint32_t timeout_ms) {
   int first_status = SALTS_OK;
   int status;
   if (impl == NULL) return SALTS_EINVAL;
+  if (impl->external_progress) return SALTS_ENOTSUP;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
   salts_mutex_lock(&impl->control_lock);
   if (impl->stopped) {
