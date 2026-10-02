@@ -63,8 +63,9 @@ foreach ($row in $rows) {
   if ($replicates -ne 11 -or $p50 -le 0.0 -or $p95 -lt $p50 -or $rate -le 0.0) {
     throw "invalid timing/replicate row: $key"
   }
-  if ($submitted -ne ($batch * $replicates) -or $rejected -ne 0) {
-    throw "admission accounting mismatch: $key"
+  $expectedSubmitted = [UInt64]1024 * $replicates
+  if ($submitted -ne $expectedSubmitted -or $rejected -ne 0) {
+    throw "admission accounting mismatch: $key expected=$expectedSubmitted submitted=$submitted rejected=$rejected"
   }
 
   $expected = if ($row.style -eq "batch") { 1.0 / [double]$batch } else { 1.0 }
