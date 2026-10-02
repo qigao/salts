@@ -145,6 +145,20 @@ int cnet_owner_external_timeout(cnet_owner *owner, uint32_t max_wait_ms,
                                 uint32_t *out_timeout_ms);
 
 /**
+ * Copies active NativeIO request identities for one live session. The snapshot
+ * contains no endpoint/native handle and is invalidated by any subsequent
+ * admission, advance, completion route or cancellation.
+ *
+ * If capacity is too small, returns SALTS_ENOBUFS and reports the required
+ * count without writing a partial snapshot.
+ */
+int cnet_owner_external_requests(cnet_owner *owner,
+                                 cnet_session_handle session,
+                                 native_io_request *out_requests,
+                                 size_t capacity,
+                                 size_t *out_count);
+
+/**
  * Owner-thread direct receive admission.
  *
  * Adds bounded receive demand and schedules one owner-local rearm for the next
