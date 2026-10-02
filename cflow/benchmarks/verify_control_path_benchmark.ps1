@@ -67,7 +67,7 @@ foreach ($row in $rows) {
   if ($replicates -ne $expectedReplicates -or $values -ne $expectedMeasured) {
     throw "sample contract mismatch for $($row.layer)"
   }
-  if ($p50 -le 0.0 -or $p95 -lt $p50 -or $p99 -lt $p95 -or $rate -le 0.0 -or $cpuPercent -lt 0.0 -or $cpuEfficiency -le 0.0) {
+  if ($p50 -lt 0.0 -or $p95 -lt $p50 -or $p99 -lt $p95 -or $p99 -le 0.0 -or $rate -le 0.0 -or $cpuPercent -lt 0.0 -or $cpuEfficiency -le 0.0) {
     throw "invalid timing/CPU metrics for $($row.layer)"
   }
   if ($accepted -ne $expectedAccepted -or $completed -ne $expectedAccepted -or $rejected -ne 0 -or $stale -ne 0) {
