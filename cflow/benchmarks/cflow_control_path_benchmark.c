@@ -71,6 +71,7 @@ typedef struct control_publisher_operation {
   uint64_t started_ns;
   uint64_t *latency_out;
   size_t *released;
+  size_t index;
   unsigned char byte;
 } control_publisher_operation;
 
@@ -672,9 +673,7 @@ static cflow_read_status control_publisher_encode(
     if (error != NULL) *error = "CFlow control baseline completion mismatch";
     return CFLOW_READ_ERROR;
   }
-  if (operation->latency_out != NULL)
-    *operation->latency_out = salts_hrtime() - operation->started_ns;
-  *(int *)out_value = 1;
+  *(int *)out_value = (int)operation->index;
   ++fixture->encoded;
   return CFLOW_READ_VALUE;
 }
@@ -683,10 +682,18 @@ static bool control_publisher_value(
     void *user, const cmeta_type_desc *type, const void *value) {
   control_publisher_fixture *fixture =
       (control_publisher_fixture *)user;
+  size_t index;
+
   if (fixture == NULL || value == NULL ||
       !cmeta_type_equal(type, &cmeta_type_int) ||
-      *(const int *)value != 1)
+      *(const int *)value < 0)
     return false;
+  index = (size_t)*(const int *)value;
+  if (index >= fixture->operation_count)
+    return false;
+  if (fixture->operations[index].latency_out != NULL)
+    *fixture->operations[index].latency_out =
+        salts_hrtime() - fixture->operations[index].started_ns;
   ++fixture->values;
   return true;
 }
@@ -793,6 +800,7 @@ static int control_publisher_replicate(
             ? &latencies[index - CONTROL_WARMUP_VALUES]
             : NULL;
     operations[index].released = &released;
+    operations[index].index = index;
   }
   fixture.operations = operations;
   fixture.operation_count = total_operations;
