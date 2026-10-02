@@ -119,6 +119,8 @@ static int cnet_shards_init_impl(cnet_shards *shards, const cnet_shards_config *
 
   if (shards == NULL || config == NULL) return SALTS_EINVAL;
   if (shards->impl != NULL) return SALTS_EALREADY;
+  if (config->borrowed_backend != NULL && config->shard_count != 1u)
+    return SALTS_EINVAL;
   if (config->shard_count == 0u ||
       (!allow_multi_owner && config->shard_count != 1u) ||
       config->shard_count > UINT32_MAX ||
@@ -176,6 +178,7 @@ static int cnet_shards_init_impl(cnet_shards *shards, const cnet_shards_config *
                                                   config->event_buffer_bytes};
     const cnet_owner_config owner_config = {
         .backend_kind = config->backend_kind,
+        .borrowed_backend = config->borrowed_backend,
         .connection_capacity = config->connection_capacity_per_shard,
         .request_capacity = config->request_capacity_per_shard,
         .completion_batch_capacity = config->completion_batch_capacity,
@@ -294,6 +297,51 @@ int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms) {
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->shard_count != 1u) return SALTS_EINVAL;
   return cnet_shards_poll_owner_impl(shards, 0u, timeout_ms);
+}
+
+int cnet_shards_advance_external(cnet_shards *shards) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  if (impl == NULL || impl->shard_count != 1u) return SALTS_EINVAL;
+  if (impl->stopping || impl->stopped) return SALTS_ESHUTDOWN;
+  return cnet_owner_advance_external(&impl->records[0].owner);
+}
+
+int cnet_shards_route_external_completion(
+    cnet_shards *shards,
+    const native_io_completion *completion,
+    bool *out_consumed) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  int status;
+  if (out_consumed == NULL) return SALTS_EINVAL;
+  *out_consumed = false;
+  if (impl == NULL || impl->shard_count != 1u) return SALTS_EINVAL;
+  status = cnet_owner_route_external_completion(
+      &impl->records[0].owner, completion, out_consumed);
+  cnet_shards_record_error(&impl->records[0], status);
+  return status;
+}
+
+int cnet_shards_external_timeout(cnet_shards *shards,
+                                 uint32_t max_wait_ms,
+                                 uint32_t *out_timeout_ms) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  if (impl == NULL || impl->shard_count != 1u) return SALTS_EINVAL;
+  return cnet_owner_external_timeout(
+      &impl->records[0].owner, max_wait_ms, out_timeout_ms);
+}
+
+int cnet_shards_external_requests(cnet_shards *shards,
+                                  cnet_shard_connection connection,
+                                  native_io_request *out_requests,
+                                  size_t capacity,
+                                  size_t *out_count) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  if (impl == NULL || impl->shard_count != 1u ||
+      connection.shard != 0u)
+    return SALTS_EINVAL;
+  return cnet_owner_external_requests(
+      &impl->records[0].owner, connection.session,
+      out_requests, capacity, out_count);
 }
 
 #if defined(CNET_INTERNAL_PROFILING)
