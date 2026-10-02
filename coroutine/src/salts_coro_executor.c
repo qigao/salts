@@ -1,4 +1,5 @@
 #include "salts_coro_executor.h"
+#include "salts_coro_executor_internal.h"
 
 #include <limits.h>
 #include <stdatomic.h>
@@ -645,6 +646,61 @@ static int salts_coro_executor_submit_internal(salts_coro_executor_t *executor, 
   shard->queued_depth++;
   queued = atomic_fetch_add(&executor->queued_tasks, 1u) + 1u;
   atomic_fetch_add(&executor->submitted_tasks, 1u);
+  salts_coro_executor_update_peak(&executor->peak_queued_tasks, queued);
+  salts_cond_signal(&shard->work_available);
+  salts_mutex_unlock(&shard->mutex);
+  return SALTS_OK;
+}
+
+int salts_coro_executor_try_submit_batch_to_internal(
+    salts_coro_executor_t *executor, size_t shard_index,
+    const salts_coro_executor_task_t *tasks, size_t count) {
+  salts_coro_executor_shard_t *shard;
+  disruptor_sequence_range_t range;
+  uint64_t queued;
+
+  if (executor == NULL) return SALTS_EINVAL;
+  if (tasks == NULL || count == 0u || count > (size_t)UINT32_MAX ||
+      shard_index >= executor->worker_count) {
+    if (count != 0u) atomic_fetch_add(&executor->rejected_tasks, count);
+    return SALTS_EINVAL;
+  }
+  for (size_t index = 0u; index < count; ++index) {
+    if (tasks[index].run == NULL) {
+      atomic_fetch_add(&executor->rejected_tasks, count);
+      return SALTS_EINVAL;
+    }
+  }
+
+  shard = &executor->shards[shard_index];
+  salts_mutex_lock(&shard->mutex);
+  if (!atomic_load(&executor->accepting)) {
+    salts_mutex_unlock(&shard->mutex);
+    atomic_fetch_add(&executor->rejected_tasks, count);
+    return SALTS_ESHUTDOWN;
+  }
+  if (count > executor->queue_capacity_per_worker - shard->queued_depth) {
+    salts_mutex_unlock(&shard->mutex);
+    atomic_fetch_add(&executor->rejected_tasks, count);
+    return SALTS_ENOBUFS;
+  }
+  if (!disruptor_publisher_try_claim_n(shard->queue, (uint32_t)count, &range)) {
+    salts_mutex_unlock(&shard->mutex);
+    atomic_fetch_add(&executor->rejected_tasks, count);
+    return SALTS_ENOBUFS;
+  }
+
+  for (size_t index = 0u; index < count; ++index) {
+    disruptor_cursor_t cursor = {range.first_sequence + (uint64_t)index};
+    salts_coro_executor_task_t *entry =
+        (salts_coro_executor_task_t *)disruptor_acquire_entry(shard->queue, &cursor);
+    *entry = tasks[index];
+  }
+  disruptor_publisher_commit_range_blocking(shard->queue, &range);
+
+  shard->queued_depth += count;
+  queued = atomic_fetch_add(&executor->queued_tasks, count) + count;
+  atomic_fetch_add(&executor->submitted_tasks, count);
   salts_coro_executor_update_peak(&executor->peak_queued_tasks, queued);
   salts_cond_signal(&shard->work_available);
   salts_mutex_unlock(&shard->mutex);
