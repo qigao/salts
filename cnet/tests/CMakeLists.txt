@@ -351,7 +351,24 @@ set_target_properties(
 # CNet/NativeIO conformance in the same build closure.
 add_dependencies(cnet_api_test
   cnet_native_io_sharded_ownership_test
-  cnet_tcp_endpoint_test)
+  cnet_tcp_endpoint_test
+  cnet_external_progress_test)
+
+cmake_add_test(
+  cnet_external_progress_test
+  SOURCES
+  cnet_external_progress_test.c
+  LIBS
+  cnet
+  Salts::Core
+  Salts::NativeIO
+  FOLDER
+  "cnet/tests")
+set_target_properties(
+  cnet_external_progress_test
+  PROPERTIES C_STANDARD 11
+             C_STANDARD_REQUIRED ON
+             C_EXTENSIONS OFF)
 
 cmake_add_test(
   cnet_api_profile_test
