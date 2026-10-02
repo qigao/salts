@@ -1,4 +1,5 @@
 #include "native_io_internal.h"
+#include "native_io_accept_escrow.h"
 
 #include <salts/error_codes.h>
 
@@ -26,12 +27,18 @@ typedef struct salts_iocp_endpoint_record {
   uintptr_t native_handle;
   uint32_t generation;
   size_t active_requests;
+  size_t retained_accepts;
   salts_io_resource_kind resource_kind;
   LPFN_CONNECTEX connect_ex;
+  LPFN_ACCEPTEX accept_ex;
   bool connected;
   bool connect_active;
   bool active;
 } salts_iocp_endpoint_record;
+
+enum {
+  SALTS_IOCP_ACCEPT_ADDRESS_BYTES = sizeof(SOCKADDR_STORAGE) + 16u
+};
 
 typedef struct salts_iocp_request_record {
   OVERLAPPED overlapped;
@@ -47,7 +54,17 @@ typedef struct salts_iocp_request_record {
   void *address;
   int address_length;
   uintptr_t user_data;
+  SOCKET accepted_socket;
+  unsigned char accept_address[SALTS_IOCP_ACCEPT_ADDRESS_BYTES * 2u];
+  bool stream_accept;
 } salts_iocp_request_record;
+
+typedef struct salts_iocp_accept_result {
+  native_io_request request;
+  native_io_endpoint listener;
+  SOCKET child;
+  bool live;
+} salts_iocp_accept_result;
 
 _Static_assert(offsetof(salts_iocp_request_record, overlapped) == 0u,
                "OVERLAPPED must remain the stable request prefix");
@@ -57,6 +74,8 @@ typedef struct salts_iocp_impl {
   HANDLE port;
   salts_iocp_endpoint_record *endpoints;
   salts_iocp_request_record *requests;
+  salts_iocp_accept_result *accept_results;
+  native_io_accept_escrow accept_escrow;
   uint32_t *free_endpoints;
   uint32_t *free_requests;
   size_t endpoint_capacity;
@@ -104,6 +123,114 @@ static int iocp_native_error(DWORD error) {
   return -(int)error;
 }
 
+static salts_iocp_endpoint_record *iocp_endpoint(
+    salts_iocp_impl *impl, native_io_endpoint endpoint);
+
+static salts_iocp_accept_result *iocp_accept_result_from_token(
+    salts_iocp_impl *impl, uintptr_t token) {
+  const uintptr_t base = (uintptr_t)impl->accept_results;
+  const uintptr_t value = token;
+  const size_t bytes = impl->request_capacity * sizeof(*impl->accept_results);
+  uintptr_t offset;
+  if (impl->accept_results == NULL || value < base || value - base >= bytes)
+    return NULL;
+  offset = value - base;
+  if (offset % sizeof(*impl->accept_results) != 0u)
+    return NULL;
+  return &impl->accept_results[offset / sizeof(*impl->accept_results)];
+}
+
+static int iocp_retire_accept_result(void *context, uintptr_t transport) {
+  salts_iocp_impl *impl = (salts_iocp_impl *)context;
+  salts_iocp_accept_result *result =
+      iocp_accept_result_from_token(impl, transport);
+  salts_iocp_endpoint_record *listener;
+  int status = SALTS_OK;
+
+  if (result == NULL || !result->live)
+    return SALTS_EINVAL;
+
+  listener = iocp_endpoint(impl, result->listener);
+  if (result->child != INVALID_SOCKET &&
+      closesocket(result->child) == SOCKET_ERROR)
+    status = iocp_native_error((DWORD)WSAGetLastError());
+  if (listener != NULL && listener->retained_accepts != 0u)
+    --listener->retained_accepts;
+  memset(result, 0, sizeof(*result));
+  result->child = INVALID_SOCKET;
+  return status;
+}
+
+static salts_iocp_accept_result *iocp_accept_result_reserve(
+    salts_iocp_impl *impl, native_io_request request,
+    native_io_endpoint listener, SOCKET child) {
+  size_t index;
+  for (index = 0u; index < impl->request_capacity; ++index) {
+    salts_iocp_accept_result *result = &impl->accept_results[index];
+    if (result->live)
+      continue;
+    result->request = request;
+    result->listener = listener;
+    result->child = child;
+    result->live = true;
+    return result;
+  }
+  return NULL;
+}
+
+static int iocp_publish_accept_result(
+    salts_iocp_impl *impl, salts_iocp_request_record *request) {
+  salts_iocp_accept_result *result;
+  salts_iocp_endpoint_record *listener;
+  int status;
+
+  if (request->accepted_socket == INVALID_SOCKET)
+    return SALTS_EPROTO;
+  result = iocp_accept_result_reserve(
+      impl, request->request, request->endpoint,
+      request->accepted_socket);
+  if (result == NULL)
+    return SALTS_ENOBUFS;
+
+  status = native_io_accept_escrow_publish(
+      &impl->accept_escrow, request->request,
+      (uintptr_t)result);
+  if (status != SALTS_OK) {
+    memset(result, 0, sizeof(*result));
+    result->child = INVALID_SOCKET;
+    return status;
+  }
+
+  listener = iocp_endpoint(impl, request->endpoint);
+  if (listener == NULL) {
+    (void)native_io_accept_escrow_discard(
+        &impl->accept_escrow, request->request);
+    return SALTS_ENOENT;
+  }
+  ++listener->retained_accepts;
+  request->accepted_socket = INVALID_SOCKET;
+  return SALTS_OK;
+}
+
+static int iocp_discard_listener_accepts(
+    salts_iocp_impl *impl, native_io_endpoint listener_handle) {
+  int first_status = SALTS_OK;
+  size_t index;
+  for (index = 0u; index < impl->request_capacity; ++index) {
+    salts_iocp_accept_result *result = &impl->accept_results[index];
+    int status;
+    if (!result->live ||
+        result->listener.slot != listener_handle.slot ||
+        result->listener.generation != listener_handle.generation)
+      continue;
+    status = native_io_accept_escrow_discard(
+        &impl->accept_escrow, result->request);
+    if (first_status == SALTS_OK && status != SALTS_OK)
+      first_status = status;
+  }
+  return first_status;
+}
+
 static salts_iocp_endpoint_record *iocp_endpoint(salts_iocp_impl *impl,
                                                  native_io_endpoint endpoint) {
   salts_iocp_endpoint_record *record;
@@ -147,8 +274,10 @@ static int iocp_attach_endpoint(salts_iocp_impl *impl, uintptr_t native_handle,
   endpoint->generation = iocp_next_generation(endpoint->generation);
   endpoint->native_handle = native_handle;
   endpoint->active_requests = 0u;
+  endpoint->retained_accepts = 0u;
   endpoint->resource_kind = resource_kind;
   endpoint->connect_ex = NULL;
+  endpoint->accept_ex = NULL;
   endpoint->connected = false;
   endpoint->connect_active = false;
   endpoint->active = true;
@@ -166,11 +295,24 @@ static int iocp_release_endpoint(salts_iocp_impl *impl, native_io_endpoint endpo
                       : endpoint->resource_kind != SALTS_IO_RESOURCE_BYTE_PIPE)
     return SALTS_EINVAL;
   if (endpoint->active_requests != 0u) return SALTS_EBUSY;
+  if (endpoint->retained_accepts != 0u) {
+    int retire_status;
+    if (impl->admission_open)
+      return SALTS_EBUSY;
+    retire_status = iocp_discard_listener_accepts(
+        impl, endpoint_handle);
+    if (endpoint->retained_accepts != 0u)
+      return retire_status == SALTS_OK ? SALTS_EPROTO : retire_status;
+    if (retire_status != SALTS_OK)
+      return retire_status;
+  }
 
   index = endpoint_handle.slot - 1u;
   endpoint->native_handle = UINTPTR_MAX;
   endpoint->resource_kind = (salts_io_resource_kind)0;
   endpoint->connect_ex = NULL;
+  endpoint->accept_ex = NULL;
+  endpoint->retained_accepts = 0u;
   endpoint->connected = false;
   endpoint->connect_active = false;
   endpoint->active = false;
@@ -275,6 +417,10 @@ static void iocp_release_request(salts_iocp_impl *impl, salts_iocp_request_recor
                                  uint32_t index) {
   salts_iocp_endpoint_record *endpoint = iocp_endpoint(impl, request->endpoint);
   if (endpoint != NULL && endpoint->active_requests != 0u) --endpoint->active_requests;
+  if (request->accepted_socket != INVALID_SOCKET) {
+    (void)closesocket(request->accepted_socket);
+    request->accepted_socket = INVALID_SOCKET;
+  }
   request->phase = SALTS_IOCP_RECORD_FREE;
   request->native_handle = UINTPTR_MAX;
   request->flags = 0u;
@@ -282,6 +428,7 @@ static void iocp_release_request(salts_iocp_impl *impl, salts_iocp_request_recor
   request->address = NULL;
   request->address_length = 0;
   request->user_data = 0u;
+  request->stream_accept = false;
   impl->free_requests[impl->free_request_count] = index;
   ++impl->free_request_count;
   --impl->active_requests;
@@ -551,6 +698,153 @@ static bool iocp_supports_vector_write(const salts_io_impl *base,
          endpoint->resource_kind == SALTS_IO_RESOURCE_STREAM_SOCKET;
 }
 
+static int iocp_submit_stream_accept(
+    salts_io_impl *base, native_io_endpoint listener_handle,
+    native_io_request *out_request) {
+  salts_iocp_impl *impl = (salts_iocp_impl *)base;
+  salts_iocp_endpoint_record *listener;
+  salts_iocp_request_record *request;
+  SOCKADDR_STORAGE local_address;
+  int local_address_length = (int)sizeof(local_address);
+  int accept_address_length;
+  GUID accept_ex_id = WSAID_ACCEPTEX;
+  DWORD extension_bytes = 0u;
+  DWORD immediate_bytes = 0u;
+  DWORD native_error;
+  uint32_t index;
+  uint32_t generation;
+  BOOL started;
+
+  if (out_request != NULL)
+    *out_request = (native_io_request){0};
+  if (!impl->admission_open || out_request == NULL)
+    return !impl->admission_open ? SALTS_ESHUTDOWN : SALTS_EINVAL;
+  listener = iocp_endpoint(impl, listener_handle);
+  if (listener == NULL)
+    return SALTS_ENOENT;
+  if (listener->resource_kind != SALTS_IO_RESOURCE_STREAM_SOCKET ||
+      listener->connected || listener->connect_active)
+    return SALTS_EINVAL;
+  {
+    int accepting = 0;
+    int option_length = (int)sizeof(accepting);
+    if (getsockopt((SOCKET)listener->native_handle, SOL_SOCKET,
+                   SO_ACCEPTCONN, (char *)&accepting,
+                   &option_length) == SOCKET_ERROR)
+      return iocp_native_error((DWORD)WSAGetLastError());
+    if (!accepting)
+      return SALTS_EINVAL;
+  }
+  if (listener->active_requests != 0u)
+    return SALTS_EBUSY;
+  if (impl->free_request_count == 0u) {
+    iocp_counter_increment(&impl->rejected_full);
+    return SALTS_ENOBUFS;
+  }
+  if (getsockname((SOCKET)listener->native_handle,
+                  (SOCKADDR *)&local_address,
+                  &local_address_length) == SOCKET_ERROR)
+    return iocp_native_error((DWORD)WSAGetLastError());
+  if (local_address.ss_family != AF_INET &&
+      local_address.ss_family != AF_INET6)
+    return SALTS_EAFNOSUPPORT;
+
+  if (listener->accept_ex == NULL &&
+      WSAIoctl((SOCKET)listener->native_handle,
+               SIO_GET_EXTENSION_FUNCTION_POINTER,
+               &accept_ex_id, (DWORD)sizeof(accept_ex_id),
+               &listener->accept_ex,
+               (DWORD)sizeof(listener->accept_ex),
+               &extension_bytes, NULL, NULL) == SOCKET_ERROR)
+    return iocp_native_error((DWORD)WSAGetLastError());
+  if (listener->accept_ex == NULL)
+    return SALTS_ENOTSUP;
+
+  index = impl->free_requests[impl->free_request_count - 1u];
+  request = &impl->requests[index];
+  generation = iocp_next_generation(request->request.generation);
+  memset(&request->overlapped, 0, sizeof(request->overlapped));
+  request->accepted_socket = WSASocketW(
+      local_address.ss_family, SOCK_STREAM, IPPROTO_TCP,
+      NULL, 0u, WSA_FLAG_OVERLAPPED);
+  if (request->accepted_socket == INVALID_SOCKET)
+    return iocp_native_error((DWORD)WSAGetLastError());
+
+  request->phase = SALTS_IOCP_RECORD_PENDING;
+  request->request = (native_io_request){index + 1u, generation};
+  request->endpoint = listener_handle;
+  request->operation_kind = (native_io_operation_kind)0;
+  request->native_handle = listener->native_handle;
+  request->flags = 0u;
+  request->address = NULL;
+  request->address_length = 0;
+  request->user_data = 0u;
+  request->stream_accept = true;
+  --impl->free_request_count;
+  ++listener->active_requests;
+  ++impl->active_requests;
+
+  accept_address_length = SALTS_IOCP_ACCEPT_ADDRESS_BYTES;
+  started = listener->accept_ex(
+      (SOCKET)listener->native_handle,
+      request->accepted_socket,
+      request->accept_address, 0u,
+      (DWORD)accept_address_length,
+      (DWORD)accept_address_length,
+      &immediate_bytes, &request->overlapped);
+  if (started) {
+    iocp_counter_increment(&impl->submitted);
+    *out_request = request->request;
+    return SALTS_OK;
+  }
+
+  native_error = (DWORD)WSAGetLastError();
+  if (native_error == WSA_IO_PENDING) {
+    iocp_counter_increment(&impl->submitted);
+    *out_request = request->request;
+    return SALTS_OK;
+  }
+
+  iocp_release_request(impl, request, index);
+  iocp_counter_increment(&impl->native_submit_errors);
+  return iocp_native_error(native_error);
+}
+
+static int iocp_take_stream_accept(
+    salts_io_impl *base, native_io_request request,
+    uintptr_t *out_transport) {
+  salts_iocp_impl *impl = (salts_iocp_impl *)base;
+  uintptr_t token = UINTPTR_MAX;
+  salts_iocp_accept_result *result;
+  salts_iocp_endpoint_record *listener;
+  SOCKET child;
+  int status;
+
+  if (out_transport == NULL)
+    return SALTS_EINVAL;
+  *out_transport = UINTPTR_MAX;
+  status = native_io_accept_escrow_take(
+      &impl->accept_escrow, request, &token);
+  if (status != SALTS_OK)
+    return status;
+  result = iocp_accept_result_from_token(impl, token);
+  if (result == NULL || !result->live ||
+      result->request.slot != request.slot ||
+      result->request.generation != request.generation)
+    return SALTS_EPROTO;
+
+  listener = iocp_endpoint(impl, result->listener);
+  child = result->child;
+  if (listener != NULL && listener->retained_accepts != 0u)
+    --listener->retained_accepts;
+  memset(result, 0, sizeof(*result));
+  result->child = INVALID_SOCKET;
+  if (child == INVALID_SOCKET)
+    return SALTS_EPROTO;
+  *out_transport = (uintptr_t)child;
+  return SALTS_OK;
+}
+
 static int iocp_cancel(salts_io_impl *base, native_io_request request_handle) {
   salts_iocp_impl *impl = (salts_iocp_impl *)base;
   salts_iocp_request_record *request = iocp_request(impl, request_handle);
@@ -580,6 +874,17 @@ iocp_completed_request(salts_iocp_impl *impl, OVERLAPPED *overlapped, uint32_t *
 static void iocp_make_completion(salts_iocp_impl *impl, salts_iocp_request_record *request,
                                  uint32_t request_index, DWORD bytes, DWORD native_error,
                                  native_io_completion *event) {
+  int accept_status = SALTS_OK;
+  if (native_error == ERROR_SUCCESS && request->stream_accept) {
+    SOCKET listener_socket = (SOCKET)request->native_handle;
+    if (setsockopt(request->accepted_socket, SOL_SOCKET,
+                   SO_UPDATE_ACCEPT_CONTEXT,
+                   (const char *)&listener_socket,
+                   (int)sizeof(listener_socket)) == SOCKET_ERROR)
+      native_error = (DWORD)WSAGetLastError();
+    else
+      accept_status = iocp_publish_accept_result(impl, request);
+  }
   if (native_error == ERROR_SUCCESS &&
       request->operation_kind == NATIVE_IO_OPERATION_STREAM_CONNECT &&
       setsockopt((SOCKET)request->native_handle, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL,
@@ -596,7 +901,14 @@ static void iocp_make_completion(salts_iocp_impl *impl, salts_iocp_request_recor
       request->request, request->endpoint,      NATIVE_IO_COMPLETION_OK, (size_t)bytes,
       SALTS_OK,         (uint32_t)native_error, request->user_data,     0u};
 
-  if (native_error == ERROR_OPERATION_ABORTED) {
+  if (native_error == ERROR_SUCCESS &&
+      request->stream_accept && accept_status != SALTS_OK) {
+    event->kind = NATIVE_IO_COMPLETION_FAILED;
+    event->bytes = 0u;
+    event->status = accept_status;
+    event->native_status = 0u;
+    iocp_counter_increment(&impl->failed);
+  } else if (native_error == ERROR_OPERATION_ABORTED) {
     event->kind = NATIVE_IO_COMPLETION_CANCELLED;
     event->bytes = 0u;
     event->status = SALTS_ECANCELED;
@@ -685,8 +997,13 @@ static int iocp_close(salts_io_impl *base) {
 static int iocp_destroy(salts_io_impl *base) {
   salts_iocp_impl *impl = (salts_iocp_impl *)base;
   int cleanup_status;
+  int escrow_status;
   if (impl->admission_open || impl->active_requests != 0u || impl->endpoint_count != 0u)
     return SALTS_EBUSY;
+  escrow_status = native_io_accept_escrow_destroy(
+      &impl->accept_escrow);
+  if (escrow_status != SALTS_OK)
+    return escrow_status;
   if (impl->port != NULL) {
     if (!CloseHandle(impl->port)) return iocp_native_error(GetLastError());
     impl->port = NULL;
@@ -698,6 +1015,7 @@ static int iocp_destroy(salts_io_impl *base) {
   }
   free(impl->free_requests);
   free(impl->free_endpoints);
+  free(impl->accept_results);
   free(impl->requests);
   free(impl->endpoints);
   free(impl);
@@ -722,10 +1040,23 @@ static bool iocp_get_stats(const salts_io_impl *base, native_io_backend_stats *o
 }
 
 static const salts_io_impl_ops iocp_ops = {
-    iocp_attach_socket, iocp_release_socket, iocp_submit,    iocp_cancel,      iocp_observe,
-    iocp_wake,          iocp_close,           iocp_destroy,  iocp_get_stats,   iocp_attach_pipe,
-    iocp_release_pipe,  iocp_submit,          NULL,              iocp_submit_vector,
-    iocp_supports_vector_write};
+    .attach_socket = iocp_attach_socket,
+    .release_socket = iocp_release_socket,
+    .submit = iocp_submit,
+    .cancel = iocp_cancel,
+    .observe = iocp_observe,
+    .wake = iocp_wake,
+    .close = iocp_close,
+    .destroy = iocp_destroy,
+    .get_stats = iocp_get_stats,
+    .attach_pipe = iocp_attach_pipe,
+    .release_pipe = iocp_release_pipe,
+    .prepare = iocp_submit,
+    .flush = NULL,
+    .submit_vector = iocp_submit_vector,
+    .supports_vector_write = iocp_supports_vector_write,
+    .submit_stream_accept = iocp_submit_stream_accept,
+    .take_stream_accept = iocp_take_stream_accept};
 
 bool native_io_platform_backend_supported(native_io_backend_kind kind) {
   return kind == NATIVE_IO_BACKEND_IOCP;
@@ -744,6 +1075,7 @@ int native_io_platform_backend_init(native_io_backend *backend,
 
   if (config->endpoint_capacity > SIZE_MAX / sizeof(salts_iocp_endpoint_record) ||
       config->request_capacity > SIZE_MAX / sizeof(salts_iocp_request_record) ||
+      config->request_capacity > SIZE_MAX / sizeof(salts_iocp_accept_result) ||
       config->endpoint_capacity > SIZE_MAX / sizeof(uint32_t) ||
       config->request_capacity > SIZE_MAX / sizeof(uint32_t))
     return SALTS_ERANGE;
@@ -754,13 +1086,17 @@ int native_io_platform_backend_init(native_io_backend *backend,
       (salts_iocp_endpoint_record *)calloc(config->endpoint_capacity, sizeof(*impl->endpoints));
   impl->requests =
       (salts_iocp_request_record *)calloc(config->request_capacity, sizeof(*impl->requests));
+  impl->accept_results =
+      (salts_iocp_accept_result *)calloc(config->request_capacity, sizeof(*impl->accept_results));
   impl->free_endpoints =
       (uint32_t *)calloc(config->endpoint_capacity, sizeof(*impl->free_endpoints));
   impl->free_requests = (uint32_t *)calloc(config->request_capacity, sizeof(*impl->free_requests));
-  if (impl->endpoints == NULL || impl->requests == NULL || impl->free_endpoints == NULL ||
+  if (impl->endpoints == NULL || impl->requests == NULL ||
+      impl->accept_results == NULL || impl->free_endpoints == NULL ||
       impl->free_requests == NULL) {
     free(impl->free_requests);
     free(impl->free_endpoints);
+    free(impl->accept_results);
     free(impl->requests);
     free(impl->endpoints);
     free(impl);
@@ -771,6 +1107,7 @@ int native_io_platform_backend_init(native_io_backend *backend,
   if (status != 0) {
     free(impl->free_requests);
     free(impl->free_endpoints);
+    free(impl->accept_results);
     free(impl->requests);
     free(impl->endpoints);
     free(impl);
@@ -783,6 +1120,7 @@ int native_io_platform_backend_init(native_io_backend *backend,
     (void)WSACleanup();
     free(impl->free_requests);
     free(impl->free_endpoints);
+    free(impl->accept_results);
     free(impl->requests);
     free(impl->endpoints);
     free(impl);
@@ -797,6 +1135,20 @@ int native_io_platform_backend_init(native_io_backend *backend,
   impl->free_endpoint_count = config->endpoint_capacity;
   impl->free_request_count = config->request_capacity;
   impl->admission_open = true;
+  status = native_io_accept_escrow_init(
+      &impl->accept_escrow, config->request_capacity,
+      iocp_retire_accept_result, impl);
+  if (status != SALTS_OK) {
+    (void)CloseHandle(impl->port);
+    (void)WSACleanup();
+    free(impl->free_requests);
+    free(impl->free_endpoints);
+    free(impl->accept_results);
+    free(impl->requests);
+    free(impl->endpoints);
+    free(impl);
+    return status;
+  }
   atomic_init(&impl->wake_pending, false);
   for (index = 0u; index < config->endpoint_capacity; ++index) {
     impl->free_endpoints[index] = (uint32_t)(config->endpoint_capacity - index - 1u);
@@ -805,6 +1157,8 @@ int native_io_platform_backend_init(native_io_backend *backend,
   for (index = 0u; index < config->request_capacity; ++index) {
     impl->free_requests[index] = (uint32_t)(config->request_capacity - index - 1u);
     impl->requests[index].native_handle = UINTPTR_MAX;
+    impl->requests[index].accepted_socket = INVALID_SOCKET;
+    impl->accept_results[index].child = INVALID_SOCKET;
   }
   backend->impl = impl;
   return SALTS_OK;
