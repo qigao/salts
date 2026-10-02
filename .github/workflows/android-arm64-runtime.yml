@@ -13,6 +13,7 @@ on:
       - "vcpkg.json"
       - "vcpkg-configuration.json"
       - ".github/actions/setup-re2c-tools/**"
+      - ".github/scripts/build-android-arm64-runtime-consumer.sh"
       - ".github/scripts/run-android-arm64-runtime.sh"
       - ".github/workflows/android-arm64-runtime.yml"
   push:
@@ -28,6 +29,7 @@ on:
       - "vcpkg.json"
       - "vcpkg-configuration.json"
       - ".github/actions/setup-re2c-tools/**"
+      - ".github/scripts/build-android-arm64-runtime-consumer.sh"
       - ".github/scripts/run-android-arm64-runtime.sh"
       - ".github/workflows/android-arm64-runtime.yml"
   workflow_dispatch:
@@ -137,6 +139,11 @@ jobs:
           path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
           PY
 
+          export SALTS_ANDROID_NDK_REVISION="$NDK_REVISION"
+          bash .github/scripts/build-android-arm64-runtime-consumer.sh
+          test -f "$GITHUB_WORKSPACE/stage/runtime-bundle/salts_android_runtime_probe"
+          test -f "$GITHUB_WORKSPACE/android-cross-build-results/package-consumer.json"
+
       - name: Upload Android installed SDK
         uses: actions/upload-artifact@v6
         with:
@@ -152,6 +159,14 @@ jobs:
           path: android-cross-build-results
           if-no-files-found: error
 
+      - name: Upload Android runtime bundle
+        uses: actions/upload-artifact@v6
+        with:
+          name: salts-android-arm64-runtime-bundle
+          path: stage/runtime-bundle
+          if-no-files-found: error
+          compression-level: 9
+
   android_runtime:
     name: Android arm64-v8a API 30 runtime
     needs: android_sdk
@@ -162,31 +177,23 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Download installed Android SDK
+      - name: Download Android runtime bundle
         uses: actions/download-artifact@v6
         with:
-          name: salts-android-arm64-runtime-sdk
-          path: stage/sdk/android-arm64-v8a
+          name: salts-android-arm64-runtime-bundle
+          path: stage/runtime-bundle
 
-      - name: Install matching Android NDK
-        shell: bash
-        env:
-          NDK_REVISION: ${{ needs.android_sdk.outputs.ndk_revision }}
-        run: |
-          set -euo pipefail
-          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          test -x "$sdkmanager"
-          yes | "$sdkmanager" --licenses >/dev/null || true
-          "$sdkmanager" "ndk;$NDK_REVISION"
-          test -f "$ANDROID_HOME/ndk/$NDK_REVISION/source.properties"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_REVISION" >> "$GITHUB_ENV"
-          echo "SALTS_ANDROID_NDK_REVISION=$NDK_REVISION" >> "$GITHUB_ENV"
+      - name: Download Android cross-build metadata
+        uses: actions/download-artifact@v6
+        with:
+          name: salts-android-arm64-cross-build-evidence
+          path: android-cross-build-results
 
       - name: Run installed SDK on arm64 emulator
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: 30
-          target: default
+          target: aosp_atd
           arch: arm64-v8a
           cores: 2
           disable-animations: true
@@ -194,10 +201,10 @@ jobs:
           emulator-options: >-
             -no-window
             -accel off
-            -gpu swiftshader_indirect
             -noaudio
             -no-boot-anim
             -camera-back none
+            -camera-front none
           script: bash .github/scripts/run-android-arm64-runtime.sh
 
       - name: Upload Android runtime evidence
