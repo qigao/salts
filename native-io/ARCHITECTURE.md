@@ -173,6 +173,47 @@ requests. Automatic owner progress, shutdown cancellation/drain and bounded
 reply routing remain later #474/#475 work. No arbitrary raw borrowed pointer is
 made cross-shard-safe by implication.
 
+### Owner locality and coarse handoff
+
+The measured owner-to-owner contract is deliberately asymmetric: owner-local
+work is the steady-state fast path; cross-owner routing is an explicit
+partition boundary, not an ordinary per-item execution step.
+
+```text
+endpoint/session/resource
+        |
+        v
+   fixed owner shard
+        |
+   owner-local work
+        |
+        +---- coarse one-way handoff ----> another owner
+                    only when required
+```
+
+The following are architectural requirements:
+
+- keep a connection/session/resource on its fixed owner for ordinary data-plane
+  progress;
+- do not bounce each item back to the originating shard merely to continue a
+  pipeline;
+- when semantics require cross-owner transfer, prefer a bounded one-way window
+  of owned/immutable descriptors plus coarse control acknowledgement rather
+  than request/reply ping-pong per item;
+- a completion may cross into a higher semantic runtime such as CFlow, but that
+  semantic wake/delivery edge must not be implemented as a hidden NativeIO
+  reverse route;
+- owner callbacks keep fail-fast bounded admission: queue saturation never
+  turns into blocking on another owner;
+- batch admission is an implementation optimization, not a substitute for
+  correct ownership partitioning, and requires separate evidence before any
+  public API is introduced.
+
+#655 and #656 provide the executable topology/window evidence behind this
+contract. On the tested hosted Linux topology, reducing reverse handoff
+frequency changes throughput by orders of magnitude, while increasing the
+window eventually plateaus when cross-core cache/queue costs dominate.
+
 ## 3. Endpoint/data-plane categories
 
 NativeIO endpoint categories stay mechanism-oriented:

@@ -148,7 +148,8 @@ set_target_properties(
   cnet_tls_test
   PROPERTIES C_STANDARD 11
              C_STANDARD_REQUIRED ON
-             C_EXTENSIONS OFF)
+             C_EXTENSIONS OFF
+             LINKER_LANGUAGE CXX)
 
 cmake_add_test(
   cnet_transport_test

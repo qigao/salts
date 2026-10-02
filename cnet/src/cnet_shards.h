@@ -110,6 +110,10 @@ int cnet_shards_tcp_option_set(cnet_shards *shards, cnet_shard_connection connec
                                cnet_tcp_socket_option option, uint64_t value);
 int cnet_shards_tcp_shutdown(cnet_shards *shards, cnet_shard_connection connection,
                              cnet_tcp_shutdown how);
+int cnet_shards_tls_negotiated_version(cnet_shards *shards, cnet_shard_connection connection,
+                                       char *buffer, size_t capacity, size_t *out_size);
+int cnet_shards_tls_negotiated_cipher(cnet_shards *shards, cnet_shard_connection connection,
+                                      char *buffer, size_t capacity, size_t *out_size);
 int cnet_shards_tls_peer_certificate_sha256(cnet_shards *shards, cnet_shard_connection connection,
                                             char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
 int cnet_shards_tls_export_channel_binding(cnet_shards *shards, cnet_shard_connection connection,

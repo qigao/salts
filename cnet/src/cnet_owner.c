@@ -2801,6 +2801,34 @@ int cnet_owner_tcp_shutdown(cnet_owner *owner, cnet_session_handle session_handl
   return SALTS_OK;
 }
 
+int cnet_owner_tls_negotiated_version(cnet_owner *owner, cnet_session_handle session_handle,
+                                      char *buffer, size_t capacity, size_t *out_size) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  if (out_size == NULL) return SALTS_EINVAL;
+  *out_size = 0u;
+  if (impl == NULL || buffer == NULL || capacity == 0u) return SALTS_EINVAL;
+  buffer[0] = '\0';
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (session->peer.scheme != CNET_URI_TLS) return SALTS_ENOTSUP;
+  return cnet_tls_state_negotiated_version(&session->tls, buffer, capacity, out_size);
+}
+
+int cnet_owner_tls_negotiated_cipher(cnet_owner *owner, cnet_session_handle session_handle,
+                                     char *buffer, size_t capacity, size_t *out_size) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  if (out_size == NULL) return SALTS_EINVAL;
+  *out_size = 0u;
+  if (impl == NULL || buffer == NULL || capacity == 0u) return SALTS_EINVAL;
+  buffer[0] = '\0';
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (session->peer.scheme != CNET_URI_TLS) return SALTS_ENOTSUP;
+  return cnet_tls_state_negotiated_cipher(&session->tls, buffer, capacity, out_size);
+}
+
 int cnet_owner_tls_peer_certificate_sha256(
     cnet_owner *owner, cnet_session_handle session_handle,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]) {

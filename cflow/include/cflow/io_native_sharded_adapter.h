@@ -69,6 +69,12 @@ int cflow_io_native_sharded_adapter_init(
  * Backend submit uses native_io_sharded_try_submit_owned(). Same-owner calls
  * therefore retain NativeIO's zero-hop path; off-owner calls use the runtime's
  * bounded queue and fail explicitly when that route is full.
+ *
+ * NativeIO terminal callbacks run on the endpoint owner and publish completion
+ * into the CFlow IO Actor. That semantic completion/wake edge does not route a
+ * task back through NativeIO Sharded. Actor delivery may subsequently use the
+ * Actor's configured CFlow executor, which is a higher-layer scheduling choice
+ * and must not be confused with an I/O-owner reverse hop.
  */
 cflow_io_backend_ops cflow_io_native_sharded_adapter_actor_ops(void);
 

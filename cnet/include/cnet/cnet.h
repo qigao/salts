@@ -1016,6 +1016,25 @@ int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, ch
  * Other errors are `SALTS_ENOTCONN` and the standard invalid/stale-handle
  * statuses.
  */
+/**
+ * Copies the negotiated TLS protocol name (for example `TLSv1.3`) into
+ * `buffer` after a TLS connection is open. `capacity` includes the trailing
+ * NUL and `out_size` excludes it. Plaintext returns `SALTS_ENOTSUP`;
+ * incomplete TLS handshakes return `SALTS_ENOTCONN`; an undersized buffer
+ * returns `SALTS_EMSGSIZE`.
+ */
+int cnet_tls_negotiated_version(cnet_client *client, cnet_connection connection, char *buffer,
+                                size_t capacity, size_t *out_size);
+
+/**
+ * Copies the negotiated TLS cipher-suite name into `buffer` after a TLS
+ * connection is open. `capacity` includes the trailing NUL and `out_size`
+ * excludes it. Plaintext returns `SALTS_ENOTSUP`; incomplete TLS handshakes
+ * return `SALTS_ENOTCONN`; an undersized buffer returns `SALTS_EMSGSIZE`.
+ */
+int cnet_tls_negotiated_cipher(cnet_client *client, cnet_connection connection, char *buffer,
+                               size_t capacity, size_t *out_size);
+
 int cnet_tls_peer_certificate_sha256(cnet_client *client, cnet_connection connection,
                                      char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
 

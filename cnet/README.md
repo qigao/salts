@@ -360,6 +360,13 @@ After CONNECTED, `cnet_tls_negotiated_alpn()` copies the selected protocol. It
 can be called from the CONNECTED callback because CNet records ALPN before
 invoking user code. No overlap returns `SALTS_ENOENT`; protocol layers such as
 HTTP/2 must treat that result as a policy decision rather than assume `h2`.
+
+The TLS protocol version and cipher suite remain automatically negotiated.
+`cnet_tls_negotiated_version()` and `cnet_tls_negotiated_cipher()` expose the
+effective session metadata after CONNECTED without exposing the underlying TLS
+implementation. The policy remains TLS 1.2 minimum with no maximum cap, so a
+TLS 1.3-capable peer is negotiated automatically while TLS 1.2 peers remain
+supported.
 `cnet_tls_peer_certificate_sha256()` copies the verified peer leaf certificate
 fingerprint while the TLS connection remains open; a server session whose peer
 did not present a client certificate returns `SALTS_ENOENT`.
@@ -487,6 +494,13 @@ is the only operation permitted from a non-owner thread.
 This does not make command publication multi-threaded: cross-thread application
 admission still requires an external mailbox, and callback-issued operations
 retain their explicit deferred paths when completion-batch safety requires it.
+
+This owner-local layout is also the CNet side of the NativeIO coarse-handoff
+contract. Ordinary send/receive/close progress does not cross a NativeIO owner
+boundary and does not need an owner-to-owner acknowledgement. A future sharded
+CNet facade may route an owned command to a connection's fixed owner, but it
+must keep subsequent data-plane progress there instead of bouncing each
+completion back through another NativeIO shard.
 
 ### Dispatcher ownership
 
