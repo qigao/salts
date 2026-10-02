@@ -101,7 +101,7 @@ foreach ($row in $rows) {
 foreach ($occupancy in @("low", "near_capacity")) {
   foreach ($batch in @(2, 4, 8, 16, 32, 64, 128)) {
     foreach ($style in @("per_item_take", "batch_take")) {
-      $key = "\${style}:\${occupancy}:$batch"
+      $key = "${style}:${occupancy}:$batch"
       if (-not $seen.ContainsKey($key)) {
         throw "missing row: $key"
       }
