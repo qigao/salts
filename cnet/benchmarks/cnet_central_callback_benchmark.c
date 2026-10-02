@@ -359,7 +359,7 @@ static int central_mailbox_publish(
   }
 
   if (!disruptor_publisher_try_claim(mailbox->ring, &cursor)) {
-    mem_buffer_release(retained);
+    if (retained != NULL) mem_buffer_release(retained);
     atomic_fetch_add_explicit(
         &mailbox->rejected, 1u, memory_order_relaxed);
     return SALTS_ENOBUFS;
@@ -436,7 +436,7 @@ static int central_event_sink(
   }
 
   if (!disruptor_publisher_try_claim(mailbox->ring, &cursor)) {
-    mem_buffer_release(retained);
+    if (retained != NULL) mem_buffer_release(retained);
     atomic_fetch_add_explicit(
         &mailbox->rejected, 1u, memory_order_relaxed);
     return SALTS_ENOBUFS;
