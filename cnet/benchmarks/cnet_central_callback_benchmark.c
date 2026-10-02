@@ -531,6 +531,9 @@ static int central_owner_drain_commands(
     if (entry->connection.shard !=
         arg->lane->connection.shard) {
       status = SALTS_EPROTO;
+      if (entry->kind == CENTRAL_COMMAND_SEND &&
+          entry->buffer != NULL)
+        mem_buffer_release(entry->buffer);
     } else if (entry->kind == CENTRAL_COMMAND_RECEIVE) {
       status = cnet_shards_receive_direct(
           arg->lane->shards, entry->connection, entry->demand);
@@ -974,6 +977,9 @@ static int central_run_repeat(
   uint64_t command_hops = 0u;
   uint64_t command_rejects = 0u;
   size_t combined_count = 0u;
+  cpu_set_t central_original_affinity;
+  bool central_affinity_saved = false;
+  bool central_affinity_changed = false;
   bool module_initialized = false;
   bool events_initialized = false;
   int status = SALTS_OK;
@@ -1094,6 +1100,24 @@ static int central_run_repeat(
   atomic_store_explicit(&events.rejected, 0u, memory_order_relaxed);
   event_hops = 0u;
 
+  {
+    const int affinity_status = pthread_getaffinity_np(
+        pthread_self(), sizeof(central_original_affinity),
+        &central_original_affinity);
+    if (affinity_status != 0) {
+      status = -affinity_status;
+      goto cleanup;
+    }
+    central_affinity_saved = true;
+  }
+  status = central_set_affinity(cpu_a);
+  if (status != SALTS_OK) goto cleanup;
+  central_affinity_changed = true;
+  if (sched_getcpu() != cpu_a) {
+    status = SALTS_EPROTO;
+    goto cleanup;
+  }
+
   atomic_store_explicit(
       &measure_owner_cpu, true, memory_order_release);
   wall_started = salts_hrtime();
@@ -1186,6 +1210,16 @@ static int central_run_repeat(
       lanes[0].receive_terminals + lanes[1].receive_terminals;
 
 cleanup:
+  atomic_store_explicit(
+      &measure_owner_cpu, false, memory_order_release);
+  if (central_affinity_changed && central_affinity_saved) {
+    const int affinity_status = pthread_setaffinity_np(
+        pthread_self(), sizeof(central_original_affinity),
+        &central_original_affinity);
+    if (status == SALTS_OK && affinity_status != 0)
+      status = -affinity_status;
+    central_affinity_changed = false;
+  }
   atomic_store_explicit(&stop, true, memory_order_release);
   if (shards.impl != NULL) {
     for (size_t lane = 0u; lane < CENTRAL_LANES; ++lane)
@@ -1341,8 +1375,10 @@ int main(void) {
 
   printf("# CNet central-callback compatibility POC\n\n");
   printf("Backend: %s\n\n", backend.name);
-  printf("Topology: %s; fixed I/O owners %d,%d.\n\n",
-         topology, cpu_a, cpu_b);
+  printf("Topology: %s; fixed I/O owners %d,%d; measured central callback "
+         "thread shares owner-A CPU %d so the compatibility mode receives no "
+         "extra CPU core.\n\n",
+         topology, cpu_a, cpu_b, cpu_a);
   printf("The central application thread never drives NativeIO. Each logical "
          "RTT publishes one bounded retained SEND descriptor to the fixed "
          "owner (pointer retain only, no payload copy); receive demand is "
