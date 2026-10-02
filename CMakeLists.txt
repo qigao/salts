@@ -48,7 +48,6 @@ include(CmakeUtils)
 include(SaltsCMetaLower)
 
 find_package(Threads REQUIRED)
-find_package(PkgConfig REQUIRED)
 
 # Additional components
 add_subdirectory(tools)

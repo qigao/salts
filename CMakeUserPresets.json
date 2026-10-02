@@ -21,7 +21,6 @@
             "toolchainFile": "$env{QIGAO_VCPKG_TOOLCHAIN_FILE}",
             "cacheVariables": {
                 "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}",
-                "PKG_CONFIG_EXECUTABLE": "$env{VCPKG_INSTALLED_DIR}/x64-windows/tools/pkgconf/pkgconf.exe",
                 "VCPKG_TARGET_TRIPLET": "x64-windows",
                 "VCPKG_MANIFEST_MODE": "ON"
             },
@@ -40,7 +39,6 @@
             "toolchainFile": "$env{QIGAO_VCPKG_TOOLCHAIN_FILE}",
             "cacheVariables": {
                 "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}",
-                "PKG_CONFIG_EXECUTABLE": "$env{VCPKG_INSTALLED_DIR}/x64-linux/tools/pkgconf/pkgconf",
                 "VCPKG_TARGET_TRIPLET": "x64-linux",
                 "VCPKG_MANIFEST_MODE": "ON"
             },
