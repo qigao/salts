@@ -159,7 +159,7 @@ typedef struct central_sample {
   uint64_t command_hops;
   uint64_t event_hops;
   uint64_t command_rejects;
-  uint64_t event_rejects;
+  uint64_t event_backpressure_retries;
   size_t send_terminals;
   size_t receive_terminals;
 } central_sample;
@@ -1179,7 +1179,9 @@ static int central_run_repeat(
       command_hops != combined_count ||
       event_hops != UINT64_C(2) * combined_count ||
       command_rejects != 0u ||
-      atomic_load_explicit(&events.rejected, memory_order_acquire) != 0u ||
+      atomic_load_explicit(&events.published, memory_order_acquire) !=
+          UINT64_C(2) * combined_count ||
+      atomic_load_explicit(&events.pending, memory_order_acquire) != 0u ||
       wall_ns == 0u || central_cpu_ns == 0u) {
     status = SALTS_EPROTO;
     goto cleanup;
@@ -1241,7 +1243,7 @@ static int central_run_repeat(
   out->command_hops = command_hops;
   out->event_hops = event_hops;
   out->command_rejects = command_rejects;
-  out->event_rejects = atomic_load_explicit(
+  out->event_backpressure_retries = atomic_load_explicit(
       &events.rejected, memory_order_acquire);
   out->send_terminals =
       lanes[0].send_terminals + lanes[1].send_terminals;
@@ -1385,7 +1387,7 @@ static int central_write_csv(FILE *csv, const central_sample *sample) {
              sample->owner_cpu_us_per_op,
              sample->central_cpu_us_per_op,
              sample->command_hops, sample->event_hops,
-             sample->command_rejects, sample->event_rejects,
+             sample->command_rejects, sample->event_backpressure_retries,
              sample->send_terminals, sample->receive_terminals) < 0
              ? SALTS_EIO
              : SALTS_OK;
@@ -1450,7 +1452,7 @@ int main(void) {
         "cpu_a,cpu_b,shard_a,shard_b,wall_ns,owner_cpu_ns,central_cpu_ns,"
         "p50_ns,p95_ns,p99_ns,operations_per_second,mib_per_second,"
         "owner_cpu_us_per_op,central_cpu_us_per_op,command_hops,event_hops,"
-        "command_rejects,event_rejects,send_terminals,receive_terminals\n");
+        "command_rejects,event_backpressure_retries,send_terminals,receive_terminals\n");
   }
 
   printf("# CNet central-callback compatibility POC\n\n");
@@ -1468,8 +1470,9 @@ int main(void) {
          "equivalent events. This measures the compatibility tax of keeping "
          "one central callback thread over multiple owners.\n\n");
   printf("| payload | ops/s median | MiB/s median | p50 us | p99 us | "
-         "owner CPU us/op | central CPU us/op | cmd hops/op | event hops/op |\n");
-  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+         "owner CPU us/op | central CPU us/op | cmd hops/op | event hops/op | "
+         "event backpressure/op |\n");
+  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
 
   for (size_t payload = 0u; payload < CENTRAL_PAYLOAD_COUNT; ++payload) {
     double rate[CENTRAL_REPEATS];
@@ -1480,6 +1483,7 @@ int main(void) {
     double central_cpu[CENTRAL_REPEATS];
     double cmd_hops[CENTRAL_REPEATS];
     double evt_hops[CENTRAL_REPEATS];
+    double evt_backpressure[CENTRAL_REPEATS];
 
     for (size_t repeat = 0u; repeat < CENTRAL_REPEATS; ++repeat) {
       const central_sample *sample = &results[payload][repeat];
@@ -1493,11 +1497,14 @@ int main(void) {
           (double)sample->command_hops / (double)sample->logical_operations;
       evt_hops[repeat] =
           (double)sample->event_hops / (double)sample->logical_operations;
+      evt_backpressure[repeat] =
+          (double)sample->event_backpressure_retries /
+          (double)sample->logical_operations;
       status = central_write_csv(csv, sample);
       if (status != SALTS_OK) goto cleanup;
     }
 
-    printf("| %zu | %.0f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f |\n",
+    printf("| %zu | %.0f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.6f |\n",
            CENTRAL_PAYLOADS[payload],
            central_double_median(rate, CENTRAL_REPEATS),
            central_double_median(mib, CENTRAL_REPEATS),
@@ -1506,7 +1513,8 @@ int main(void) {
            central_double_median(owner_cpu, CENTRAL_REPEATS),
            central_double_median(central_cpu, CENTRAL_REPEATS),
            central_double_median(cmd_hops, CENTRAL_REPEATS),
-           central_double_median(evt_hops, CENTRAL_REPEATS));
+           central_double_median(evt_hops, CENTRAL_REPEATS),
+           central_double_median(evt_backpressure, CENTRAL_REPEATS));
   }
 
 cleanup:
