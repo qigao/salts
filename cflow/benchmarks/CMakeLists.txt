@@ -46,3 +46,14 @@ set_target_properties(cflow_reactive_benchmark PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+
+
+cmake_add_benchmark(cflow_control_path_benchmark
+  SOURCES cflow_control_path_benchmark.c
+  LIBS Salts::CFlow Salts::NativeIO Salts::Platform
+  FOLDER "cflow/benchmarks")
+
+set_target_properties(cflow_control_path_benchmark PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
