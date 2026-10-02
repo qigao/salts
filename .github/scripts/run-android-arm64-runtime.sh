@@ -123,8 +123,8 @@ result = {
         "ro_kernel_qemu": os.environ["QEMU"],
         "uname": os.environ["UNAME_TEXT"],
         "system_image": "system-images;android-30;aosp_atd;arm64-v8a",
-        "host_runner": "ubuntu-24.04-arm",
-        "acceleration": "kvm",
+        "host_runner": "ubuntu-24.04-x64",
+        "acceleration": "software-tcg",
     },
     "execution": {
         "command": os.environ["RUNTIME_COMMAND"],
