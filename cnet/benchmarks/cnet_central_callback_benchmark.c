@@ -834,25 +834,45 @@ static int central_close_connections(
 
   while (terminals < CENTRAL_LANES) {
     central_event_entry event = {0};
+    central_lane *lane;
     int status = central_event_take_wait(events, &event, deadline);
     if (status != SALTS_OK) return status;
 
     if (event.shard >= CENTRAL_LANES ||
-        event.kind != CNET_EVENT_STATE ||
-        (event.state != CNET_EVENT_STATE_CLOSED &&
-         event.state != CNET_EVENT_STATE_FAILED)) {
+        event.kind != CNET_EVENT_STATE) {
       if (event.backing != NULL)
         mem_buffer_release(event.backing);
       return SALTS_EPROTO;
     }
 
-    if (!lanes[event.shard].terminal) {
-      lanes[event.shard].terminal = true;
-      ++terminals;
+    lane = &lanes[event.shard];
+    if (event.session.slot != lane->connection.session.slot ||
+        event.session.generation !=
+            lane->connection.session.generation) {
+      if (event.backing != NULL)
+        mem_buffer_release(event.backing);
+      return SALTS_EPROTO;
     }
-    if (event.state == CNET_EVENT_STATE_FAILED)
-      lanes[event.shard].status =
+
+    if (event.state == CNET_EVENT_STATE_CLOSING) {
+      /* Expected non-terminal close notification; keep draining. */
+    } else if (event.state == CNET_EVENT_STATE_CLOSED) {
+      if (!lane->terminal) {
+        lane->terminal = true;
+        ++terminals;
+      }
+    } else if (event.state == CNET_EVENT_STATE_FAILED) {
+      if (!lane->terminal) {
+        lane->terminal = true;
+        ++terminals;
+      }
+      lane->status =
           event.status != SALTS_OK ? event.status : SALTS_EIO;
+    } else {
+      if (event.backing != NULL)
+        mem_buffer_release(event.backing);
+      return SALTS_EPROTO;
+    }
 
     if (event.backing != NULL)
       mem_buffer_release(event.backing);
