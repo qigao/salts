@@ -549,6 +549,10 @@ static void *shards_parallel_owner_entry(void *user) {
     goto cleanup;
   }
 
+  lane->poll_calls = 0u;
+  lane->measured_sends = 0u;
+  lane->measured_receives = 0u;
+
   status = shards_parallel_gate_ready_and_wait(arg->gate);
   if (status != SALTS_OK) {
     arg->status = status;
