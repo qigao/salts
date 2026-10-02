@@ -45,10 +45,15 @@
       "verifier": "cnet/benchmarks/verify_owner_parallel_benchmark.ps1",
       "pr_mode": "anchor-candidate",
       "anchor": "distinct-core 2-owner scaling; payloads 1024 and 65536",
-      "noise": "historical qualification pending",
+      "noise": "paired throughput-ratio relative MAD <= 5% qualifies a stable candidate; no performance threshold yet",
       "threshold": "none",
       "evidence": [
         "cnet-owner-parallel-*.csv"
+      ],
+      "candidate_noise_relative_mad_percent": 5,
+      "candidate_payloads": [
+        1024,
+        65536
       ]
     },
     {
@@ -58,10 +63,15 @@
       "verifier": "cnet/benchmarks/verify_shards_parallel_benchmark.ps1",
       "pr_mode": "anchor-candidate",
       "anchor": "shared engine retention vs independent owners; payloads 1024 and 65536",
-      "noise": "historical qualification pending",
+      "noise": "paired throughput-ratio relative MAD <= 5% qualifies a stable candidate; no performance threshold yet",
       "threshold": "none",
       "evidence": [
         "cnet-shards-parallel-*.csv"
+      ],
+      "candidate_noise_relative_mad_percent": 5,
+      "candidate_payloads": [
+        1024,
+        65536
       ]
     },
     {
@@ -71,10 +81,15 @@
       "verifier": "cnet/benchmarks/verify_external_owner_parallel_benchmark.ps1",
       "pr_mode": "anchor-candidate",
       "anchor": "external-progress retention vs independent owners; payloads 1024 and 65536",
-      "noise": "historical qualification pending",
+      "noise": "paired throughput-ratio relative MAD <= 5% qualifies a stable candidate; no performance threshold yet",
       "threshold": "none",
       "evidence": [
         "cnet-external-owner-parallel-*.csv"
+      ],
+      "candidate_noise_relative_mad_percent": 5,
+      "candidate_payloads": [
+        1024,
+        65536
       ]
     },
     {

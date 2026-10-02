@@ -34,6 +34,18 @@ foreach ($family in $families) {
     if ($threshold -in @("","n/a","none","contract only")) { throw "performance anchor missing threshold: $id" }
   } elseif ($role -eq "DIAGNOSTIC") {
     if ($threshold -ne "none") { throw "diagnostic benchmark cannot define performance threshold: $id" }
+    if ($prMode -eq "anchor-candidate") {
+      if ($null -eq $family.candidate_noise_relative_mad_percent) {
+        throw "anchor candidate missing candidate_noise_relative_mad_percent: $id"
+      }
+      $candidateNoise = [double]$family.candidate_noise_relative_mad_percent
+      if (-not [double]::IsFinite($candidateNoise) -or $candidateNoise -le 0.0) {
+        throw "anchor candidate has invalid noise limit: $id"
+      }
+      if (@($family.candidate_payloads).Count -eq 0) {
+        throw "anchor candidate has no payload cells: $id"
+      }
+    }
   } else {
     if ($threshold -ne "contract only") { throw "contract benchmark must use contract-only semantics: $id" }
   }
