@@ -1,15 +1,22 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$Prefix
+    [string]$Prefix,
+
+    [string]$VcpkgInstalledDir = $env:VCPKG_INSTALLED_DIR
 )
 
 $ErrorActionPreference = "Stop"
 
-if ([string]::IsNullOrWhiteSpace($env:VCPKG_INSTALLED_DIR)) {
-    throw "VCPKG_INSTALLED_DIR is required to stage private CNet TLS runtime DLLs"
+if ([string]::IsNullOrWhiteSpace($VcpkgInstalledDir)) {
+    $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+    $VcpkgInstalledDir = Join-Path $repoRoot "vcpkg_installed"
 }
 
-$tlsRuntimeDir = Join-Path $env:VCPKG_INSTALLED_DIR "x64-windows\bin"
+if (-not (Test-Path -LiteralPath $VcpkgInstalledDir -PathType Container)) {
+    throw "vcpkg installed tree is unavailable: $VcpkgInstalledDir"
+}
+
+$tlsRuntimeDir = Join-Path $VcpkgInstalledDir "x64-windows\bin"
 $sdkBin = Join-Path $Prefix "bin"
 New-Item -ItemType Directory -Force -Path $sdkBin | Out-Null
 
