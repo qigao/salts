@@ -2,6 +2,7 @@
 #define SALTS_NATIVE_IO_INTERNAL_H
 
 #include <salts/native_io.h>
+#include "native_io_internal_accept.h"
 #include <salts/clock.h>
 
 static inline uint32_t native_io_remaining_timeout(uint64_t started_ms, uint32_t timeout_ms) {
@@ -83,15 +84,5 @@ bool native_io_platform_backend_supported(native_io_backend_kind kind);
 bool native_io_platform_pipe_supported(native_io_backend_kind kind);
 int native_io_platform_backend_init(native_io_backend *backend,
                                     const native_io_backend_config *config);
-
-int native_io_internal_submit_stream_accept(
-    native_io_backend *backend,
-    native_io_endpoint listener,
-    native_io_request *out_request);
-
-int native_io_internal_take_stream_accept(
-    native_io_backend *backend,
-    native_io_request request,
-    uintptr_t *out_transport);
 
 #endif /* SALTS_NATIVE_IO_INTERNAL_H */
