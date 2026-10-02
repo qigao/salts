@@ -190,7 +190,9 @@ jobs:
                   $_ -like "cmake/ci/render-benchmark-verdicts.ps1"
                 }).Count -gt 0
               $buildChanged = @($changed | Where-Object {
-                  $_ -like "cmake/*" -or $_ -eq "CMakeLists.txt" -or
+                  (($_ -like "cmake/*.cmake" -or $_ -like "cmake/**/*.cmake") -and
+                    $_ -notlike "cmake/ci/*") -or
+                  $_ -eq "CMakeLists.txt" -or
                   $_ -eq "CMakePresets.json"
                 }).Count -gt 0
               $dependencyChanged = @($changed | Where-Object {
