@@ -351,7 +351,8 @@ set_target_properties(
 # CNet/NativeIO conformance in the same build closure.
 add_dependencies(cnet_api_test
   cnet_native_io_sharded_ownership_test
-  cnet_tcp_endpoint_test)
+  cnet_tcp_endpoint_test
+  cnet_external_progress_test)
 
 cmake_add_test(
   cnet_external_progress_test
