@@ -366,8 +366,8 @@ static int control_direct_replicate(native_io_backend_kind kind,
         CONTROL_MEASURED_VALUES - offset < CONTROL_CHUNK_VALUES
             ? CONTROL_MEASURED_VALUES - offset
             : CONTROL_CHUNK_VALUES;
-    const uint64_t wall_started;
-    const uint64_t cpu_started;
+    uint64_t wall_started;
+    uint64_t cpu_started;
     status = control_prefill(pipes[1], chunk);
     if (status != SALTS_OK) goto cleanup;
     wall_started = salts_hrtime();
