@@ -589,6 +589,22 @@ bool native_io_backend_get_stats(const native_io_backend *backend,
   return impl->ops->get_stats(impl, out_stats);
 }
 
+bool native_io_backend_get_config(const native_io_backend *backend,
+                                  native_io_backend_config *out_config) {
+  const salts_io_impl *impl = native_io_const_impl(backend);
+  native_io_backend_stats stats = {0};
+  if (impl == NULL || out_config == NULL ||
+      !native_io_backend_get_stats(backend, &stats) ||
+      impl->coroutine_completion_capacity == 0u)
+    return false;
+  *out_config = (native_io_backend_config){
+      impl->kind,
+      stats.endpoint_capacity,
+      stats.request_capacity,
+      impl->coroutine_completion_capacity};
+  return true;
+}
+
 bool native_io_backend_get_coroutine_stats(const native_io_backend *backend,
                                            native_io_coroutine_stats *out_stats) {
   const salts_io_impl *impl = native_io_const_impl(backend);
