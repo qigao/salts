@@ -259,6 +259,26 @@ set_target_properties(
              C_STANDARD_REQUIRED ON
              C_EXTENSIONS OFF)
 
+
+cmake_add_test(
+  cnet_shards_multi_owner_test
+  SOURCES
+  cnet_shards_multi_owner_test.c
+  LIBS
+  cnet_profile
+  Salts::TinyTest
+  INCLUDES
+  ${CNET_TEST_PRIVATE_INCLUDE}
+  FOLDER
+  "cnet/tests")
+set_target_properties(
+  cnet_shards_multi_owner_test
+  PROPERTIES C_STANDARD 11
+             C_STANDARD_REQUIRED ON
+             C_EXTENSIONS OFF
+             LINKER_LANGUAGE CXX)
+add_dependencies(cnet_shards_test cnet_shards_multi_owner_test)
+
 cmake_add_test(
   cnet_dispatcher_test
   SOURCES
