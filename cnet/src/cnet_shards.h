@@ -14,6 +14,8 @@ typedef struct cnet_shard_connection {
 
 typedef struct cnet_shards_config {
   native_io_backend_kind backend_kind;
+  /** Optional shared backend; production external-progress mode requires one shard. */
+  native_io_backend *borrowed_backend;
   size_t shard_count;
   size_t connection_capacity_per_shard;
   size_t command_capacity_per_shard;
@@ -58,6 +60,14 @@ bool cnet_shards_get_layout(const cnet_shards *shards, cnet_shards_layout *out_l
 
 /** Advances the production single owner on the calling thread. */
 int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms);
+
+/** Non-observing progress for a single owner using a borrowed NativeIO backend. */
+int cnet_shards_advance_external(cnet_shards *shards);
+int cnet_shards_route_external_completion(cnet_shards *shards,
+                                          const native_io_completion *completion,
+                                          bool *out_consumed);
+int cnet_shards_external_timeout(cnet_shards *shards, uint32_t max_wait_ms,
+                                 uint32_t *out_timeout_ms);
 
 #if defined(CNET_INTERNAL_MULTI_OWNER_POC)
 /** Internal Phase-B1 owner-specific progress; exactly one caller owns each shard. */
