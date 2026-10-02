@@ -646,6 +646,55 @@ spec("Salts coroutine executor") {
     check_equal(salts_coro_executor_destroy(executor), SALTS_OK);
   }
 
+  it("batches internal dequeue without changing FIFO lifecycle") {
+    salts_coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    salts_coro_executor_t *executor;
+    batch_task_state state = {0};
+    batch_task_arg args[8];
+    salts_coro_executor_task_t tasks[8];
+    salts_coro_executor_stats_t stats = {0};
+
+    config.worker_count = 1u;
+    config.queue_capacity_per_worker = 16u;
+    config.coroutine_pool.initial_capacity = 0u;
+    config.coroutine_pool.max_capacity = 4u;
+    executor = salts_coro_executor_create(&config);
+    check_not_null(executor);
+
+    check_equal(
+        salts_coro_executor_set_dequeue_batch_limit_internal(executor, 0u, 4u),
+        SALTS_OK);
+    check_equal(
+        salts_coro_executor_set_dequeue_batch_limit_internal(executor, 0u, 0u),
+        SALTS_EINVAL);
+    check_equal(
+        salts_coro_executor_set_dequeue_batch_limit_internal(
+            executor, 0u, SALTS_CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH + 1u),
+        SALTS_EINVAL);
+
+    for (size_t index = 0u; index < 8u; ++index) {
+      args[index] = (batch_task_arg){&state, index};
+      tasks[index] = (salts_coro_executor_task_t){
+          batch_order_task, NULL, batch_order_finalize, &args[index]};
+    }
+
+    check_equal(
+        salts_coro_executor_try_submit_batch_to_internal(executor, 0u, tasks, 8u),
+        SALTS_OK);
+    check_equal(salts_coro_executor_wait(executor), SALTS_OK);
+    salts_coro_executor_get_stats(executor, &stats);
+
+    check_equal(atomic_load_explicit(&state.runs, memory_order_acquire), 8);
+    check_equal(atomic_load_explicit(&state.finalizes, memory_order_acquire), 8);
+    check_equal(atomic_load_explicit(&state.order_errors, memory_order_acquire), 0);
+    check_equal(atomic_load_explicit(&state.next, memory_order_acquire), (size_t)8u);
+    check_equal(stats.submitted_tasks, (uint64_t)8u);
+    check_equal(stats.completed_tasks, (uint64_t)8u);
+    check_equal(stats.cancelled_tasks, (uint64_t)0u);
+    check_equal(stats.rejected_tasks, (uint64_t)0u);
+    check_equal(salts_coro_executor_destroy(executor), SALTS_OK);
+  }
+
   it("rejects an internal batch atomically when bounded capacity is insufficient") {
     salts_coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
     salts_coro_executor_t *executor;
