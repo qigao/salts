@@ -3,6 +3,7 @@
 #endif
 
 #include "native_io_readiness.h"
+#include "native_io_accept_escrow.h"
 
 #include <salts/clock.h>
 #include <salts/error_codes.h>
