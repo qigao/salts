@@ -31,6 +31,7 @@ struct salts_coro_executor_shard_s {
   disruptor_consumer_t consumer;
   uint64_t next_sequence;
   size_t queued_depth;
+  atomic_size_t dequeue_batch_limit;
   disruptor_t *wake_queue;
   disruptor_consumer_t wake_consumer;
   uint64_t next_wake_sequence;
@@ -249,6 +250,63 @@ static int salts_coro_executor_take_task(salts_coro_executor_shard_t *shard,
   return 1;
 }
 
+static size_t salts_coro_executor_take_task_batch(
+    salts_coro_executor_shard_t *shard,
+    salts_coro_executor_task_t *tasks,
+    size_t capacity) {
+  disruptor_cursor_t available;
+  disruptor_cursor_t release_cursor;
+  size_t limit;
+  size_t count;
+
+  if (shard == NULL || tasks == NULL || capacity == 0u) return 0u;
+
+  salts_mutex_lock(&shard->mutex);
+  if (shard->queued_depth == 0u) {
+    salts_mutex_unlock(&shard->mutex);
+    return 0u;
+  }
+
+  limit = atomic_load_explicit(&shard->dequeue_batch_limit, memory_order_acquire);
+  if (limit < 2u) {
+    salts_mutex_unlock(&shard->mutex);
+    return 0u;
+  }
+  if (limit > capacity) limit = capacity;
+  if (limit > shard->queued_depth) limit = shard->queued_depth;
+
+  available.sequence = shard->next_sequence;
+  if (!disruptor_consumer_wait_for_nonblocking_for(
+          shard->queue, &shard->consumer, &available)) {
+    salts_mutex_unlock(&shard->mutex);
+    return 0u;
+  }
+
+  count = (size_t)(available.sequence - shard->next_sequence + 1u);
+  if (count > limit) count = limit;
+  for (size_t index = 0u; index < count; ++index) {
+    disruptor_cursor_t cursor = {shard->next_sequence + (uint64_t)index};
+    const salts_coro_executor_task_t *entry =
+        (const salts_coro_executor_task_t *)disruptor_show_entry(
+            shard->queue, &cursor);
+    if (entry == NULL || entry->run == NULL) {
+      salts_mutex_unlock(&shard->mutex);
+      return 0u;
+    }
+    tasks[index] = *entry;
+  }
+
+  release_cursor.sequence = shard->next_sequence + (uint64_t)count - 1u;
+  disruptor_consumer_release_entry(
+      shard->queue, &shard->consumer, &release_cursor);
+  shard->next_sequence += count;
+  shard->queued_depth -= count;
+  atomic_fetch_sub(&shard->executor->queued_tasks, count);
+  salts_cond_broadcast(&shard->queue_space);
+  salts_mutex_unlock(&shard->mutex);
+  return count;
+}
+
 static int salts_coro_executor_dispatch_wake(salts_coro_executor_shard_t *shard) {
   disruptor_cursor_t available;
   disruptor_cursor_t cursor;
@@ -400,11 +458,29 @@ static void salts_coro_executor_worker(void *arg) {
       while (salts_coro_executor_dispatch_wake(shard))
         progressed = 1;
 
-      while (salts_coro_pool_active_count(shard->pool) < executor->pool_config.max_capacity) {
-        salts_coro_executor_task_t task;
-        if (!salts_coro_executor_take_task(shard, &task)) break;
-        salts_coro_executor_start_task(shard, &task);
-        progressed = 1;
+      if (atomic_load_explicit(&shard->dequeue_batch_limit, memory_order_acquire) <= 1u) {
+        while (salts_coro_pool_active_count(shard->pool) < executor->pool_config.max_capacity) {
+          salts_coro_executor_task_t task;
+          if (!salts_coro_executor_take_task(shard, &task)) break;
+          salts_coro_executor_start_task(shard, &task);
+          progressed = 1;
+        }
+      } else {
+        while (salts_coro_pool_active_count(shard->pool) < executor->pool_config.max_capacity) {
+          salts_coro_executor_task_t
+              tasks[SALTS_CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH];
+          const size_t active = salts_coro_pool_active_count(shard->pool);
+          size_t room = executor->pool_config.max_capacity - active;
+          size_t count;
+
+          if (room > SALTS_CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH)
+            room = SALTS_CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH;
+          count = salts_coro_executor_take_task_batch(shard, tasks, room);
+          if (count == 0u) break;
+          for (size_t index = 0u; index < count; ++index)
+            salts_coro_executor_start_task(shard, &tasks[index]);
+          progressed = 1;
+        }
       }
 
       if (coro_scheduler_has_ready(shard->scheduler)) {
@@ -545,6 +621,7 @@ salts_coro_executor_t *salts_coro_executor_create(const salts_coro_executor_conf
                                              (uint64_t)wake_capacity, 1u, DISRUPTOR_MODE_BROADCAST};
     shard->executor = executor;
     shard->index = index;
+    atomic_init(&shard->dequeue_batch_limit, 1u);
     shard->await_capacity = executor->pool_config.max_capacity;
     shard->free_await_count = shard->await_capacity;
     shard->wake_capacity = wake_capacity;
@@ -702,6 +779,22 @@ int salts_coro_executor_try_submit_batch_to_internal(
   queued = atomic_fetch_add(&executor->queued_tasks, count) + count;
   atomic_fetch_add(&executor->submitted_tasks, count);
   salts_coro_executor_update_peak(&executor->peak_queued_tasks, queued);
+  salts_cond_signal(&shard->work_available);
+  salts_mutex_unlock(&shard->mutex);
+  return SALTS_OK;
+}
+
+int salts_coro_executor_set_dequeue_batch_limit_internal(
+    salts_coro_executor_t *executor, size_t shard_index, size_t limit) {
+  salts_coro_executor_shard_t *shard;
+
+  if (executor == NULL || shard_index >= executor->worker_count || limit == 0u ||
+      limit > SALTS_CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH)
+    return SALTS_EINVAL;
+
+  shard = &executor->shards[shard_index];
+  atomic_store_explicit(&shard->dequeue_batch_limit, limit, memory_order_release);
+  salts_mutex_lock(&shard->mutex);
   salts_cond_signal(&shard->work_available);
   salts_mutex_unlock(&shard->mutex);
   return SALTS_OK;
