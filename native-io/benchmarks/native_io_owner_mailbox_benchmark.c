@@ -359,8 +359,16 @@ int main(void) {
   const size_t messages =
       owner_mailbox_env_count("NATIVE_IO_OWNER_MAILBOX_MESSAGES",
                               OWNER_MAILBOX_DEFAULT_MESSAGES);
-  static const size_t windows[] = {1u, 2u, 4u, 8u, 16u, 32u, 64u, 128u, 256u, 512u, 1024u};
-  owner_mailbox_summary summaries[sizeof(windows) / sizeof(windows[0])] = {{0}};
+  static const size_t full_windows[] = {
+      1u, 2u, 4u, 8u, 16u, 32u, 64u, 128u, 256u, 512u, 1024u};
+  static const size_t pr_windows[] = {1u, 16u, 64u, 256u};
+  const char *profile = getenv("SALTS_BENCH_PROFILE");
+  const int pr_profile = profile != NULL && strcmp(profile, "pr") == 0;
+  const size_t *windows = pr_profile ? pr_windows : full_windows;
+  const size_t window_count =
+      pr_profile ? sizeof(pr_windows) / sizeof(pr_windows[0])
+                 : sizeof(full_windows) / sizeof(full_windows[0]);
+  owner_mailbox_summary summaries[sizeof(full_windows) / sizeof(full_windows[0])] = {{0}};
   FILE *csv;
   int status;
 
@@ -369,12 +377,13 @@ int main(void) {
     fprintf(stderr, "unsupported NativeIO owner-mailbox benchmark backend: %s\n", backend);
     return 2;
   }
-  if (messages < windows[sizeof(windows) / sizeof(windows[0]) - 1u]) {
-    fprintf(stderr, "owner-mailbox message count must be >= 1024\n");
+  if (messages < windows[window_count - 1u]) {
+    fprintf(stderr, "owner-mailbox message count must be >= %zu\n",
+            windows[window_count - 1u]);
     return 2;
   }
 
-  for (size_t index = 0u; index < sizeof(windows) / sizeof(windows[0]); ++index) {
+  for (size_t index = 0u; index < window_count; ++index) {
     status = owner_mailbox_run_window(kind, warmup_messages, messages, windows[index],
                                       &summaries[index]);
     if (status != SALTS_OK) {
@@ -391,7 +400,7 @@ int main(void) {
   printf("p50/p95 are distributions of replicate batch-average ns/data-message, not individual-message latency percentiles.\n\n");
   printf("| window | messages/replicate | replicates | p50 ns/message | p95 ns/message | median messages/s | data hops | control hops | queued dispatches | rejected | same-owner direct | peak command slots |\n");
   printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
-  for (size_t index = 0u; index < sizeof(windows) / sizeof(windows[0]); ++index) {
+  for (size_t index = 0u; index < window_count; ++index) {
     const owner_mailbox_summary *row = &summaries[index];
     printf("| %zu | %zu | %zu | %.3f | %.3f | %.0f | %" PRIu64 " | %" PRIu64
            " | %" PRIu64 " | %" PRIu64 " | %" PRIu64 " | %" PRIu64 " |\n",
@@ -409,7 +418,7 @@ int main(void) {
             "p50_batch_ns_per_message,p95_batch_ns_per_message,"
             "median_messages_per_second,data_hops,control_hops,queued_dispatches,"
             "rejected_tasks,same_shard_direct_tasks,peak_command_slots\n");
-    for (size_t index = 0u; index < sizeof(windows) / sizeof(windows[0]); ++index)
+    for (size_t index = 0u; index < window_count; ++index)
       owner_mailbox_print_csv_row(csv, backend, cpu_set, &summaries[index]);
     fclose(csv);
   }
