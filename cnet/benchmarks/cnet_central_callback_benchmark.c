@@ -50,7 +50,8 @@ typedef enum central_command_kind {
   CENTRAL_COMMAND_NONE = 0,
   CENTRAL_COMMAND_RECEIVE,
   CENTRAL_COMMAND_SEND,
-  CENTRAL_COMMAND_CLOSE
+  CENTRAL_COMMAND_CLOSE,
+  CENTRAL_COMMAND_RECYCLE
 } central_command_kind;
 
 typedef struct central_command {
@@ -119,11 +120,14 @@ typedef struct central_lane {
   bool send_done;
   bool receive_done;
   bool terminal;
+  atomic_bool recycled;
+  atomic_int recycle_status;
 } central_lane;
 
 typedef struct central_owner_arg {
   central_lane *lane;
   atomic_bool *stop;
+  atomic_bool *measure_cpu;
   int cpu;
   int observed_cpu;
   uint64_t cpu_ns;
@@ -535,6 +539,16 @@ static int central_owner_drain_commands(
       if (status == SALTS_EBUSY)
         status = cnet_shards_close(
             arg->lane->shards, entry->connection);
+    } else if (entry->kind == CENTRAL_COMMAND_RECYCLE) {
+      cnet_session_terminal terminal = {0};
+      status = cnet_shards_recycle(
+          arg->lane->shards, entry->connection, &terminal);
+      if (status == SALTS_OK && terminal.status != SALTS_OK)
+        status = terminal.status;
+      atomic_store_explicit(
+          &arg->lane->recycle_status, status, memory_order_release);
+      atomic_store_explicit(
+          &arg->lane->recycled, true, memory_order_release);
     } else {
       status = SALTS_EINVAL;
     }
@@ -567,41 +581,53 @@ static void *central_owner_entry(void *user) {
     return NULL;
   }
 
-  {
-    const uint64_t cpu_started = central_thread_cpu_ns();
-    while (!atomic_load_explicit(arg->stop, memory_order_acquire)) {
-      status = central_owner_drain_commands(arg);
-      if (status != SALTS_OK) break;
+  while (!atomic_load_explicit(arg->stop, memory_order_acquire)) {
+    const bool measure =
+        atomic_load_explicit(arg->measure_cpu, memory_order_acquire);
+    const uint64_t cpu_started =
+        measure ? central_thread_cpu_ns() : 0u;
+
+    status = central_owner_drain_commands(arg);
+    if (status == SALTS_OK)
       status = cnet_shards_poll_owner(
           arg->lane->shards, arg->lane->connection.shard, 10u);
-      if (status != SALTS_OK && status != SALTS_ETIMEDOUT)
-        break;
-    }
-    if (status == SALTS_OK) {
-      const int drain_status = central_owner_drain_commands(arg);
-      if (drain_status != SALTS_OK) status = drain_status;
-    }
-    arg->cpu_ns = central_thread_cpu_ns() - cpu_started;
+
+    if (measure)
+      arg->cpu_ns += central_thread_cpu_ns() - cpu_started;
+    if (status != SALTS_OK && status != SALTS_ETIMEDOUT)
+      break;
+    status = SALTS_OK;
+  }
+  if (status == SALTS_OK) {
+    const int drain_status = central_owner_drain_commands(arg);
+    if (drain_status != SALTS_OK) status = drain_status;
   }
 
   arg->status = status;
   return NULL;
 }
 
-static int central_publish_pair(central_lane *lane) {
-  const central_command receive = {
-      CENTRAL_COMMAND_RECEIVE,
-      lane->connection,
-      NULL,
-      lane->payload_size};
+static int central_publish_send(central_lane *lane) {
   const central_command send = {
       CENTRAL_COMMAND_SEND,
       lane->connection,
       lane->buffer,
       0u};
-  int status = central_mailbox_publish(&lane->commands, &receive);
+  int status = central_mailbox_publish(&lane->commands, &send);
   if (status == SALTS_OK)
-    status = central_mailbox_publish(&lane->commands, &send);
+    status = cnet_shards_wake_owner(
+        lane->shards, lane->connection.shard);
+  return status;
+}
+
+static int central_publish_receive_setup(
+    central_lane *lane, size_t demand) {
+  const central_command receive = {
+      CENTRAL_COMMAND_RECEIVE,
+      lane->connection,
+      NULL,
+      demand};
+  int status = central_mailbox_publish(&lane->commands, &receive);
   if (status == SALTS_OK)
     status = cnet_shards_wake_owner(
         lane->shards, lane->connection.shard);
@@ -618,7 +644,7 @@ static int central_start_lane_sample(
   lane->started_ns = salts_hrtime();
   lane->latencies = latencies;
   if (latencies != NULL) latencies[sample] = 0u;
-  return central_publish_pair(lane);
+  return central_publish_send(lane);
 }
 
 static int central_handle_event(
@@ -825,16 +851,36 @@ static int central_close_connections(
   }
 
   for (size_t lane = 0u; lane < CENTRAL_LANES; ++lane) {
-    cnet_session_terminal terminal = {0};
+    const central_command recycle = {
+        CENTRAL_COMMAND_RECYCLE,
+        lanes[lane].connection,
+        NULL,
+        0u};
     int status;
     if (lanes[lane].status != SALTS_OK)
       return lanes[lane].status;
-    status = cnet_shards_recycle(
-        lanes[lane].shards,
-        lanes[lane].connection,
-        &terminal);
+    atomic_store_explicit(&lanes[lane].recycled, false, memory_order_release);
+    atomic_store_explicit(
+        &lanes[lane].recycle_status, SALTS_OK, memory_order_release);
+    status = central_mailbox_publish(&lanes[lane].commands, &recycle);
     if (status != SALTS_OK) return status;
-    if (terminal.status != SALTS_OK) return terminal.status;
+    status = cnet_shards_wake_owner(
+        lanes[lane].shards, lanes[lane].connection.shard);
+    if (status != SALTS_OK) return status;
+  }
+
+  for (size_t lane = 0u; lane < CENTRAL_LANES; ++lane) {
+    while (!atomic_load_explicit(
+        &lanes[lane].recycled, memory_order_acquire)) {
+      if (salts_monotonic_ms() >= deadline)
+        return SALTS_ETIMEDOUT;
+      salts_sleep_ms(1u);
+    }
+    {
+      const int status = atomic_load_explicit(
+          &lanes[lane].recycle_status, memory_order_acquire);
+      if (status != SALTS_OK) return status;
+    }
   }
 
   return SALTS_OK;
@@ -898,6 +944,7 @@ static int central_run_repeat(
   bool owner_started[CENTRAL_LANES] = {false, false};
   central_event_mailbox events;
   atomic_bool stop;
+  atomic_bool measure_owner_cpu;
   uint64_t latencies[CENTRAL_LANES][CENTRAL_SAMPLES];
   uint64_t combined[CENTRAL_LANES * CENTRAL_SAMPLES];
   const size_t cycles = CENTRAL_WARMUPS + CENTRAL_SAMPLES;
@@ -932,6 +979,7 @@ static int central_run_repeat(
   memset(owner_args, 0, sizeof(owner_args));
   memset(&events, 0, sizeof(events));
   atomic_init(&stop, false);
+  atomic_init(&measure_owner_cpu, false);
   for (size_t lane = 0u; lane < CENTRAL_LANES; ++lane)
     central_peer_reset(&peers[lane]);
 
@@ -978,6 +1026,8 @@ static int central_run_repeat(
     lanes[lane].shards = &shards;
     lanes[lane].payload_size = payload_size;
     lanes[lane].status = SALTS_OK;
+    atomic_init(&lanes[lane].recycled, false);
+    atomic_init(&lanes[lane].recycle_status, SALTS_OK);
     lanes[lane].payload = (unsigned char *)malloc(payload_size);
     if (lanes[lane].payload == NULL) {
       status = SALTS_ENOMEM;
@@ -998,6 +1048,7 @@ static int central_run_repeat(
   for (size_t lane = 0u; lane < CENTRAL_LANES; ++lane) {
     owner_args[lane].lane = &lanes[lane];
     owner_args[lane].stop = &stop;
+    owner_args[lane].measure_cpu = &measure_owner_cpu;
     owner_args[lane].cpu = lane == 0u ? cpu_a : cpu_b;
     {
       const int create_status = pthread_create(
@@ -1015,6 +1066,13 @@ static int central_run_repeat(
   status = central_wait_connected(lanes, &events);
   if (status != SALTS_OK) goto cleanup;
 
+  for (size_t lane = 0u; lane < CENTRAL_LANES; ++lane) {
+    const size_t demand =
+        payload_size * (CENTRAL_WARMUPS + CENTRAL_SAMPLES);
+    status = central_publish_receive_setup(&lanes[lane], demand);
+    if (status != SALTS_OK) goto cleanup;
+  }
+
   status = central_run_phase(
       lanes, &events, CENTRAL_WARMUPS, false, latencies, &event_hops);
   if (status != SALTS_OK) goto cleanup;
@@ -1031,12 +1089,16 @@ static int central_run_repeat(
   atomic_store_explicit(&events.rejected, 0u, memory_order_relaxed);
   event_hops = 0u;
 
+  atomic_store_explicit(
+      &measure_owner_cpu, true, memory_order_release);
   wall_started = salts_hrtime();
   central_cpu_started = central_thread_cpu_ns();
   status = central_run_phase(
       lanes, &events, CENTRAL_SAMPLES, true, latencies, &event_hops);
   central_cpu_ns = central_thread_cpu_ns() - central_cpu_started;
   wall_ns = salts_hrtime() - wall_started;
+  atomic_store_explicit(
+      &measure_owner_cpu, false, memory_order_release);
   if (status != SALTS_OK) goto cleanup;
 
   for (size_t lane = 0u; lane < CENTRAL_LANES; ++lane) {
@@ -1049,7 +1111,7 @@ static int central_run_repeat(
   }
 
   if (combined_count != CENTRAL_LANES * CENTRAL_SAMPLES ||
-      command_hops != UINT64_C(2) * combined_count ||
+      command_hops != combined_count ||
       event_hops != UINT64_C(2) * combined_count ||
       command_rejects != 0u ||
       atomic_load_explicit(&events.rejected, memory_order_acquire) != 0u ||
@@ -1277,8 +1339,10 @@ int main(void) {
   printf("Topology: %s; fixed I/O owners %d,%d.\n\n",
          topology, cpu_a, cpu_b);
   printf("The central application thread never drives NativeIO. Each logical "
-         "RTT publishes bounded RECEIVE+SEND descriptors to the fixed owner "
-         "(retained buffer pointer only, no payload copy), then drains a "
+         "RTT publishes one bounded retained SEND descriptor to the fixed "
+         "owner (pointer retain only, no payload copy); receive demand is "
+         "pre-admitted before timing to match the owner-affine baseline. "
+         "The central thread then drains a "
          "bounded MPSC event aggregation where SEND+RECEIVE are callback-"
          "equivalent events. This measures the compatibility tax of keeping "
          "one central callback thread over multiple owners.\n\n");
