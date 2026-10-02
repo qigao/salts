@@ -165,6 +165,9 @@ jobs:
                   $_ -eq ".github/workflows/native-io-release-benchmarks.yml" -or
                   $_ -like ".github/actions/setup-re2c-tools/*"
                 }).Count -gt 0
+              $verdictRendererChanged = @($changed | Where-Object {
+                  $_ -eq "cmake/ci/render-benchmark-verdicts.ps1"
+                }).Count -gt 0
               $policyChanged = @($changed | Where-Object {
                   $_ -like "cmake/ci/benchmark-policy.json" -or
                   $_ -like "cmake/ci/*benchmark*policy*.ps1" -or
@@ -249,8 +252,8 @@ jobs:
 
               $runNativeOwner = $nativeRuntime -or $nativeOwnerBench -or $concurrencyRuntime -or $platformRuntime -or $buildChanged -or $dependencyChanged
               $runNativeStyle = $nativeRuntime -or $nativeStyleBench -or $coroutineRuntime -or $buildChanged -or $dependencyChanged
-              $runCnetOwner = $cnetRuntime -or $cnetOwnerBench -or $nativeRuntime -or $concurrencyRuntime -or $platformRuntime -or $buildChanged -or $dependencyChanged
-              $runCnetIo = $cnetRuntime -or $cnetIoBench -or $nativeRuntime -or $coroutineRuntime -or $buildChanged -or $dependencyChanged
+              $runCnetOwner = $cnetRuntime -or $cnetOwnerBench -or $nativeRuntime -or $concurrencyRuntime -or $platformRuntime -or $buildChanged -or $dependencyChanged -or $verdictRendererChanged
+              $runCnetIo = $cnetRuntime -or $cnetIoBench -or $nativeRuntime -or $coroutineRuntime -or $buildChanged -or $dependencyChanged -or $verdictRendererChanged
               $runCnetSg = $cnetRuntime -or $cnetSgBench -or $nativeRuntime -or $buildChanged -or $dependencyChanged
               $runCoroutine = $coroutineRuntime -or $coroutineBench -or $concurrencyRuntime -or $buildChanged -or $dependencyChanged
               $runCflow = $cflowChanged -or $cnetRuntime -or $nativeRuntime -or $buildChanged -or $dependencyChanged
