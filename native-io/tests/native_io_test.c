@@ -812,7 +812,16 @@ static void native_io_test_wake_owner_run(void *user) {
     return;
   }
 
+  /*
+   * Keep the owner out of observe until the controller has issued the whole
+   * coalescing burst. Otherwise the first wake can be consumed between
+   * sequential controller calls and a later call legitimately becomes a
+   * second wake generation.
+   */
   atomic_store_explicit(&owner->stage, 1, memory_order_release);
+  while (atomic_load_explicit(&owner->stage, memory_order_acquire) == 1)
+    salts_thread_yield();
+
   owner->first_status =
       native_io_backend_observe(&owner->backend, &event, 1u, UINT32_MAX, &owner->first_count);
   owner->zero_count = SIZE_MAX;
@@ -852,13 +861,15 @@ static void native_io_test_wake_coalesces(native_io_backend_kind kind) {
     check_equal(native_io_backend_wake(&owner.backend), SALTS_OK);
     check_equal(native_io_backend_wake(&owner.backend), SALTS_OK);
     check_equal(native_io_backend_wake(&owner.backend), SALTS_OK);
-    while (atomic_load_explicit(&owner.stage, memory_order_acquire) == 1) salts_thread_yield();
+    atomic_store_explicit(&owner.stage, 6, memory_order_release);
+    while (atomic_load_explicit(&owner.stage, memory_order_acquire) == 6)
+      salts_thread_yield();
   }
 
   if (atomic_load_explicit(&owner.stage, memory_order_acquire) == 2) {
-    salts_sleep_ms(10u);
     check_equal(native_io_backend_wake(&owner.backend), SALTS_OK);
-    while (atomic_load_explicit(&owner.stage, memory_order_acquire) == 2) salts_thread_yield();
+    while (atomic_load_explicit(&owner.stage, memory_order_acquire) == 2)
+      salts_thread_yield();
   }
 
   if (atomic_load_explicit(&owner.stage, memory_order_acquire) == 3) {
