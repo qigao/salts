@@ -163,6 +163,11 @@ set_target_properties(
              FOLDER "cnet/tests")
 add_test(NAME cnet_gmssl_contract_test COMMAND cnet_gmssl_contract_test)
 
+# The unified release workflow explicitly builds cnet_tls_test before running
+# the cnet_* CTest contract set. Keep the provider probe in that build closure
+# so a registered test can never become "Not Run" due to a missing executable.
+add_dependencies(cnet_tls_test cnet_gmssl_contract_test)
+
 cmake_add_test(
   cnet_transport_test
   SOURCES
