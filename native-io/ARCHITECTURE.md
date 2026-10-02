@@ -214,6 +214,28 @@ contract. On the tested hosted Linux topology, reducing reverse handoff
 frequency changes throughput by orders of magnitude, while increasing the
 window eventually plateaus when cross-core cache/queue costs dominate.
 
+#671 provides the complementary control: equal total compute work with no
+measured I/O and no owner-to-owner submission. Two owners pinned to one logical
+CPU produce essentially no speedup (~0.99-1.00x); two owners on sibling SMT
+threads reach about 1.87-1.93x; two owners on distinct physical cores reach
+about 1.99x. The same qualitative result appears in both epoll- and
+io_uring-configured runs because the benchmark does no I/O.
+
+Therefore the performance model is not "sharding is slow" or "more shards are
+always faster":
+
+```text
+fine-grained cross-owner ping-pong
+        -> synchronization / queue / cache-coherence cost
+
+independent owner-local shards
+        -> parallel throughput
+```
+
+Shard count is useful only when partitioning creates independent owner-local
+work. A design that adds shards but also adds per-item cross-owner communication
+can lose more to handoff than it gains from parallelism.
+
 ## 3. Endpoint/data-plane categories
 
 NativeIO endpoint categories stay mechanism-oriented:
@@ -391,6 +413,10 @@ Cancellation is a request, not a synthesized completion.
 - Direct remains the mechanism baseline.
 - Coroutine overhead is measured separately from backend/transport cost.
 - Sharded same-owner and cross-owner paths are measured separately.
+- Sharded communication benchmarks are paired with an owner-local parallel
+  control before drawing conclusions about shard scalability.
+- CPU-only topology controls do not rank epoll/io_uring/IOCP/kqueue; backend
+  labels identify runtime configuration only.
 - Pipe/VSOCK/TCP/UDP NativeIO mechanism benchmarks do not require CNet.
 - Small expected deltas use same-run/exact-head evidence.
 - p95/tail regressions must not be hidden by median-only summaries.
