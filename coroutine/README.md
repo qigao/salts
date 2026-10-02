@@ -19,6 +19,28 @@ await slot 只保存“哪个 frame 等待、是否已有完成、完成状态�
 
 默认每 shard 最多保留 64 个 frame。按 minicoro 默认 128 KiB stack 与 1 KiB storage 计算，硬上限约为每 worker 8.1 MiB，尚未计入 frame metadata 和 alignment；64 位平台上的 1024-entry task queue 约持有 32 KiB descriptor，completion queue 则按 frame 上限向上取 2 的幂，因此每个 active await 最多占一个 wake entry。达到历史峰值的 frame 会被 pool 保留复用，因此长驻进程应按 `worker_count × max_capacity × (stack_size + storage_size)` 配置预算，而不是把默认值视为无成本。
 
+
+## Internal batch POCs
+
+Executor 内部保留两个只供测试/benchmark 使用的 batch POC：
+
+- producer-side range admission：一次 mutex/claim/commit/signal 接收一组同 shard task；
+- consumer-side dequeue batching：一次 mutex/release/broadcast 取出一组连续 FIFO task。
+
+它们来自 #663/#665/#666 的性能分解，不是公开 API。实验结论是：
+
+- owner-local / coarse one-way handoff 的收益远大于 executor 微优化；
+- producer range admission 在合成 admission workload 中有明显独立收益；
+- consumer dequeue batching 只有较小的二级收益，通常在 batch 16–32 已接近平台；
+- 当前 production 中没有天然一次生成同 owner N 个 Coroutine Executor task 的 consumer。NativeIO Sharded 的语义边界仍是一次一个 routed task；CFlow 使用自己的 executor；CNet 普通 data plane 保持 owner-local。
+
+因此 `salts_coro_executor_try_submit_batch_to_internal()`、
+`salts_coro_executor_set_dequeue_batch_limit_internal()` 和相关常量只存在于
+`coroutine/src/` 的 private header。它们不安装、不出现在
+`salts_coro_executor.h`，NativeIO/CNet/CFlow production 源码也不得直接依赖。
+只有出现具有原生 range semantics 的真实 consumer，并有 paired end-to-end
+evidence，才重新讨论 productization。
+
 NativeIO 现有 `native_io_coroutine_await()` 仍由 backend 的单 owner 在 terminal completion 到达后恢复其私有 frame。通用 Executor 的 await token 为未来 adapter 提供跨线程完成投递 primitive，但不改变 NativeIO 当前“submit/observe 由 backend owner 推进”的约束；真正接入时，adapter 仍需把 NativeIO completion 映射到 token，不能让 token 成为第二份 I/O 结果。
 
 依赖方向固定为：
