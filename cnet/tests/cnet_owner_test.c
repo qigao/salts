@@ -1481,7 +1481,61 @@ static void cnet_owner_test_retained_vector_partial_send(native_io_backend_kind 
 }
 #endif
 
+static void cnet_owner_test_init_cleanup_after_backend(
+    native_io_backend_kind backend_kind) {
+#if SIZE_MAX > UINT32_MAX
+  cnet_session_table sessions = {0};
+  cnet_command_queue commands = {0};
+  cnet_event_queue events = {0};
+  cnet_owner owner = {0};
+  const cnet_command_queue_config command_config = {
+      8u, sizeof(cnet_owner_connect_payload)};
+  const cnet_event_queue_config event_config = {8u, 2u, 64u};
+  const cnet_owner_config owner_config = {
+      .backend_kind = backend_kind,
+      .connection_capacity = 1u,
+      .request_capacity = 4u,
+      .completion_batch_capacity = 4u,
+      .receive_buffer_bytes = 64u,
+      .receive_buffer_count = 1u,
+      .write_capacity = (size_t)UINT32_MAX + 1u,
+      .max_write_bytes = 256u,
+      .sessions = &sessions,
+      .commands = &commands,
+      .events = &events};
+
+  check_equal(cnet_session_table_init(&sessions, 1u), SALTS_OK);
+  check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
+  check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
+
+  /*
+   * NativeIO backend construction succeeds first; the oversized write queue
+   * then fails deterministically with SALTS_ERANGE. Owner init must clean up
+   * the owned backend without recursion and publish no partial owner.
+   */
+  check_equal(cnet_owner_init(&owner, &owner_config), SALTS_ERANGE);
+  check_null(owner.impl);
+
+  check_equal(cnet_event_queue_close(&events), SALTS_OK);
+  check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
+  check_equal(cnet_command_queue_close(&commands), SALTS_OK);
+  check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
+  check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
+#else
+  (void)backend_kind;
+#endif
+}
+
 spec("CNet owner shard") {
+  it("cleans up an owned backend when later owner initialization fails") {
+    native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
+    const size_t count = cnet_owner_test_backends(backends);
+    check_equal(cnet_module_init(), SALTS_OK);
+    for (size_t index = 0u; index < count; ++index)
+      cnet_owner_test_init_cleanup_after_backend(backends[index]);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
+  }
+
   it("owns a TCP session from command admission through terminal recycle") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
     const size_t count = cnet_owner_test_backends(backends);
