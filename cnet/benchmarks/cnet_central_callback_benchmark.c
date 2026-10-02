@@ -82,6 +82,7 @@ typedef struct central_event_mailbox {
   disruptor_t *ring;
   salts_mutex_t mutex;
   salts_cond_t available;
+  atomic_size_t pending;
   atomic_uint_fast64_t published;
   atomic_uint_fast64_t rejected;
 } central_event_mailbox;
@@ -342,12 +343,19 @@ static int central_mailbox_publish(
     central_mailbox *mailbox, const central_command *command) {
   disruptor_cursor_t cursor = {0};
   central_command *entry;
+  mem_buffer_t *retained = NULL;
 
   if (mailbox == NULL || mailbox->ring == NULL ||
       command == NULL || command->kind == CENTRAL_COMMAND_NONE)
     return SALTS_EINVAL;
+  if (command->kind == CENTRAL_COMMAND_SEND) {
+    if (command->buffer == NULL) return SALTS_EINVAL;
+    retained = mem_buffer_retain(command->buffer);
+    if (retained == NULL) return SALTS_ENOMEM;
+  }
 
   if (!disruptor_publisher_try_claim(mailbox->ring, &cursor)) {
+    mem_buffer_release(retained);
     atomic_fetch_add_explicit(
         &mailbox->rejected, 1u, memory_order_relaxed);
     return SALTS_ENOBUFS;
@@ -356,17 +364,8 @@ static int central_mailbox_publish(
   entry = (central_command *)disruptor_acquire_entry(
       mailbox->ring, &cursor);
   *entry = *command;
-  if (entry->kind == CENTRAL_COMMAND_SEND) {
-    if (entry->buffer == NULL) {
-      disruptor_worker_release_entry(mailbox->ring, &cursor);
-      return SALTS_EINVAL;
-    }
-    entry->buffer = mem_buffer_retain(entry->buffer);
-    if (entry->buffer == NULL) {
-      disruptor_worker_release_entry(mailbox->ring, &cursor);
-      return SALTS_ENOMEM;
-    }
-  }
+  if (command->kind == CENTRAL_COMMAND_SEND)
+    entry->buffer = retained;
 
   (void)disruptor_publisher_publish(mailbox->ring, &cursor);
   atomic_fetch_add_explicit(
@@ -396,6 +395,7 @@ static int central_event_mailbox_init(central_event_mailbox *mailbox) {
     mailbox->ring = NULL;
     return SALTS_ENOMEM;
   }
+  atomic_init(&mailbox->pending, 0u);
   atomic_init(&mailbox->published, 0u);
   atomic_init(&mailbox->rejected, 0u);
   return SALTS_OK;
@@ -419,11 +419,20 @@ static int central_event_sink(
       (central_event_mailbox *)context;
   disruptor_cursor_t cursor = {0};
   central_event_entry *entry;
+  mem_buffer_t *retained = NULL;
 
   if (mailbox == NULL || mailbox->ring == NULL || event == NULL)
     return SALTS_EINVAL;
+  if (event->size != 0u) {
+    if (event->kind != CNET_EVENT_RECEIVE ||
+        event->backing == NULL)
+      return SALTS_EPROTO;
+    retained = mem_buffer_retain(event->backing);
+    if (retained == NULL) return SALTS_ENOMEM;
+  }
 
   if (!disruptor_publisher_try_claim(mailbox->ring, &cursor)) {
+    mem_buffer_release(retained);
     atomic_fetch_add_explicit(
         &mailbox->rejected, 1u, memory_order_relaxed);
     return SALTS_ENOBUFS;
@@ -440,22 +449,13 @@ static int central_event_sink(
       event->stage,
       event->size,
       event->argument,
-      NULL};
-
-  if (event->kind == CNET_EVENT_RECEIVE && event->backing != NULL) {
-    entry->backing = mem_buffer_retain(event->backing);
-    if (entry->backing == NULL) {
-      disruptor_worker_release_entry(mailbox->ring, &cursor);
-      return SALTS_ENOMEM;
-    }
-  } else if (event->size != 0u) {
-    disruptor_worker_release_entry(mailbox->ring, &cursor);
-    return SALTS_EPROTO;
-  }
+      retained};
 
   (void)disruptor_publisher_publish(mailbox->ring, &cursor);
   atomic_fetch_add_explicit(
-      &mailbox->published, 1u, memory_order_release);
+      &mailbox->pending, 1u, memory_order_release);
+  atomic_fetch_add_explicit(
+      &mailbox->published, 1u, memory_order_relaxed);
 
   salts_mutex_lock(&mailbox->mutex);
   salts_cond_signal(&mailbox->available);
@@ -475,6 +475,8 @@ static int central_event_take_wait(
               mailbox->ring, &cursor);
       *out_event = *entry;
       disruptor_worker_release_entry(mailbox->ring, &cursor);
+      atomic_fetch_sub_explicit(
+          &mailbox->pending, 1u, memory_order_release);
       return SALTS_OK;
     }
 
@@ -482,7 +484,8 @@ static int central_event_take_wait(
       return SALTS_ETIMEDOUT;
 
     salts_mutex_lock(&mailbox->mutex);
-    {
+    if (atomic_load_explicit(
+            &mailbox->pending, memory_order_acquire) == 0u) {
       const uint64_t now = salts_monotonic_ms();
       const uint64_t remaining_ms =
           deadline_ms > now ? deadline_ms - now : 0u;
