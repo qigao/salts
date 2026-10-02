@@ -2,7 +2,9 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$Path,
   [string]$Backend = "",
-  [string]$CpuSet = ""
+  [string]$CpuSet = "",
+  [ValidateSet("full","pr")]
+  [string]$Profile = "full"
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,8 +15,9 @@ if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
 }
 
 $rows = @(Import-Csv -LiteralPath $Path)
-if ($rows.Count -ne 11) {
-  throw "expected eleven owner-mailbox window rows, got $($rows.Count)"
+$expectedWindows = if ($Profile -eq "pr") { @(1, 16, 64, 256) } else { @(1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024) }
+if ($rows.Count -ne $expectedWindows.Count) {
+  throw "expected $($expectedWindows.Count) owner-mailbox window rows for profile=$Profile, got $($rows.Count)"
 }
 
 $required = @(
@@ -100,7 +103,7 @@ foreach ($row in $rows) {
   }
 }
 
-foreach ($window in @(1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024)) {
+foreach ($window in $expectedWindows) {
   if (-not $byWindow.ContainsKey([UInt64]$window)) {
     throw "missing owner-mailbox window: $window"
   }

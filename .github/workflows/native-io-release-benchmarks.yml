@@ -147,6 +147,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $runFull = "${{ github.event_name }}" -ne "pull_request"
+          $benchmarkProfile = if ($runFull) { "full" } else { "pr" }
           if ($runFull) {
             $runAdapted = $true
             $runCnetCompare = $true
@@ -287,6 +288,7 @@ jobs:
             $runCnetOwner -or $runCnetIo -or $runCnetSg -or
             $runCoroutine -or $runCflow -or $runNativeUring -or $runForensic
 
+          "profile=$benchmarkProfile" >> $env:GITHUB_OUTPUT
           "adapted=$($runAdapted.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "evidence=$($runEvidence.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "cnet_compare=$($runCnetCompare.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
@@ -700,6 +702,7 @@ jobs:
         if: matrix.family == 'linux' && steps.scope.outputs.native_owner == 'true'
         shell: bash
         env:
+          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
           NATIVE_IO_OWNER_HANDOFF_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_owner_handoff_benchmark
           NATIVE_IO_OWNER_HANDOFF_BACKEND: ${{ matrix.backend }}
         run: |
@@ -728,7 +731,8 @@ jobs:
             pwsh ./native-io/benchmarks/verify_owner_handoff_benchmark.ps1 \
               -Path "$prefix.csv" \
               -Backend "$NATIVE_IO_OWNER_HANDOFF_BACKEND" \
-              -CpuSet "$label"
+              -CpuSet "$label" \
+              -Profile "$SALTS_BENCH_PROFILE"
             {
               echo ""
               echo "## NativeIO owner-to-owner handoff: $NATIVE_IO_OWNER_HANDOFF_BACKEND / $label ($cpuset)"
@@ -755,6 +759,7 @@ jobs:
         if: matrix.family == 'linux' && steps.scope.outputs.native_owner == 'true'
         shell: bash
         env:
+          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
           NATIVE_IO_OWNER_MAILBOX_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_owner_mailbox_benchmark
           NATIVE_IO_OWNER_MAILBOX_BACKEND: ${{ matrix.backend }}
         run: |
@@ -783,7 +788,8 @@ jobs:
             pwsh ./native-io/benchmarks/verify_owner_mailbox_benchmark.ps1 \
               -Path "$prefix.csv" \
               -Backend "$NATIVE_IO_OWNER_MAILBOX_BACKEND" \
-              -CpuSet "$label"
+              -CpuSet "$label" \
+              -Profile "$SALTS_BENCH_PROFILE"
             {
               echo ""
               echo "## NativeIO owner one-way mailbox: $NATIVE_IO_OWNER_MAILBOX_BACKEND / $label ($cpuset)"
@@ -800,6 +806,7 @@ jobs:
         if: matrix.family != 'linux' && steps.scope.outputs.native_owner == 'true'
         shell: pwsh
         env:
+          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
           NATIVE_IO_OWNER_MAILBOX_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_owner_mailbox_benchmark
           NATIVE_IO_OWNER_MAILBOX_BACKEND: ${{ matrix.backend }}
           NATIVE_IO_OWNER_MAILBOX_CPU_SET: default
@@ -819,7 +826,8 @@ jobs:
           & ./native-io/benchmarks/verify_owner_mailbox_benchmark.ps1 `
             -Path "$env:NATIVE_IO_OWNER_MAILBOX_OUTPUT.csv" `
             -Backend $env:NATIVE_IO_OWNER_MAILBOX_BACKEND `
-            -CpuSet default
+            -CpuSet default `
+            -Profile $env:SALTS_BENCH_PROFILE
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO owner one-way mailbox: $env:NATIVE_IO_OWNER_MAILBOX_BACKEND / default"
@@ -1170,6 +1178,7 @@ jobs:
         if: matrix.family == 'linux' && steps.scope.outputs.coroutine == 'true'
         shell: bash
         env:
+          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
           CORO_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/salts_coro_executor_batch_benchmark
         run: |
           set -euo pipefail
@@ -1193,7 +1202,7 @@ jobs:
             local prefix="$result_dir/coro-executor-batch-$label"
             export SALTS_CORO_EXECUTOR_BATCH_BENCH_OUTPUT="$prefix"
             taskset -c "$cpuset" "$benchmark" 2>&1 | tee "$prefix.md"
-            pwsh ./coroutine/benchmarks/verify_executor_batch_benchmark.ps1 -Path "$prefix.csv"
+            pwsh ./coroutine/benchmarks/verify_executor_batch_benchmark.ps1 -Path "$prefix.csv" -Profile "$SALTS_BENCH_PROFILE"
             {
               echo ""
               echo "## Coroutine Executor producer batch admission / $label ($cpuset)"
@@ -1210,6 +1219,7 @@ jobs:
         if: matrix.family != 'linux' && steps.scope.outputs.coroutine == 'true'
         shell: pwsh
         env:
+          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
           CORO_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/salts_coro_executor_batch_benchmark
         run: |
           $ErrorActionPreference = "Stop"
@@ -1225,7 +1235,8 @@ jobs:
             Tee-Object -FilePath (Join-Path $resultDir "coro-executor-batch-default.md")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & ./coroutine/benchmarks/verify_executor_batch_benchmark.ps1 `
-            -Path "$env:SALTS_CORO_EXECUTOR_BATCH_BENCH_OUTPUT.csv"
+            -Path "$env:SALTS_CORO_EXECUTOR_BATCH_BENCH_OUTPUT.csv" `
+            -Profile $env:SALTS_BENCH_PROFILE
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## Coroutine Executor producer batch admission / default"
@@ -1236,6 +1247,7 @@ jobs:
         if: matrix.family == 'linux' && steps.scope.outputs.coroutine == 'true'
         shell: bash
         env:
+          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
           CORO_DEQUEUE_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/salts_coro_executor_dequeue_batch_benchmark
         run: |
           set -euo pipefail
@@ -1259,7 +1271,7 @@ jobs:
             local prefix="$result_dir/coro-executor-dequeue-batch-$label"
             export SALTS_CORO_EXECUTOR_DEQUEUE_BATCH_BENCH_OUTPUT="$prefix"
             taskset -c "$cpuset" "$benchmark" 2>&1 | tee "$prefix.md"
-            pwsh ./coroutine/benchmarks/verify_executor_dequeue_batch_benchmark.ps1 -Path "$prefix.csv"
+            pwsh ./coroutine/benchmarks/verify_executor_dequeue_batch_benchmark.ps1 -Path "$prefix.csv" -Profile "$SALTS_BENCH_PROFILE"
             {
               echo ""
               echo "## Coroutine Executor consumer dequeue batching / $label ($cpuset)"
@@ -1276,6 +1288,7 @@ jobs:
         if: matrix.family != 'linux' && steps.scope.outputs.coroutine == 'true'
         shell: pwsh
         env:
+          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
           CORO_DEQUEUE_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/salts_coro_executor_dequeue_batch_benchmark
         run: |
           $ErrorActionPreference = "Stop"
@@ -1292,7 +1305,8 @@ jobs:
             Tee-Object -FilePath (Join-Path $resultDir "coro-executor-dequeue-batch-default.md")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & ./coroutine/benchmarks/verify_executor_dequeue_batch_benchmark.ps1 `
-            -Path "$env:SALTS_CORO_EXECUTOR_DEQUEUE_BATCH_BENCH_OUTPUT.csv"
+            -Path "$env:SALTS_CORO_EXECUTOR_DEQUEUE_BATCH_BENCH_OUTPUT.csv" `
+            -Profile $env:SALTS_BENCH_PROFILE
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## Coroutine Executor consumer dequeue batching / default"
@@ -1735,6 +1749,7 @@ jobs:
         if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.native_uring == 'true'
         shell: pwsh
         env:
+          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
           NATIVE_IO_QD_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_queue_depth_benchmark
         run: |
           $ErrorActionPreference = "Stop"
@@ -1747,7 +1762,7 @@ jobs:
           $env:NATIVE_IO_QD_BENCHMARK_OUTPUT = Join-Path $resultDir "native-io-queue-depth"
           $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "native-io-queue-depth.md")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & ./native-io/benchmarks/verify_queue_depth_benchmark.ps1 -Path "$env:NATIVE_IO_QD_BENCHMARK_OUTPUT.csv"
+          & ./native-io/benchmarks/verify_queue_depth_benchmark.ps1 -Path "$env:NATIVE_IO_QD_BENCHMARK_OUTPUT.csv" -Profile $env:SALTS_BENCH_PROFILE
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO io_uring queue-depth benchmark"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
@@ -1757,6 +1772,7 @@ jobs:
         if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.forensic == 'true'
         shell: bash
         env:
+          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
           NATIVE_IO_QD_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_queue_depth_benchmark
         run: |
           set -euo pipefail
