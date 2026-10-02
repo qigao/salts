@@ -277,7 +277,30 @@ set_target_properties(
              C_STANDARD_REQUIRED ON
              C_EXTENSIONS OFF
              LINKER_LANGUAGE CXX)
-add_dependencies(cnet_shards_test cnet_shards_multi_owner_test)
+
+cmake_add_test(
+  cnet_owner_handoff_test
+  SOURCES
+  cnet_owner_handoff_test.c
+  LIBS
+  cnet_profile
+  Salts::TinyTest
+  INCLUDES
+  ${CNET_TEST_PRIVATE_INCLUDE}
+  FOLDER
+  "cnet/tests")
+set_target_properties(
+  cnet_owner_handoff_test
+  PROPERTIES C_STANDARD 11
+             C_STANDARD_REQUIRED ON
+             C_EXTENSIONS OFF
+             LINKER_LANGUAGE CXX)
+
+# The unified release workflow explicitly builds cnet_shards_test. Keep both
+# private multi-owner diagnostics in that build closure.
+add_dependencies(cnet_shards_test
+  cnet_shards_multi_owner_test
+  cnet_owner_handoff_test)
 
 cmake_add_test(
   cnet_dispatcher_test
