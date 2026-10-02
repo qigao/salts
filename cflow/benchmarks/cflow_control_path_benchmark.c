@@ -34,8 +34,18 @@ typedef int control_pipe;
 
 enum {
   CONTROL_WARMUP_VALUES = 64,
+#if defined(_WIN32)
+  /*
+   * GetProcessTimes() accounts CPU in scheduler quanta on hosted Windows.
+   * One longer measured chunk keeps peer prefill outside timing while making
+   * Direct/Actor CPU-efficiency observable instead of rounding to zero.
+   */
+  CONTROL_MEASURED_VALUES = 32768,
+  CONTROL_CHUNK_VALUES = 32768,
+#else
   CONTROL_MEASURED_VALUES = 4096,
   CONTROL_CHUNK_VALUES = 256,
+#endif
   CONTROL_REPLICATES = 7,
   CONTROL_MAX_STEPS = 64,
   CONTROL_MAX_DRIVE_ROUNDS = 100000,
@@ -191,7 +201,7 @@ static int control_make_pipe_pair(control_pipe pipes[2]) {
   pipes[0] = CreateNamedPipeW(
       name, PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
       PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1u,
-      8192u, 8192u, 0u, NULL);
+      65536u, 65536u, 0u, NULL);
   if (pipes[0] == INVALID_HANDLE_VALUE)
     return -(int)GetLastError();
 
