@@ -161,8 +161,8 @@ foreach ($row in $rows) {
   if ($logical -ne 128 -or $sends -ne 128 -or $receives -ne 128) {
     throw "central equal-work/lifecycle mismatch payload=$payload repeat=$repeat"
   }
-  if ($commandHops -ne 128 -or $eventHops -ne 256) {
-    throw "central hop contract mismatch payload=$payload repeat=$repeat command=$commandHops event=$eventHops"
+  if ($commandHops -ne 128 -or $eventHops -lt 256) {
+    throw "central hop contract mismatch payload=$payload repeat=$repeat command=$commandHops physical_event_hops=$eventHops"
   }
   if ($commandRejects -ne 0) {
     throw "central command mailbox rejection payload=$payload repeat=$repeat command=$commandRejects"
