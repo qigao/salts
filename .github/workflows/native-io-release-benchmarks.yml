@@ -261,11 +261,11 @@ jobs:
               # PR-base CNet tree on Windows.
               $runCnetCompare = $cnetRuntime -or $nativeRuntime -or
                 $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
+                $buildChanged -or $dependencyChanged
 
               $runAsan = $cnetRuntime -or $nativeRuntime -or
                 $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
                 $cnetTestsChanged -or $buildChanged -or $dependencyChanged
-                $buildChanged -or $dependencyChanged
 
               $runAdapted = $runNativeOwner -or $runNativeStyle -or
                 $runCnetOwner -or $runCnetIo -or $runCnetSg -or
