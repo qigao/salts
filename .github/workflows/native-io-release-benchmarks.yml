@@ -631,23 +631,15 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
-      - name: Run NativeIO owner-to-owner handoff CPU-set sweep
-        if: matrix.family == 'linux' && steps.scope.outputs.native_owner == 'true'
+      - name: Prepare Linux benchmark CPU topology
+        if: matrix.family == 'linux' && (steps.scope.outputs.native_owner == 'true' || steps.scope.outputs.cnet_owner == 'true' || steps.scope.outputs.coroutine == 'true')
         shell: bash
         env:
-          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
-          NATIVE_IO_OWNER_HANDOFF_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_owner_handoff_benchmark
-          NATIVE_IO_OWNER_HANDOFF_BACKEND: ${{ matrix.backend }}
+          BENCHMARK_BACKEND: ${{ matrix.backend }}
         run: |
           set -euo pipefail
           result_dir="$GITHUB_WORKSPACE/native-io-results"
           mkdir -p "$result_dir"
-          benchmark="$GITHUB_WORKSPACE/$NATIVE_IO_OWNER_HANDOFF_EXECUTABLE"
-          if [[ ! -x "$benchmark" ]]; then
-            echo "NativeIO owner-handoff benchmark executable not found: $benchmark" >&2
-            exit 1
-          fi
-
           allowed="$(taskset -pc "$BASHPID" | sed 's/.*: //')"
           topology="$result_dir/native-io-owner-handoff-topology.csv"
           lscpu -p=CPU,CORE,SOCKET > "$topology"
@@ -660,9 +652,7 @@ jobs:
               if [[ "$part" == *-* ]]; then
                 start="${part%-*}"
                 end="${part#*-}"
-                for ((cpu = start; cpu <= end; ++cpu)); do
-                  echo "$cpu"
-                done
+                for ((cpu = start; cpu <= end; ++cpu)); do echo "$cpu"; done
               else
                 echo "$part"
               fi
@@ -692,6 +682,37 @@ jobs:
             fi
           done
 
+          {
+            echo "backend=$BENCHMARK_BACKEND"
+            echo "runner_allowed_cpu_set=$allowed"
+            echo "one_cpu_set=$first"
+            echo "two_cpu_same_core_set=$([[ -n "$same_core" ]] && echo "$first,$same_core" || echo unavailable)"
+            echo "two_cpu_distinct_core_set=$([[ -n "$distinct_core" ]] && echo "$first,$distinct_core" || echo unavailable)"
+          } > "$result_dir/native-io-owner-handoff-cpu-set.txt"
+
+      - name: Run NativeIO owner-to-owner handoff CPU-set sweep
+        if: matrix.family == 'linux' && steps.scope.outputs.native_owner == 'true'
+        shell: bash
+        env:
+          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
+          NATIVE_IO_OWNER_HANDOFF_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_owner_handoff_benchmark
+          NATIVE_IO_OWNER_HANDOFF_BACKEND: ${{ matrix.backend }}
+        run: |
+          set -euo pipefail
+          result_dir="$GITHUB_WORKSPACE/native-io-results"
+          mkdir -p "$result_dir"
+          benchmark="$GITHUB_WORKSPACE/$NATIVE_IO_OWNER_HANDOFF_EXECUTABLE"
+          if [[ ! -x "$benchmark" ]]; then
+            echo "NativeIO owner-handoff benchmark executable not found: $benchmark" >&2
+            exit 1
+          fi
+          cpu_sets="$result_dir/native-io-owner-handoff-cpu-set.txt"
+          if [[ ! -f "$cpu_sets" ]]; then
+            echo "Benchmark CPU-set evidence not found: $cpu_sets" >&2
+            exit 1
+          fi
+          source "$cpu_sets"
+
           run_case() {
             local label="$1"
             local cpuset="$2"
@@ -712,27 +733,20 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           }
 
-          run_case one_cpu "$first"
-          if [[ -n "$same_core" ]]; then
-            run_case two_cpu_same_core "$first,$same_core"
+          run_case one_cpu "$one_cpu_set"
+          if [[ "$two_cpu_same_core_set" != "unavailable" ]]; then
+            run_case two_cpu_same_core "$two_cpu_same_core_set"
           else
             echo "No second logical CPU on the first physical core; SMT-pair case skipped." |
               tee -a "$GITHUB_STEP_SUMMARY"
           fi
-          if [[ -n "$distinct_core" ]]; then
-            run_case two_cpu_distinct_core "$first,$distinct_core"
+          if [[ "$two_cpu_distinct_core_set" != "unavailable" ]]; then
+            run_case two_cpu_distinct_core "$two_cpu_distinct_core_set"
           else
             echo "No CPU on a distinct physical core; distinct-core case skipped." |
               tee -a "$GITHUB_STEP_SUMMARY"
           fi
 
-          {
-            echo "backend=$NATIVE_IO_OWNER_HANDOFF_BACKEND"
-            echo "runner_allowed_cpu_set=$allowed"
-            echo "one_cpu_set=$first"
-            echo "two_cpu_same_core_set=$([[ -n "$same_core" ]] && echo "$first,$same_core" || echo unavailable)"
-            echo "two_cpu_distinct_core_set=$([[ -n "$distinct_core" ]] && echo "$first,$distinct_core" || echo unavailable)"
-          } > "$result_dir/native-io-owner-handoff-cpu-set.txt"
       - name: Run NativeIO owner one-way mailbox CPU-set sweep
         if: matrix.family == 'linux' && steps.scope.outputs.native_owner == 'true'
         shell: bash
