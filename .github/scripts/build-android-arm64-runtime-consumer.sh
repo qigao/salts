@@ -71,6 +71,7 @@ clang_bin="$(
 )"
 test -n "$clang_bin"
 clang_version="$("$clang_bin" --version | head -n 1)"
+export SALTS_ANDROID_CLANG_VERSION="$clang_version"
 
 python3 - <<'PY'
 import json, os, pathlib
