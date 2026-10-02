@@ -3,11 +3,12 @@
     {
       "kind": "git",
       "repository": "https://github.com/qigao/vcpkg-cache",
-      "baseline": "9a3d7d837009cbcbd02be80d7b004d7b59ae21c5",
+      "baseline": "5abdcd30c65f76dd8aab6f05c02008a8286031be",
       "packages": [
         "aklomp-base64",
         "c-ares",
-        "zstd"
+        "zstd",
+        "gmssl"
       ]
     }
   ]
