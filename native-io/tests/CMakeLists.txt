@@ -7,6 +7,15 @@ set_target_properties(native_io_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+cmake_add_test(native_io_accept_escrow_test
+  SOURCES native_io_accept_escrow_test.c
+  LIBS Salts::NativeIO
+  FOLDER "native-io/tests")
+set_target_properties(native_io_accept_escrow_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
 cmake_add_test(native_io_sharded_test
   SOURCES native_io_sharded_test.c
   LIBS Salts::NativeIO Salts::TinyTest Salts::Platform
