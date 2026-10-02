@@ -326,27 +326,9 @@ jobs:
           $prefix = Join-Path $env:GITHUB_WORKSPACE "stage\sdk\windows-x64"
           cmake --install build/Msvc-Release --prefix $prefix --config Release
 
-          # CNet keeps OpenSSL/BoringSSL targets private, but the release
-          # x64-windows triplet builds their runtime as DLLs. Bundle those
-          # implementation artifacts beside cnet.dll so the native SDK is
-          # self-contained and installed consumers need no global OpenSSL.
-          if ([string]::IsNullOrWhiteSpace($env:VCPKG_INSTALLED_DIR)) {
-            throw "VCPKG_INSTALLED_DIR is required to stage private CNet TLS runtime DLLs"
-          }
-          $tlsRuntimeDir = Join-Path $env:VCPKG_INSTALLED_DIR "x64-windows\bin"
-          $sdkBin = Join-Path $prefix "bin"
-          New-Item -ItemType Directory -Force -Path $sdkBin | Out-Null
-          foreach ($dllName in @("ssl.dll", "crypto.dll")) {
-            $source = Join-Path $tlsRuntimeDir $dllName
-            $destination = Join-Path $sdkBin $dllName
-            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
-              throw "missing private CNet TLS runtime: $source"
-            }
-            Copy-Item -LiteralPath $source -Destination $destination -Force
-            if (-not (Test-Path -LiteralPath $destination -PathType Leaf)) {
-              throw "failed to stage private CNet TLS runtime: $destination"
-            }
-          }
+          # Keep CNet's private TLS runtime artifacts self-contained in the
+          # Windows SDK without exporting OpenSSL/BoringSSL CMake dependencies.
+          ./cmake/ci/stage-windows-cnet-runtime.ps1 -Prefix $prefix
 
           $config = Join-Path $prefix "lib\cmake\Salts\SaltsConfig.cmake"
           $targets = Join-Path $prefix "lib\cmake\Salts\SaltsTargets.cmake"
