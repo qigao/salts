@@ -284,11 +284,18 @@ static void dequeue_bench_print_csv(
 }
 
 int main(void) {
-  static const size_t sizes[] = {2u, 4u, 8u, 16u, 32u, 64u, 128u};
+  static const size_t full_sizes[] = {2u, 4u, 8u, 16u, 32u, 64u, 128u};
+  static const size_t pr_sizes[] = {2u, 16u, 128u};
   static const char *styles[] = {"per_item_take", "batch_take"};
   static const char *occupancies[] = {"low", "near_capacity"};
+  const char *profile = getenv("SALTS_BENCH_PROFILE");
+  const int pr_profile = profile != NULL && strcmp(profile, "pr") == 0;
+  const size_t *sizes = pr_profile ? pr_sizes : full_sizes;
+  const size_t size_count =
+      pr_profile ? sizeof(pr_sizes) / sizeof(pr_sizes[0])
+                 : sizeof(full_sizes) / sizeof(full_sizes[0]);
   dequeue_bench_summary rows[
-      (sizeof(sizes) / sizeof(sizes[0])) *
+      (sizeof(full_sizes) / sizeof(full_sizes[0])) *
       (sizeof(styles) / sizeof(styles[0])) *
       (sizeof(occupancies) / sizeof(occupancies[0]))];
   size_t row_count = 0u;
@@ -297,8 +304,7 @@ int main(void) {
   for (size_t occupancy = 0u;
        occupancy < sizeof(occupancies) / sizeof(occupancies[0]);
        ++occupancy) {
-    for (size_t size = 0u;
-         size < sizeof(sizes) / sizeof(sizes[0]); ++size) {
+    for (size_t size = 0u; size < size_count; ++size) {
       for (size_t style = 0u;
            style < sizeof(styles) / sizeof(styles[0]); ++style) {
         const int status = dequeue_bench_run_case(
