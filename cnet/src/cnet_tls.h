@@ -10,6 +10,12 @@ enum { CNET_TLS_SERVER_NAME_CAPACITY = 254 };
 
 typedef struct cnet_tls_context cnet_tls_context;
 
+typedef enum cnet_tls_protocol_version {
+  CNET_TLS_PROTOCOL_VERSION_DEFAULT = 0,
+  CNET_TLS_PROTOCOL_VERSION_1_2 = 12,
+  CNET_TLS_PROTOCOL_VERSION_1_3 = 13
+} cnet_tls_protocol_version;
+
 typedef struct cnet_tls_state {
   cnet_tls_context *context;
   void *engine;
@@ -39,6 +45,9 @@ void cnet_tls_state_destroy(cnet_tls_state *state);
 
 int cnet_tls_handshake(cnet_tls_state *state, bool *out_complete);
 bool cnet_tls_state_handshake_complete(const cnet_tls_state *state);
+int cnet_tls_state_set_protocol_range(cnet_tls_state *state,
+                                      cnet_tls_protocol_version minimum,
+                                      cnet_tls_protocol_version maximum);
 void *cnet_tls_state_read_buffer(cnet_tls_state *state);
 void *cnet_tls_state_write_buffer(cnet_tls_state *state);
 size_t cnet_tls_state_io_buffer_bytes(const cnet_tls_state *state);
