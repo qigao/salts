@@ -1,0 +1,61 @@
+param([string]$Path = "cmake/ci/benchmark-policy.json", [string]$ProjectRoot = ".", [switch]$WriteSummary)
+$ErrorActionPreference = "Stop"
+$policyPath = Join-Path $ProjectRoot $Path
+if (-not (Test-Path -LiteralPath $policyPath -PathType Leaf)) { throw "benchmark policy not found: $policyPath" }
+$policy = Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json
+if ($policy.schema_version -ne 1) { throw "unsupported benchmark policy schema: $($policy.schema_version)" }
+$allowedRoles = @("CONTRACT","PERFORMANCE_ANCHOR","DIAGNOSTIC")
+$allowedResults = @("PASS","FAIL","UNSTABLE","DIAGNOSTIC")
+$allowedPrModes = @("affected","anchor","anchor-candidate","diagnostic","reduced-sweep","master-or-failure","master-or-manual")
+$results = @($policy.result_values)
+if ($results.Count -ne $allowedResults.Count) { throw "invalid benchmark result vocabulary" }
+foreach ($result in $allowedResults) { if ($results -notcontains $result) { throw "missing benchmark result: $result" } }
+$families = @($policy.families)
+if ($families.Count -eq 0) { throw "benchmark policy contains no families" }
+$ids = @{}; $roleCounts = @{}; $performanceAnchors = 0
+foreach ($family in $families) {
+  $id = [string]$family.id; $role = [string]$family.role; $scope = [string]$family.scope
+  $prMode = [string]$family.pr_mode; $verifier = [string]$family.verifier
+  $anchor = [string]$family.anchor; $noise = [string]$family.noise; $threshold = [string]$family.threshold
+  if ([string]::IsNullOrWhiteSpace($id)) { throw "benchmark family has empty id" }
+  if ($ids.ContainsKey($id)) { throw "duplicate benchmark family id: $id" }; $ids[$id] = $true
+  if ($allowedRoles -notcontains $role) { throw "invalid benchmark role for $id : $role" }
+  if ([string]::IsNullOrWhiteSpace($scope)) { throw "benchmark family has empty scope: $id" }
+  if ($allowedPrModes -notcontains $prMode) { throw "invalid PR mode for $id : $prMode" }
+  if ([string]::IsNullOrWhiteSpace($anchor)) { throw "benchmark family has no anchor: $id" }
+  if (-not [string]::IsNullOrWhiteSpace($verifier)) {
+    $verifierPath = Join-Path $ProjectRoot $verifier
+    if (-not (Test-Path -LiteralPath $verifierPath -PathType Leaf)) { throw "benchmark verifier missing for $id : $verifier" }
+  }
+  if ($role -eq "PERFORMANCE_ANCHOR") {
+    $performanceAnchors++
+    if ($noise -in @("","n/a","none")) { throw "performance anchor missing noise qualification: $id" }
+    if ($threshold -in @("","n/a","none","contract only")) { throw "performance anchor missing threshold: $id" }
+  } elseif ($role -eq "DIAGNOSTIC") {
+    if ($threshold -ne "none") { throw "diagnostic benchmark cannot define performance threshold: $id" }
+  } else {
+    if ($threshold -ne "contract only") { throw "contract benchmark must use contract-only semantics: $id" }
+  }
+  if (-not $roleCounts.ContainsKey($role)) { $roleCounts[$role] = 0 }; $roleCounts[$role]++
+}
+if ($performanceAnchors -eq 0) { throw "policy requires at least one PERFORMANCE_ANCHOR" }
+Write-Host ("Benchmark policy verified: families={0} contract={1} anchors={2} diagnostic={3}" -f $families.Count,$roleCounts["CONTRACT"],$roleCounts["PERFORMANCE_ANCHOR"],$roleCounts["DIAGNOSTIC"])
+if ($WriteSummary) {
+  $summaryPath = $env:GITHUB_STEP_SUMMARY
+  if ([string]::IsNullOrWhiteSpace($summaryPath)) { throw "-WriteSummary requires GITHUB_STEP_SUMMARY" }
+  Add-Content -LiteralPath $summaryPath -Value ""
+  Add-Content -LiteralPath $summaryPath -Value "## Benchmark decision policy"
+  Add-Content -LiteralPath $summaryPath -Value ""
+  Add-Content -LiteralPath $summaryPath -Value ("**{0} families** — CONTRACT {1} · PERFORMANCE_ANCHOR {2} · DIAGNOSTIC {3}" -f $families.Count,$roleCounts["CONTRACT"],$roleCounts["PERFORMANCE_ANCHOR"],$roleCounts["DIAGNOSTIC"])
+  Add-Content -LiteralPath $summaryPath -Value ""
+  Add-Content -LiteralPath $summaryPath -Value "> CONTRACT violations block merge. PERFORMANCE_ANCHOR cells may block merge only after noise qualification passes. DIAGNOSTIC relative speed never blocks merge by itself."
+  Add-Content -LiteralPath $summaryPath -Value ""
+  Add-Content -LiteralPath $summaryPath -Value "| Family | Role | PR mode | Anchor | Noise | Threshold |"
+  Add-Content -LiteralPath $summaryPath -Value "|---|---|---|---|---|---|"
+  foreach ($family in ($families | Sort-Object scope,id)) {
+    $cells = @([string]$family.id,[string]$family.role,[string]$family.pr_mode,[string]$family.anchor,[string]$family.noise,[string]$family.threshold) | ForEach-Object { $_.Replace("|","\|").Replace([char]13," ").Replace([char]10," ") }
+    Add-Content -LiteralPath $summaryPath -Value ("| {0} | {1} | {2} | {3} | {4} | {5} |" -f $cells)
+  }
+  Add-Content -LiteralPath $summaryPath -Value ""
+  Add-Content -LiteralPath $summaryPath -Value "Allowed verdicts: **PASS**, **FAIL**, **UNSTABLE**, **DIAGNOSTIC**."
+}
