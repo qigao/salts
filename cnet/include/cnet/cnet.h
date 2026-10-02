@@ -669,6 +669,20 @@ typedef struct cnet_packet_endpoint_config {
  */
 int cnet_client_init(cnet_client *client, const cnet_client_config *config);
 
+/**
+ * Initializes the same bounded CNet client while borrowing one caller-owned
+ * NativeIO backend. CNet submits/cancels against this backend but never
+ * observes, closes, or destroys it. The backend kind and capacities must cover
+ * the client configuration. Progress is then owned by the embedding runtime
+ * through the external APIs below; cnet_client_poll() is disabled.
+ *
+ * The borrowed backend must outlive the client and must not be closed while
+ * any CNet request or endpoint remains live.
+ */
+int cnet_client_init_external(cnet_client *client,
+                              const cnet_client_config *config,
+                              native_io_backend *borrowed_backend);
+
 /** Validates bounds and option dependencies without touching a socket. */
 int cnet_stream_socket_options_validate(const cnet_stream_socket_options *options);
 
@@ -931,6 +945,40 @@ int cnet_close(cnet_client *client, cnet_connection connection);
 int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_events);
 
 /**
+ * Advances CNet-owned command, session, resolver and deadline state without
+ * observing NativeIO. Valid only for a client created by
+ * cnet_client_init_external(). Callbacks remain ordered and execute inline.
+ */
+int cnet_client_advance_external(cnet_client *client, size_t *out_events);
+
+/**
+ * Routes one terminal completion already observed by the embedding runtime.
+ * A completion not owned by this client returns SALTS_OK with
+ * *out_consumed == false and is not modified.
+ */
+int cnet_client_route_external_completion(
+    cnet_client *client,
+    const native_io_completion *completion,
+    bool *out_consumed,
+    size_t *out_events);
+
+/**
+ * Returns CNet's next timer requirement capped by max_wait_ms. The embedding
+ * runtime should arm this deadline alongside its NativeIO wait and call
+ * cnet_client_advance_external() when it expires.
+ */
+int cnet_client_external_timeout(cnet_client *client,
+                                 uint32_t max_wait_ms,
+                                 uint32_t *out_timeout_ms);
+
+/**
+ * Completes teardown for an external-progress client only after every live
+ * connection has reached its terminal callback. It never observes NativeIO.
+ * SALTS_EBUSY means the embedding runtime must continue routing/advancing.
+ */
+int cnet_client_stop_external(cnet_client *client);
+
+/**
  * Wakes a thread blocked in cnet_client_poll without publishing a callback or
  * changing connection state. This is the only progress-control operation that
  * may be called concurrently from a non-owner thread. Concurrent wakes are
@@ -948,6 +996,10 @@ int cnet_client_wake(cnet_client *client);
  * @return `SALTS_OK` only after quiescence, or the first drain/progress error.
  * A non-timeout progress error may be returned after quiescence was reached;
  * the caller must still attempt `cnet_client_destroy()` to release the client.
+ */
+/**
+ * External-progress clients return SALTS_ENOTSUP here. They must drive
+ * completions externally and finish with cnet_client_stop_external().
  */
 int cnet_client_stop(cnet_client *client, uint32_t timeout_ms);
 
