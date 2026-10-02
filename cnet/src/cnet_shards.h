@@ -50,6 +50,8 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config);
  */
 int cnet_shards_init_multi_owner_experimental(cnet_shards *shards,
                                               const cnet_shards_config *config);
+/** Initializes one deferred owner/backend on its final owner thread. */
+int cnet_shards_init_owner_experimental(cnet_shards *shards, uint32_t shard);
 #endif
 
 bool cnet_shards_get_layout(const cnet_shards *shards, cnet_shards_layout *out_layout);
