@@ -982,6 +982,7 @@ static int central_run_repeat(
   bool central_affinity_changed = false;
   bool module_initialized = false;
   bool events_initialized = false;
+  const char *stage = "arguments";
   int status = SALTS_OK;
 
   if (out == NULL) return SALTS_EINVAL;
@@ -994,16 +995,20 @@ static int central_run_repeat(
   for (size_t lane = 0u; lane < CENTRAL_LANES; ++lane)
     central_peer_reset(&peers[lane]);
 
+  stage = "module_init";
   status = cnet_module_init();
   if (status != SALTS_OK) goto cleanup;
   module_initialized = true;
 
+  stage = "event_mailbox_init";
   status = central_event_mailbox_init(&events);
   if (status != SALTS_OK) goto cleanup;
   events_initialized = true;
 
+  stage = "shards_init";
   status = cnet_shards_init_multi_owner_experimental(&shards, &config);
   if (status != SALTS_OK) goto cleanup;
+  stage = "bind_event_sink";
   status = cnet_shards_bind_event_sink(&shards, central_event_sink, &events);
   if (status != SALTS_OK) goto cleanup;
 
@@ -1011,6 +1016,7 @@ static int central_run_repeat(
        lane < CENTRAL_LANES && status == SALTS_OK; ++lane) {
     cnet_owner_connect_payload payload = {0};
 
+    stage = "peer_init";
     status = central_peer_init(
         &peers[lane], payload_size, cycles);
     if (status != SALTS_OK) break;
@@ -1019,6 +1025,7 @@ static int central_run_repeat(
     payload.socket_options =
         (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
     payload.socket_options.nodelay = 1;
+    stage = "peer_address";
     status = cnet_transport_parse_numeric_address(
         "127.0.0.1",
         ntohs(peers[lane].address.sin_port),
@@ -1026,6 +1033,7 @@ static int central_run_repeat(
         &payload.address_length);
     if (status != SALTS_OK) break;
 
+    stage = "connect_admission";
     status = cnet_shards_connect(
         &shards, &payload, &lanes[lane].connection);
     if (status != SALTS_OK) break;
@@ -1052,6 +1060,7 @@ static int central_run_repeat(
       break;
     }
 
+    stage = "command_mailbox_init";
     status = central_mailbox_init(&lanes[lane].commands);
   }
   if (status != SALTS_OK) goto cleanup;
@@ -1062,6 +1071,7 @@ static int central_run_repeat(
     owner_args[lane].measure_cpu = &measure_owner_cpu;
     owner_args[lane].cpu = lane == 0u ? cpu_a : cpu_b;
     {
+      stage = "owner_thread_create";
       const int create_status = pthread_create(
           &owner_threads[lane], NULL,
           central_owner_entry, &owner_args[lane]);
@@ -1074,16 +1084,19 @@ static int central_run_repeat(
   }
   if (status != SALTS_OK) goto cleanup;
 
+  stage = "wait_connected";
   status = central_wait_connected(lanes, &events);
   if (status != SALTS_OK) goto cleanup;
 
   for (size_t lane = 0u; lane < CENTRAL_LANES; ++lane) {
     const size_t demand =
         payload_size * (CENTRAL_WARMUPS + CENTRAL_SAMPLES);
+    stage = "receive_setup";
     status = central_publish_receive_setup(&lanes[lane], demand);
     if (status != SALTS_OK) goto cleanup;
   }
 
+  stage = "warmup";
   status = central_run_phase(
       lanes, &events, CENTRAL_WARMUPS, false, latencies, &event_hops);
   if (status != SALTS_OK) goto cleanup;
@@ -1110,6 +1123,7 @@ static int central_run_repeat(
     }
     central_affinity_saved = true;
   }
+  stage = "central_affinity";
   status = central_set_affinity(cpu_a);
   if (status != SALTS_OK) goto cleanup;
   central_affinity_changed = true;
@@ -1122,6 +1136,7 @@ static int central_run_repeat(
       &measure_owner_cpu, true, memory_order_release);
   wall_started = salts_hrtime();
   central_cpu_started = central_thread_cpu_ns();
+  stage = "measure";
   status = central_run_phase(
       lanes, &events, CENTRAL_SAMPLES, true, latencies, &event_hops);
   central_cpu_ns = central_thread_cpu_ns() - central_cpu_started;
@@ -1139,6 +1154,7 @@ static int central_run_repeat(
       combined[combined_count++] = latencies[lane][sample];
   }
 
+  stage = "measured_accounting";
   if (combined_count != CENTRAL_LANES * CENTRAL_SAMPLES ||
       command_hops != combined_count ||
       event_hops != UINT64_C(2) * combined_count ||
@@ -1149,9 +1165,11 @@ static int central_run_repeat(
     goto cleanup;
   }
 
+  stage = "close_recycle";
   status = central_close_connections(lanes, &events);
   if (status != SALTS_OK) goto cleanup;
 
+  stage = "owner_join";
   atomic_store_explicit(&stop, true, memory_order_release);
   for (size_t lane = 0u; lane < CENTRAL_LANES; ++lane)
     (void)cnet_shards_wake_owner(&shards, (uint32_t)lane);
@@ -1174,6 +1192,7 @@ static int central_run_repeat(
   }
   if (status != SALTS_OK) goto cleanup;
 
+  stage = "result";
   out->backend = backend_name;
   out->topology = topology;
   out->mode = "central_callback_compat";
@@ -1210,6 +1229,47 @@ static int central_run_repeat(
       lanes[0].receive_terminals + lanes[1].receive_terminals;
 
 cleanup:
+  if (status != SALTS_OK) {
+    fprintf(
+        stderr,
+        "central facade repeat failure: stage=%s status=%d payload=%zu repeat=%zu "
+        "events_pending=%zu events_published=%" PRIuFAST64 " events_rejected=%" PRIuFAST64 "\n",
+        stage, status, payload_size, repeat,
+        events_initialized
+            ? atomic_load_explicit(&events.pending, memory_order_acquire)
+            : 0u,
+        events_initialized
+            ? atomic_load_explicit(&events.published, memory_order_acquire)
+            : UINT64_C(0),
+        events_initialized
+            ? atomic_load_explicit(&events.rejected, memory_order_acquire)
+            : UINT64_C(0));
+    for (size_t lane = 0u; lane < CENTRAL_LANES; ++lane) {
+      fprintf(
+          stderr,
+          "  lane=%zu shard=%u connected=%d send_done=%d receive_done=%d "
+          "terminal=%d sends=%zu receives=%zu cmd_published=%" PRIuFAST64
+          " cmd_rejected=%" PRIuFAST64 " owner_status=%d observed_cpu=%d expected_cpu=%d\n",
+          lane, lanes[lane].connection.shard,
+          lanes[lane].connected ? 1 : 0,
+          lanes[lane].send_done ? 1 : 0,
+          lanes[lane].receive_done ? 1 : 0,
+          lanes[lane].terminal ? 1 : 0,
+          lanes[lane].send_terminals,
+          lanes[lane].receive_terminals,
+          lanes[lane].commands.ring != NULL
+              ? atomic_load_explicit(
+                    &lanes[lane].commands.published, memory_order_acquire)
+              : UINT64_C(0),
+          lanes[lane].commands.ring != NULL
+              ? atomic_load_explicit(
+                    &lanes[lane].commands.rejected, memory_order_acquire)
+              : UINT64_C(0),
+          owner_args[lane].status,
+          owner_args[lane].observed_cpu,
+          owner_args[lane].cpu);
+    }
+  }
   atomic_store_explicit(
       &measure_owner_cpu, false, memory_order_release);
   if (central_affinity_changed && central_affinity_saved) {
