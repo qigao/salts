@@ -42,7 +42,10 @@ function(cnet_configure_target target_name)
     PUBLIC
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
       $<INSTALL_INTERFACE:include>
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/tools/wsparser)
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+      ${CMAKE_SOURCE_DIR}/tools/wsparser
+      ${CMAKE_SOURCE_DIR}/native-io/src)
   target_link_libraries(
     ${target_name}
     PUBLIC Salts::NativeIO Salts::Concurrency Salts::Core
