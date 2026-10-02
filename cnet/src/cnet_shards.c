@@ -198,13 +198,15 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
   return cnet_shards_init_impl(shards, config, false);
 }
 
+#if defined(CNET_INTERNAL_MULTI_OWNER_POC)
 int cnet_shards_init_multi_owner_experimental(
     cnet_shards *shards, const cnet_shards_config *config) {
   return cnet_shards_init_impl(shards, config, true);
 }
+#endif
 
-int cnet_shards_poll_owner(cnet_shards *shards, uint32_t shard,
-                           uint32_t timeout_ms) {
+static int cnet_shards_poll_owner_impl(cnet_shards *shards, uint32_t shard,
+                                       uint32_t timeout_ms) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
   cnet_shard_record *record;
   int first_status;
@@ -221,11 +223,18 @@ int cnet_shards_poll_owner(cnet_shards *shards, uint32_t shard,
   return first_status != SALTS_OK ? first_status : status;
 }
 
+#if defined(CNET_INTERNAL_MULTI_OWNER_POC)
+int cnet_shards_poll_owner(cnet_shards *shards, uint32_t shard,
+                           uint32_t timeout_ms) {
+  return cnet_shards_poll_owner_impl(shards, shard, timeout_ms);
+}
+#endif
+
 int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->shard_count != 1u) return SALTS_EINVAL;
-  return cnet_shards_poll_owner(shards, 0u, timeout_ms);
+  return cnet_shards_poll_owner_impl(shards, 0u, timeout_ms);
 }
 
 #if defined(CNET_INTERNAL_PROFILING)
@@ -267,7 +276,7 @@ int cnet_shards_profile_take(cnet_shards *shards, cnet_owner_profile *out_profil
 }
 #endif
 
-int cnet_shards_wake_owner(cnet_shards *shards, uint32_t shard) {
+static int cnet_shards_wake_owner_impl(cnet_shards *shards, uint32_t shard) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
   cnet_shard_record *record;
   if (impl == NULL) return SALTS_EINVAL;
@@ -275,10 +284,16 @@ int cnet_shards_wake_owner(cnet_shards *shards, uint32_t shard) {
   return record != NULL ? cnet_owner_wake(&record->owner) : SALTS_EINVAL;
 }
 
+#if defined(CNET_INTERNAL_MULTI_OWNER_POC)
+int cnet_shards_wake_owner(cnet_shards *shards, uint32_t shard) {
+  return cnet_shards_wake_owner_impl(shards, shard);
+}
+#endif
+
 int cnet_shards_wake(cnet_shards *shards) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
   if (impl == NULL || impl->shard_count != 1u) return SALTS_EINVAL;
-  return cnet_shards_wake_owner(shards, 0u);
+  return cnet_shards_wake_owner_impl(shards, 0u);
 }
 
 int cnet_shards_bind_event_sink(cnet_shards *shards, cnet_shards_event_sink_fn sink,
