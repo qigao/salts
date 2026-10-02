@@ -68,6 +68,11 @@ int cnet_shards_route_external_completion(cnet_shards *shards,
                                           bool *out_consumed);
 int cnet_shards_external_timeout(cnet_shards *shards, uint32_t max_wait_ms,
                                  uint32_t *out_timeout_ms);
+int cnet_shards_external_requests(cnet_shards *shards,
+                                  cnet_shard_connection connection,
+                                  native_io_request *out_requests,
+                                  size_t capacity,
+                                  size_t *out_count);
 
 #if defined(CNET_INTERNAL_MULTI_OWNER_POC)
 /** Internal Phase-B1 owner-specific progress; exactly one caller owns each shard. */
