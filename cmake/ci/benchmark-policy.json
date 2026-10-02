@@ -148,7 +148,7 @@
       "role": "CONTRACT",
       "verifier": "native-io/benchmarks/verify_owner_handoff_benchmark.ps1",
       "pr_mode": "reduced-sweep",
-      "anchor": "windows 1 / 8 / 64 for PR; full 1..64 release",
+      "anchor": "window 1 / 8 / 64 for PR; full 1..64 sweep on master/manual",
       "noise": "n/a",
       "threshold": "contract only",
       "evidence": [
@@ -161,7 +161,7 @@
       "role": "CONTRACT",
       "verifier": "native-io/benchmarks/verify_owner_mailbox_benchmark.ps1",
       "pr_mode": "reduced-sweep",
-      "anchor": "windows 1 / 16 / 64 / 256 for PR; full 1..1024 release",
+      "anchor": "window 1 / 16 / 64 / 256 for PR; full 1..1024 sweep on master/manual",
       "noise": "n/a",
       "threshold": "contract only",
       "evidence": [
@@ -252,7 +252,7 @@
       "role": "DIAGNOSTIC",
       "verifier": "native-io/benchmarks/verify_queue_depth_benchmark.ps1",
       "pr_mode": "reduced-sweep",
-      "anchor": "32KiB at QD 1 / 8 / 32 / 64 for PR; full 7x4 release",
+      "anchor": "32KiB at QD 1 / 8 / 32 / 64 for PR; full 7x4 matrix on master/manual",
       "noise": "historical qualification pending",
       "threshold": "none",
       "evidence": [
@@ -265,7 +265,7 @@
       "role": "CONTRACT",
       "verifier": "coroutine/benchmarks/verify_executor_batch_benchmark.ps1",
       "pr_mode": "reduced-sweep",
-      "anchor": "batch 2 / 16 / 128 for PR; full sweep release",
+      "anchor": "batch 2 / 16 / 128 for PR; full 2..128 sweep on master/manual",
       "noise": "n/a",
       "threshold": "contract only",
       "evidence": [
@@ -278,7 +278,7 @@
       "role": "CONTRACT",
       "verifier": "coroutine/benchmarks/verify_executor_dequeue_batch_benchmark.ps1",
       "pr_mode": "reduced-sweep",
-      "anchor": "batch 2 / 16 / 128 for PR; full sweep release",
+      "anchor": "batch 2 / 16 / 128 for PR; full 2..128 sweep on master/manual",
       "noise": "n/a",
       "threshold": "contract only",
       "evidence": [
