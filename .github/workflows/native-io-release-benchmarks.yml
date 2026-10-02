@@ -246,6 +246,7 @@ jobs:
                   $_ -like "cnet/benchmarks/*tls_sg*" -or
                   $_ -like "cnet/benchmarks/*sg_benchmark*" -or
                   $_ -like "cnet/benchmarks/verify_tls_sg_benchmark.ps1"
+                  $_ -eq "cnet/benchmarks/cnet_io_benchmark.c" -or
                 }).Count -gt 0
               $coroutineBench = @($changed | Where-Object {
                   $_ -like "coroutine/benchmarks/*"
@@ -298,6 +299,31 @@ jobs:
           "cflow=$($runCflow.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "native_uring=$($runNativeUring.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "forensic=$($runForensic.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Report selected benchmark scopes
+        if: matrix.family == 'linux' && matrix.backend == 'epoll'
+        shell: pwsh
+        run: |
+          $rows = @(
+            @("native_owner", "${{ steps.scope.outputs.native_owner }}"),
+            @("native_style", "${{ steps.scope.outputs.native_style }}"),
+            @("cnet_owner", "${{ steps.scope.outputs.cnet_owner }}"),
+            @("cnet_io", "${{ steps.scope.outputs.cnet_io }}"),
+            @("cnet_sg", "${{ steps.scope.outputs.cnet_sg }}"),
+            @("coroutine", "${{ steps.scope.outputs.coroutine }}"),
+            @("cflow", "${{ steps.scope.outputs.cflow }}"),
+            @("native_uring", "${{ steps.scope.outputs.native_uring }}"),
+            @("forensic", "${{ steps.scope.outputs.forensic }}"),
+            @("cnet_compare", "${{ steps.scope.outputs.cnet_compare }}")
+          )
+          Write-Host "Selected benchmark scopes:"
+          foreach ($row in $rows) { Write-Host ("  {0}={1}" -f $row[0], $row[1]) }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## Selected benchmark scopes"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "| Scope | Enabled |"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "|---|---|"
+          foreach ($row in $rows) { Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ("| {0} | **{1}** |" -f $row[0], $row[1]) }
 
       - name: Validate benchmark decision policy
         if: matrix.family == 'linux' && matrix.backend == 'epoll'
