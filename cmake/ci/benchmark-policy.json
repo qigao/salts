@@ -20,7 +20,10 @@
       "pr_mode": "anchor",
       "anchor": "NativeIO direct vs CNet retained; 16 connections; 65536-byte payload",
       "noise": "rate MAD <= 5pp; p50 MAD <= 5pp; p95 MAD <= 10pp",
-      "threshold": "throughput >= -5%; p50 <= +10%; p95 <= +15%"
+      "threshold": "throughput >= -5%; p50 <= +10%; p95 <= +15%",
+      "evidence": [
+        "cnet-scaling.paired.csv"
+      ]
     },
     {
       "id": "cnet_io_reference",
@@ -30,7 +33,10 @@
       "pr_mode": "affected",
       "anchor": "libuv / NativeIO direct / coroutine / CNet workload matrix",
       "noise": "runner-affinity dependent",
-      "threshold": "none"
+      "threshold": "none",
+      "evidence": [
+        "io.runs.csv"
+      ]
     },
     {
       "id": "cnet_owner_parallel",
@@ -40,7 +46,10 @@
       "pr_mode": "anchor-candidate",
       "anchor": "distinct-core 2-owner scaling; payloads 1024 and 65536",
       "noise": "historical qualification pending",
-      "threshold": "none"
+      "threshold": "none",
+      "evidence": [
+        "cnet-owner-parallel-*.csv"
+      ]
     },
     {
       "id": "cnet_shards_parallel",
@@ -50,7 +59,10 @@
       "pr_mode": "anchor-candidate",
       "anchor": "shared engine retention vs independent owners; payloads 1024 and 65536",
       "noise": "historical qualification pending",
-      "threshold": "none"
+      "threshold": "none",
+      "evidence": [
+        "cnet-shards-parallel-*.csv"
+      ]
     },
     {
       "id": "cnet_external_owner_parallel",
@@ -60,7 +72,10 @@
       "pr_mode": "anchor-candidate",
       "anchor": "external-progress retention vs independent owners; payloads 1024 and 65536",
       "noise": "historical qualification pending",
-      "threshold": "none"
+      "threshold": "none",
+      "evidence": [
+        "cnet-external-owner-parallel-*.csv"
+      ]
     },
     {
       "id": "cnet_central_callback",
@@ -70,7 +85,10 @@
       "pr_mode": "diagnostic",
       "anchor": "central callback compatibility tax vs owner-affine external",
       "noise": "historical qualification pending",
-      "threshold": "none"
+      "threshold": "none",
+      "evidence": [
+        "cnet-central-callback-*.csv"
+      ]
     },
     {
       "id": "cnet_tls_sg",
@@ -80,7 +98,10 @@
       "pr_mode": "affected",
       "anchor": "retained TLS SG write/cipher accounting",
       "noise": "n/a",
-      "threshold": "contract only"
+      "threshold": "contract only",
+      "evidence": [
+        "cnet-tls-sg.csv"
+      ]
     },
     {
       "id": "cnet_receive_ownership",
@@ -90,7 +111,10 @@
       "pr_mode": "diagnostic",
       "anchor": "borrowed-copy vs owned receive at 64B / 64KiB / 1MiB",
       "noise": "historical qualification pending",
-      "threshold": "none"
+      "threshold": "none",
+      "evidence": [
+        "cnet-receive-ownership.md"
+      ]
     },
     {
       "id": "cnet_sg_cross_window",
@@ -100,7 +124,10 @@
       "pr_mode": "diagnostic",
       "anchor": "1MiB segments 16/17/32 candidate; 64KiB cross-window is TCP mechanism evidence",
       "noise": "transport/Nagle sensitive",
-      "threshold": "none"
+      "threshold": "none",
+      "evidence": [
+        "sg-compare.sg-window.csv"
+      ]
     },
     {
       "id": "native_io_sharded_routing",
@@ -110,7 +137,10 @@
       "pr_mode": "affected",
       "anchor": "same-owner zero-hop and cross-owner one-hop routing",
       "noise": "n/a",
-      "threshold": "contract only"
+      "threshold": "contract only",
+      "evidence": [
+        "native-io-sharded-routing.csv"
+      ]
     },
     {
       "id": "native_io_owner_handoff",
@@ -120,7 +150,10 @@
       "pr_mode": "reduced-sweep",
       "anchor": "windows 1 / 8 / 64 for PR; full 1..64 release",
       "noise": "n/a",
-      "threshold": "contract only"
+      "threshold": "contract only",
+      "evidence": [
+        "native-io-owner-handoff-*.csv"
+      ]
     },
     {
       "id": "native_io_owner_mailbox",
@@ -130,7 +163,10 @@
       "pr_mode": "reduced-sweep",
       "anchor": "windows 1 / 16 / 64 / 256 for PR; full 1..1024 release",
       "noise": "n/a",
-      "threshold": "contract only"
+      "threshold": "contract only",
+      "evidence": [
+        "native-io-owner-mailbox-*.csv"
+      ]
     },
     {
       "id": "native_io_owner_local_parallel",
@@ -140,7 +176,10 @@
       "pr_mode": "affected",
       "anchor": "equal-work serial vs two-owner parallel checksum/accounting",
       "noise": "n/a",
-      "threshold": "contract only"
+      "threshold": "contract only",
+      "evidence": [
+        "native-io-owner-local-parallel-*.csv"
+      ]
     },
     {
       "id": "native_io_pipe_styles",
@@ -150,7 +189,10 @@
       "pr_mode": "reduced-sweep",
       "anchor": "Direct / Coroutine / Sharded routing contract",
       "noise": "n/a",
-      "threshold": "contract only"
+      "threshold": "contract only",
+      "evidence": [
+        "native-io-pipe-styles.csv"
+      ]
     },
     {
       "id": "native_io_stream_styles",
@@ -160,7 +202,10 @@
       "pr_mode": "affected",
       "anchor": "TCP STREAM completion/routing contract",
       "noise": "n/a",
-      "threshold": "contract only"
+      "threshold": "contract only",
+      "evidence": [
+        "native-io-stream-styles.csv"
+      ]
     },
     {
       "id": "native_io_udp_styles",
@@ -170,7 +215,10 @@
       "pr_mode": "reduced-sweep",
       "anchor": "UDP DATAGRAM routing contract",
       "noise": "n/a",
-      "threshold": "contract only"
+      "threshold": "contract only",
+      "evidence": [
+        "native-io-udp-styles.csv"
+      ]
     },
     {
       "id": "native_io_vsock_styles",
@@ -180,7 +228,10 @@
       "pr_mode": "reduced-sweep",
       "anchor": "AF_VSOCK routing contract where supported",
       "noise": "n/a",
-      "threshold": "contract only"
+      "threshold": "contract only",
+      "evidence": [
+        "native-io-vsock-styles.csv"
+      ]
     },
     {
       "id": "native_io_idle_observe",
@@ -190,7 +241,10 @@
       "pr_mode": "diagnostic",
       "anchor": "io_uring idle observe control cost",
       "noise": "runner sensitive",
-      "threshold": "none"
+      "threshold": "none",
+      "evidence": [
+        "native-io-idle-observe.csv"
+      ]
     },
     {
       "id": "native_io_queue_depth",
@@ -200,7 +254,10 @@
       "pr_mode": "reduced-sweep",
       "anchor": "32KiB at QD 1 / 8 / 32 / 64 for PR; full 7x4 release",
       "noise": "historical qualification pending",
-      "threshold": "none"
+      "threshold": "none",
+      "evidence": [
+        "native-io-queue-depth.csv"
+      ]
     },
     {
       "id": "coroutine_executor_batch",
@@ -210,7 +267,10 @@
       "pr_mode": "reduced-sweep",
       "anchor": "batch 2 / 16 / 128 for PR; full sweep release",
       "noise": "n/a",
-      "threshold": "contract only"
+      "threshold": "contract only",
+      "evidence": [
+        "coro-executor-batch-*.csv"
+      ]
     },
     {
       "id": "coroutine_executor_dequeue",
@@ -220,7 +280,10 @@
       "pr_mode": "reduced-sweep",
       "anchor": "batch 2 / 16 / 128 for PR; full sweep release",
       "noise": "n/a",
-      "threshold": "contract only"
+      "threshold": "contract only",
+      "evidence": [
+        "coro-executor-dequeue-batch-*.csv"
+      ]
     },
     {
       "id": "cflow_control_path",
@@ -230,7 +293,10 @@
       "pr_mode": "affected",
       "anchor": "direct -> actor -> publisher lifecycle/accounting; timing is trend evidence",
       "noise": "sub-microsecond timer quantization on some runners",
-      "threshold": "contract only"
+      "threshold": "contract only",
+      "evidence": [
+        "cflow-control-path.csv"
+      ]
     },
     {
       "id": "raw_io_samples",
@@ -240,7 +306,10 @@
       "pr_mode": "master-or-failure",
       "anchor": "full per-RTT samples",
       "noise": "n/a",
-      "threshold": "none"
+      "threshold": "none",
+      "evidence": [
+        "io.samples.csv"
+      ]
     },
     {
       "id": "syscall_traces",
@@ -250,7 +319,12 @@
       "pr_mode": "master-or-manual",
       "anchor": "strace / mechanism evidence",
       "noise": "tracing perturbs timing",
-      "threshold": "none"
+      "threshold": "none",
+      "evidence": [
+        "syscalls/*.trace*",
+        "stream-style-syscalls/*.trace*",
+        "queue-depth-syscalls/*.trace*"
+      ]
     }
   ]
 }
