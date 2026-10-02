@@ -1256,6 +1256,39 @@ int cnet_listener_vsock_local(const cnet_listener *listener, cnet_vsock_peer *ou
 int cnet_listener_wait(cnet_listener *listener, uint32_t timeout_ms, int *out_ready);
 
 /**
+ * Attaches this listening TCP owner to a caller-owned NativeIO backend for
+ * external accept progress. CNet borrows but never observes, closes or
+ * destroys the backend. The backend kind must match the listener backend and
+ * must outlive the listener.
+ *
+ * This is mutually exclusive with cnet_listener_wait() for progress ownership.
+ */
+int cnet_listener_attach_external(cnet_listener *listener,
+                                  native_io_backend *borrowed_backend);
+
+/**
+ * Ensures exactly one external stream-accept request is active and returns its
+ * generation-safe NativeIO identity. Repeated calls while that request is
+ * active return the same identity and do not submit another OS accept.
+ *
+ * SALTS_EALREADY means a terminal accepted child is already pending consumption
+ * by cnet_listener_accept*().
+ */
+int cnet_listener_submit_external_accept(cnet_listener *listener,
+                                         native_io_request *out_request);
+
+/**
+ * Routes one completion already observed by the embedding runtime. Unrelated
+ * completions return SALTS_OK with *out_consumed == false. A successful accept
+ * consumes the backend-private child escrow into CNet listener ownership; no
+ * native handle crosses this API.
+ */
+int cnet_listener_route_external_completion(
+    cnet_listener *listener,
+    const native_io_completion *completion,
+    bool *out_consumed);
+
+/**
  * Accepts at most one pending TCP peer and transfers its socket into `client`.
  * Success publishes a generation-checked handle and guarantees a later state
  * callback. No pending peer returns `SALTS_ETIMEDOUT`. Admission failure closes

@@ -864,8 +864,6 @@ static int readiness_submit_stream_accept(
   size_t bytes = 0u;
   size_t address_length = 0u;
   int descriptor_flags;
-  int accepting = 0;
-  socklen_t option_length = (socklen_t)sizeof(accepting);
   int status;
 
   if (out_request != NULL)
@@ -880,11 +878,12 @@ static int readiness_submit_stream_accept(
   if (listener->resource_kind != SALTS_IO_RESOURCE_STREAM_SOCKET ||
       listener->connected || listener->connect_active)
     return SALTS_EINVAL;
-  if (getsockopt(listener->fd, SOL_SOCKET, SO_ACCEPTCONN,
-                 &accepting, &option_length) != 0)
-    return -errno;
-  if (!accepting)
-    return SALTS_EINVAL;
+
+  /*
+   * Darwin does not provide SO_ACCEPTCONN. The immediate nonblocking accept
+   * below is the portable listener validation: no peer yields would-block;
+   * a non-listening stream socket fails the operation.
+   */
   descriptor_flags = fcntl(listener->fd, F_GETFL, 0);
   if (descriptor_flags < 0)
     return -errno;
