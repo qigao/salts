@@ -1980,21 +1980,35 @@ static int cnet_owner_fail_direct_request(cnet_owner_impl *impl, cnet_owner_requ
   return status;
 }
 
+static bool cnet_owner_completion_owned(
+    const cnet_owner_impl *impl,
+    const native_io_completion *completion) {
+  const cnet_owner_request *request;
+  size_t index;
+
+  if (impl == NULL || completion == NULL ||
+      completion->user_data == 0u ||
+      completion->user_data > (uintptr_t)impl->request_capacity)
+    return false;
+  index = (size_t)completion->user_data - 1u;
+  request = &impl->request_records[index];
+  return request->active && request->owner == impl &&
+         native_io_request_valid(request->native_request) &&
+         cnet_owner_native_request_equal(
+             request->native_request, completion->request) &&
+         cnet_owner_native_endpoint_equal(
+             request->operation.endpoint, completion->endpoint);
+}
+
 static int cnet_owner_route_completion(cnet_owner_impl *impl,
                                        const native_io_completion *completion) {
   cnet_owner_request *request;
   size_t index;
 
-  if (completion == NULL || completion->user_data == 0u ||
-      completion->user_data > (uintptr_t)impl->request_capacity)
+  if (!cnet_owner_completion_owned(impl, completion))
     return SALTS_EPROTO;
   index = (size_t)completion->user_data - 1u;
   request = &impl->request_records[index];
-  if (!request->active || request->owner != impl ||
-      !native_io_request_valid(request->native_request) ||
-      !cnet_owner_native_request_equal(request->native_request, completion->request) ||
-      !cnet_owner_native_endpoint_equal(request->operation.endpoint, completion->endpoint))
-    return SALTS_EPROTO;
 
   if ((request->role == CNET_OWNER_REQUEST_SEND ||
        request->role == CNET_OWNER_REQUEST_TLS_WRITE) &&
@@ -2580,6 +2594,46 @@ int cnet_owner_wake(cnet_owner *owner) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
   if (impl == NULL) return SALTS_EINVAL;
   return native_io_backend_wake(&impl->backend);
+}
+
+int cnet_owner_advance_external(cnet_owner *owner) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  if (impl == NULL) return SALTS_EINVAL;
+  if (!impl->backend_borrowed) return SALTS_ENOTSUP;
+  return cnet_owner_drive(owner, 0u);
+}
+
+int cnet_owner_route_external_completion(
+    cnet_owner *owner,
+    const native_io_completion *completion,
+    bool *out_consumed) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  int status;
+
+  if (out_consumed == NULL) return SALTS_EINVAL;
+  *out_consumed = false;
+  if (impl == NULL || completion == NULL) return SALTS_EINVAL;
+  if (!impl->backend_borrowed) return SALTS_ENOTSUP;
+  if (!cnet_owner_completion_owned(impl, completion))
+    return SALTS_OK;
+
+  *out_consumed = true;
+  status = cnet_owner_route_completion(impl, completion);
+  if (status != SALTS_OK) return status;
+  return cnet_owner_process_deadlines(impl);
+}
+
+int cnet_owner_external_timeout(cnet_owner *owner, uint32_t max_wait_ms,
+                                uint32_t *out_timeout_ms) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  if (out_timeout_ms == NULL) return SALTS_EINVAL;
+  *out_timeout_ms = 0u;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (!impl->backend_borrowed) return SALTS_ENOTSUP;
+  if (impl->closed) return SALTS_ESHUTDOWN;
+  *out_timeout_ms =
+      cnet_owner_observe_timeout(impl, max_wait_ms, false);
+  return SALTS_OK;
 }
 
 #if defined(CNET_INTERNAL_TESTING)
