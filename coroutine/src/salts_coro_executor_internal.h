@@ -23,6 +23,20 @@ int salts_coro_executor_try_submit_batch_to_internal(
     const salts_coro_executor_task_t *tasks,
     size_t count);
 
+enum { SALTS_CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH = 128u };
+
+/*
+ * Internal benchmark/implementation hook for Phase B.
+ *
+ * The public/default executor keeps a dequeue limit of 1. A private consumer
+ * benchmark may raise one shard's limit up to the fixed internal maximum so
+ * the worker can copy and release a contiguous FIFO range under one mutex.
+ */
+int salts_coro_executor_set_dequeue_batch_limit_internal(
+    salts_coro_executor_t *executor,
+    size_t shard,
+    size_t limit);
+
 #ifdef __cplusplus
 }
 #endif
