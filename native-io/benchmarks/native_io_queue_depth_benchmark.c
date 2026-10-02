@@ -28,6 +28,8 @@ enum {
 
 static const size_t QD_BENCH_DEPTHS[] = {1u, 2u, 4u, 8u, 16u, 32u, 64u};
 static const size_t QD_BENCH_PAYLOADS[] = {1024u, 8192u, 32768u, 65536u};
+static const size_t QD_BENCH_PR_DEPTHS[] = {1u, 8u, 32u, 64u};
+static const size_t QD_BENCH_PR_PAYLOADS[] = {32768u};
 
 typedef struct qd_peer {
   int descriptors[QD_BENCH_MAX_QD];
@@ -411,6 +413,16 @@ static FILE *qd_open_csv(void) {
 
 int main(void) {
   FILE *csv = qd_open_csv();
+  const char *profile = getenv("SALTS_BENCH_PROFILE");
+  const int pr_profile = profile != NULL && strcmp(profile, "pr") == 0;
+  const size_t *depths = pr_profile ? QD_BENCH_PR_DEPTHS : QD_BENCH_DEPTHS;
+  const size_t depth_count =
+      pr_profile ? sizeof(QD_BENCH_PR_DEPTHS) / sizeof(QD_BENCH_PR_DEPTHS[0])
+                 : sizeof(QD_BENCH_DEPTHS) / sizeof(QD_BENCH_DEPTHS[0]);
+  const size_t *payloads = pr_profile ? QD_BENCH_PR_PAYLOADS : QD_BENCH_PAYLOADS;
+  const size_t payload_count =
+      pr_profile ? sizeof(QD_BENCH_PR_PAYLOADS) / sizeof(QD_BENCH_PR_PAYLOADS[0])
+                 : sizeof(QD_BENCH_PAYLOADS) / sizeof(QD_BENCH_PAYLOADS[0]);
   size_t cells = 0u;
   int status = SALTS_OK;
 
@@ -430,10 +442,10 @@ int main(void) {
   printf("| QD | payload | ops/s | MiB/s | p50 us | p95 us | p99 us | CPU us/op | peak active | observe/op |\n");
   printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
 
-  for (size_t p = 0u; p < sizeof(QD_BENCH_PAYLOADS) / sizeof(QD_BENCH_PAYLOADS[0]); ++p) {
-    for (size_t d = 0u; d < sizeof(QD_BENCH_DEPTHS) / sizeof(QD_BENCH_DEPTHS[0]); ++d) {
-      const size_t qd = QD_BENCH_DEPTHS[d];
-      const size_t payload = QD_BENCH_PAYLOADS[p];
+  for (size_t p = 0u; p < payload_count; ++p) {
+    for (size_t d = 0u; d < depth_count; ++d) {
+      const size_t qd = depths[d];
+      const size_t payload = payloads[p];
       qd_result result = {0};
       if (!qd_trace_filter(qd, payload)) continue;
       status = qd_run_cell(qd, payload, &result);
