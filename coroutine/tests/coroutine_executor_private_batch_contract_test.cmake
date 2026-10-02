@@ -37,6 +37,20 @@ foreach(marker
                 "Coroutine public API")
 endforeach()
 
+file(GLOB_RECURSE coroutine_public_headers
+     LIST_DIRECTORIES false
+     "${PROJECT_SOURCE_DIR}/coroutine/include/*.h")
+foreach(header IN LISTS coroutine_public_headers)
+  file(READ "${header}" content)
+  foreach(marker
+      "salts_coro_executor_try_submit_batch_to_internal"
+      "salts_coro_executor_set_dequeue_batch_limit_internal"
+      "SALTS_CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH")
+    forbid_marker("${content}" "${marker}"
+                  "Coroutine installed public header ${header}")
+  endforeach()
+endforeach()
+
 # Do not allow a public spelling to appear while #668 keeps productization
 # gated on a real range consumer and paired end-to-end evidence.
 foreach(marker
@@ -59,12 +73,19 @@ file(GLOB_RECURSE production_sources
      LIST_DIRECTORIES false
      "${PROJECT_SOURCE_DIR}/native-io/src/*.c"
      "${PROJECT_SOURCE_DIR}/native-io/src/*.h"
+     "${PROJECT_SOURCE_DIR}/native-io/include/*.h"
      "${PROJECT_SOURCE_DIR}/cnet/src/*.c"
      "${PROJECT_SOURCE_DIR}/cnet/src/*.h"
+     "${PROJECT_SOURCE_DIR}/cnet/include/*.h"
      "${PROJECT_SOURCE_DIR}/cflow/src/*.c"
      "${PROJECT_SOURCE_DIR}/cflow/src/*.h"
+     "${PROJECT_SOURCE_DIR}/cflow/include/*.h"
+     "${PROJECT_SOURCE_DIR}/cflow/cnet-adapter/include/*.h")
+file(GLOB cflow_cnet_adapter_sources
+     LIST_DIRECTORIES false
      "${PROJECT_SOURCE_DIR}/cflow/cnet-adapter/*.c"
      "${PROJECT_SOURCE_DIR}/cflow/cnet-adapter/*.h")
+list(APPEND production_sources ${cflow_cnet_adapter_sources})
 
 foreach(source IN LISTS production_sources)
   file(READ "${source}" content)
