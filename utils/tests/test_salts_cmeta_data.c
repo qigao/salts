@@ -98,6 +98,23 @@ static const cmeta_type_desc owned_tstr_record_type = {
     NULL, NULL, &owned_tstr_record_identity
 };
 
+static const cmeta_field_desc owned_tstr_record_layout_fields[] = {
+    {"first", "tstr", offsetof(owned_tstr_record, first),
+     sizeof(tstr), CMETA_ALIGNOF(tstr), SALTS_TSTR_CMETA_TYPE_REF, NULL},
+    {"second", "tstr", offsetof(owned_tstr_record, second),
+     sizeof(tstr), CMETA_ALIGNOF(tstr), SALTS_TSTR_CMETA_TYPE_REF, NULL},
+    {"marker", "int", offsetof(owned_tstr_record, marker),
+     sizeof(int), CMETA_ALIGNOF(int), &cmeta_type_int, NULL}
+};
+
+static const cmeta_struct_desc owned_tstr_record_layout = {
+    "owned_tstr_record", sizeof(owned_tstr_record),
+    CMETA_ALIGNOF(owned_tstr_record),
+    owned_tstr_record_layout_fields,
+    sizeof(owned_tstr_record_layout_fields) /
+        sizeof(owned_tstr_record_layout_fields[0])
+};
+
 static const cmeta_data_field_desc owned_tstr_record_fields[] = {
     {"test.salts.owned-tstr-record.first", "first",
      offsetof(owned_tstr_record, first), SALTS_TSTR_CMETA_DATA_REF},
@@ -108,7 +125,7 @@ static const cmeta_data_field_desc owned_tstr_record_fields[] = {
 };
 
 static const cmeta_data_struct_shape owned_tstr_record_shape = {
-    .layout = NULL,
+    .layout = &owned_tstr_record_layout,
     .fields = owned_tstr_record_fields,
     .field_count = sizeof(owned_tstr_record_fields) /
                    sizeof(owned_tstr_record_fields[0])
