@@ -334,7 +334,7 @@ jobs:
               cnet_vsock_integration_test \
               cnet_benchmark_stats_test cnet_io_benchmark_config_test \
               concurrency_deadline_queue_test native_io_queue_depth_benchmark \
-              native_io_idle_observe_benchmark native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_pipe_styles_benchmark \
+              native_io_idle_observe_benchmark native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_pipe_styles_benchmark \
               native_io_stream_styles_benchmark native_io_udp_styles_benchmark native_io_vsock_styles_benchmark cnet_scaling_benchmark \
               cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
 
@@ -355,7 +355,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_sharded_test native_io_header_cpp_test native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark cnet_websocket_parser_test cnet_websocket_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_owner_profile_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_api_profile_test cnet_header_cpp_test cnet_tls_test cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test cnet_packet_endpoint_test cnet_stop_contract_test cnet_benchmark_stats_test cnet_io_benchmark_config_test concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
+          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_sharded_test native_io_header_cpp_test native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark cnet_websocket_parser_test cnet_websocket_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_owner_profile_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_api_profile_test cnet_header_cpp_test cnet_tls_test cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test cnet_packet_endpoint_test cnet_stop_contract_test cnet_benchmark_stats_test cnet_io_benchmark_config_test concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
 
       - name: Configure and build macOS Release
         if: matrix.family == 'mac'
@@ -377,7 +377,7 @@ jobs:
               cnet_packet_endpoint_test cnet_stop_contract_test \
               cnet_benchmark_stats_test \
               cnet_io_benchmark_config_test \
-              concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
+              concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
 
       - name: Run NativeIO and NativeIPC contract tests
         shell: pwsh
@@ -586,6 +586,81 @@ jobs:
             echo "two_cpu_same_core_set=$([[ -n "$same_core" ]] && echo "$first,$same_core" || echo unavailable)"
             echo "two_cpu_distinct_core_set=$([[ -n "$distinct_core" ]] && echo "$first,$distinct_core" || echo unavailable)"
           } > "$result_dir/native-io-owner-handoff-cpu-set.txt"
+      - name: Run NativeIO owner one-way mailbox CPU-set sweep
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: bash
+        env:
+          NATIVE_IO_OWNER_MAILBOX_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_owner_mailbox_benchmark
+          NATIVE_IO_OWNER_MAILBOX_BACKEND: ${{ matrix.backend }}
+        run: |
+          set -euo pipefail
+          result_dir="$GITHUB_WORKSPACE/native-io-results"
+          benchmark="$GITHUB_WORKSPACE/$NATIVE_IO_OWNER_MAILBOX_EXECUTABLE"
+          cpu_sets="$result_dir/native-io-owner-handoff-cpu-set.txt"
+          if [[ ! -x "$benchmark" ]]; then
+            echo "NativeIO owner-mailbox benchmark executable not found: $benchmark" >&2
+            exit 1
+          fi
+          if [[ ! -f "$cpu_sets" ]]; then
+            echo "Owner-handoff CPU-set evidence not found: $cpu_sets" >&2
+            exit 1
+          fi
+          source "$cpu_sets"
+
+          run_case() {
+            local label="$1"
+            local cpuset="$2"
+            [[ -z "$cpuset" || "$cpuset" == "unavailable" ]] && return 0
+            local prefix="$result_dir/native-io-owner-mailbox-$label"
+            export NATIVE_IO_OWNER_MAILBOX_CPU_SET="$label"
+            export NATIVE_IO_OWNER_MAILBOX_OUTPUT="$prefix"
+            taskset -c "$cpuset" "$benchmark" 2>&1 | tee "$prefix.md"
+            pwsh ./native-io/benchmarks/verify_owner_mailbox_benchmark.ps1 \
+              -Path "$prefix.csv" \
+              -Backend "$NATIVE_IO_OWNER_MAILBOX_BACKEND" \
+              -CpuSet "$label"
+            {
+              echo ""
+              echo "## NativeIO owner one-way mailbox: $NATIVE_IO_OWNER_MAILBOX_BACKEND / $label ($cpuset)"
+              echo ""
+              cat "$prefix.md"
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          run_case one_cpu "$one_cpu_set"
+          run_case two_cpu_same_core "$two_cpu_same_core_set"
+          run_case two_cpu_distinct_core "$two_cpu_distinct_core_set"
+
+      - name: Run NativeIO owner one-way mailbox default benchmark
+        if: matrix.family != 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_OWNER_MAILBOX_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_owner_mailbox_benchmark
+          NATIVE_IO_OWNER_MAILBOX_BACKEND: ${{ matrix.backend }}
+          NATIVE_IO_OWNER_MAILBOX_CPU_SET: default
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_OWNER_MAILBOX_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "NativeIO owner-mailbox benchmark executable not found: $benchmark"
+          }
+          $env:NATIVE_IO_OWNER_MAILBOX_OUTPUT = Join-Path $resultDir "native-io-owner-mailbox-default"
+          $output = & $benchmark 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "native-io-owner-mailbox-default.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./native-io/benchmarks/verify_owner_mailbox_benchmark.ps1 `
+            -Path "$env:NATIVE_IO_OWNER_MAILBOX_OUTPUT.csv" `
+            -Backend $env:NATIVE_IO_OWNER_MAILBOX_BACKEND `
+            -CpuSet default
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO owner one-way mailbox: $env:NATIVE_IO_OWNER_MAILBOX_BACKEND / default"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
       - name: Run NativeIO PIPE execution-style benchmark
         if: steps.scope.outputs.adapted == 'true'
         shell: pwsh
