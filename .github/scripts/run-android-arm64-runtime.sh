@@ -2,60 +2,18 @@
 set -euo pipefail
 
 : "$GITHUB_WORKSPACE"
-: "$RUNNER_TEMP"
-: "$ANDROID_HOME"
-: "$SALTS_ANDROID_NDK_REVISION"
 
-sdk_prefix="$GITHUB_WORKSPACE/stage/sdk/android-arm64-v8a"
+bundle="$GITHUB_WORKSPACE/stage/runtime-bundle"
 results="$GITHUB_WORKSPACE/android-runtime-results"
-consumer_src="$RUNNER_TEMP/salts-android-runtime-consumer"
-consumer_build="$RUNNER_TEMP/salts-android-runtime-build"
-if [[ -n "$ANDROID_NDK_HOME" ]]; then
-  ndk_root="$ANDROID_NDK_HOME"
-else
-  ndk_root="$ANDROID_HOME/ndk/$SALTS_ANDROID_NDK_REVISION"
-fi
+cross_build="$GITHUB_WORKSPACE/android-cross-build-results/cross-build.json"
+consumer_meta="$GITHUB_WORKSPACE/android-cross-build-results/package-consumer.json"
 
-test -f "$sdk_prefix/lib/cmake/Salts/SaltsConfig.cmake"
-test -f "$GITHUB_WORKSPACE/cflow/tests/android_runtime_probe.c"
-test -f "$ndk_root/build/cmake/android.toolchain.cmake"
+test -f "$bundle/salts_android_runtime_probe"
+test -f "$cross_build"
+test -f "$consumer_meta"
 
-rm -rf "$results" "$consumer_src" "$consumer_build"
-mkdir -p "$results" "$consumer_src"
-
-cat > "$consumer_src/CMakeLists.txt" <<EOF
-cmake_minimum_required(VERSION 3.25)
-project(SaltsAndroidRuntimeConsumer C)
-
-find_package(Salts CONFIG REQUIRED)
-
-add_executable(salts_android_runtime_probe
-  "$GITHUB_WORKSPACE/cflow/tests/android_runtime_probe.c")
-
-target_link_libraries(salts_android_runtime_probe PRIVATE
-  Salts::Platform
-  Salts::Concurrency
-  Salts::CMeta
-  Salts::CFlow)
-
-set_target_properties(salts_android_runtime_probe PROPERTIES
-  C_STANDARD 11
-  C_STANDARD_REQUIRED ON
-  C_EXTENSIONS OFF)
-EOF
-
-cmake -S "$consumer_src" -B "$consumer_build" -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_TOOLCHAIN_FILE="$ndk_root/build/cmake/android.toolchain.cmake" \
-  -DANDROID_ABI=arm64-v8a \
-  -DANDROID_PLATFORM=android-24 \
-  -DANDROID_STL=c++_shared \
-  -DSalts_DIR="$sdk_prefix/lib/cmake/Salts"
-
-cmake --build "$consumer_build" --parallel 2
-
-probe="$consumer_build/salts_android_runtime_probe"
-test -f "$probe"
+rm -rf "$results"
+mkdir -p "$results"
 
 abi="$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
 api="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
@@ -80,20 +38,10 @@ fi
 
 remote="/data/local/tmp/salts-android-runtime"
 adb shell "rm -rf '$remote' && mkdir -p '$remote'"
-adb push "$probe" "$remote/salts_android_runtime_probe" >/dev/null
 
-while IFS= read -r library; do
-  adb push "$library" "$remote/$(basename "$library")" >/dev/null
-done < <(find "$sdk_prefix" -type f -name '*.so' | sort)
-
-libcxx="$(
-  find "$ndk_root/toolchains/llvm/prebuilt" \
-    -type f -path '*/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so' \
-    -print -quit
-)"
-if [[ -n "$libcxx" ]]; then
-  adb push "$libcxx" "$remote/libc++_shared.so" >/dev/null
-fi
+while IFS= read -r file; do
+  adb push "$file" "$remote/$(basename "$file")" >/dev/null
+done < <(find "$bundle" -maxdepth 1 -type f | sort)
 
 adb shell "chmod 755 '$remote/salts_android_runtime_probe'"
 
@@ -142,12 +90,6 @@ assert record.get("reactive_values") == 1
 assert record.get("reactive_value") == 42
 PY
 
-clang_bin="$(
-  find "$ndk_root/toolchains/llvm/prebuilt" \
-    -type f -path '*/bin/clang' -print -quit
-)"
-clang_version="$("$clang_bin" --version | head -n 1)"
-
 export ABI="$abi"
 export API="$api"
 export MODEL="$model"
@@ -155,15 +97,23 @@ export FINGERPRINT="$fingerprint"
 export QEMU="$qemu"
 export UNAME_TEXT="$uname_text"
 export MACHINE="$machine"
-export NDK_ROOT="$ndk_root"
-export CLANG_VERSION="$clang_version"
 export RUNTIME_COMMAND="$runtime_command"
 export PROBE_JSON="$probe_json"
 
 python3 - <<'PY'
 import json, os, pathlib
+
+root = pathlib.Path(os.environ["GITHUB_WORKSPACE"])
+cross_build = json.loads(
+    (root / "android-cross-build-results" / "cross-build.json").read_text()
+)
+consumer = json.loads(
+    (root / "android-cross-build-results" / "package-consumer.json").read_text()
+)
 result = {
     "schema": "salts-android-runtime-evidence/v1",
+    "cross_build": cross_build,
+    "package_consumer": consumer,
     "runtime": {
         "api_level": int(os.environ["API"]),
         "abi": os.environ["ABI"],
@@ -172,25 +122,15 @@ result = {
         "fingerprint": os.environ["FINGERPRINT"],
         "ro_kernel_qemu": os.environ["QEMU"],
         "uname": os.environ["UNAME_TEXT"],
-    },
-    "toolchain": {
-        "ndk_revision": os.environ["SALTS_ANDROID_NDK_REVISION"],
-        "ndk_root": os.environ["NDK_ROOT"],
-        "clang": os.environ["CLANG_VERSION"],
-        "compile_platform": "android-24",
-        "compile_abi": "arm64-v8a",
-    },
-    "package": {
-        "salts_prefix": "stage/sdk/android-arm64-v8a",
-        "consumer": "find_package(Salts CONFIG REQUIRED)",
-        "source_tree_linkage": False,
+        "system_image": "system-images;android-30;aosp_atd;arm64-v8a",
+        "acceleration": "off",
     },
     "execution": {
         "command": os.environ["RUNTIME_COMMAND"],
         "probe": json.loads(os.environ["PROBE_JSON"]),
     },
 }
-path = pathlib.Path(os.environ["GITHUB_WORKSPACE"]) / "android-runtime-results" / "runtime-evidence.json"
+path = root / "android-runtime-results" / "runtime-evidence.json"
 path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
 PY
 
