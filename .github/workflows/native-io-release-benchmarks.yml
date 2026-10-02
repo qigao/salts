@@ -144,11 +144,13 @@ jobs:
           $ErrorActionPreference = "Stop"
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
             $runAdapted = $true
+            $runCnetCompare = $true
           } else {
             $base = "${{ github.event.pull_request.base.sha || github.event.before }}"
             if ([string]::IsNullOrWhiteSpace($base) -or
                 $base -match '^0+$') {
               $runAdapted = $true
+              $runCnetCompare = $true
             } else {
               $head = (git rev-parse HEAD).Trim()
               $changed = @(git diff --name-only $base $head)
@@ -184,6 +186,29 @@ jobs:
               $dependencyChanged = @($changed | Where-Object {
                   $_ -eq 'vcpkg.json' -or $_ -eq 'vcpkg-configuration.json'
                 }).Count -gt 0
+
+              # Windows PR-base CNet DSO comparison is intentionally narrower
+              # than the general adapted benchmark scope. Pure tests/docs/CI
+              # wiring should not pay for a second full CNet configure/build.
+              $runCnetCompare = @($changed | Where-Object {
+                  $_ -like 'cnet/src/*' -or
+                  $_ -like 'cnet/include/*' -or
+                  $_ -like 'native-io/src/*' -or
+                  $_ -like 'native-io/include/*' -or
+                  $_ -like 'coroutine/src/*' -or
+                  $_ -like 'coroutine/include/*' -or
+                  $_ -like 'concurrency/src/*' -or
+                  $_ -like 'concurrency/include/*' -or
+                  $_ -like 'platform/src/*' -or
+                  $_ -like 'platform/include/*' -or
+                  $_ -eq 'cnet/CMakeLists.txt' -or
+                  $_ -eq 'native-io/CMakeLists.txt' -or
+                  $_ -eq 'CMakeLists.txt' -or
+                  $_ -eq 'CMakePresets.json' -or
+                  $_ -like 'cmake/*' -or
+                  $_ -eq 'vcpkg.json' -or
+                  $_ -eq 'vcpkg-configuration.json'
+                }).Count -gt 0
               $onlyCflowContract = @($changed | Where-Object {
                   $_ -notlike 'cflow/*' -and
                   $_ -ne 'CMakeLists.txt' -and
@@ -198,6 +223,7 @@ jobs:
             }
           }
           "adapted=$($runAdapted.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "cnet_compare=$($runCnetCompare.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
       - name: Setup Linux dependencies
         if: matrix.family == 'linux'
@@ -408,7 +434,7 @@ jobs:
           ./cnet/tests/cnet_io_trace_test.ps1
 
       - name: Build PR-base CNet comparison DSO
-        if: matrix.family == 'windows' && steps.scope.outputs.adapted == 'true' && github.event_name == 'pull_request'
+        if: matrix.family == 'windows' && steps.scope.outputs.cnet_compare == 'true' && github.event_name == 'pull_request'
         shell: cmd
         env:
           CNET_COMPARE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -433,7 +459,7 @@ jobs:
           echo CNET_COMPARE_EXECUTABLE=%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\bin\cnet_owner_lifecycle_compare.exe>>"%GITHUB_ENV%"
 
       - name: Compare PR-base and candidate CNet owner
-        if: matrix.family == 'windows' && steps.scope.outputs.adapted == 'true' && github.event_name == 'pull_request'
+        if: matrix.family == 'windows' && steps.scope.outputs.cnet_compare == 'true' && github.event_name == 'pull_request'
         shell: pwsh
         env:
           CNET_IO_BENCHMARK_BACKEND: iocp
