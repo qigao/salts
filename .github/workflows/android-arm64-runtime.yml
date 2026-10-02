@@ -170,7 +170,7 @@ jobs:
   android_runtime:
     name: Android arm64-v8a API 30 runtime
     needs: android_sdk
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
@@ -189,19 +189,6 @@ jobs:
           name: salts-android-arm64-cross-build-evidence
           path: android-cross-build-results
 
-      - name: Enable ARM64 Linux KVM
-        shell: bash
-        run: |
-          set -euo pipefail
-          uname -a
-          test "$(uname -m)" = "aarch64"
-          if [[ ! -e /dev/kvm ]]; then
-            echo "/dev/kvm is unavailable on ubuntu-24.04-arm" >&2
-            exit 1
-          fi
-          sudo chmod 666 /dev/kvm
-          ls -l /dev/kvm
-
       - name: Run installed SDK on arm64 emulator
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
@@ -210,10 +197,11 @@ jobs:
           arch: arm64-v8a
           cores: 2
           disable-animations: true
-          emulator-boot-timeout: 900
+          disable-linux-hw-accel: true
+          emulator-boot-timeout: 1200
           emulator-options: >-
             -no-window
-            -accel on
+            -accel off
             -no-snapshot
             -gpu swiftshader_indirect
             -noaudio
