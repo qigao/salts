@@ -30,6 +30,14 @@ struct cnet_shards_impl {
   size_t next_shard;
   size_t max_command_payload_bytes;
   size_t max_write_payload_bytes;
+#if defined(CNET_INTERNAL_MULTI_OWNER_POC)
+  native_io_backend_kind experimental_backend_kind;
+  size_t experimental_request_capacity;
+  size_t experimental_completion_batch_capacity;
+  size_t experimental_receive_buffer_bytes;
+  size_t experimental_write_capacity;
+  bool experimental_deferred_owner_init;
+#endif
   _Atomic(cnet_shards_event_sink_fn) event_sink;
   _Atomic(void *) event_sink_context;
   bool admission_open;
@@ -142,6 +150,16 @@ static int cnet_shards_init_impl(cnet_shards *shards, const cnet_shards_config *
                                       : config->max_state_payload_bytes;
   impl->max_command_payload_bytes = config->max_command_payload_bytes;
   impl->max_write_payload_bytes = max_write_payload_bytes;
+#if defined(CNET_INTERNAL_MULTI_OWNER_POC)
+  if (allow_multi_owner) {
+    impl->experimental_backend_kind = config->backend_kind;
+    impl->experimental_request_capacity = config->request_capacity_per_shard;
+    impl->experimental_completion_batch_capacity = config->completion_batch_capacity;
+    impl->experimental_receive_buffer_bytes = config->receive_buffer_bytes;
+    impl->experimental_write_capacity = write_capacity;
+    impl->experimental_deferred_owner_init = true;
+  }
+#endif
   impl->admission_open = true;
   atomic_init(&impl->event_sink, NULL);
   atomic_init(&impl->event_sink_context, NULL);
@@ -177,7 +195,13 @@ static int cnet_shards_init_impl(cnet_shards *shards, const cnet_shards_config *
     status = cnet_session_table_init(&record->sessions, config->connection_capacity_per_shard);
     if (status == SALTS_OK) status = cnet_command_queue_init(&record->commands, &command_config);
     if (status == SALTS_OK) status = cnet_event_queue_init(&record->events, &event_config);
-    if (status == SALTS_OK) status = cnet_owner_init(&record->owner, &owner_config);
+#if defined(CNET_INTERNAL_MULTI_OWNER_POC)
+    if (status == SALTS_OK && !allow_multi_owner)
+      status = cnet_owner_init(&record->owner, &owner_config);
+#else
+    if (status == SALTS_OK)
+      status = cnet_owner_init(&record->owner, &owner_config);
+#endif
     ++initialized;
     if (status != SALTS_OK) break;
   }
@@ -203,6 +227,40 @@ int cnet_shards_init_multi_owner_experimental(
     cnet_shards *shards, const cnet_shards_config *config) {
   return cnet_shards_init_impl(shards, config, true);
 }
+
+int cnet_shards_init_owner_experimental(cnet_shards *shards, uint32_t shard) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_shard_record *record;
+  cnet_owner_config owner_config;
+  int status;
+
+  if (impl == NULL || !impl->experimental_deferred_owner_init)
+    return SALTS_EINVAL;
+  record = cnet_shards_get_record(impl, shard);
+  if (record == NULL) return SALTS_EINVAL;
+  if (record->owner.impl != NULL) return SALTS_EALREADY;
+  if (impl->stopping || impl->stopped) return SALTS_ESHUTDOWN;
+
+  owner_config = (cnet_owner_config){
+      .backend_kind = impl->experimental_backend_kind,
+      .connection_capacity = impl->connection_capacity_per_shard,
+      .request_capacity = impl->experimental_request_capacity,
+      .completion_batch_capacity = impl->experimental_completion_batch_capacity,
+      .receive_buffer_bytes = impl->experimental_receive_buffer_bytes,
+      .receive_buffer_count = impl->connection_capacity_per_shard,
+      .write_capacity = impl->experimental_write_capacity,
+      .max_write_bytes = impl->max_write_payload_bytes,
+      .sessions = &record->sessions,
+      .commands = &record->commands,
+      .events = &record->events,
+      .publish_event = cnet_shards_publish_owner_event,
+      .event_context = record};
+
+  status = cnet_owner_init(&record->owner, &owner_config);
+  if (status != SALTS_OK)
+    cnet_shards_record_error(record, status);
+  return status;
+}
 #endif
 
 static int cnet_shards_poll_owner_impl(cnet_shards *shards, uint32_t shard,
@@ -216,6 +274,7 @@ static int cnet_shards_poll_owner_impl(cnet_shards *shards, uint32_t shard,
   record = cnet_shards_get_record(impl, shard);
   if (record == NULL) return SALTS_EINVAL;
   if (impl->stopping || impl->stopped) return SALTS_ESHUTDOWN;
+  if (record->owner.impl == NULL) return SALTS_EBUSY;
 
   first_status = cnet_shards_first_error(impl);
   status = cnet_owner_drive(&record->owner, timeout_ms);
@@ -780,8 +839,10 @@ int cnet_shards_stop(cnet_shards *shards, uint32_t timeout_ms) {
   for (index = 0u; index < impl->shard_count; ++index) {
     cnet_shard_record *record = &impl->records[index];
     if (!record->owner_closed) {
-      status = cnet_owner_close(&record->owner);
-      if (status != SALTS_OK) return status;
+      if (record->owner.impl != NULL) {
+        status = cnet_owner_close(&record->owner);
+        if (status != SALTS_OK) return status;
+      }
       record->owner_closed = true;
     }
     status = cnet_event_queue_close(&record->events);
