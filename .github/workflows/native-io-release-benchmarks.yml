@@ -95,47 +95,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  benchmark:
-    name: ${{ matrix.host }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - host: epoll / Ubuntu 24.04 GCC
-            runner: ubuntu-24.04
-            family: linux
-            backend: epoll
-            artifact: linux-epoll
-            configure_preset: linux-release-user
-            build_preset: linux-release-user
-            build_dir: build/linux-gcc-release
-          - host: io_uring / Ubuntu 24.04 GCC
-            runner: ubuntu-24.04
-            family: linux
-            backend: io_uring
-            artifact: linux-io-uring
-            configure_preset: linux-release-user
-            build_preset: linux-release-user
-            build_dir: build/linux-gcc-release
-          - host: IOCP / Windows 2025 MSVC v145
-            runner: windows-2025
-            family: windows
-            backend: iocp
-            artifact: windows-iocp
-            configure_preset: win-release-user
-            build_preset: win-release-user
-            build_dir: build/Msvc-Release
-          - host: kqueue / macOS 15 AppleClang
-            runner: macos-15
-            family: mac
-            backend: kqueue
-            artifact: macos-kqueue
-            configure_preset: release-mac-ninja
-            build_preset: build-default-mac
-            build_dir: build/mac-clang-release
-
+  scope:
+    name: Benchmark scope / policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      profile: ${{ steps.scope.outputs.profile }}
+      adapted: ${{ steps.scope.outputs.adapted }}
+      evidence: ${{ steps.scope.outputs.evidence }}
+      cnet_compare: ${{ steps.scope.outputs.cnet_compare }}
+      asan: ${{ steps.scope.outputs.asan }}
+      native_owner: ${{ steps.scope.outputs.native_owner }}
+      native_style: ${{ steps.scope.outputs.native_style }}
+      cnet_owner: ${{ steps.scope.outputs.cnet_owner }}
+      cnet_io: ${{ steps.scope.outputs.cnet_io }}
+      cnet_sg: ${{ steps.scope.outputs.cnet_sg }}
+      coroutine: ${{ steps.scope.outputs.coroutine }}
+      cflow: ${{ steps.scope.outputs.cflow }}
+      native_uring: ${{ steps.scope.outputs.native_uring }}
+      forensic: ${{ steps.scope.outputs.forensic }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -162,6 +140,7 @@ jobs:
             $runCflow = $true
             $runNativeUring = $true
             $runForensic = $true
+            $runAsan = $true
           } else {
             $base = "${{ github.event.pull_request.base.sha }}"
             if ([string]::IsNullOrWhiteSpace($base) -or $base -match "^0+$") {
@@ -176,6 +155,7 @@ jobs:
               $runCflow = $true
               $runNativeUring = $true
               $runForensic = $true
+              $runAsan = $true
             } else {
               $head = (git rev-parse HEAD).Trim()
               $changed = @(git diff --name-only $base $head)
@@ -218,6 +198,9 @@ jobs:
                 }).Count -gt 0
               $platformRuntime = @($changed | Where-Object {
                   $_ -like "platform/src/*" -or $_ -like "platform/include/*"
+                }).Count -gt 0
+              $cnetTestsChanged = @($changed | Where-Object {
+                  $_ -like "cnet/tests/*"
                 }).Count -gt 0
 
               $nativeOwnerBench = @($changed | Where-Object {
@@ -280,6 +263,10 @@ jobs:
                 $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
                 $buildChanged -or $dependencyChanged
 
+              $runAsan = $cnetRuntime -or $nativeRuntime -or
+                $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
+                $cnetTestsChanged -or $buildChanged -or $dependencyChanged
+
               $runAdapted = $runNativeOwner -or $runNativeStyle -or
                 $runCnetOwner -or $runCnetIo -or $runCnetSg -or
                 $runCoroutine -or $runCflow -or $runNativeUring -or
@@ -295,6 +282,7 @@ jobs:
           "adapted=$($runAdapted.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "evidence=$($runEvidence.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "cnet_compare=$($runCnetCompare.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "asan=$($runAsan.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "native_owner=$($runNativeOwner.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "native_style=$($runNativeStyle.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "cnet_owner=$($runCnetOwner.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
@@ -306,7 +294,6 @@ jobs:
           "forensic=$($runForensic.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
       - name: Report selected benchmark scopes
-        if: matrix.family == 'linux' && matrix.backend == 'epoll'
         shell: pwsh
         run: |
           $rows = @(
@@ -319,7 +306,8 @@ jobs:
             @("cflow", "${{ steps.scope.outputs.cflow }}"),
             @("native_uring", "${{ steps.scope.outputs.native_uring }}"),
             @("forensic", "${{ steps.scope.outputs.forensic }}"),
-            @("cnet_compare", "${{ steps.scope.outputs.cnet_compare }}")
+            @("cnet_compare", "${{ steps.scope.outputs.cnet_compare }}"),
+            @("asan", "${{ steps.scope.outputs.asan }}")
           )
           Write-Host "Selected benchmark scopes:"
           foreach ($row in $rows) { Write-Host ("  {0}={1}" -f $row[0], $row[1]) }
@@ -331,13 +319,11 @@ jobs:
           foreach ($row in $rows) { Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ("| {0} | **{1}** |" -f $row[0], $row[1]) }
 
       - name: Validate benchmark decision policy
-        if: matrix.family == 'linux' && matrix.backend == 'epoll'
         shell: pwsh
         run: |
           ./cmake/ci/verify-benchmark-policy.ps1 -ProjectRoot . -WriteSummary
 
       - name: Validate PR artifact pruning contract
-        if: matrix.family == 'linux' && matrix.backend == 'epoll'
         shell: pwsh
         run: |
           $root = Join-Path $env:RUNNER_TEMP "benchmark-prune-contract"
@@ -360,15 +346,66 @@ jobs:
           }
           Remove-Item -LiteralPath $root -Recurse -Force
 
+
+  benchmark:
+    needs: scope
+    if: needs.scope.outputs.evidence == 'true'
+    name: ${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: epoll / Ubuntu 24.04 GCC
+            runner: ubuntu-24.04
+            family: linux
+            backend: epoll
+            artifact: linux-epoll
+            configure_preset: linux-release-user
+            build_preset: linux-release-user
+            build_dir: build/linux-gcc-release
+          - host: io_uring / Ubuntu 24.04 GCC
+            runner: ubuntu-24.04
+            family: linux
+            backend: io_uring
+            artifact: linux-io-uring
+            configure_preset: linux-release-user
+            build_preset: linux-release-user
+            build_dir: build/linux-gcc-release
+          - host: IOCP / Windows 2025 MSVC v145
+            runner: windows-2025
+            family: windows
+            backend: iocp
+            artifact: windows-iocp
+            configure_preset: win-release-user
+            build_preset: win-release-user
+            build_dir: build/Msvc-Release
+          - host: kqueue / macOS 15 AppleClang
+            runner: macos-15
+            family: mac
+            backend: kqueue
+            artifact: macos-kqueue
+            configure_preset: release-mac-ninja
+            build_preset: build-default-mac
+            build_dir: build/mac-clang-release
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
-        if: steps.scope.outputs.evidence == 'true'
+        if: needs.scope.outputs.evidence == 'true'
         id: shared_deps
         uses: ./.github/actions/setup-re2c-tools
 
       # PRs run only benchmark families touched by the change; master/manual
       # runs deliberately keep the exhaustive matrix for historical evidence.
       - name: Setup Linux dependencies
-        if: steps.scope.outputs.evidence == 'true' && matrix.family == 'linux'
+        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'linux'
         id: linux-env
         shell: bash
         run: |
@@ -385,7 +422,7 @@ jobs:
           echo "triplet=x64-linux" >> "$GITHUB_OUTPUT"
 
       - name: Restore Linux vcpkg binary cache
-        if: steps.scope.outputs.evidence == 'true' && matrix.family == 'linux'
+        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'linux'
         id: linux-vcpkg-cache
         uses: actions/cache@v4
         with:
@@ -395,12 +432,12 @@ jobs:
             vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
 
       - name: Report Linux vcpkg cache state
-        if: steps.scope.outputs.evidence == 'true' && matrix.family == 'linux'
+        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'linux'
         shell: bash
         run: echo "vcpkg cache hit=${{ steps.linux-vcpkg-cache.outputs.cache-hit }} contract=${{ steps.shared_deps.outputs.contract_version }} revision=${{ steps.shared_deps.outputs.cache_revision }}"
 
       - name: Setup Windows build environment
-        if: steps.scope.outputs.evidence == 'true' && matrix.family == 'windows'
+        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'windows'
         id: windows-env
         shell: pwsh
         run: |
@@ -447,7 +484,7 @@ jobs:
           "triplet=x64-windows" >> $env:GITHUB_OUTPUT
 
       - name: Restore Windows vcpkg binary cache
-        if: steps.scope.outputs.evidence == 'true' && matrix.family == 'windows'
+        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'windows'
         id: windows-vcpkg-cache
         uses: actions/cache@v4
         with:
@@ -457,12 +494,12 @@ jobs:
             vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
 
       - name: Report Windows vcpkg cache state
-        if: steps.scope.outputs.evidence == 'true' && matrix.family == 'windows'
+        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'windows'
         shell: pwsh
         run: Write-Host "vcpkg cache hit=${{ steps.windows-vcpkg-cache.outputs.cache-hit }} contract=${{ steps.shared_deps.outputs.contract_version }} revision=${{ steps.shared_deps.outputs.cache_revision }}"
 
       - name: Setup macOS dependencies
-        if: steps.scope.outputs.evidence == 'true' && matrix.family == 'mac'
+        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'mac'
         id: macos-env
         shell: bash
         run: |
@@ -477,7 +514,7 @@ jobs:
           echo "triplet=default-osx-${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
 
       - name: Restore macOS vcpkg binary cache
-        if: steps.scope.outputs.evidence == 'true' && matrix.family == 'mac'
+        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'mac'
         id: macos-vcpkg-cache
         uses: actions/cache@v4
         with:
@@ -487,12 +524,12 @@ jobs:
             vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
 
       - name: Report macOS vcpkg cache state
-        if: steps.scope.outputs.evidence == 'true' && matrix.family == 'mac'
+        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'mac'
         shell: bash
         run: echo "vcpkg cache hit=${{ steps.macos-vcpkg-cache.outputs.cache-hit }} contract=${{ steps.shared_deps.outputs.contract_version }} revision=${{ steps.shared_deps.outputs.cache_revision }}"
 
       - name: Configure and build Linux Release
-        if: steps.scope.outputs.evidence == 'true' && matrix.family == 'linux'
+        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'linux'
         shell: bash
         run: |
           set -euo pipefail
@@ -517,7 +554,7 @@ jobs:
               cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
 
       - name: Configure Windows Release
-        if: steps.scope.outputs.evidence == 'true' && matrix.family == 'windows'
+        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'windows'
         shell: cmd
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
@@ -526,7 +563,7 @@ jobs:
           cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
 
       - name: Build Windows Release
-        if: steps.scope.outputs.evidence == 'true' && matrix.family == 'windows'
+        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'windows'
         shell: cmd
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
@@ -535,7 +572,7 @@ jobs:
           cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_sharded_test native_io_header_cpp_test native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark cnet_websocket_parser_test cnet_websocket_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_owner_profile_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_api_profile_test cnet_header_cpp_test cnet_tls_test cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test cnet_packet_endpoint_test cnet_stop_contract_test cnet_benchmark_stats_test cnet_io_benchmark_config_test concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark salts_coro_executor_test salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_control_path_benchmark cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
 
       - name: Configure and build macOS Release
-        if: steps.scope.outputs.evidence == 'true' && matrix.family == 'mac'
+        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'mac'
         shell: bash
         run: |
           set -euo pipefail
@@ -557,21 +594,21 @@ jobs:
               concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark salts_coro_executor_test salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_control_path_benchmark cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
 
       - name: Run NativeIO and NativeIPC contract tests
-        if: steps.scope.outputs.evidence == 'true'
+        if: needs.scope.outputs.evidence == 'true'
         shell: pwsh
         run: |
           ctest --test-dir "${{ matrix.build_dir }}" -R '^(native_(io|ipc)_(test|header_cpp_test)|native_io_sharded_test|native_io_uring_batch_test|native_io_architecture_contract_test|native_io_accept_escrow_test|native_io_internal_accept_test|native_io_iocp_accept_test|native_io_readiness_accept_test|native_io_uring_accept_test)$' --timeout 30 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run CFlow contract tests
-        if: steps.scope.outputs.evidence == 'true'
+        if: needs.scope.outputs.evidence == 'true'
         shell: pwsh
         run: |
           ctest --test-dir "${{ matrix.build_dir }}" -R '^(cflow_seeded_reduce_test|cflow_pipeline_test|cflow_plan_managed_test|cflow_io_native_test|cflow_io_native(_sharded)?_adapter_test|cflow_io_cnet_adapter_test|cflow_header_cpp_test|cflow_cnet_header_cpp_test|cflow_cnet_dependency_contract_test|cflow_pipe_data_plane_contract_test)$' --timeout 60 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run CNet contract tests
-        if: steps.scope.outputs.evidence == 'true'
+        if: needs.scope.outputs.evidence == 'true'
         shell: pwsh
         run: |
           ctest --test-dir "${{ matrix.build_dir }}" -R '^(cnet_.*_test|concurrency_deadline_queue_test)$' --timeout 60 --output-on-failure
@@ -579,7 +616,7 @@ jobs:
           ./cnet/tests/cnet_io_trace_test.ps1
 
       - name: Build PR-base CNet comparison DSO
-        if: matrix.family == 'windows' && steps.scope.outputs.cnet_compare == 'true' && github.event_name == 'pull_request'
+        if: matrix.family == 'windows' && needs.scope.outputs.cnet_compare == 'true' && github.event_name == 'pull_request'
         shell: cmd
         env:
           CNET_COMPARE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -604,7 +641,7 @@ jobs:
           echo CNET_COMPARE_EXECUTABLE=%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\bin\cnet_owner_lifecycle_compare.exe>>"%GITHUB_ENV%"
 
       - name: Compare PR-base and candidate CNet owner
-        if: matrix.family == 'windows' && steps.scope.outputs.cnet_compare == 'true' && github.event_name == 'pull_request'
+        if: matrix.family == 'windows' && needs.scope.outputs.cnet_compare == 'true' && github.event_name == 'pull_request'
         shell: pwsh
         env:
           CNET_IO_BENCHMARK_BACKEND: iocp
@@ -639,7 +676,7 @@ jobs:
           Get-Content -LiteralPath $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run NativeIO Sharded same-owner versus cross-owner routing benchmark
-        if: steps.scope.outputs.native_owner == 'true'
+        if: needs.scope.outputs.native_owner == 'true'
         shell: pwsh
         env:
           NATIVE_IO_SHARDED_BENCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_sharded_routing_benchmark
@@ -667,7 +704,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Prepare Linux benchmark CPU topology
-        if: matrix.family == 'linux' && (steps.scope.outputs.native_owner == 'true' || steps.scope.outputs.cnet_owner == 'true' || steps.scope.outputs.coroutine == 'true')
+        if: matrix.family == 'linux' && (needs.scope.outputs.native_owner == 'true' || needs.scope.outputs.cnet_owner == 'true' || needs.scope.outputs.coroutine == 'true')
         shell: bash
         env:
           BENCHMARK_BACKEND: ${{ matrix.backend }}
@@ -726,10 +763,10 @@ jobs:
           } > "$result_dir/native-io-owner-handoff-cpu-set.txt"
 
       - name: Run NativeIO owner-to-owner handoff CPU-set sweep
-        if: matrix.family == 'linux' && steps.scope.outputs.native_owner == 'true'
+        if: matrix.family == 'linux' && needs.scope.outputs.native_owner == 'true'
         shell: bash
         env:
-          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
+          SALTS_BENCH_PROFILE: ${{ needs.scope.outputs.profile }}
           NATIVE_IO_OWNER_HANDOFF_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_owner_handoff_benchmark
           NATIVE_IO_OWNER_HANDOFF_BACKEND: ${{ matrix.backend }}
         run: |
@@ -783,10 +820,10 @@ jobs:
           fi
 
       - name: Run NativeIO owner one-way mailbox CPU-set sweep
-        if: matrix.family == 'linux' && steps.scope.outputs.native_owner == 'true'
+        if: matrix.family == 'linux' && needs.scope.outputs.native_owner == 'true'
         shell: bash
         env:
-          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
+          SALTS_BENCH_PROFILE: ${{ needs.scope.outputs.profile }}
           NATIVE_IO_OWNER_MAILBOX_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_owner_mailbox_benchmark
           NATIVE_IO_OWNER_MAILBOX_BACKEND: ${{ matrix.backend }}
         run: |
@@ -830,10 +867,10 @@ jobs:
           run_case two_cpu_distinct_core "$two_cpu_distinct_core_set"
 
       - name: Run NativeIO owner one-way mailbox default benchmark
-        if: matrix.family != 'linux' && steps.scope.outputs.native_owner == 'true'
+        if: matrix.family != 'linux' && needs.scope.outputs.native_owner == 'true'
         shell: pwsh
         env:
-          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
+          SALTS_BENCH_PROFILE: ${{ needs.scope.outputs.profile }}
           NATIVE_IO_OWNER_MAILBOX_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_owner_mailbox_benchmark
           NATIVE_IO_OWNER_MAILBOX_BACKEND: ${{ matrix.backend }}
           NATIVE_IO_OWNER_MAILBOX_CPU_SET: default
@@ -862,7 +899,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run NativeIO owner-local parallel CPU-set sweep
-        if: matrix.family == 'linux' && steps.scope.outputs.native_owner == 'true'
+        if: matrix.family == 'linux' && needs.scope.outputs.native_owner == 'true'
         shell: bash
         env:
           NATIVE_IO_OWNER_LOCAL_PARALLEL_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_owner_local_parallel_benchmark
@@ -907,7 +944,7 @@ jobs:
           run_case two_cpu_distinct_core "$two_cpu_distinct_core_set"
 
       - name: Run CNet independent-owner CPU topology sweep
-        if: matrix.family == 'linux' && steps.scope.outputs.cnet_owner == 'true'
+        if: matrix.family == 'linux' && needs.scope.outputs.cnet_owner == 'true'
         shell: bash
         env:
           CNET_OWNER_PARALLEL_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_owner_parallel_benchmark
@@ -963,7 +1000,7 @@ jobs:
           run_case two_cpu_distinct_core "$two_cpu_distinct_core_set"
 
       - name: Run CNet shared multi-owner engine CPU topology sweep
-        if: matrix.family == 'linux' && steps.scope.outputs.cnet_owner == 'true'
+        if: matrix.family == 'linux' && needs.scope.outputs.cnet_owner == 'true'
         shell: bash
         env:
           CNET_SHARDS_PARALLEL_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_shards_parallel_benchmark
@@ -1027,7 +1064,7 @@ jobs:
           run_case two_cpu_distinct_core "$two_cpu_distinct_core_set"
 
       - name: Run CNet external-progress owner-affine CPU topology sweep
-        if: matrix.family == 'linux' && steps.scope.outputs.cnet_owner == 'true'
+        if: matrix.family == 'linux' && needs.scope.outputs.cnet_owner == 'true'
         shell: bash
         env:
           CNET_EXTERNAL_OWNER_PARALLEL_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_external_owner_parallel_benchmark
@@ -1100,7 +1137,7 @@ jobs:
           run_case two_cpu_distinct_core "$two_cpu_distinct_core_set"
 
       - name: Run CNet central-callback compatibility CPU topology sweep
-        if: matrix.family == 'linux' && steps.scope.outputs.cnet_owner == 'true'
+        if: matrix.family == 'linux' && needs.scope.outputs.cnet_owner == 'true'
         shell: bash
         env:
           CNET_CENTRAL_CALLBACK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_central_callback_benchmark
@@ -1164,7 +1201,7 @@ jobs:
           run_case two_cpu_distinct_core "$two_cpu_distinct_core_set"
 
       - name: Run NativeIO owner-local parallel default benchmark
-        if: matrix.family != 'linux' && steps.scope.outputs.native_owner == 'true'
+        if: matrix.family != 'linux' && needs.scope.outputs.native_owner == 'true'
         shell: pwsh
         env:
           NATIVE_IO_OWNER_LOCAL_PARALLEL_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_owner_local_parallel_benchmark
@@ -1195,17 +1232,17 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run Coroutine Executor batch/private contracts
-        if: steps.scope.outputs.coroutine == 'true'
+        if: needs.scope.outputs.coroutine == 'true'
         shell: pwsh
         run: |
           ctest --test-dir "${{ matrix.build_dir }}" -R '^(salts_coro_executor_test|coroutine_executor_private_batch_contract_test)$' --timeout 60 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run Coroutine Executor batch admission CPU-set sweep
-        if: matrix.family == 'linux' && steps.scope.outputs.coroutine == 'true'
+        if: matrix.family == 'linux' && needs.scope.outputs.coroutine == 'true'
         shell: bash
         env:
-          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
+          SALTS_BENCH_PROFILE: ${{ needs.scope.outputs.profile }}
           CORO_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/salts_coro_executor_batch_benchmark
         run: |
           set -euo pipefail
@@ -1243,10 +1280,10 @@ jobs:
           run_case two_cpu_distinct_core "$two_cpu_distinct_core_set"
 
       - name: Run Coroutine Executor batch admission default benchmark
-        if: matrix.family != 'linux' && steps.scope.outputs.coroutine == 'true'
+        if: matrix.family != 'linux' && needs.scope.outputs.coroutine == 'true'
         shell: pwsh
         env:
-          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
+          SALTS_BENCH_PROFILE: ${{ needs.scope.outputs.profile }}
           CORO_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/salts_coro_executor_batch_benchmark
         run: |
           $ErrorActionPreference = "Stop"
@@ -1271,10 +1308,10 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run Coroutine Executor dequeue batch CPU-set sweep
-        if: matrix.family == 'linux' && steps.scope.outputs.coroutine == 'true'
+        if: matrix.family == 'linux' && needs.scope.outputs.coroutine == 'true'
         shell: bash
         env:
-          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
+          SALTS_BENCH_PROFILE: ${{ needs.scope.outputs.profile }}
           CORO_DEQUEUE_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/salts_coro_executor_dequeue_batch_benchmark
         run: |
           set -euo pipefail
@@ -1312,10 +1349,10 @@ jobs:
           run_case two_cpu_distinct_core "$two_cpu_distinct_core_set"
 
       - name: Run Coroutine Executor dequeue batch default benchmark
-        if: matrix.family != 'linux' && steps.scope.outputs.coroutine == 'true'
+        if: matrix.family != 'linux' && needs.scope.outputs.coroutine == 'true'
         shell: pwsh
         env:
-          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
+          SALTS_BENCH_PROFILE: ${{ needs.scope.outputs.profile }}
           CORO_DEQUEUE_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/salts_coro_executor_dequeue_batch_benchmark
         run: |
           $ErrorActionPreference = "Stop"
@@ -1341,7 +1378,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run CFlow Direct/Actor/Publisher control-path baseline
-        if: steps.scope.outputs.cflow == 'true'
+        if: needs.scope.outputs.cflow == 'true'
         shell: pwsh
         env:
           CFLOW_CONTROL_BASELINE_EXECUTABLE: ${{ matrix.build_dir }}/bin/cflow_control_path_benchmark
@@ -1370,7 +1407,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run NativeIO PIPE execution-style benchmark
-        if: steps.scope.outputs.native_style == 'true'
+        if: needs.scope.outputs.native_style == 'true'
         shell: pwsh
         env:
           NATIVE_IO_PIPE_STYLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_pipe_styles_benchmark
@@ -1398,7 +1435,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run NativeIO TCP STREAM execution-style benchmark
-        if: steps.scope.outputs.native_style == 'true'
+        if: needs.scope.outputs.native_style == 'true'
         shell: pwsh
         env:
           NATIVE_IO_STREAM_STYLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_stream_styles_benchmark
@@ -1426,7 +1463,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run NativeIO Direct/Coroutine bounded vector-write benchmark
-        if: steps.scope.outputs.native_style == 'true'
+        if: needs.scope.outputs.native_style == 'true'
         shell: pwsh
         env:
           NATIVE_IO_STREAM_STYLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_stream_styles_benchmark
@@ -1450,7 +1487,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Trace NativeIO STREAM execution-style mechanisms
-        if: matrix.family == 'linux' && steps.scope.outputs.forensic == 'true'
+        if: matrix.family == 'linux' && needs.scope.outputs.forensic == 'true'
         shell: bash
         env:
           NATIVE_IO_STREAM_STYLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_stream_styles_benchmark
@@ -1473,7 +1510,7 @@ jobs:
           unset NATIVE_IO_STREAM_STYLE_TRACE
 
       - name: Verify NativeIO STREAM mechanism evidence
-        if: matrix.family == 'linux' && steps.scope.outputs.forensic == 'true'
+        if: matrix.family == 'linux' && needs.scope.outputs.forensic == 'true'
         shell: pwsh
         env:
           NATIVE_IO_STREAM_STYLE_BACKEND: ${{ matrix.backend }}
@@ -1494,7 +1531,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run NativeIO UDP DATAGRAM execution-style benchmark
-        if: steps.scope.outputs.native_style == 'true'
+        if: needs.scope.outputs.native_style == 'true'
         shell: pwsh
         env:
           NATIVE_IO_UDP_STYLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_udp_styles_benchmark
@@ -1522,7 +1559,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run NativeIO AF_VSOCK execution-style benchmark
-        if: matrix.family == 'linux' && steps.scope.outputs.native_style == 'true'
+        if: matrix.family == 'linux' && needs.scope.outputs.native_style == 'true'
         shell: pwsh
         env:
           NATIVE_IO_VSOCK_STYLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_vsock_styles_benchmark
@@ -1559,7 +1596,7 @@ jobs:
           }
 
       - name: Run retained TLS contiguous versus slicev benchmark
-        if: steps.scope.outputs.cnet_sg == 'true'
+        if: needs.scope.outputs.cnet_sg == 'true'
         shell: pwsh
         env:
           CNET_TLS_SG_BENCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_tls_sg_benchmark
@@ -1587,7 +1624,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run borrowed-copy versus owned receive benchmark
-        if: steps.scope.outputs.cnet_io == 'true'
+        if: needs.scope.outputs.cnet_io == 'true'
         shell: pwsh
         env:
           IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_io_benchmark
@@ -1620,7 +1657,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run flatten versus NativeIO SG merge-gate comparison
-        if: steps.scope.outputs.cnet_sg == 'true'
+        if: needs.scope.outputs.cnet_sg == 'true'
         shell: pwsh
         env:
           IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_io_benchmark
@@ -1689,7 +1726,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run libuv versus NativeIO direct/coroutine versus CNet retained benchmark
-        if: steps.scope.outputs.cnet_io == 'true'
+        if: needs.scope.outputs.cnet_io == 'true'
         shell: pwsh
         env:
           IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_io_benchmark
@@ -1726,7 +1763,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run NativeIO direct versus CNet retained scaling benchmark
-        if: matrix.family == 'linux' && steps.scope.outputs.cnet_io == 'true'
+        if: matrix.family == 'linux' && needs.scope.outputs.cnet_io == 'true'
         shell: pwsh
         env:
           CNET_SCALING_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_scaling_benchmark
@@ -1750,7 +1787,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run NativeIO io_uring idle observe benchmark
-        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.native_uring == 'true'
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && needs.scope.outputs.native_uring == 'true'
         shell: pwsh
         env:
           NATIVE_IO_IDLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_idle_observe_benchmark
@@ -1773,10 +1810,10 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run NativeIO io_uring queue-depth benchmark
-        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.native_uring == 'true'
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && needs.scope.outputs.native_uring == 'true'
         shell: pwsh
         env:
-          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
+          SALTS_BENCH_PROFILE: ${{ needs.scope.outputs.profile }}
           NATIVE_IO_QD_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_queue_depth_benchmark
         run: |
           $ErrorActionPreference = "Stop"
@@ -1796,10 +1833,10 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Trace NativeIO io_uring queue-depth control path
-        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.forensic == 'true'
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && needs.scope.outputs.forensic == 'true'
         shell: bash
         env:
-          SALTS_BENCH_PROFILE: ${{ steps.scope.outputs.profile }}
+          SALTS_BENCH_PROFILE: ${{ needs.scope.outputs.profile }}
           NATIVE_IO_QD_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_queue_depth_benchmark
         run: |
           set -euo pipefail
@@ -1818,7 +1855,7 @@ jobs:
           unset NATIVE_IO_QD_TRACE
 
       - name: Summarize NativeIO queue-depth syscall evidence
-        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.forensic == 'true'
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && needs.scope.outputs.forensic == 'true'
         shell: pwsh
         run: |
           ./native-io/benchmarks/summarize_queue_depth_trace.ps1 -Directory native-io-results/queue-depth-syscalls |
@@ -1826,7 +1863,7 @@ jobs:
             Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Collect isolated Linux syscall evidence
-        if: matrix.family == 'linux' && steps.scope.outputs.forensic == 'true'
+        if: matrix.family == 'linux' && needs.scope.outputs.forensic == 'true'
         shell: bash
         env:
           CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
@@ -1859,7 +1896,7 @@ jobs:
             > native-io-results/syscalls/README.txt
 
       - name: Summarize measured client syscall counts
-        if: matrix.family == 'linux' && steps.scope.outputs.forensic == 'true'
+        if: matrix.family == 'linux' && needs.scope.outputs.forensic == 'true'
         shell: pwsh
         run: |
           ./cnet/benchmarks/summarize_io_trace.ps1 -Directory native-io-results/syscalls |
@@ -1867,13 +1904,13 @@ jobs:
             Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Prune successful PR forensic artifacts
-        if: success() && github.event_name == 'pull_request' && steps.scope.outputs.forensic != 'true'
+        if: success() && github.event_name == 'pull_request' && needs.scope.outputs.forensic != 'true'
         shell: pwsh
         run: |
           ./cmake/ci/prune-benchmark-artifacts.ps1 -EvidenceDir (Join-Path $env:GITHUB_WORKSPACE "native-io-results")
 
       - name: Render benchmark verdicts
-        if: always() && steps.scope.outputs.evidence == 'true'
+        if: always() && needs.scope.outputs.evidence == 'true'
         shell: pwsh
         env:
           BENCHMARK_JOB_STATUS: ${{ job.status }}
@@ -1886,7 +1923,7 @@ jobs:
             -WriteSummary
 
       - name: Upload I/O benchmark evidence
-        if: always() && steps.scope.outputs.evidence == 'true'
+        if: always() && needs.scope.outputs.evidence == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: io-benchmark-${{ matrix.artifact }}
@@ -1895,6 +1932,8 @@ jobs:
           retention-days: 30
 
   cnet-owned-receive-asan:
+    needs: scope
+    if: needs.scope.outputs.asan == 'true'
     name: CNet owned receive ASan / Ubuntu 24.04 GCC
     runs-on: ubuntu-24.04
     timeout-minutes: 20
