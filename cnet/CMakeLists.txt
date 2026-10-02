@@ -65,6 +65,7 @@ if(BUILD_TESTS OR BUILD_BENCHMARKS)
   # Diagnostics use a private static copy so profiling and deterministic test
   # faults add neither exported symbols nor hot-path branches to installed CNet.
   add_library(cnet_profile STATIC ${CNET_SOURCE_FILES})
+  target_sources(cnet_profile PRIVATE src/cnet_owner_handoff.c)
   cnet_configure_target(cnet_profile)
   target_compile_definitions(
     cnet_profile
