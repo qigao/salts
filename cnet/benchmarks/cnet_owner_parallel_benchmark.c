@@ -65,21 +65,32 @@ typedef struct owner_parallel_connection {
   uint64_t started_ns;
   uint64_t *latency_out;
   bool connected;
+  bool terminal;
   bool send_done;
   bool receive_done;
 } owner_parallel_connection;
 
 struct owner_parallel_lane {
   cnet_client client;
+#if defined(CNET_OWNER_PARALLEL_EXTERNAL_PROGRESS)
+  native_io_backend external_backend;
+#endif
   owner_parallel_connection connection;
   mem_buffer_t *retained_buffer;
   unsigned char *payload;
   size_t payload_size;
   size_t poll_calls;
+  size_t external_advance_calls;
+  size_t external_observe_calls;
+  size_t external_routed_completions;
+  size_t external_unrelated_completions;
   size_t measured_sends;
   size_t measured_receives;
   int status;
   bool measuring;
+#if defined(CNET_OWNER_PARALLEL_EXTERNAL_PROGRESS)
+  bool external_backend_initialized;
+#endif
 };
 
 typedef struct owner_parallel_gate {
@@ -123,6 +134,10 @@ typedef struct owner_parallel_sample {
   double mib_per_second;
   double owner_cpu_us_per_op;
   size_t poll_calls;
+  size_t external_advance_calls;
+  size_t external_observe_calls;
+  size_t external_routed_completions;
+  size_t external_unrelated_completions;
   size_t send_terminals;
   size_t receive_terminals;
 } owner_parallel_sample;
@@ -275,7 +290,10 @@ static void owner_parallel_state(
 
   if (state == CNET_CONNECTION_CONNECTED) {
     entry->connected = true;
+  } else if (state == CNET_CONNECTION_CLOSED) {
+    entry->terminal = true;
   } else if (state == CNET_CONNECTION_FAILED) {
+    entry->terminal = true;
     entry->lane->status =
         error != NULL ? error->status : SALTS_EIO;
   }
@@ -329,10 +347,57 @@ static void owner_parallel_sent(
 static int owner_parallel_lane_poll(
     owner_parallel_lane *lane, uint32_t timeout_ms) {
   size_t events = 0u;
+#if defined(CNET_OWNER_PARALLEL_EXTERNAL_PROGRESS)
+  native_io_completion completions[OWNER_PARALLEL_REQUEST_CAPACITY];
+  size_t completion_count = 0u;
+  uint32_t wait_ms = timeout_ms;
+  int status;
+
+  status = cnet_client_advance_external(&lane->client, &events);
+  if (lane->measuring) {
+    ++lane->poll_calls;
+    ++lane->external_advance_calls;
+  }
+  if (status != SALTS_OK) return status;
+
+  status = cnet_client_external_timeout(
+      &lane->client, timeout_ms, &wait_ms);
+  if (status != SALTS_OK) return status;
+
+  status = native_io_backend_observe(
+      &lane->external_backend, completions,
+      OWNER_PARALLEL_REQUEST_CAPACITY, wait_ms,
+      &completion_count);
+  if (lane->measuring) ++lane->external_observe_calls;
+  if (status == SALTS_ETIMEDOUT) {
+    status = cnet_client_advance_external(&lane->client, &events);
+    if (lane->measuring) ++lane->external_advance_calls;
+    return status;
+  }
+  if (status != SALTS_OK) return status;
+
+  for (size_t index = 0u; index < completion_count; ++index) {
+    bool consumed = false;
+    size_t routed_events = 0u;
+    status = cnet_client_route_external_completion(
+        &lane->client, &completions[index],
+        &consumed, &routed_events);
+    if (status != SALTS_OK) return status;
+    if (!consumed) {
+      if (lane->measuring)
+        ++lane->external_unrelated_completions;
+      return SALTS_EPROTO;
+    }
+    if (lane->measuring)
+      ++lane->external_routed_completions;
+  }
+  return SALTS_OK;
+#else
   const int status =
       cnet_client_poll(&lane->client, timeout_ms, &events);
   if (lane->measuring) ++lane->poll_calls;
   return status;
+#endif
 }
 
 static int owner_parallel_lane_wait_connected(
@@ -388,7 +453,23 @@ static int owner_parallel_lane_init(
       mem_wrap_external(lane->payload, payload_size, NULL, NULL);
   if (lane->retained_buffer == NULL) return SALTS_ENOMEM;
 
+#if defined(CNET_OWNER_PARALLEL_EXTERNAL_PROGRESS)
+  {
+    const native_io_backend_config external_config = {
+        backend_kind,
+        config.connection_capacity * 2u,
+        config.request_capacity,
+        config.completion_batch_capacity};
+    status = native_io_backend_init(
+        &lane->external_backend, &external_config);
+    if (status != SALTS_OK) return status;
+    lane->external_backend_initialized = true;
+    status = cnet_client_init_external(
+        &lane->client, &config, &lane->external_backend);
+  }
+#else
   status = cnet_client_init(&lane->client, &config);
+#endif
   if (status != SALTS_OK) return status;
 
   socket_options.nodelay = 1;
@@ -466,6 +547,10 @@ static int owner_parallel_lane_measure(
     uint64_t latencies[OWNER_PARALLEL_SAMPLES]) {
   lane->measuring = true;
   lane->poll_calls = 0u;
+  lane->external_advance_calls = 0u;
+  lane->external_observe_calls = 0u;
+  lane->external_routed_completions = 0u;
+  lane->external_unrelated_completions = 0u;
   lane->measured_sends = 0u;
   lane->measured_receives = 0u;
 
@@ -490,9 +575,41 @@ static int owner_parallel_lane_destroy(owner_parallel_lane *lane) {
   int status = SALTS_OK;
 
   if (lane->client.impl != NULL) {
-    const int stop_status =
-        cnet_client_stop(&lane->client, OWNER_PARALLEL_TIMEOUT_MS);
-    if (stop_status != SALTS_OK) status = stop_status;
+#if defined(CNET_OWNER_PARALLEL_EXTERNAL_PROGRESS)
+    if (lane->connection.handle.slot != 0u &&
+        lane->connection.handle.generation != 0u &&
+        !lane->connection.terminal) {
+      int close_status =
+          cnet_close(&lane->client, lane->connection.handle);
+      const uint64_t deadline =
+          salts_monotonic_ms() + OWNER_PARALLEL_TIMEOUT_MS;
+      if (close_status != SALTS_OK &&
+          close_status != SALTS_EALREADY)
+        status = close_status;
+      while (status == SALTS_OK &&
+             !lane->connection.terminal &&
+             salts_monotonic_ms() < deadline) {
+        close_status = owner_parallel_lane_poll(lane, 10u);
+        if (close_status != SALTS_OK)
+          status = close_status;
+      }
+      if (status == SALTS_OK && !lane->connection.terminal)
+        status = SALTS_ETIMEDOUT;
+    }
+    if (status == SALTS_OK) {
+      const int stop_status =
+          cnet_client_stop_external(&lane->client);
+      if (stop_status != SALTS_OK &&
+          stop_status != SALTS_EALREADY)
+        status = stop_status;
+    }
+#else
+    {
+      const int stop_status =
+          cnet_client_stop(&lane->client, OWNER_PARALLEL_TIMEOUT_MS);
+      if (stop_status != SALTS_OK) status = stop_status;
+    }
+#endif
     {
       const int destroy_status =
           cnet_client_destroy(&lane->client);
@@ -501,6 +618,25 @@ static int owner_parallel_lane_destroy(owner_parallel_lane *lane) {
         status = destroy_status;
     }
   }
+
+#if defined(CNET_OWNER_PARALLEL_EXTERNAL_PROGRESS)
+  if (lane->external_backend_initialized) {
+    const int close_status =
+        native_io_backend_close(&lane->external_backend);
+    if (status == SALTS_OK &&
+        close_status != SALTS_OK &&
+        close_status != SALTS_EALREADY)
+      status = close_status;
+    {
+      const int destroy_status =
+          native_io_backend_destroy(&lane->external_backend);
+      if (status == SALTS_OK &&
+          destroy_status != SALTS_OK)
+        status = destroy_status;
+    }
+    lane->external_backend_initialized = false;
+  }
+#endif
 
   if (lane->retained_buffer != NULL) {
     if (status == SALTS_OK &&
@@ -692,6 +828,10 @@ static int owner_parallel_run_mode(
   uint64_t owner_cpu_ns = 0u;
   size_t latency_count = 0u;
   size_t poll_calls = 0u;
+  size_t external_advance_calls = 0u;
+  size_t external_observe_calls = 0u;
+  size_t external_routed_completions = 0u;
+  size_t external_unrelated_completions = 0u;
   size_t send_terminals = 0u;
   size_t receive_terminals = 0u;
   int status = SALTS_OK;
@@ -791,6 +931,14 @@ join_threads:
            sample < OWNER_PARALLEL_SAMPLES; ++sample)
         latencies[latency_count++] = args[index].latencies[lane][sample];
       poll_calls += args[index].lanes[lane].poll_calls;
+      external_advance_calls +=
+          args[index].lanes[lane].external_advance_calls;
+      external_observe_calls +=
+          args[index].lanes[lane].external_observe_calls;
+      external_routed_completions +=
+          args[index].lanes[lane].external_routed_completions;
+      external_unrelated_completions +=
+          args[index].lanes[lane].external_unrelated_completions;
       send_terminals += args[index].lanes[lane].measured_sends;
       receive_terminals += args[index].lanes[lane].measured_receives;
     }
@@ -832,6 +980,10 @@ join_threads:
   out->owner_cpu_us_per_op =
       (double)owner_cpu_ns / 1000.0 / (double)latency_count;
   out->poll_calls = poll_calls;
+  out->external_advance_calls = external_advance_calls;
+  out->external_observe_calls = external_observe_calls;
+  out->external_routed_completions = external_routed_completions;
+  out->external_unrelated_completions = external_unrelated_completions;
   out->send_terminals = send_terminals;
   out->receive_terminals = receive_terminals;
 
@@ -893,7 +1045,7 @@ static int owner_parallel_write_csv(
              csv,
              "%s,%s,%s,%zu,%zu,%zu,%d,%d,%" PRIu64 ",%" PRIu64
              ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
-             ",%.6f,%.6f,%.6f,%zu,%zu,%zu\n",
+             ",%.6f,%.6f,%.6f,%zu,%zu,%zu,%zu,%zu,%zu,%zu\n",
              sample->backend, sample->topology, sample->mode,
              sample->payload_size, sample->repeat,
              sample->logical_operations, sample->cpu_a, sample->cpu_b,
@@ -903,6 +1055,10 @@ static int owner_parallel_write_csv(
              sample->mib_per_second,
              sample->owner_cpu_us_per_op,
              sample->poll_calls,
+             sample->external_advance_calls,
+             sample->external_observe_calls,
+             sample->external_routed_completions,
+             sample->external_unrelated_completions,
              sample->send_terminals,
              sample->receive_terminals) < 0
              ? SALTS_EIO
@@ -984,10 +1140,16 @@ int main(void) {
         "backend,topology,mode,payload_bytes,repeat,logical_operations,"
         "cpu_a,cpu_b,wall_ns,owner_cpu_ns,p50_ns,p95_ns,p99_ns,"
         "operations_per_second,mib_per_second,owner_cpu_us_per_op,"
-        "poll_calls,send_terminals,receive_terminals\n");
+        "poll_calls,external_advance_calls,external_observe_calls,"
+        "external_routed_completions,external_unrelated_completions,"
+        "send_terminals,receive_terminals\n");
   }
 
+#if defined(CNET_OWNER_PARALLEL_EXTERNAL_PROGRESS)
+  printf("# CNet external-progress owner-affine retained TCP scaling control\n\n");
+#else
   printf("# CNet independent-owner retained TCP scaling control\n\n");
+#endif
   printf("Backend: %s\n\n", backend.name);
   printf("Topology: %s; owner CPU A=%d; owner CPU B=%d.\n\n",
          topology, cpu_a, cpu_b);
@@ -996,7 +1158,13 @@ int main(void) {
          "receive demand, and %u measured logical round trips per lane. "
          "Serial mode drives both clients on one pinned owner thread; parallel "
          "mode drives one client per explicitly pinned owner thread. Echo-peer "
-         "threads are not affinity-pinned.\n\n",
+         "threads are not affinity-pinned. "
+#if defined(CNET_OWNER_PARALLEL_EXTERNAL_PROGRESS)
+         "Each client borrows an owner-local NativeIO backend and progress is "
+         "advance_external -> observe -> route on that same pinned owner.\n\n",
+#else
+         "Each client uses caller-driven cnet_client_poll().\n\n",
+#endif
          (unsigned)OWNER_PARALLEL_SAMPLES);
   printf("| payload | mode | ops/s median | MiB/s median | p50 us median | "
          "p99 us median | owner CPU us/op median | poll calls median |\n");
