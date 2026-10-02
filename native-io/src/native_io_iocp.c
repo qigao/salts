@@ -123,6 +123,9 @@ static int iocp_native_error(DWORD error) {
   return -(int)error;
 }
 
+static salts_iocp_endpoint_record *iocp_endpoint(
+    salts_iocp_impl *impl, native_io_endpoint endpoint);
+
 static salts_iocp_accept_result *iocp_accept_result_from_token(
     salts_iocp_impl *impl, uintptr_t token) {
   const uintptr_t base = (uintptr_t)impl->accept_results;
