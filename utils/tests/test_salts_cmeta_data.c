@@ -82,9 +82,118 @@ static const cmeta_data_desc vstr_string = {
     .buffer_ops = &salts_vstr_cmeta_buffer_ops
 };
 
+
+typedef struct owned_tstr_record {
+  tstr first;
+  tstr second;
+  int marker;
+} owned_tstr_record;
+
+static const cmeta_type_identity owned_tstr_record_identity =
+    CMETA_TYPE_ID_ATOM_INIT("test.salts.owned-tstr-record");
+
+static const cmeta_type_desc owned_tstr_record_type = {
+    "owned_tstr_record", sizeof(owned_tstr_record),
+    CMETA_ALIGNOF(owned_tstr_record), CMETA_T_OBJECT,
+    NULL, NULL, &owned_tstr_record_identity
+};
+
+static const cmeta_field_desc owned_tstr_record_layout_fields[] = {
+    {"first", "tstr", offsetof(owned_tstr_record, first),
+     sizeof(tstr), CMETA_ALIGNOF(tstr), SALTS_TSTR_CMETA_TYPE_REF, NULL},
+    {"second", "tstr", offsetof(owned_tstr_record, second),
+     sizeof(tstr), CMETA_ALIGNOF(tstr), SALTS_TSTR_CMETA_TYPE_REF, NULL},
+    {"marker", "int", offsetof(owned_tstr_record, marker),
+     sizeof(int), CMETA_ALIGNOF(int), &cmeta_type_int, NULL}
+};
+
+static const cmeta_struct_desc owned_tstr_record_layout = {
+    "owned_tstr_record", sizeof(owned_tstr_record),
+    CMETA_ALIGNOF(owned_tstr_record),
+    owned_tstr_record_layout_fields,
+    sizeof(owned_tstr_record_layout_fields) /
+        sizeof(owned_tstr_record_layout_fields[0])
+};
+
+static const cmeta_data_field_desc owned_tstr_record_fields[] = {
+    {"test.salts.owned-tstr-record.first", "first",
+     offsetof(owned_tstr_record, first), SALTS_TSTR_CMETA_DATA_REF},
+    {"test.salts.owned-tstr-record.second", "second",
+     offsetof(owned_tstr_record, second), SALTS_TSTR_CMETA_DATA_REF},
+    {"test.salts.owned-tstr-record.marker", "marker",
+     offsetof(owned_tstr_record, marker), &cmeta_data_int}
+};
+
+static const cmeta_data_struct_shape owned_tstr_record_shape = {
+    .layout = &owned_tstr_record_layout,
+    .fields = owned_tstr_record_fields,
+    .field_count = sizeof(owned_tstr_record_fields) /
+                   sizeof(owned_tstr_record_fields[0])
+};
+
+static const cmeta_data_desc owned_tstr_record_data = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.salts.owned-tstr-record.data",
+    .display_name = "owned tstr record",
+    .kind = CMETA_DATA_STRUCT,
+    .storage_type = &owned_tstr_record_type,
+    .shape = &owned_tstr_record_shape
+};
+
 spec("Salts CMeta buffer adapters") {
   before_each() {
     bind_tstr_bytes();
+  }
+
+  it("composes owned tstr lifetime through struct data traits") {
+    static const unsigned char first_text[] = "invoke-250";
+    static const unsigned char second_text[] = "send-577";
+    owned_tstr_record source = {0};
+    owned_tstr_record copied = {0};
+    owned_tstr_record moved = {0};
+
+    check_true(cmeta_data_value_traits_supported(&owned_tstr_record_data));
+    check_equal(cmeta_data_value_init_zero(&owned_tstr_record_data, &source),
+                CMETA_OK);
+    check_equal(cmeta_data_buffer_assign(
+                    SALTS_TSTR_CMETA_DATA_REF, &source.first,
+                    first_text, sizeof(first_text) - 1u,
+                    sizeof(first_text) - 1u),
+                CMETA_OK);
+    check_equal(cmeta_data_buffer_assign(
+                    SALTS_TSTR_CMETA_DATA_REF, &source.second,
+                    second_text, sizeof(second_text) - 1u,
+                    sizeof(second_text) - 1u),
+                CMETA_OK);
+    source.marker = 577;
+
+    check_true(cmeta_data_trait_copy_construct(
+        &owned_tstr_record_data, &copied, &source));
+    check_not_null(copied.first);
+    check_not_null(copied.second);
+    check_true(copied.first != source.first);
+    check_true(copied.second != source.second);
+    check_equal(copied.marker, 577);
+
+    cmeta_data_trait_move_construct(
+        &owned_tstr_record_data, &moved, &copied);
+    check_null(copied.first);
+    check_null(copied.second);
+    check_equal(copied.marker, 0);
+    check_not_null(moved.first);
+    check_not_null(moved.second);
+    check_equal(moved.marker, 577);
+
+    cmeta_data_trait_destroy(&owned_tstr_record_data, &moved);
+    check_null(moved.first);
+    check_null(moved.second);
+    check_equal(moved.marker, 0);
+
+    cmeta_data_trait_destroy(&owned_tstr_record_data, &source);
+    check_null(source.first);
+    check_null(source.second);
+    check_equal(source.marker, 0);
   }
 
   it("publishes data-backed COPY MOVE DESTROY traits for tstr") {
