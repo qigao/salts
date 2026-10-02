@@ -13,6 +13,7 @@ on:
       - "cmake/ci/benchmark-policy.json"
       - "cmake/ci/verify-benchmark-policy.ps1"
       - "cmake/ci/render-benchmark-verdicts.ps1"
+      - "cmake/ci/prune-benchmark-artifacts.ps1"
       - "cflow/include/cflow/io_native_sharded_adapter.h"
       - "cflow/src/io_native_sharded_adapter.c"
       - "cflow/include/cflow/io_actor.h"
@@ -54,6 +55,7 @@ on:
       - "cmake/ci/benchmark-policy.json"
       - "cmake/ci/verify-benchmark-policy.ps1"
       - "cmake/ci/render-benchmark-verdicts.ps1"
+      - "cmake/ci/prune-benchmark-artifacts.ps1"
       - "cflow/include/cflow/io_native_sharded_adapter.h"
       - "cflow/src/io_native_sharded_adapter.c"
       - "cflow/include/cflow/io_actor.h"
@@ -186,7 +188,8 @@ jobs:
               $policyChanged = @($changed | Where-Object {
                   $_ -like "cmake/ci/benchmark-policy.json" -or
                   $_ -like "cmake/ci/*benchmark*policy*.ps1" -or
-                  $_ -like "cmake/ci/render-benchmark-verdicts.ps1"
+                  $_ -like "cmake/ci/render-benchmark-verdicts.ps1" -or
+                  $_ -like "cmake/ci/prune-benchmark-artifacts.ps1"
                 }).Count -gt 0
               $buildChanged = @($changed | Where-Object {
                   (($_ -like "cmake/*.cmake" -or $_ -like "cmake/**/*.cmake") -and
@@ -332,6 +335,30 @@ jobs:
         shell: pwsh
         run: |
           ./cmake/ci/verify-benchmark-policy.ps1 -ProjectRoot . -WriteSummary
+
+      - name: Validate PR artifact pruning contract
+        if: matrix.family == 'linux' && matrix.backend == 'epoll'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "benchmark-prune-contract"
+          Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          Set-Content -LiteralPath (Join-Path $root "io.samples.csv") -Value "raw"
+          Set-Content -LiteralPath (Join-Path $root "io.runs.csv") -Value "summary"
+          Set-Content -LiteralPath (Join-Path $root "benchmark-verdicts.csv") -Value "verdict"
+          foreach ($name in @("syscalls","stream-style-syscalls","queue-depth-syscalls")) {
+            $dir = Join-Path $root $name
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            Set-Content -LiteralPath (Join-Path $dir "evidence.trace") -Value "trace"
+          }
+          ./cmake/ci/prune-benchmark-artifacts.ps1 -EvidenceDir $root
+          foreach ($removed in @("io.samples.csv","syscalls","stream-style-syscalls","queue-depth-syscalls")) {
+            if (Test-Path -LiteralPath (Join-Path $root $removed)) { throw "forensic artifact was not pruned: $removed" }
+          }
+          foreach ($kept in @("io.runs.csv","benchmark-verdicts.csv")) {
+            if (-not (Test-Path -LiteralPath (Join-Path $root $kept) -PathType Leaf)) { throw "summary artifact was pruned: $kept" }
+          }
+          Remove-Item -LiteralPath $root -Recurse -Force
 
       - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
         if: steps.scope.outputs.evidence == 'true'
@@ -1838,6 +1865,12 @@ jobs:
           ./cnet/benchmarks/summarize_io_trace.ps1 -Directory native-io-results/syscalls |
             Tee-Object -FilePath native-io-results/syscalls/summary.txt |
             Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Prune successful PR forensic artifacts
+        if: success() && github.event_name == 'pull_request' && steps.scope.outputs.forensic != 'true'
+        shell: pwsh
+        run: |
+          ./cmake/ci/prune-benchmark-artifacts.ps1 -EvidenceDir (Join-Path $env:GITHUB_WORKSPACE "native-io-results")
 
       - name: Render benchmark verdicts
         if: always() && steps.scope.outputs.evidence == 'true'
