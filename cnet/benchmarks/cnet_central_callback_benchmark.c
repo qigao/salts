@@ -80,12 +80,17 @@ typedef struct central_event_entry {
 } central_event_entry;
 
 typedef struct central_event_mailbox {
-  disruptor_t *ring;
+  /*
+   * One bounded producer ring per fixed CNet owner. The central callback
+   * thread is the sole consumer across all rings.
+   */
+  disruptor_t *rings[CENTRAL_LANES];
   salts_mutex_t mutex;
   salts_cond_t available;
   atomic_size_t pending;
   atomic_uint_fast64_t published;
   atomic_uint_fast64_t rejected;
+  atomic_uint next_take_ring;
 } central_event_mailbox;
 
 typedef struct central_peer {
@@ -386,8 +391,6 @@ static int central_event_mailbox_init(central_event_mailbox *mailbox) {
 
   if (mailbox == NULL) return SALTS_EINVAL;
   memset(mailbox, 0, sizeof(*mailbox));
-  mailbox->ring = disruptor_create(&config);
-  if (mailbox->ring == NULL) return SALTS_ENOMEM;
   salts_mutex_init(&mailbox->mutex);
   salts_cond_init(&mailbox->available);
   if (mailbox->mutex == NULL || mailbox->available == NULL) {
@@ -395,13 +398,26 @@ static int central_event_mailbox_init(central_event_mailbox *mailbox) {
       salts_cond_destroy(&mailbox->available);
     if (mailbox->mutex != NULL)
       salts_mutex_destroy(&mailbox->mutex);
-    disruptor_destroy(mailbox->ring);
-    mailbox->ring = NULL;
+    memset(mailbox, 0, sizeof(*mailbox));
     return SALTS_ENOMEM;
   }
+
+  for (size_t shard = 0u; shard < CENTRAL_LANES; ++shard) {
+    mailbox->rings[shard] = disruptor_create(&config);
+    if (mailbox->rings[shard] == NULL) {
+      for (size_t initialized = 0u; initialized < shard; ++initialized)
+        disruptor_destroy(mailbox->rings[initialized]);
+      salts_cond_destroy(&mailbox->available);
+      salts_mutex_destroy(&mailbox->mutex);
+      memset(mailbox, 0, sizeof(*mailbox));
+      return SALTS_ENOMEM;
+    }
+  }
+
   atomic_init(&mailbox->pending, 0u);
   atomic_init(&mailbox->published, 0u);
   atomic_init(&mailbox->rejected, 0u);
+  atomic_init(&mailbox->next_take_ring, 0u);
   return SALTS_OK;
 }
 
@@ -412,8 +428,10 @@ static void central_event_mailbox_destroy(
     salts_cond_destroy(&mailbox->available);
   if (mailbox->mutex != NULL)
     salts_mutex_destroy(&mailbox->mutex);
-  if (mailbox->ring != NULL)
-    disruptor_destroy(mailbox->ring);
+  for (size_t shard = 0u; shard < CENTRAL_LANES; ++shard) {
+    if (mailbox->rings[shard] != NULL)
+      disruptor_destroy(mailbox->rings[shard]);
+  }
   memset(mailbox, 0, sizeof(*mailbox));
 }
 
@@ -424,9 +442,14 @@ static int central_event_sink(
   disruptor_cursor_t cursor = {0};
   central_event_entry *entry;
   mem_buffer_t *retained = NULL;
+  disruptor_t *ring;
 
-  if (mailbox == NULL || mailbox->ring == NULL || event == NULL)
+  if (mailbox == NULL || shard >= CENTRAL_LANES ||
+      event == NULL)
     return SALTS_EINVAL;
+  ring = mailbox->rings[shard];
+  if (ring == NULL) return SALTS_EINVAL;
+
   if (event->size != 0u) {
     if (event->kind != CNET_EVENT_RECEIVE ||
         event->backing == NULL)
@@ -435,7 +458,12 @@ static int central_event_sink(
     if (retained == NULL) return SALTS_ENOMEM;
   }
 
-  if (!disruptor_publisher_try_claim(mailbox->ring, &cursor)) {
+  /*
+   * The fixed owner is the sole producer of this shard-local ring. A failed
+   * claim therefore represents real bounded-capacity pressure, not a writer
+   * CAS collision between two owners.
+   */
+  if (!disruptor_publisher_try_claim(ring, &cursor)) {
     if (retained != NULL) mem_buffer_release(retained);
     atomic_fetch_add_explicit(
         &mailbox->rejected, 1u, memory_order_relaxed);
@@ -443,7 +471,7 @@ static int central_event_sink(
   }
 
   entry = (central_event_entry *)disruptor_acquire_entry(
-      mailbox->ring, &cursor);
+      ring, &cursor);
   *entry = (central_event_entry){
       shard,
       event->kind,
@@ -455,14 +483,9 @@ static int central_event_sink(
       event->argument,
       retained};
 
-  /*
-   * Reserve the pending count before publishing. The consumer may observe the
-   * reservation before the ring cursor becomes visible and retry briefly, but
-   * it can never claim a published entry and decrement pending from zero.
-   */
   atomic_fetch_add_explicit(
       &mailbox->pending, 1u, memory_order_release);
-  (void)disruptor_publisher_publish(mailbox->ring, &cursor);
+  (void)disruptor_publisher_publish(ring, &cursor);
   atomic_fetch_add_explicit(
       &mailbox->published, 1u, memory_order_relaxed);
 
@@ -476,17 +499,32 @@ static int central_event_take_wait(
     central_event_mailbox *mailbox,
     central_event_entry *out_event,
     uint64_t deadline_ms) {
+  if (mailbox == NULL || out_event == NULL)
+    return SALTS_EINVAL;
+
   for (;;) {
-    disruptor_cursor_t cursor = {0};
-    if (disruptor_worker_try_claim(mailbox->ring, &cursor)) {
-      const central_event_entry *entry =
-          (const central_event_entry *)disruptor_show_entry(
-              mailbox->ring, &cursor);
-      *out_event = *entry;
-      disruptor_worker_release_entry(mailbox->ring, &cursor);
-      atomic_fetch_sub_explicit(
-          &mailbox->pending, 1u, memory_order_release);
-      return SALTS_OK;
+    const unsigned start =
+        atomic_fetch_add_explicit(
+            &mailbox->next_take_ring, 1u, memory_order_relaxed) %
+        CENTRAL_LANES;
+
+    for (size_t offset = 0u; offset < CENTRAL_LANES; ++offset) {
+      const size_t shard =
+          ((size_t)start + offset) % CENTRAL_LANES;
+      disruptor_cursor_t cursor = {0};
+      disruptor_t *ring = mailbox->rings[shard];
+
+      if (ring != NULL &&
+          disruptor_worker_try_claim(ring, &cursor)) {
+        const central_event_entry *entry =
+            (const central_event_entry *)disruptor_show_entry(
+                ring, &cursor);
+        *out_event = *entry;
+        disruptor_worker_release_entry(ring, &cursor);
+        atomic_fetch_sub_explicit(
+            &mailbox->pending, 1u, memory_order_release);
+        return SALTS_OK;
+      }
     }
 
     if (salts_monotonic_ms() >= deadline_ms)
