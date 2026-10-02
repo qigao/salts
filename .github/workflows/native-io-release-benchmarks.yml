@@ -345,7 +345,7 @@ jobs:
               cnet_benchmark_stats_test cnet_io_benchmark_config_test \
               concurrency_deadline_queue_test native_io_queue_depth_benchmark \
               native_io_idle_observe_benchmark native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark salts_coro_executor_test salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark native_io_pipe_styles_benchmark \
-              native_io_stream_styles_benchmark native_io_udp_styles_benchmark native_io_vsock_styles_benchmark cnet_scaling_benchmark cnet_owner_parallel_benchmark cnet_shards_parallel_benchmark cflow_control_path_benchmark \
+              native_io_stream_styles_benchmark native_io_udp_styles_benchmark native_io_vsock_styles_benchmark cnet_scaling_benchmark cnet_owner_parallel_benchmark cnet_shards_parallel_benchmark cnet_central_callback_benchmark cflow_control_path_benchmark \
               cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
 
       - name: Configure Windows Release
@@ -826,6 +826,70 @@ jobs:
             {
               echo ""
               echo "## CNet shared-engine vs independent owners: $CNET_IO_BENCHMARK_BACKEND / $label (owners $cpu_a,$cpu_b)"
+              echo ""
+              cat "$prefix.md"
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          run_case one_cpu "$one_cpu_set"
+          run_case two_cpu_same_core "$two_cpu_same_core_set"
+          run_case two_cpu_distinct_core "$two_cpu_distinct_core_set"
+
+      - name: Run CNet central-callback compatibility CPU topology sweep
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: bash
+        env:
+          CNET_CENTRAL_CALLBACK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_central_callback_benchmark
+          CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
+        run: |
+          set -euo pipefail
+          result_dir="$GITHUB_WORKSPACE/native-io-results"
+          benchmark="$GITHUB_WORKSPACE/$CNET_CENTRAL_CALLBACK_EXECUTABLE"
+          cpu_sets="$result_dir/native-io-owner-handoff-cpu-set.txt"
+          if [[ ! -x "$benchmark" ]]; then
+            echo "CNet central-callback benchmark executable not found: $benchmark" >&2
+            exit 1
+          fi
+          if [[ ! -f "$cpu_sets" ]]; then
+            echo "CPU-set evidence not found: $cpu_sets" >&2
+            exit 1
+          fi
+          source "$cpu_sets"
+
+          run_case() {
+            local label="$1"
+            local cpuset="$2"
+            [[ -z "$cpuset" || "$cpuset" == "unavailable" ]] && return 0
+            local cpu_a="${cpuset%%,*}"
+            local cpu_b="$cpu_a"
+            if [[ "$cpuset" == *,* ]]; then
+              cpu_b="${cpuset##*,}"
+            fi
+
+            local baseline="$result_dir/cnet-shards-parallel-$label.csv"
+            local prefix="$result_dir/cnet-central-callback-$label"
+            if [[ ! -f "$baseline" ]]; then
+              echo "owner-affine shared-engine baseline not found: $baseline" >&2
+              exit 1
+            fi
+
+            export CNET_OWNER_PARALLEL_TOPOLOGY="$label"
+            export CNET_OWNER_PARALLEL_CPU_A="$cpu_a"
+            export CNET_OWNER_PARALLEL_CPU_B="$cpu_b"
+            export CNET_CENTRAL_CALLBACK_OUTPUT="$prefix"
+
+            "$benchmark" 2>&1 | tee "$prefix.md"
+            pwsh ./cnet/benchmarks/verify_central_callback_benchmark.ps1 \
+              -Path "$prefix.csv" \
+              -BaselinePath "$baseline" \
+              -Backend "$CNET_IO_BENCHMARK_BACKEND" \
+              -Topology "$label" \
+              -CpuA "$cpu_a" \
+              -CpuB "$cpu_b"
+
+            {
+              echo ""
+              echo "## CNet central-callback vs owner-affine: $CNET_IO_BENCHMARK_BACKEND / $label (owners $cpu_a,$cpu_b)"
               echo ""
               cat "$prefix.md"
             } >> "$GITHUB_STEP_SUMMARY"
