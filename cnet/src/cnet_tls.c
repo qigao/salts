@@ -532,6 +532,49 @@ bool cnet_tls_state_handshake_complete(const cnet_tls_state *state) {
   return state != NULL && state->handshake_complete;
 }
 
+static int cnet_tls_protocol_native(cnet_tls_protocol_version version, int *out_version) {
+  if (out_version == NULL) return SALTS_EINVAL;
+  switch (version) {
+  case CNET_TLS_PROTOCOL_VERSION_DEFAULT:
+    *out_version = 0;
+    return SALTS_OK;
+  case CNET_TLS_PROTOCOL_VERSION_1_2:
+    *out_version = TLS1_2_VERSION;
+    return SALTS_OK;
+  case CNET_TLS_PROTOCOL_VERSION_1_3:
+#if defined(TLS1_3_VERSION)
+    *out_version = TLS1_3_VERSION;
+    return SALTS_OK;
+#else
+    return SALTS_ENOTSUP;
+#endif
+  default:
+    return SALTS_EINVAL;
+  }
+}
+
+int cnet_tls_state_set_protocol_range(cnet_tls_state *state,
+                                      cnet_tls_protocol_version minimum,
+                                      cnet_tls_protocol_version maximum) {
+  SSL *ssl;
+  int min_native = 0;
+  int max_native = 0;
+  int status;
+  if (state == NULL || (ssl = CNET_TLS_SSL(state)) == NULL || state->handshake_complete)
+    return SALTS_EINVAL;
+  status = cnet_tls_protocol_native(minimum, &min_native);
+  if (status != SALTS_OK) return status;
+  status = cnet_tls_protocol_native(maximum, &max_native);
+  if (status != SALTS_OK) return status;
+  if (minimum != CNET_TLS_PROTOCOL_VERSION_DEFAULT &&
+      maximum != CNET_TLS_PROTOCOL_VERSION_DEFAULT && minimum > maximum)
+    return SALTS_EINVAL;
+  if (SSL_set_min_proto_version(ssl, min_native) != 1 ||
+      SSL_set_max_proto_version(ssl, max_native) != 1)
+    return SALTS_EIO;
+  return SALTS_OK;
+}
+
 void *cnet_tls_state_read_buffer(cnet_tls_state *state) {
   return state != NULL ? state->read_buffer : NULL;
 }
