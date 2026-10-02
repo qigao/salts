@@ -3,6 +3,7 @@ name: NativeIO and CNet release benchmarks
 on:
   pull_request:
     paths:
+      - ".github/workflows/native-io-release-benchmarks.yml"
       - "native-io/**"
       - "coroutine/**"
       - "cnet/**"
@@ -43,6 +44,7 @@ on:
   push:
     branches: [master]
     paths:
+      - ".github/workflows/native-io-release-benchmarks.yml"
       - "native-io/**"
       - "coroutine/**"
       - "cnet/**"
