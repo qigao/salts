@@ -179,7 +179,7 @@ spec("CNet private retained owner handoff") {
     mem_buffer_release(buffer);
     check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 0);
     check_equal(cnet_write_queue_peek(&writes, connection, &write_view), SALTS_OK);
-    check_equal(write_view.data, original + 2);
+    check_true(write_view.data == original + 2);
     check_equal(write_view.size, (size_t)4u);
     check_equal(((const unsigned char *)write_view.data)[0], 3u);
     check_equal(((const unsigned char *)write_view.data)[3], 6u);
