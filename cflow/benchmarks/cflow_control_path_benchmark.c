@@ -324,7 +324,8 @@ static int control_direct_replicate(native_io_backend_kind kind,
                                     double *cpu_efficiency,
                                     uint64_t *accepted,
                                     uint64_t *completed,
-                                    uint64_t *rejected) {
+                                    uint64_t *rejected,
+                                    uint64_t *stale) {
   control_pipe pipes[2] = {CONTROL_INVALID_PIPE, CONTROL_INVALID_PIPE};
   native_io_backend backend = {0};
   native_io_endpoint endpoint = {0};
@@ -393,6 +394,7 @@ static int control_direct_replicate(native_io_backend_kind kind,
   *accepted = stats.submitted;
   *completed = stats.completed;
   *rejected = stats.rejected_full;
+  *stale = 0u;
   *rate = wall_ns == 0u ? 0.0
       : (double)CONTROL_MEASURED_VALUES * 1.0e9 / (double)wall_ns;
   *cpu_percent = wall_ns == 0u ? 0.0
