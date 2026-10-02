@@ -9,6 +9,8 @@ on:
       - "cflow/include/cflow/io_cnet_adapter.h"
       - "cflow/cnet-adapter/**"
       - "CMakeLists.txt"
+      - "cmake/ci/benchmark-policy.json"
+      - "cmake/ci/verify-benchmark-policy.ps1"
       - "cflow/include/cflow/io_native_sharded_adapter.h"
       - "cflow/src/io_native_sharded_adapter.c"
       - "cflow/include/cflow/io_actor.h"
@@ -46,6 +48,8 @@ on:
       - "cflow/include/cflow/io_cnet_adapter.h"
       - "cflow/cnet-adapter/**"
       - "CMakeLists.txt"
+      - "cmake/ci/benchmark-policy.json"
+      - "cmake/ci/verify-benchmark-policy.ps1"
       - "cflow/include/cflow/io_native_sharded_adapter.h"
       - "cflow/src/io_native_sharded_adapter.c"
       - "cflow/include/cflow/io_actor.h"
@@ -224,6 +228,12 @@ jobs:
           }
           "adapted=$($runAdapted.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "cnet_compare=$($runCnetCompare.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Validate benchmark decision policy
+        if: matrix.family == 'linux' && matrix.backend == 'epoll'
+        shell: pwsh
+        run: |
+          ./cmake/ci/verify-benchmark-policy.ps1 -ProjectRoot . -WriteSummary
 
       - name: Setup Linux dependencies
         if: matrix.family == 'linux'
