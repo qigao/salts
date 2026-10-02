@@ -27,8 +27,8 @@ if [[ "$abi" != "arm64-v8a" ]]; then
   echo "expected Android arm64-v8a runtime, got ABI=$abi" >&2
   exit 1
 fi
-if [[ "$api" != "30" ]]; then
-  echo "expected API 30 emulator, got API=$api" >&2
+if ! [[ "$api" =~ ^[0-9]+$ ]] || (( api < 24 )); then
+  echo "expected Android API >= 24, got API=$api" >&2
   exit 1
 fi
 if [[ "$machine" != "aarch64" && "$machine" != "arm64" ]]; then
@@ -122,9 +122,9 @@ result = {
         "fingerprint": os.environ["FINGERPRINT"],
         "ro_kernel_qemu": os.environ["QEMU"],
         "uname": os.environ["UNAME_TEXT"],
-        "system_image": "system-images;android-30;aosp_atd;arm64-v8a",
-        "host_runner": "ubuntu-24.04-x64",
-        "acceleration": "software-tcg",
+        "target_kind": "emulator" if os.environ["QEMU"] == "1" else "device",
+        "adb_serial": os.environ.get("ANDROID_SERIAL", ""),
+        "qualification_lane": "self-hosted-adb",
     },
     "execution": {
         "command": os.environ["RUNTIME_COMMAND"],
