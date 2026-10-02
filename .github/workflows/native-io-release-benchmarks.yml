@@ -103,6 +103,8 @@ jobs:
       profile: ${{ steps.scope.outputs.profile }}
       adapted: ${{ steps.scope.outputs.adapted }}
       evidence: ${{ steps.scope.outputs.evidence }}
+      contracts: ${{ steps.scope.outputs.contracts }}
+      work: ${{ steps.scope.outputs.work }}
       cnet_compare: ${{ steps.scope.outputs.cnet_compare }}
       asan: ${{ steps.scope.outputs.asan }}
       native_owner: ${{ steps.scope.outputs.native_owner }}
@@ -140,6 +142,7 @@ jobs:
             $runCflow = $true
             $runNativeUring = $true
             $runForensic = $true
+            $runContracts = $true
             $runAsan = $true
           } else {
             $base = "${{ github.event.pull_request.base.sha }}"
@@ -155,6 +158,7 @@ jobs:
               $runCflow = $true
               $runNativeUring = $true
               $runForensic = $true
+              $runContracts = $true
               $runAsan = $true
             } else {
               $head = (git rev-parse HEAD).Trim()
@@ -202,8 +206,20 @@ jobs:
               $platformRuntime = @($changed | Where-Object {
                   $_ -like "platform/src/*" -or $_ -like "platform/include/*"
                 }).Count -gt 0
+              $nativeTestsChanged = @($changed | Where-Object {
+                  $_ -like "native-io/tests/*"
+                }).Count -gt 0
               $cnetTestsChanged = @($changed | Where-Object {
                   $_ -like "cnet/tests/*"
+                }).Count -gt 0
+              $coroutineTestsChanged = @($changed | Where-Object {
+                  $_ -like "coroutine/tests/*"
+                }).Count -gt 0
+              $cflowContractsChanged = @($changed | Where-Object {
+                  $_ -like "cflow/src/*" -or
+                  $_ -like "cflow/include/*" -or
+                  $_ -like "cflow/tests/*" -or
+                  $_ -eq "cflow/CMakeLists.txt"
                 }).Count -gt 0
 
               $nativeOwnerBench = @($changed | Where-Object {
@@ -266,6 +282,12 @@ jobs:
                 $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
                 $buildChanged -or $dependencyChanged
 
+              $runContracts = $nativeRuntime -or $cnetRuntime -or
+                $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
+                $nativeTestsChanged -or $cnetTestsChanged -or
+                $coroutineTestsChanged -or $cflowContractsChanged -or
+                $buildChanged -or $dependencyChanged
+
               $runAsan = $cnetRuntime -or $nativeRuntime -or
                 $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
                 $cnetTestsChanged -or $buildChanged -or $dependencyChanged
@@ -280,10 +302,13 @@ jobs:
           $runEvidence = $runNativeOwner -or $runNativeStyle -or
             $runCnetOwner -or $runCnetIo -or $runCnetSg -or
             $runCoroutine -or $runCflow -or $runNativeUring -or $runForensic
+          $runWork = $runEvidence -or $runContracts
 
           "profile=$benchmarkProfile" >> $env:GITHUB_OUTPUT
           "adapted=$($runAdapted.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "evidence=$($runEvidence.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "contracts=$($runContracts.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "work=$($runWork.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "cnet_compare=$($runCnetCompare.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "asan=$($runAsan.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "native_owner=$($runNativeOwner.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
@@ -309,6 +334,8 @@ jobs:
             @("cflow", "${{ steps.scope.outputs.cflow }}"),
             @("native_uring", "${{ steps.scope.outputs.native_uring }}"),
             @("forensic", "${{ steps.scope.outputs.forensic }}"),
+            @("contracts", "${{ steps.scope.outputs.contracts }}"),
+            @("work", "${{ steps.scope.outputs.work }}"),
             @("cnet_compare", "${{ steps.scope.outputs.cnet_compare }}"),
             @("asan", "${{ steps.scope.outputs.asan }}")
           )
@@ -352,7 +379,7 @@ jobs:
 
   benchmark:
     needs: scope
-    if: needs.scope.outputs.evidence == 'true'
+    if: needs.scope.outputs.work == 'true'
     name: ${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -401,14 +428,14 @@ jobs:
           persist-credentials: false
 
       - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
-        if: needs.scope.outputs.evidence == 'true'
+        if: needs.scope.outputs.work == 'true'
         id: shared_deps
         uses: ./.github/actions/setup-re2c-tools
 
       # PRs run only benchmark families touched by the change; master/manual
       # runs deliberately keep the exhaustive matrix for historical evidence.
       - name: Setup Linux dependencies
-        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'linux'
+        if: needs.scope.outputs.work == 'true' && matrix.family == 'linux'
         id: linux-env
         shell: bash
         run: |
@@ -425,7 +452,7 @@ jobs:
           echo "triplet=x64-linux" >> "$GITHUB_OUTPUT"
 
       - name: Restore Linux vcpkg binary cache
-        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'linux'
+        if: needs.scope.outputs.work == 'true' && matrix.family == 'linux'
         id: linux-vcpkg-cache
         uses: actions/cache@v4
         with:
@@ -435,12 +462,12 @@ jobs:
             vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
 
       - name: Report Linux vcpkg cache state
-        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'linux'
+        if: needs.scope.outputs.work == 'true' && matrix.family == 'linux'
         shell: bash
         run: echo "vcpkg cache hit=${{ steps.linux-vcpkg-cache.outputs.cache-hit }} contract=${{ steps.shared_deps.outputs.contract_version }} revision=${{ steps.shared_deps.outputs.cache_revision }}"
 
       - name: Setup Windows build environment
-        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'windows'
+        if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         id: windows-env
         shell: pwsh
         run: |
@@ -487,7 +514,7 @@ jobs:
           "triplet=x64-windows" >> $env:GITHUB_OUTPUT
 
       - name: Restore Windows vcpkg binary cache
-        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'windows'
+        if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         id: windows-vcpkg-cache
         uses: actions/cache@v4
         with:
@@ -497,12 +524,12 @@ jobs:
             vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
 
       - name: Report Windows vcpkg cache state
-        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'windows'
+        if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         shell: pwsh
         run: Write-Host "vcpkg cache hit=${{ steps.windows-vcpkg-cache.outputs.cache-hit }} contract=${{ steps.shared_deps.outputs.contract_version }} revision=${{ steps.shared_deps.outputs.cache_revision }}"
 
       - name: Setup macOS dependencies
-        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'mac'
+        if: needs.scope.outputs.work == 'true' && matrix.family == 'mac'
         id: macos-env
         shell: bash
         run: |
@@ -517,7 +544,7 @@ jobs:
           echo "triplet=default-osx-${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
 
       - name: Restore macOS vcpkg binary cache
-        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'mac'
+        if: needs.scope.outputs.work == 'true' && matrix.family == 'mac'
         id: macos-vcpkg-cache
         uses: actions/cache@v4
         with:
@@ -527,12 +554,12 @@ jobs:
             vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
 
       - name: Report macOS vcpkg cache state
-        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'mac'
+        if: needs.scope.outputs.work == 'true' && matrix.family == 'mac'
         shell: bash
         run: echo "vcpkg cache hit=${{ steps.macos-vcpkg-cache.outputs.cache-hit }} contract=${{ steps.shared_deps.outputs.contract_version }} revision=${{ steps.shared_deps.outputs.cache_revision }}"
 
       - name: Configure and build Linux Release
-        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'linux'
+        if: needs.scope.outputs.work == 'true' && matrix.family == 'linux'
         shell: bash
         run: |
           set -euo pipefail
@@ -557,7 +584,7 @@ jobs:
               cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
 
       - name: Configure Windows Release
-        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'windows'
+        if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         shell: cmd
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
@@ -566,7 +593,7 @@ jobs:
           cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
 
       - name: Build Windows Release
-        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'windows'
+        if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         shell: cmd
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
@@ -575,7 +602,7 @@ jobs:
           cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_sharded_test native_io_header_cpp_test native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark cnet_websocket_parser_test cnet_websocket_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_owner_profile_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_api_profile_test cnet_header_cpp_test cnet_tls_test cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test cnet_packet_endpoint_test cnet_stop_contract_test cnet_benchmark_stats_test cnet_io_benchmark_config_test concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark salts_coro_executor_test salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_control_path_benchmark cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
 
       - name: Configure and build macOS Release
-        if: needs.scope.outputs.evidence == 'true' && matrix.family == 'mac'
+        if: needs.scope.outputs.work == 'true' && matrix.family == 'mac'
         shell: bash
         run: |
           set -euo pipefail
@@ -597,21 +624,21 @@ jobs:
               concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark salts_coro_executor_test salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_control_path_benchmark cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
 
       - name: Run NativeIO and NativeIPC contract tests
-        if: needs.scope.outputs.evidence == 'true'
+        if: needs.scope.outputs.contracts == 'true'
         shell: pwsh
         run: |
           ctest --test-dir "${{ matrix.build_dir }}" -R '^(native_(io|ipc)_(test|header_cpp_test)|native_io_sharded_test|native_io_uring_batch_test|native_io_architecture_contract_test|native_io_accept_escrow_test|native_io_internal_accept_test|native_io_iocp_accept_test|native_io_readiness_accept_test|native_io_uring_accept_test)$' --timeout 30 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run CFlow contract tests
-        if: needs.scope.outputs.evidence == 'true'
+        if: needs.scope.outputs.contracts == 'true'
         shell: pwsh
         run: |
           ctest --test-dir "${{ matrix.build_dir }}" -R '^(cflow_seeded_reduce_test|cflow_pipeline_test|cflow_plan_managed_test|cflow_io_native_test|cflow_io_native(_sharded)?_adapter_test|cflow_io_cnet_adapter_test|cflow_header_cpp_test|cflow_cnet_header_cpp_test|cflow_cnet_dependency_contract_test|cflow_pipe_data_plane_contract_test)$' --timeout 60 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run CNet contract tests
-        if: needs.scope.outputs.evidence == 'true'
+        if: needs.scope.outputs.contracts == 'true'
         shell: pwsh
         run: |
           ctest --test-dir "${{ matrix.build_dir }}" -R '^(cnet_.*_test|concurrency_deadline_queue_test)$' --timeout 60 --output-on-failure
