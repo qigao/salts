@@ -33,6 +33,11 @@ on:
       - ".github/scripts/run-android-arm64-runtime.sh"
       - ".github/workflows/android-arm64-runtime.yml"
   workflow_dispatch:
+    inputs:
+      adb_serial:
+        description: "Optional adb serial for the self-hosted Android arm64 device/emulator"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -168,13 +173,16 @@ jobs:
           compression-level: 9
 
   android_runtime:
-    name: Android arm64-v8a API 30 runtime
+    name: Android arm64 device/emulator runtime
     needs: android_sdk
-    runs-on: ubuntu-24.04
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, android-arm64-runtime]
+    env:
+      ANDROID_SERIAL: ${{ inputs.adb_serial }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Download Android runtime bundle
@@ -189,26 +197,21 @@ jobs:
           name: salts-android-arm64-cross-build-evidence
           path: android-cross-build-results
 
-      - name: Run installed SDK on arm64 emulator
-        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
-        with:
-          api-level: 30
-          target: aosp_atd
-          arch: arm64-v8a
-          cores: 2
-          disable-animations: true
-          disable-linux-hw-accel: true
-          emulator-boot-timeout: 1200
-          emulator-options: >-
-            -no-window
-            -accel off
-            -no-snapshot
-            -gpu swiftshader_indirect
-            -noaudio
-            -no-boot-anim
-            -camera-back none
-            -camera-front none
-          script: bash .github/scripts/run-android-arm64-runtime.sh
+      - name: Verify connected Android runtime target
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v adb
+          adb start-server
+          adb devices -l
+          adb wait-for-device
+          test "$(adb shell getprop ro.product.cpu.abi | tr -d '\r')" = "arm64-v8a"
+          machine="$(adb shell uname -m | tr -d '\r')"
+          test "$machine" = "aarch64" -o "$machine" = "arm64"
+
+      - name: Run installed SDK on Android arm64 target
+        shell: bash
+        run: bash .github/scripts/run-android-arm64-runtime.sh
 
       - name: Upload Android runtime evidence
         uses: actions/upload-artifact@v6
