@@ -582,6 +582,11 @@ static int control_actor_replicate(
       !cflow_io_native_adapter_get_stats(&adapter, &adapter_stats) ||
       measured != CONTROL_MEASURED_VALUES ||
       released != CONTROL_WARMUP_VALUES + CONTROL_MEASURED_VALUES) {
+    fprintf(stderr,
+            "actor accounting mismatch: measured=%zu released=%zu accepted=%zu acknowledged=%zu stale=%zu adapter_stale=%" PRIu64 "\n",
+            measured, released, actor_stats.accepted,
+            actor_stats.acknowledged, actor_stats.stale_completions,
+            adapter_stats.stale_actor_completions);
     status = SALTS_EPROTO;
     goto cleanup;
   }
@@ -880,6 +885,13 @@ static int control_publisher_replicate(
       fixture.encoded != total_operations ||
       released != total_operations ||
       fixture.errors != 0u) {
+    fprintf(stderr,
+            "publisher accounting mismatch: prepared=%zu encoded=%zu values=%zu released=%zu errors=%zu dones=%zu accepted=%zu acknowledged=%zu stale=%zu adapter_stale=%" PRIu64 "\n",
+            fixture.prepared, fixture.encoded, fixture.values, released,
+            fixture.errors, fixture.dones, publisher_stats.actor.accepted,
+            publisher_stats.actor.acknowledged,
+            publisher_stats.actor.stale_completions,
+            adapter_stats.stale_actor_completions);
     status = SALTS_EPROTO;
     goto cleanup;
   }
@@ -983,7 +995,12 @@ static int control_run_layer(
         &cpu_efficiency[replicate],
         &replicate_accepted, &replicate_completed,
         &replicate_rejected, &replicate_stale);
-    if (status != SALTS_OK) break;
+    if (status != SALTS_OK) {
+      fprintf(stderr,
+              "CFlow control baseline layer=%s replicate=%zu failed: status=%d\n",
+              name, replicate, status);
+      break;
+    }
     accepted += replicate_accepted;
     completed += replicate_completed;
     rejected += replicate_rejected;
