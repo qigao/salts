@@ -1,6 +1,8 @@
 param(
   [Parameter(Mandatory = $true)]
-  [string]$Path
+  [string]$Path,
+  [ValidateSet("full","pr")]
+  [string]$Profile = "full"
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,8 +13,10 @@ if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
 }
 
 $rows = @(Import-Csv -LiteralPath $Path)
-if ($rows.Count -ne 28) {
-  throw "expected 28 dequeue batch benchmark rows, got $($rows.Count)"
+$expectedBatches = if ($Profile -eq "pr") { @(2, 16, 128) } else { @(2, 4, 8, 16, 32, 64, 128) }
+$expectedRows = 2 * 2 * $expectedBatches.Count
+if ($rows.Count -ne $expectedRows) {
+  throw "expected $expectedRows dequeue batch benchmark rows for profile=$Profile, got $($rows.Count)"
 }
 
 function Parse-U64([object]$Value, [string]$Name) {
@@ -49,7 +53,7 @@ foreach ($row in $rows) {
   }
 
   $batch = Parse-U64 $row.batch_size "batch_size"
-  if ($batch -notin @(2, 4, 8, 16, 32, 64, 128)) {
+  if ($batch -notin $expectedBatches) {
     throw "unexpected batch size: $batch"
   }
   $key = "$($row.style):$($row.occupancy):$batch"
@@ -99,7 +103,7 @@ foreach ($row in $rows) {
 }
 
 foreach ($occupancy in @("low", "near_capacity")) {
-  foreach ($batch in @(2, 4, 8, 16, 32, 64, 128)) {
+  foreach ($batch in $expectedBatches) {
     foreach ($style in @("per_item_take", "batch_take")) {
       $key = "${style}:${occupancy}:$batch"
       if (-not $seen.ContainsKey($key)) {
