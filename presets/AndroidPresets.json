@@ -30,7 +30,6 @@
             "hidden": true,
             "inherits": "ISWindows",
             "cacheVariables": {
-                "PKG_CONFIG_EXECUTABLE": "${sourceDir}/vcpkg_installed/x64-windows/tools/pkgconf/pkgconf.exe",
                 "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed"
             }
         },
