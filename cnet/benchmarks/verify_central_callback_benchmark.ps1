@@ -97,6 +97,10 @@ $centralCpu = @{
   "1024" = @()
   "65536" = @()
 }
+$eventBackpressure = @{
+  "1024" = @()
+  "65536" = @()
+}
 
 foreach ($row in $rows) {
   if ($row.mode -ne "central_callback_compat") {
@@ -150,7 +154,7 @@ foreach ($row in $rows) {
   $commandHops = Parse-U64 $row.command_hops "command_hops"
   $eventHops = Parse-U64 $row.event_hops "event_hops"
   $commandRejects = Parse-U64 $row.command_rejects "command_rejects"
-  $eventRejects = Parse-U64 $row.event_rejects "event_rejects"
+  $eventBackpressureRetries = Parse-U64 $row.event_backpressure_retries "event_backpressure_retries"
   $sends = Parse-U64 $row.send_terminals "send_terminals"
   $receives = Parse-U64 $row.receive_terminals "receive_terminals"
 
@@ -160,8 +164,8 @@ foreach ($row in $rows) {
   if ($commandHops -ne 128 -or $eventHops -ne 256) {
     throw "central hop contract mismatch payload=$payload repeat=$repeat command=$commandHops event=$eventHops"
   }
-  if ($commandRejects -ne 0 -or $eventRejects -ne 0) {
-    throw "central bounded mailbox rejection payload=$payload repeat=$repeat command=$commandRejects event=$eventRejects"
+  if ($commandRejects -ne 0) {
+    throw "central command mailbox rejection payload=$payload repeat=$repeat command=$commandRejects"
   }
   if ($wall -eq 0 -or $ownerCpuNs -eq 0 -or $centralCpuNs -eq 0 -or
       $p50 -eq 0 -or $p95 -lt $p50 -or $p99 -lt $p95 -or
@@ -212,6 +216,8 @@ foreach ($row in $rows) {
   $ownerCpuRatio[$payloadKey] += ($ownerCpuUs / $baseOwnerCpuUs)
   $totalCpuRatio[$payloadKey] += (($ownerCpuUs + $centralCpuUs) / $baseOwnerCpuUs)
   $centralCpu[$payloadKey] += $centralCpuUs
+  $eventBackpressure[$payloadKey] +=
+    ([double]$eventBackpressureRetries / [double]$logical)
 }
 
 foreach ($payload in @(1024, 65536)) {
@@ -228,10 +234,11 @@ foreach ($payload in @(1024, 65536)) {
   $o = @($ownerCpuRatio[$key] | Sort-Object)
   $t = @($totalCpuRatio[$key] | Sort-Object)
   $c = @($centralCpu[$key] | Sort-Object)
+  $e = @($eventBackpressure[$key] | Sort-Object)
   $mid = [int][Math]::Floor($r.Count / 2)
 
   Write-Host (
-    "CNet central-callback paired evidence: backend={0} topology={1} payload={2} throughput_retention={3:N3}x p99_ratio={4:N3}x owner_cpu_ratio={5:N3}x total_cpu_ratio={6:N3}x central_cpu_us_per_op={7:N3}" -f
+    "CNet central-callback paired evidence: backend={0} topology={1} payload={2} throughput_retention={3:N3}x p99_ratio={4:N3}x owner_cpu_ratio={5:N3}x total_cpu_ratio={6:N3}x central_cpu_us_per_op={7:N3} event_backpressure_per_op={8:N6}" -f
       $rows[0].backend,
       $rows[0].topology,
       $payload,
@@ -239,7 +246,8 @@ foreach ($payload in @(1024, 65536)) {
       $p[$mid],
       $o[$mid],
       $t[$mid],
-      $c[$mid]
+      $c[$mid],
+      $e[$mid]
   )
 }
 
