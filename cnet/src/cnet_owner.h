@@ -55,6 +55,12 @@ typedef int (*cnet_owner_event_publish_fn)(void *context, const cnet_event *even
 
 typedef struct cnet_owner_config {
   native_io_backend_kind backend_kind;
+  /**
+   * Optional caller-owned NativeIO backend. When non-NULL, the owner borrows
+   * this backend and never closes/destroys it. Kind and capacities must cover
+   * the CNet owner contract below.
+   */
+  native_io_backend *borrowed_backend;
   size_t connection_capacity;
   size_t request_capacity;
   size_t completion_batch_capacity;
@@ -117,6 +123,26 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config);
 
 /** Processes bounded commands and directly settles one NativeIO completion batch. */
 int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms);
+
+/**
+ * External-progress mode: advances CNet-owned commands, session work,
+ * resolver state and deadlines without observing NativeIO. Valid only when
+ * initialized with borrowed_backend.
+ */
+int cnet_owner_advance_external(cnet_owner *owner);
+
+/**
+ * Routes one completion already observed from the borrowed NativeIO backend.
+ * out_consumed is false for a completion not owned by this CNet owner; such a
+ * completion is untouched and may be offered to another backend consumer.
+ */
+int cnet_owner_route_external_completion(cnet_owner *owner,
+                                         const native_io_completion *completion,
+                                         bool *out_consumed);
+
+/** Returns the next CNet-owned timer deadline, capped by max_wait_ms. */
+int cnet_owner_external_timeout(cnet_owner *owner, uint32_t max_wait_ms,
+                                uint32_t *out_timeout_ms);
 
 /**
  * Owner-thread direct receive admission.
