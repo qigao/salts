@@ -177,8 +177,6 @@ jobs:
     needs: android_sdk
     if: github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, android-arm64-runtime]
-    env:
-      ANDROID_SERIAL: ${{ inputs.adb_serial }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -199,8 +197,14 @@ jobs:
 
       - name: Verify connected Android runtime target
         shell: bash
+        env:
+          REQUESTED_ANDROID_SERIAL: ${{ inputs.adb_serial }}
         run: |
           set -euo pipefail
+          if [[ -n "$REQUESTED_ANDROID_SERIAL" ]]; then
+            echo "ANDROID_SERIAL=$REQUESTED_ANDROID_SERIAL" >> "$GITHUB_ENV"
+            export ANDROID_SERIAL="$REQUESTED_ANDROID_SERIAL"
+          fi
           command -v adb
           adb start-server
           adb devices -l
