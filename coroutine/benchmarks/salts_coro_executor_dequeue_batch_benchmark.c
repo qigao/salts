@@ -121,6 +121,7 @@ static int dequeue_bench_run_case(const char *style, const char *occupancy,
       strcmp(occupancy, "near_capacity") == 0
           ? DEQUEUE_BENCH_NEAR_CAPACITY_TASKS
           : DEQUEUE_BENCH_LOW_TASKS;
+  salts_coro_executor_t *executor = NULL;
   dequeue_bench_task_arg *args = NULL;
   salts_coro_executor_task_t *tasks = NULL;
   double latency[DEQUEUE_BENCH_REPLICATES];
@@ -135,9 +136,11 @@ static int dequeue_bench_run_case(const char *style, const char *occupancy,
       batch_size > SALTS_CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH)
     return SALTS_EINVAL;
 
+  executor = dequeue_bench_create_executor(use_batch ? batch_size : 1u);
   args = (dequeue_bench_task_arg *)calloc(tasks_count, sizeof(*args));
   tasks = (salts_coro_executor_task_t *)calloc(tasks_count, sizeof(*tasks));
-  if (args == NULL || tasks == NULL) {
+  if (executor == NULL || args == NULL || tasks == NULL) {
+    if (executor != NULL) (void)salts_coro_executor_destroy(executor);
     free(tasks);
     free(args);
     return SALTS_ENOMEM;
@@ -145,20 +148,14 @@ static int dequeue_bench_run_case(const char *style, const char *occupancy,
 
   for (size_t replicate = 0u;
        replicate < DEQUEUE_BENCH_REPLICATES; ++replicate) {
-    salts_coro_executor_t *executor =
-        dequeue_bench_create_executor(use_batch ? batch_size : 1u);
     dequeue_bench_gate gate;
     dequeue_bench_state state;
     salts_coro_executor_task_t
         gate_tasks[DEQUEUE_BENCH_POOL_CAPACITY];
-    salts_coro_executor_stats_t stats = {0};
+    salts_coro_executor_stats_t before = {0};
+    salts_coro_executor_stats_t after = {0};
     uint64_t started;
     uint64_t elapsed;
-
-    if (executor == NULL) {
-      status = SALTS_ENOMEM;
-      break;
-    }
 
     atomic_init(&gate.started, 0);
     atomic_init(&gate.release, 0);
@@ -166,6 +163,7 @@ static int dequeue_bench_run_case(const char *style, const char *occupancy,
     atomic_init(&state.runs, 0u);
     atomic_init(&state.order_errors, 0u);
 
+    salts_coro_executor_get_stats(executor, &before);
     for (size_t index = 0u;
          index < DEQUEUE_BENCH_POOL_CAPACITY; ++index)
       gate_tasks[index] = (salts_coro_executor_task_t){
@@ -177,7 +175,6 @@ static int dequeue_bench_run_case(const char *style, const char *occupancy,
       if (status == SALTS_OK) status = SALTS_ETIMEDOUT;
       atomic_store_explicit(&gate.release, 1, memory_order_release);
       (void)salts_coro_executor_wait(executor);
-      (void)salts_coro_executor_destroy(executor);
       break;
     }
 
@@ -192,7 +189,6 @@ static int dequeue_bench_run_case(const char *style, const char *occupancy,
     if (status != SALTS_OK) {
       atomic_store_explicit(&gate.release, 1, memory_order_release);
       (void)salts_coro_executor_wait(executor);
-      (void)salts_coro_executor_destroy(executor);
       break;
     }
 
@@ -200,7 +196,7 @@ static int dequeue_bench_run_case(const char *style, const char *occupancy,
     atomic_store_explicit(&gate.release, 1, memory_order_release);
     status = salts_coro_executor_wait(executor);
     elapsed = salts_hrtime() - started;
-    salts_coro_executor_get_stats(executor, &stats);
+    salts_coro_executor_get_stats(executor, &after);
 
     if (status == SALTS_OK &&
         (atomic_load_explicit(&state.runs, memory_order_acquire) !=
@@ -209,31 +205,26 @@ static int dequeue_bench_run_case(const char *style, const char *occupancy,
              tasks_count ||
          atomic_load_explicit(&state.order_errors, memory_order_acquire) !=
              0u ||
-         stats.submitted_tasks !=
+         after.submitted_tasks - before.submitted_tasks !=
              (uint64_t)(DEQUEUE_BENCH_POOL_CAPACITY + tasks_count) ||
-         stats.completed_tasks != stats.submitted_tasks ||
-         stats.cancelled_tasks != 0u ||
-         stats.rejected_tasks != 0u))
+         after.completed_tasks - before.completed_tasks !=
+             after.submitted_tasks - before.submitted_tasks ||
+         after.cancelled_tasks != before.cancelled_tasks ||
+         after.rejected_tasks != before.rejected_tasks))
       status = SALTS_EPROTO;
 
-    if (status == SALTS_OK) {
-      latency[replicate] = (double)elapsed / (double)tasks_count;
-      rate[replicate] =
-          elapsed == 0u
-              ? 0.0
-              : (double)tasks_count * 1.0e9 / (double)elapsed;
-      submitted += stats.submitted_tasks;
-      completed += stats.completed_tasks;
-      rejected += stats.rejected_tasks;
-      order_errors +=
-          atomic_load_explicit(&state.order_errors, memory_order_acquire);
-    }
-
-    {
-      const int destroy_status = salts_coro_executor_destroy(executor);
-      if (status == SALTS_OK) status = destroy_status;
-    }
     if (status != SALTS_OK) break;
+
+    latency[replicate] = (double)elapsed / (double)tasks_count;
+    rate[replicate] =
+        elapsed == 0u
+            ? 0.0
+            : (double)tasks_count * 1.0e9 / (double)elapsed;
+    submitted += after.submitted_tasks - before.submitted_tasks;
+    completed += after.completed_tasks - before.completed_tasks;
+    rejected += after.rejected_tasks - before.rejected_tasks;
+    order_errors +=
+        atomic_load_explicit(&state.order_errors, memory_order_acquire);
   }
 
   if (status == SALTS_OK) {
@@ -261,6 +252,10 @@ static int dequeue_bench_run_case(const char *style, const char *occupancy,
     out->order_errors = order_errors;
   }
 
+  {
+    const int destroy_status = salts_coro_executor_destroy(executor);
+    if (status == SALTS_OK) status = destroy_status;
+  }
   free(tasks);
   free(args);
   return status;
