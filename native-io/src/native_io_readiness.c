@@ -37,6 +37,7 @@ typedef struct salts_io_readiness_endpoint {
   int fd;
   uint32_t generation;
   size_t active_requests;
+  size_t retained_accepts;
   uint32_t interests;
   salts_io_readiness_lane read_lane;
   salts_io_readiness_lane write_lane;
@@ -59,7 +60,16 @@ typedef struct salts_io_readiness_request {
   bool vector_write;
   bool write_lane;
   bool connect_started;
+  bool stream_accept;
+  int accepted_fd;
 } salts_io_readiness_request;
+
+typedef struct salts_io_readiness_accept_result {
+  native_io_request request;
+  native_io_endpoint listener;
+  int child_fd;
+  bool live;
+} salts_io_readiness_accept_result;
 
 typedef struct salts_io_readiness_impl {
   salts_io_impl base;
@@ -67,6 +77,8 @@ typedef struct salts_io_readiness_impl {
   void *driver_state;
   salts_io_readiness_endpoint *endpoints;
   salts_io_readiness_request *requests;
+  salts_io_readiness_accept_result *accept_results;
+  native_io_accept_escrow accept_escrow;
   salts_io_ready_event *ready_events;
   uint32_t *free_endpoints;
   uint32_t *free_requests;
@@ -105,6 +117,125 @@ static void readiness_counter_increment(uint64_t *counter) {
 static uint32_t readiness_next_generation(uint32_t generation) {
   ++generation;
   return generation == 0u ? 1u : generation;
+}
+
+static salts_io_readiness_endpoint *readiness_endpoint(
+    salts_io_readiness_impl *impl, native_io_endpoint endpoint);
+
+static salts_io_readiness_accept_result *readiness_accept_result_from_token(
+    salts_io_readiness_impl *impl, uintptr_t token) {
+  const uintptr_t base = (uintptr_t)impl->accept_results;
+  const uintptr_t value = token;
+  const size_t bytes =
+      impl->request_capacity * sizeof(*impl->accept_results);
+  uintptr_t offset;
+  if (impl->accept_results == NULL || value < base ||
+      value - base >= bytes)
+    return NULL;
+  offset = value - base;
+  if (offset % sizeof(*impl->accept_results) != 0u)
+    return NULL;
+  return &impl->accept_results[
+      offset / sizeof(*impl->accept_results)];
+}
+
+static int readiness_retire_accept_result(
+    void *context, uintptr_t transport) {
+  salts_io_readiness_impl *impl =
+      (salts_io_readiness_impl *)context;
+  salts_io_readiness_accept_result *result =
+      readiness_accept_result_from_token(impl, transport);
+  salts_io_readiness_endpoint *listener;
+  int status = SALTS_OK;
+
+  if (result == NULL || !result->live)
+    return SALTS_EINVAL;
+  listener = readiness_endpoint(impl, result->listener);
+  if (result->child_fd >= 0 && close(result->child_fd) != 0)
+    status = -errno;
+  if (listener != NULL && listener->retained_accepts != 0u)
+    --listener->retained_accepts;
+  memset(result, 0, sizeof(*result));
+  result->child_fd = -1;
+  return status;
+}
+
+static salts_io_readiness_accept_result *
+readiness_accept_result_reserve(
+    salts_io_readiness_impl *impl,
+    native_io_request request,
+    native_io_endpoint listener,
+    int child_fd) {
+  size_t index;
+  for (index = 0u; index < impl->request_capacity; ++index) {
+    salts_io_readiness_accept_result *result =
+        &impl->accept_results[index];
+    if (result->live)
+      continue;
+    result->request = request;
+    result->listener = listener;
+    result->child_fd = child_fd;
+    result->live = true;
+    return result;
+  }
+  return NULL;
+}
+
+static int readiness_publish_accept_result(
+    salts_io_readiness_impl *impl,
+    salts_io_readiness_request *request) {
+  salts_io_readiness_accept_result *result;
+  salts_io_readiness_endpoint *listener;
+  int status;
+
+  if (request->accepted_fd < 0)
+    return SALTS_EPROTO;
+  result = readiness_accept_result_reserve(
+      impl, request->request, request->endpoint,
+      request->accepted_fd);
+  if (result == NULL)
+    return SALTS_ENOBUFS;
+
+  status = native_io_accept_escrow_publish(
+      &impl->accept_escrow, request->request,
+      (uintptr_t)result);
+  if (status != SALTS_OK) {
+    memset(result, 0, sizeof(*result));
+    result->child_fd = -1;
+    return status;
+  }
+
+  listener = readiness_endpoint(impl, request->endpoint);
+  if (listener == NULL) {
+    (void)native_io_accept_escrow_discard(
+        &impl->accept_escrow, request->request);
+    return SALTS_ENOENT;
+  }
+  ++listener->retained_accepts;
+  request->accepted_fd = -1;
+  return SALTS_OK;
+}
+
+static int readiness_discard_listener_accepts(
+    salts_io_readiness_impl *impl,
+    native_io_endpoint listener_handle) {
+  int first_status = SALTS_OK;
+  size_t index;
+  for (index = 0u; index < impl->request_capacity; ++index) {
+    salts_io_readiness_accept_result *result =
+        &impl->accept_results[index];
+    int status;
+    if (!result->live ||
+        result->listener.slot != listener_handle.slot ||
+        result->listener.generation !=
+            listener_handle.generation)
+      continue;
+    status = native_io_accept_escrow_discard(
+        &impl->accept_escrow, result->request);
+    if (first_status == SALTS_OK && status != SALTS_OK)
+      first_status = status;
+  }
+  return first_status;
 }
 
 static uint64_t readiness_endpoint_token(uint32_t index, uint32_t generation) {
@@ -217,10 +348,15 @@ static void readiness_release_request(salts_io_readiness_impl *impl,
                                       salts_io_readiness_request *request, uint32_t index) {
   salts_io_readiness_endpoint *endpoint = readiness_endpoint(impl, request->endpoint);
   if (endpoint != NULL && endpoint->active_requests != 0u) --endpoint->active_requests;
+  if (request->accepted_fd >= 0) {
+    (void)close(request->accepted_fd);
+    request->accepted_fd = -1;
+  }
   request->phase = SALTS_IO_READINESS_FREE;
   request->operation = (native_io_operation){0};
   request->vector_count = 0u;
   request->vector_write = false;
+  request->stream_accept = false;
   request->completion = (native_io_completion){0};
   impl->free_requests[impl->free_request_count++] = index;
   --impl->active_requests;
@@ -373,6 +509,26 @@ static int readiness_try_pipe(salts_io_readiness_endpoint *endpoint,
 static int readiness_try_operation(salts_io_readiness_endpoint *endpoint,
                                    salts_io_readiness_request *request, size_t *out_bytes,
                                    size_t *out_address_length) {
+  if (request->stream_accept) {
+    int child_fd;
+    int flags;
+    do {
+      child_fd = accept(endpoint->fd, NULL, NULL);
+    } while (child_fd < 0 && errno == EINTR);
+    if (child_fd < 0)
+      return -errno;
+    flags = fcntl(child_fd, F_GETFL, 0);
+    if (flags < 0 ||
+        fcntl(child_fd, F_SETFL, flags | O_NONBLOCK) != 0) {
+      const int saved = errno;
+      (void)close(child_fd);
+      return -saved;
+    }
+    request->accepted_fd = child_fd;
+    *out_bytes = 0u;
+    *out_address_length = 0u;
+    return SALTS_OK;
+  }
   if (native_io_resource_kind_is_socket(endpoint->resource_kind))
     return readiness_try_socket(endpoint, request, out_bytes, out_address_length);
   if (endpoint->resource_kind == SALTS_IO_RESOURCE_BYTE_PIPE) {
@@ -389,6 +545,15 @@ static bool readiness_would_block(int status) {
 static void readiness_finish_attempt(salts_io_readiness_impl *impl,
                                      salts_io_readiness_request *request, uint32_t index,
                                      int status, size_t bytes, size_t address_length) {
+  if (status == SALTS_OK && request->stream_accept) {
+    status = readiness_publish_accept_result(impl, request);
+    if (status != SALTS_OK) {
+      readiness_publish_terminal(
+          impl, request, index, NATIVE_IO_COMPLETION_FAILED,
+          0u, status, 0u, 0u);
+      return;
+    }
+  }
   if (status < 0) {
     readiness_publish_terminal(impl, request, index, NATIVE_IO_COMPLETION_FAILED, 0u, status,
                                (uint32_t)(-status), 0u);
@@ -419,6 +584,7 @@ static int readiness_attach_endpoint(salts_io_readiness_impl *impl, int fd,
   endpoint->fd = fd;
   endpoint->generation = readiness_next_generation(endpoint->generation);
   endpoint->active_requests = 0u;
+  endpoint->retained_accepts = 0u;
   endpoint->interests = 0u;
   endpoint->read_lane = (salts_io_readiness_lane){SALTS_IO_INDEX_NONE, SALTS_IO_INDEX_NONE};
   endpoint->write_lane = (salts_io_readiness_lane){SALTS_IO_INDEX_NONE, SALTS_IO_INDEX_NONE};
@@ -490,6 +656,19 @@ static int readiness_release_endpoint(salts_io_readiness_impl *impl,
                       : endpoint->resource_kind != SALTS_IO_RESOURCE_BYTE_PIPE)
     return SALTS_EINVAL;
   if (endpoint->active_requests != 0u) return SALTS_EBUSY;
+  if (endpoint->retained_accepts != 0u) {
+    int retire_status;
+    if (impl->admission_open)
+      return SALTS_EBUSY;
+    retire_status = readiness_discard_listener_accepts(
+        impl, endpoint_handle);
+    if (endpoint->retained_accepts != 0u)
+      return retire_status == SALTS_OK
+                 ? SALTS_EPROTO
+                 : retire_status;
+    if (retire_status != SALTS_OK)
+      return retire_status;
+  }
   if (endpoint->interests != 0u) {
     if (!impl->driver_ops->persistent_interests) return SALTS_EBUSY;
     const int status = impl->driver_ops->update(impl->driver_state, endpoint->fd,
@@ -502,6 +681,7 @@ static int readiness_release_endpoint(salts_io_readiness_impl *impl,
   endpoint->active = false;
   endpoint->fd = -1;
   endpoint->resource_kind = (salts_io_resource_kind)0;
+  endpoint->retained_accepts = 0u;
   endpoint->connected = false;
   endpoint->connect_active = false;
   impl->free_endpoints[impl->free_endpoint_count++] = index;
@@ -671,6 +851,129 @@ static int readiness_submit_vector(salts_io_impl *base,
   return SALTS_OK;
 }
 
+static int readiness_submit_stream_accept(
+    salts_io_impl *base,
+    native_io_endpoint listener_handle,
+    native_io_request *out_request) {
+  salts_io_readiness_impl *impl =
+      (salts_io_readiness_impl *)base;
+  salts_io_readiness_endpoint *listener;
+  salts_io_readiness_request *request;
+  uint32_t index;
+  size_t bytes = 0u;
+  size_t address_length = 0u;
+  int descriptor_flags;
+  int accepting = 0;
+  socklen_t option_length = (socklen_t)sizeof(accepting);
+  int status;
+
+  if (out_request != NULL)
+    *out_request = (native_io_request){0};
+  if (!impl->admission_open || out_request == NULL)
+    return !impl->admission_open
+               ? SALTS_ESHUTDOWN
+               : SALTS_EINVAL;
+  listener = readiness_endpoint(impl, listener_handle);
+  if (listener == NULL)
+    return SALTS_ENOENT;
+  if (listener->resource_kind != SALTS_IO_RESOURCE_STREAM_SOCKET ||
+      listener->connected || listener->connect_active)
+    return SALTS_EINVAL;
+  if (getsockopt(listener->fd, SOL_SOCKET, SO_ACCEPTCONN,
+                 &accepting, &option_length) != 0)
+    return -errno;
+  if (!accepting)
+    return SALTS_EINVAL;
+  descriptor_flags = fcntl(listener->fd, F_GETFL, 0);
+  if (descriptor_flags < 0)
+    return -errno;
+  if ((descriptor_flags & O_NONBLOCK) == 0)
+    return SALTS_EINVAL;
+  if (listener->active_requests != 0u)
+    return SALTS_EBUSY;
+  if (impl->free_request_count == 0u) {
+    readiness_counter_increment(&impl->rejected_full);
+    return SALTS_ENOBUFS;
+  }
+
+  index = impl->free_requests[--impl->free_request_count];
+  request = &impl->requests[index];
+  request->phase = SALTS_IO_READINESS_PENDING;
+  request->request = (native_io_request){
+      index + 1u,
+      readiness_next_generation(request->request.generation)};
+  request->endpoint = listener_handle;
+  request->operation = (native_io_operation){0};
+  request->vector_count = 0u;
+  request->vector_write = false;
+  request->previous = SALTS_IO_INDEX_NONE;
+  request->next = SALTS_IO_INDEX_NONE;
+  request->write_lane = false;
+  request->connect_started = false;
+  request->stream_accept = true;
+  request->accepted_fd = -1;
+  ++listener->active_requests;
+  ++impl->active_requests;
+
+  status = readiness_try_operation(
+      listener, request, &bytes, &address_length);
+  if (readiness_would_block(status)) {
+    readiness_lane_push(impl, listener, index);
+    status = readiness_update_interests(
+        impl, listener_handle, listener);
+    if (status != SALTS_OK) {
+      readiness_lane_remove(impl, listener, index);
+      readiness_release_request(impl, request, index);
+      readiness_counter_increment(&impl->native_submit_errors);
+      return status;
+    }
+  } else {
+    readiness_finish_attempt(
+        impl, request, index, status, bytes, address_length);
+  }
+
+  readiness_counter_increment(&impl->submitted);
+  *out_request = request->request;
+  return SALTS_OK;
+}
+
+static int readiness_take_stream_accept(
+    salts_io_impl *base,
+    native_io_request request,
+    uintptr_t *out_transport) {
+  salts_io_readiness_impl *impl =
+      (salts_io_readiness_impl *)base;
+  uintptr_t token = UINTPTR_MAX;
+  salts_io_readiness_accept_result *result;
+  salts_io_readiness_endpoint *listener;
+  int child_fd;
+  int status;
+
+  if (out_transport == NULL)
+    return SALTS_EINVAL;
+  *out_transport = UINTPTR_MAX;
+  status = native_io_accept_escrow_take(
+      &impl->accept_escrow, request, &token);
+  if (status != SALTS_OK)
+    return status;
+  result = readiness_accept_result_from_token(impl, token);
+  if (result == NULL || !result->live ||
+      result->request.slot != request.slot ||
+      result->request.generation != request.generation)
+    return SALTS_EPROTO;
+
+  listener = readiness_endpoint(impl, result->listener);
+  child_fd = result->child_fd;
+  if (listener != NULL && listener->retained_accepts != 0u)
+    --listener->retained_accepts;
+  memset(result, 0, sizeof(*result));
+  result->child_fd = -1;
+  if (child_fd < 0)
+    return SALTS_EPROTO;
+  *out_transport = (uintptr_t)child_fd;
+  return SALTS_OK;
+}
+
 static bool readiness_supports_vector_write(const salts_io_impl *base,
                                             native_io_endpoint endpoint_handle) {
   const salts_io_readiness_impl *impl = (const salts_io_readiness_impl *)base;
@@ -804,13 +1107,19 @@ static int readiness_close(salts_io_impl *base) {
 
 static int readiness_destroy(salts_io_impl *base) {
   salts_io_readiness_impl *impl = (salts_io_readiness_impl *)base;
+  int escrow_status;
   if (impl->admission_open || impl->active_requests != 0u || impl->endpoint_count != 0u)
     return SALTS_EBUSY;
+  escrow_status = native_io_accept_escrow_destroy(
+      &impl->accept_escrow);
+  if (escrow_status != SALTS_OK)
+    return escrow_status;
   impl->driver_ops->destroy(impl->driver_state);
   free(impl->terminal_requests);
   free(impl->free_requests);
   free(impl->free_endpoints);
   free(impl->ready_events);
+  free(impl->accept_results);
   free(impl->requests);
   free(impl->endpoints);
   free(impl->driver_state);
@@ -836,11 +1145,23 @@ static bool readiness_get_stats(const salts_io_impl *base, native_io_backend_sta
 }
 
 static const salts_io_impl_ops readiness_ops = {
-    readiness_attach_socket, readiness_release_socket, readiness_submit,  readiness_cancel,
-    readiness_observe,       readiness_wake,            readiness_close,  readiness_destroy,
-    readiness_get_stats,     readiness_attach_pipe,     readiness_release_pipe,
-    readiness_submit,        NULL,                  readiness_submit_vector,
-    readiness_supports_vector_write};
+    .attach_socket = readiness_attach_socket,
+    .release_socket = readiness_release_socket,
+    .submit = readiness_submit,
+    .cancel = readiness_cancel,
+    .observe = readiness_observe,
+    .wake = readiness_wake,
+    .close = readiness_close,
+    .destroy = readiness_destroy,
+    .get_stats = readiness_get_stats,
+    .attach_pipe = readiness_attach_pipe,
+    .release_pipe = readiness_release_pipe,
+    .prepare = readiness_submit,
+    .flush = NULL,
+    .submit_vector = readiness_submit_vector,
+    .supports_vector_write = readiness_supports_vector_write,
+    .submit_stream_accept = readiness_submit_stream_accept,
+    .take_stream_accept = readiness_take_stream_accept};
 
 static bool readiness_array_fits(size_t count, size_t element_size) {
   return element_size != 0u && count <= SIZE_MAX / element_size;
@@ -857,6 +1178,7 @@ int salts_io_readiness_backend_init(native_io_backend *backend,
       driver_state_size == 0u ||
       !readiness_array_fits(config->endpoint_capacity, sizeof(salts_io_readiness_endpoint)) ||
       !readiness_array_fits(config->request_capacity, sizeof(salts_io_readiness_request)) ||
+      !readiness_array_fits(config->request_capacity, sizeof(salts_io_readiness_accept_result)) ||
       !readiness_array_fits(config->completion_batch_capacity, sizeof(salts_io_ready_event)) ||
       !readiness_array_fits(config->endpoint_capacity, sizeof(uint32_t)) ||
       !readiness_array_fits(config->request_capacity, sizeof(uint32_t)))
@@ -868,14 +1190,18 @@ int salts_io_readiness_backend_init(native_io_backend *backend,
       (salts_io_readiness_endpoint *)calloc(config->endpoint_capacity, sizeof(*impl->endpoints));
   impl->requests =
       (salts_io_readiness_request *)calloc(config->request_capacity, sizeof(*impl->requests));
+  impl->accept_results =
+      (salts_io_readiness_accept_result *)calloc(
+          config->request_capacity, sizeof(*impl->accept_results));
   impl->ready_events = (salts_io_ready_event *)calloc(config->completion_batch_capacity,
                                                       sizeof(*impl->ready_events));
   impl->free_endpoints = (uint32_t *)calloc(config->endpoint_capacity, sizeof(uint32_t));
   impl->free_requests = (uint32_t *)calloc(config->request_capacity, sizeof(uint32_t));
   impl->terminal_requests = (uint32_t *)calloc(config->request_capacity, sizeof(uint32_t));
-  if (impl->driver_state == NULL || impl->endpoints == NULL || impl->requests == NULL ||
-      impl->ready_events == NULL || impl->free_endpoints == NULL || impl->free_requests == NULL ||
-      impl->terminal_requests == NULL) {
+  if (impl->driver_state == NULL || impl->endpoints == NULL ||
+      impl->requests == NULL || impl->accept_results == NULL ||
+      impl->ready_events == NULL || impl->free_endpoints == NULL ||
+      impl->free_requests == NULL || impl->terminal_requests == NULL) {
     status = SALTS_ENOMEM;
     goto failed;
   }
@@ -888,23 +1214,34 @@ int salts_io_readiness_backend_init(native_io_backend *backend,
   impl->free_endpoint_count = config->endpoint_capacity;
   impl->free_request_count = config->request_capacity;
   impl->admission_open = true;
+  status = native_io_accept_escrow_init(
+      &impl->accept_escrow, config->request_capacity,
+      readiness_retire_accept_result, impl);
+  if (status != SALTS_OK)
+    goto failed;
   atomic_init(&impl->wake_pending, false);
   for (size_t index = 0u; index < config->endpoint_capacity; ++index) {
     impl->free_endpoints[index] = (uint32_t)(config->endpoint_capacity - index - 1u);
     impl->endpoints[index].fd = -1;
   }
-  for (size_t index = 0u; index < config->request_capacity; ++index)
-    impl->free_requests[index] = (uint32_t)(config->request_capacity - index - 1u);
+  for (size_t index = 0u; index < config->request_capacity; ++index) {
+    impl->free_requests[index] =
+        (uint32_t)(config->request_capacity - index - 1u);
+    impl->requests[index].accepted_fd = -1;
+    impl->accept_results[index].child_fd = -1;
+  }
   status = driver_ops->init(impl->driver_state, config->completion_batch_capacity);
   if (status != SALTS_OK) goto failed;
   backend->impl = impl;
   return SALTS_OK;
 
 failed:
+  (void)native_io_accept_escrow_destroy(&impl->accept_escrow);
   free(impl->terminal_requests);
   free(impl->free_requests);
   free(impl->free_endpoints);
   free(impl->ready_events);
+  free(impl->accept_results);
   free(impl->requests);
   free(impl->endpoints);
   free(impl->driver_state);
