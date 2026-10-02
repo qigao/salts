@@ -100,7 +100,8 @@ bool cnet_shard_connection_valid(cnet_shard_connection connection) {
   return cnet_session_handle_valid(connection.session);
 }
 
-int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
+static int cnet_shards_init_impl(cnet_shards *shards, const cnet_shards_config *config,
+                                  bool allow_multi_owner) {
   cnet_shards_impl *impl;
   size_t initialized = 0u;
   size_t write_capacity;
@@ -110,7 +111,10 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
 
   if (shards == NULL || config == NULL) return SALTS_EINVAL;
   if (shards->impl != NULL) return SALTS_EALREADY;
-  if (config->shard_count != 1u || config->connection_capacity_per_shard == 0u ||
+  if (config->shard_count == 0u ||
+      (!allow_multi_owner && config->shard_count != 1u) ||
+      config->shard_count > UINT32_MAX ||
+      config->connection_capacity_per_shard == 0u ||
       config->command_capacity_per_shard == 0u || config->request_capacity_per_shard == 0u ||
       config->completion_batch_capacity == 0u || config->event_capacity_per_shard < 2u ||
       config->receive_buffer_bytes == 0u ||
@@ -189,18 +193,39 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
   return SALTS_OK;
 }
 
-int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms) {
+
+int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
+  return cnet_shards_init_impl(shards, config, false);
+}
+
+int cnet_shards_init_multi_owner_experimental(
+    cnet_shards *shards, const cnet_shards_config *config) {
+  return cnet_shards_init_impl(shards, config, true);
+}
+
+int cnet_shards_poll_owner(cnet_shards *shards, uint32_t shard,
+                           uint32_t timeout_ms) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
   cnet_shard_record *record;
   int first_status;
   int status;
+
   if (impl == NULL) return SALTS_EINVAL;
+  record = cnet_shards_get_record(impl, shard);
+  if (record == NULL) return SALTS_EINVAL;
   if (impl->stopping || impl->stopped) return SALTS_ESHUTDOWN;
+
   first_status = cnet_shards_first_error(impl);
-  record = &impl->records[0];
   status = cnet_owner_drive(&record->owner, timeout_ms);
   cnet_shards_record_error(record, status);
   return first_status != SALTS_OK ? first_status : status;
+}
+
+int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->shard_count != 1u) return SALTS_EINVAL;
+  return cnet_shards_poll_owner(shards, 0u, timeout_ms);
 }
 
 #if defined(CNET_INTERNAL_PROFILING)
@@ -208,7 +233,9 @@ int cnet_shards_profile_begin(cnet_shards *shards) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
   cnet_command_queue_profile command_profile = {0};
   int status;
-  if (impl == NULL || impl->stopping || impl->stopped) return SALTS_EINVAL;
+  if (impl == NULL || impl->stopping || impl->stopped ||
+      impl->shard_count != 1u)
+    return SALTS_EINVAL;
   status = cnet_command_queue_profile_begin(&impl->records[0].commands);
   if (status != SALTS_OK) return status;
   status = cnet_owner_profile_begin(&impl->records[0].owner);
@@ -221,7 +248,8 @@ int cnet_shards_profile_take(cnet_shards *shards, cnet_owner_profile *out_profil
   cnet_shards_impl *impl = cnet_shards_get(shards);
   cnet_command_queue_profile command_profile = {0};
   int status;
-  if (impl == NULL || out_profile == NULL) return SALTS_EINVAL;
+  if (impl == NULL || out_profile == NULL || impl->shard_count != 1u)
+    return SALTS_EINVAL;
   status = cnet_owner_profile_take(&impl->records[0].owner, out_profile);
   if (status != SALTS_OK) {
     (void)cnet_command_queue_profile_take(&impl->records[0].commands, &command_profile);
@@ -239,10 +267,18 @@ int cnet_shards_profile_take(cnet_shards *shards, cnet_owner_profile *out_profil
 }
 #endif
 
+int cnet_shards_wake_owner(cnet_shards *shards, uint32_t shard) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_shard_record *record;
+  if (impl == NULL) return SALTS_EINVAL;
+  record = cnet_shards_get_record(impl, shard);
+  return record != NULL ? cnet_owner_wake(&record->owner) : SALTS_EINVAL;
+}
+
 int cnet_shards_wake(cnet_shards *shards) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
-  if (impl == NULL) return SALTS_EINVAL;
-  return cnet_owner_wake(&impl->records[0].owner);
+  if (impl == NULL || impl->shard_count != 1u) return SALTS_EINVAL;
+  return cnet_shards_wake_owner(shards, 0u);
 }
 
 int cnet_shards_bind_event_sink(cnet_shards *shards, cnet_shards_event_sink_fn sink,
