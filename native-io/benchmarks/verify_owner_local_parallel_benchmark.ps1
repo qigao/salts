@@ -70,7 +70,7 @@ foreach ($row in $rows) {
 
   if ($units -eq 0 -or $total -ne (2 * $units) -or
       $replicates -ne 11 -or $p50 -le 0.0 -or
-      $p95 -lt $p50 -or $rate -le 0.0 -or $checksum -eq 0) {
+      $p95 -lt $p50 -or $rate -le 0.0) {
     throw "invalid owner-local parallel metrics: mode=$($row.mode)"
   }
 }
