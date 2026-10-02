@@ -66,7 +66,9 @@ if(BUILD_TESTS OR BUILD_BENCHMARKS)
   # faults add neither exported symbols nor hot-path branches to installed CNet.
   add_library(cnet_profile STATIC ${CNET_SOURCE_FILES})
   cnet_configure_target(cnet_profile)
-  target_compile_definitions(cnet_profile PUBLIC CNET_INTERNAL_PROFILING=1)
+  target_compile_definitions(
+    cnet_profile
+    PUBLIC CNET_INTERNAL_PROFILING=1 CNET_INTERNAL_MULTI_OWNER_POC=1)
   if(BUILD_TESTS)
     target_compile_definitions(cnet_profile PUBLIC CNET_INTERNAL_TESTING=1)
   endif()
