@@ -66,7 +66,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
   cmake_add_benchmark(cnet_shards_parallel_benchmark
     SOURCES cnet_shards_parallel_benchmark.c cnet_io_benchmark_config.c
-    LIBS Salts::CNet Salts::Platform
+    LIBS cnet_profile Salts::Platform
     FOLDER "cnet/benchmarks")
   target_include_directories(cnet_shards_parallel_benchmark PRIVATE ../src)
   set_target_properties(cnet_shards_parallel_benchmark PROPERTIES
