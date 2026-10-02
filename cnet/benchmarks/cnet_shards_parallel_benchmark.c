@@ -4,6 +4,7 @@
 
 #include "cnet_module.h"
 #include "cnet_shards.h"
+#include "cnet_transport.h"
 
 #include "cnet_io_benchmark_config.h"
 
@@ -253,30 +254,6 @@ static int shards_parallel_peer_destroy(
   free(peer->scratch);
   peer->scratch = NULL;
   return status;
-}
-
-static int shards_parallel_connect_socket(
-    const struct sockaddr_in *address, int *out_socket) {
-  int descriptor;
-  int status;
-
-  if (address == NULL || out_socket == NULL) return SALTS_EINVAL;
-  *out_socket = -1;
-
-  descriptor = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (descriptor < 0) return shards_parallel_socket_error();
-  status = shards_parallel_set_nodelay(descriptor);
-  if (status == SALTS_OK &&
-      connect(descriptor, (const struct sockaddr *)address,
-              sizeof(*address)) != 0)
-    status = shards_parallel_socket_error();
-  if (status != SALTS_OK) {
-    (void)close(descriptor);
-    return status;
-  }
-
-  *out_socket = descriptor;
-  return SALTS_OK;
 }
 
 static int shards_parallel_set_affinity(int cpu) {
@@ -640,7 +617,6 @@ static int shards_parallel_run_repeat(
   shards_parallel_thread_arg args[SHARDS_PARALLEL_LANES];
   pthread_t threads[SHARDS_PARALLEL_LANES];
   bool thread_started[SHARDS_PARALLEL_LANES] = {false, false};
-  int client_sockets[SHARDS_PARALLEL_LANES] = {-1, -1};
   uint64_t combined_latencies[
       SHARDS_PARALLEL_LANES * SHARDS_PARALLEL_SAMPLES];
   const size_t cycles =
@@ -694,21 +670,20 @@ static int shards_parallel_run_repeat(
     status = shards_parallel_peer_init(
         &peers[index], payload_size, cycles);
     if (status != SALTS_OK) break;
-    status = shards_parallel_connect_socket(
-        &peers[index].address, &client_sockets[index]);
-    if (status != SALTS_OK) break;
 
     payload.scheme = CNET_URI_TCP;
-    payload.adopted_socket = (uintptr_t)client_sockets[index];
-    payload.adopted = true;
     payload.socket_options =
         (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
     payload.socket_options.nodelay = 1;
+    status = cnet_transport_parse_numeric_address(
+        "127.0.0.1",
+        ntohs(peers[index].address.sin_port),
+        payload.address, sizeof(payload.address),
+        &payload.address_length);
+    if (status != SALTS_OK) break;
 
     status = cnet_shards_connect(
         &shards, &payload, &lanes[index].connection);
-    if (status == SALTS_OK)
-      client_sockets[index] = -1;
     if (status != SALTS_OK) break;
 
     if (lanes[index].connection.shard != (uint32_t)index) {
@@ -848,11 +823,6 @@ join_threads:
   out->receive_terminals = receive_terminals;
 
 cleanup:
-  for (size_t index = 0u; index < SHARDS_PARALLEL_LANES; ++index) {
-    if (client_sockets[index] >= 0)
-      (void)close(client_sockets[index]);
-  }
-
   if (shards.impl != NULL) {
     const int stop_status =
         cnet_shards_stop(&shards, SHARDS_PARALLEL_TIMEOUT_MS);
