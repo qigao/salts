@@ -379,9 +379,15 @@ static int external_parallel_lane_poll(
     if (!consumed) return SALTS_EPROTO;
   }
 
-  status = cnet_client_advance_external(&lane->client, &events);
-  if (lane->measuring) ++lane->advance_calls;
-  return status;
+  /*
+   * Do not immediately advance again after a successful observed batch.
+   * Routing already settles callbacks inline. Any owner-local work queued by
+   * those completions is advanced at the beginning of the next host-loop
+   * iteration, before the next wait. Running another advance here double-
+   * drives the same iteration and adds a control/deadline scan that the
+   * ordinary cnet_client_poll() path does not perform.
+   */
+  return SALTS_OK;
 }
 
 static int external_parallel_lane_wait_connected(
