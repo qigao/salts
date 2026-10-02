@@ -958,6 +958,25 @@ int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, ch
                              size_t capacity, size_t *out_size);
 
 /**
+ * Copies the negotiated TLS protocol name (for example `TLSv1.3`) into
+ * `buffer` after a TLS connection is open. `capacity` includes the trailing
+ * NUL and `out_size` excludes it. Plaintext returns `SALTS_ENOTSUP`;
+ * incomplete TLS handshakes return `SALTS_ENOTCONN`; an undersized buffer
+ * returns `SALTS_EMSGSIZE`.
+ */
+int cnet_tls_negotiated_version(cnet_client *client, cnet_connection connection, char *buffer,
+                                size_t capacity, size_t *out_size);
+
+/**
+ * Copies the negotiated TLS cipher-suite name into `buffer` after a TLS
+ * connection is open. `capacity` includes the trailing NUL and `out_size`
+ * excludes it. Plaintext returns `SALTS_ENOTSUP`; incomplete TLS handshakes
+ * return `SALTS_ENOTCONN`; an undersized buffer returns `SALTS_EMSGSIZE`.
+ */
+int cnet_tls_negotiated_cipher(cnet_client *client, cnet_connection connection, char *buffer,
+                               size_t capacity, size_t *out_size);
+
+/**
  * Copies the verified peer leaf certificate SHA-256 digest as 64 lowercase
  * hexadecimal characters plus a trailing NUL. The query is valid only while
  * the TLS connection remains open. A server connection without a presented

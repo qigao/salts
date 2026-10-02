@@ -3,6 +3,8 @@
 
 #include <salts/clock.h>
 
+#include <openssl/ssl.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -190,9 +192,15 @@ typedef struct cnet_tls_network_probe {
   cnet_connection connection;
   char received[16];
   char alpn[16];
+  char tls_version[16];
+  char tls_cipher[128];
   size_t received_size;
   size_t alpn_size;
+  size_t tls_version_size;
+  size_t tls_cipher_size;
   int alpn_status;
+  int tls_version_status;
+  int tls_cipher_status;
   int connected;
   int connected_count;
   int handshaking;
@@ -215,6 +223,12 @@ static void cnet_tls_network_state(void *user, cnet_connection connection,
     ++probe->connected_count;
     probe->alpn_status = cnet_tls_negotiated_alpn(probe->client, connection, probe->alpn,
                                                   sizeof(probe->alpn), &probe->alpn_size);
+    probe->tls_version_status =
+        cnet_tls_negotiated_version(probe->client, connection, probe->tls_version,
+                                    sizeof(probe->tls_version), &probe->tls_version_size);
+    probe->tls_cipher_status =
+        cnet_tls_negotiated_cipher(probe->client, connection, probe->tls_cipher,
+                                   sizeof(probe->tls_cipher), &probe->tls_cipher_size);
   } else if (state == CNET_CONNECTION_TLS_HANDSHAKING) {
     ++probe->handshaking;
   } else if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
@@ -316,6 +330,94 @@ static int cnet_tls_network_drive(cnet_client *client, cnet_client *server, cnet
 }
 
 spec("CNet bounded TLS engine") {
+
+  it("reports negotiated TLS protocol and cipher only after handshake") {
+    cnet_tls_test_pair pair;
+    char client_version[16] = {0};
+    char server_version[16] = {0};
+    char client_cipher[128] = {0};
+    char server_cipher[128] = {0};
+    size_t client_version_size = 0u;
+    size_t server_version_size = 0u;
+    size_t client_cipher_size = 0u;
+    size_t server_cipher_size = 0u;
+
+    check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
+    check_equal(cnet_tls_state_negotiated_version(&pair.client, client_version,
+                                                  sizeof(client_version), &client_version_size),
+                SALTS_ENOTCONN);
+    check_equal(client_version_size, (size_t)0u);
+    check_equal(cnet_tls_state_negotiated_cipher(&pair.client, client_cipher,
+                                                 sizeof(client_cipher), &client_cipher_size),
+                SALTS_ENOTCONN);
+    check_equal(client_cipher_size, (size_t)0u);
+
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+    check_equal(cnet_tls_state_negotiated_version(&pair.client, client_version,
+                                                  sizeof(client_version), &client_version_size),
+                SALTS_OK);
+    check_equal(cnet_tls_state_negotiated_version(&pair.server, server_version,
+                                                  sizeof(server_version), &server_version_size),
+                SALTS_OK);
+    check_equal(strcmp(client_version, server_version), 0);
+    check_true(strcmp(client_version, "TLSv1.2") == 0 ||
+               strcmp(client_version, "TLSv1.3") == 0);
+    check_equal(client_version_size, strlen(client_version));
+    check_equal(server_version_size, strlen(server_version));
+
+    check_equal(cnet_tls_state_negotiated_cipher(&pair.client, client_cipher,
+                                                 sizeof(client_cipher), &client_cipher_size),
+                SALTS_OK);
+    check_equal(cnet_tls_state_negotiated_cipher(&pair.server, server_cipher,
+                                                 sizeof(server_cipher), &server_cipher_size),
+                SALTS_OK);
+    check_equal(strcmp(client_cipher, server_cipher), 0);
+    check_greater(client_cipher_size, (size_t)0u);
+    check_equal(client_cipher_size, strlen(client_cipher));
+    check_equal(server_cipher_size, strlen(server_cipher));
+
+    check_equal(cnet_tls_state_negotiated_version(&pair.client, client_version, 1u,
+                                                  &client_version_size),
+                SALTS_EMSGSIZE);
+    check_equal(client_version_size, (size_t)0u);
+    cnet_tls_test_pair_destroy(&pair);
+  }
+
+  it("continues to negotiate TLS 1.2 when both peers cap at TLS 1.2") {
+    cnet_tls_test_pair pair;
+    char version[16] = {0};
+    size_t version_size = 0u;
+
+    check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
+    check_equal(SSL_set_max_proto_version((SSL *)pair.client.ssl, TLS1_2_VERSION), 1);
+    check_equal(SSL_set_max_proto_version((SSL *)pair.server.ssl, TLS1_2_VERSION), 1);
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+    check_equal(cnet_tls_state_negotiated_version(&pair.client, version, sizeof(version),
+                                                  &version_size),
+                SALTS_OK);
+    check_equal(strcmp(version, "TLSv1.2"), 0);
+    check_equal(version_size, strlen(version));
+    cnet_tls_test_pair_destroy(&pair);
+  }
+
+#if defined(TLS1_3_VERSION)
+  it("negotiates TLS 1.3 when both peers require TLS 1.3") {
+    cnet_tls_test_pair pair;
+    char version[16] = {0};
+    size_t version_size = 0u;
+
+    check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
+    check_equal(SSL_set_min_proto_version((SSL *)pair.client.ssl, TLS1_3_VERSION), 1);
+    check_equal(SSL_set_min_proto_version((SSL *)pair.server.ssl, TLS1_3_VERSION), 1);
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+    check_equal(cnet_tls_state_negotiated_version(&pair.client, version, sizeof(version),
+                                                  &version_size),
+                SALTS_OK);
+    check_equal(strcmp(version, "TLSv1.3"), 0);
+    check_equal(version_size, strlen(version));
+    cnet_tls_test_pair_destroy(&pair);
+  }
+#endif
 
   it("probes peer close without consuming pending application plaintext") {
     cnet_tls_test_pair pair;
@@ -551,6 +653,19 @@ spec("CNet bounded TLS engine") {
     check_equal(server_probe.alpn_size, (size_t)2u);
     check_equal(memcmp(client_probe.alpn, "h2", 2u), 0);
     check_equal(memcmp(server_probe.alpn, "h2", 2u), 0);
+    check_equal(client_probe.tls_version_status, SALTS_OK);
+    check_equal(server_probe.tls_version_status, SALTS_OK);
+    check_equal(strcmp(client_probe.tls_version, server_probe.tls_version), 0);
+    check_true(strcmp(client_probe.tls_version, "TLSv1.2") == 0 ||
+               strcmp(client_probe.tls_version, "TLSv1.3") == 0);
+    check_equal(client_probe.tls_version_size, strlen(client_probe.tls_version));
+    check_equal(server_probe.tls_version_size, strlen(server_probe.tls_version));
+    check_equal(client_probe.tls_cipher_status, SALTS_OK);
+    check_equal(server_probe.tls_cipher_status, SALTS_OK);
+    check_greater(client_probe.tls_cipher_size, (size_t)0u);
+    check_equal(strcmp(client_probe.tls_cipher, server_probe.tls_cipher), 0);
+    check_equal(client_probe.tls_cipher_size, strlen(client_probe.tls_cipher));
+    check_equal(server_probe.tls_cipher_size, strlen(server_probe.tls_cipher));
     check_equal(cnet_tls_peer_certificate_sha256(&client, client_connection,
                                                  peer_certificate_sha256),
                 SALTS_OK);
