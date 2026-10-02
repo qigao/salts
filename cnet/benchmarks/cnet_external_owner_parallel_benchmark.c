@@ -440,7 +440,7 @@ static int external_parallel_lane_init(
   {
     const native_io_backend_config backend_config = {
         backend_kind,
-        config.connection_capacity,
+        config.connection_capacity * 2u,
         config.request_capacity,
         config.completion_batch_capacity};
     status = native_io_backend_init(&lane->backend, &backend_config);
