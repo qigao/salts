@@ -1,6 +1,8 @@
 param(
   [Parameter(Mandatory = $true)]
-  [string]$Path
+  [string]$Path,
+  [ValidateSet("full","pr")]
+  [string]$Profile = "full"
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,8 +12,8 @@ if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
 }
 
 $rows = @(Import-Csv -LiteralPath $Path)
-$depths = @(1, 2, 4, 8, 16, 32, 64)
-$payloads = @(1024, 8192, 32768, 65536)
+$depths = if ($Profile -eq "pr") { @(1, 8, 32, 64) } else { @(1, 2, 4, 8, 16, 32, 64) }
+$payloads = if ($Profile -eq "pr") { @(32768) } else { @(1024, 8192, 32768, 65536) }
 $expectedCount = $depths.Count * $payloads.Count
 
 if ($rows.Count -ne $expectedCount) {
