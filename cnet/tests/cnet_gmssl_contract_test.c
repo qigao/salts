@@ -35,6 +35,9 @@ int main(void) {
   cnet_gmssl_probe_io io = {0};
   unsigned char byte = 0u;
 
+  if (sizeof(TLS_CTX) != tls_ctx_sizeof()) return 5;
+  if (sizeof(TLS_CONNECT) != tls_connect_sizeof()) return 6;
+
   memset(&conn, 0, sizeof(conn));
   memset(&callbacks, 0, sizeof(callbacks));
   callbacks.user = &io;
