@@ -649,8 +649,23 @@ static void sharded_adapter_test_run_one_backend(
       SALTS_OK);
   check_equal(sharded_adapter_test_observe_owner(runtime, &observe), SALTS_OK);
   check_true(observe.count >= 1u);
-  sharded_adapter_test_deliver_and_ack(
-      &fixture, submitted.request_id);
+  {
+    native_io_sharded_stats completion_before =
+        NATIVE_IO_SHARDED_STATS_V1_INITIALIZER;
+    native_io_sharded_stats completion_after =
+        NATIVE_IO_SHARDED_STATS_V1_INITIALIZER;
+
+    check_true(native_io_sharded_get_stats(runtime, &completion_before));
+    sharded_adapter_test_deliver_and_ack(
+        &fixture, submitted.request_id);
+    check_true(native_io_sharded_get_stats(runtime, &completion_after));
+    check_equal(
+        completion_after.queued_dispatches,
+        completion_before.queued_dispatches);
+    check_equal(
+        completion_after.same_shard_direct_tasks,
+        completion_before.same_shard_direct_tasks);
+  }
   check_equal(
       fixture.completion.completion.kind,
       CFLOW_IO_COMPLETION_OK);

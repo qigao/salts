@@ -488,6 +488,13 @@ This does not make command publication multi-threaded: cross-thread application
 admission still requires an external mailbox, and callback-issued operations
 retain their explicit deferred paths when completion-batch safety requires it.
 
+This owner-local layout is also the CNet side of the NativeIO coarse-handoff
+contract. Ordinary send/receive/close progress does not cross a NativeIO owner
+boundary and does not need an owner-to-owner acknowledgement. A future sharded
+CNet facade may route an owned command to a connection's fixed owner, but it
+must keep subsequent data-plane progress there instead of bouncing each
+completion back through another NativeIO shard.
+
 ### Dispatcher ownership
 
 The client dispatcher is a same-owner callback bridge, not a synchronization
