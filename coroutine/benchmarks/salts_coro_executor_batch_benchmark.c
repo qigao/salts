@@ -46,7 +46,7 @@ static void batch_bench_gate_task(coro_t *coroutine, void *arg) {
   (void)coroutine;
   atomic_store_explicit(&gate->started, 1, memory_order_release);
   while (atomic_load_explicit(&gate->release, memory_order_acquire) == 0)
-    (void)coro_yield();
+    salts_thread_yield();
 }
 
 static void batch_bench_noop_task(coro_t *coroutine, void *arg) {
