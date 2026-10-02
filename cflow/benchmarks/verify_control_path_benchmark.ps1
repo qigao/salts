@@ -35,8 +35,7 @@ function Parse-Double([object]$Value, [string]$Name) {
 $expectedLayers = @("direct", "actor", "publisher")
 $byLayer = @{}
 $expectedReplicates = [UInt64]7
-$expectedMeasured = [UInt64]4096
-$expectedAccepted = [UInt64]29120
+$expectedMeasuredValues = @(4096, 32768)
 
 foreach ($row in $rows) {
   if ($row.layer -notin $expectedLayers) {
@@ -64,14 +63,19 @@ foreach ($row in $rows) {
   $rejected = Parse-U64 $row.rejected "rejected"
   $stale = Parse-U64 $row.stale "stale"
 
-  if ($replicates -ne $expectedReplicates -or $values -ne $expectedMeasured) {
-    throw "sample contract mismatch for $($row.layer)"
+  if ($replicates -ne $expectedReplicates -or
+      $values -notin $expectedMeasuredValues) {
+    throw "sample contract mismatch for $($row.layer): replicates=$replicates values=$values"
   }
   if ($p50 -lt 0.0 -or $p95 -lt $p50 -or $p99 -lt $p95 -or $p99 -le 0.0 -or $rate -le 0.0 -or $cpuPercent -lt 0.0 -or $cpuEfficiency -le 0.0) {
     throw "invalid timing/CPU metrics for $($row.layer)"
   }
-  if ($accepted -ne $expectedAccepted -or $completed -ne $expectedAccepted -or $rejected -ne 0 -or $stale -ne 0) {
-    throw "lifecycle accounting mismatch for $($row.layer): accepted=$accepted completed=$completed rejected=$rejected stale=$stale"
+  $expectedAccepted =
+    [UInt64]($replicates * ([UInt64]64 + $values))
+  if ($accepted -ne $expectedAccepted -or
+      $completed -ne $expectedAccepted -or
+      $rejected -ne 0 -or $stale -ne 0) {
+    throw "lifecycle accounting mismatch for $($row.layer): expected=$expectedAccepted accepted=$accepted completed=$completed rejected=$rejected stale=$stale"
   }
 }
 
@@ -79,6 +83,11 @@ foreach ($layer in $expectedLayers) {
   if (-not $byLayer.ContainsKey($layer)) {
     throw "missing CFlow control layer: $layer"
   }
+}
+
+$sampleCounts = @($rows | Select-Object -ExpandProperty values_per_replicate -Unique)
+if ($sampleCounts.Count -ne 1) {
+  throw "CFlow control layers used different measured value counts"
 }
 
 $directRate = Parse-Double $byLayer["direct"].median_values_per_second "direct rate"
