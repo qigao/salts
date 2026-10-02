@@ -344,8 +344,15 @@ int main(void) {
   const size_t hops =
       owner_handoff_env_count("NATIVE_IO_OWNER_HANDOFF_HOPS",
                               OWNER_HANDOFF_DEFAULT_HOPS);
-  static const size_t windows[] = {1u, 2u, 4u, 8u, 16u, 32u, 64u};
-  owner_handoff_summary summaries[sizeof(windows) / sizeof(windows[0])] = {{0}};
+  static const size_t full_windows[] = {1u, 2u, 4u, 8u, 16u, 32u, 64u};
+  static const size_t pr_windows[] = {1u, 8u, 64u};
+  const char *profile = getenv("SALTS_BENCH_PROFILE");
+  const int pr_profile = profile != NULL && strcmp(profile, "pr") == 0;
+  const size_t *windows = pr_profile ? pr_windows : full_windows;
+  const size_t window_count =
+      pr_profile ? sizeof(pr_windows) / sizeof(pr_windows[0])
+                 : sizeof(full_windows) / sizeof(full_windows[0]);
+  owner_handoff_summary summaries[sizeof(full_windows) / sizeof(full_windows[0])] = {{0}};
   FILE *csv;
   int status;
 
@@ -354,12 +361,13 @@ int main(void) {
     fprintf(stderr, "unsupported NativeIO owner-handoff benchmark backend: %s\n", backend);
     return 2;
   }
-  if (hops < windows[sizeof(windows) / sizeof(windows[0]) - 1u]) {
-    fprintf(stderr, "owner-handoff hop count must be >= 64\n");
+  if (hops < windows[window_count - 1u]) {
+    fprintf(stderr, "owner-handoff hop count must be >= %zu\n",
+            windows[window_count - 1u]);
     return 2;
   }
 
-  for (size_t index = 0u; index < sizeof(windows) / sizeof(windows[0]); ++index) {
+  for (size_t index = 0u; index < window_count; ++index) {
     status = owner_handoff_run_window(kind, warmup_hops, hops, windows[index],
                                       &summaries[index]);
     if (status != SALTS_OK) {
@@ -376,7 +384,7 @@ int main(void) {
   printf("p50/p95 are distributions of replicate batch-average ns/hop, not individual-hop latency percentiles.\n\n");
   printf("| window | hops/replicate | replicates | p50 ns/hop | p95 ns/hop | median hops/s | queued owner hops | rejected | same-owner direct | peak command slots |\n");
   printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
-  for (size_t index = 0u; index < sizeof(windows) / sizeof(windows[0]); ++index) {
+  for (size_t index = 0u; index < window_count; ++index) {
     const owner_handoff_summary *row = &summaries[index];
     printf("| %zu | %zu | %zu | %.3f | %.3f | %.0f | %" PRIu64 " | %" PRIu64
            " | %" PRIu64 " | %" PRIu64 " |\n",
@@ -393,7 +401,7 @@ int main(void) {
             "p50_batch_ns_per_hop,p95_batch_ns_per_hop,median_hops_per_second,"
             "queued_dispatches,rejected_tasks,same_shard_direct_tasks,"
             "peak_command_slots\n");
-    for (size_t index = 0u; index < sizeof(windows) / sizeof(windows[0]); ++index)
+    for (size_t index = 0u; index < window_count; ++index)
       owner_handoff_print_csv_row(csv, backend, cpu_set, &summaries[index]);
     fclose(csv);
   }
