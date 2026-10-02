@@ -43,6 +43,18 @@ struct cnet_tls_context {
   bool server;
 };
 
+typedef struct cnet_tls_boringssl_state {
+  SSL *ssl;
+  BIO *network_bio;
+} cnet_tls_boringssl_state;
+
+#define CNET_TLS_ENGINE(state) ((cnet_tls_boringssl_state *)((state)->engine))
+#define CNET_TLS_SSL(state) \
+  (CNET_TLS_ENGINE(state) != NULL ? CNET_TLS_ENGINE(state)->ssl : NULL)
+#define CNET_TLS_BIO(state) \
+  (CNET_TLS_ENGINE(state) != NULL ? CNET_TLS_ENGINE(state)->network_bio : NULL)
+
+
 static bool cnet_tls_bounded_string(const char *value, size_t max_bytes, size_t *out_size) {
   size_t size;
   if (value == NULL) {
@@ -408,6 +420,7 @@ int cnet_tls_state_init(cnet_tls_state *state, cnet_tls_context *context, bool s
   BIO *ssl_bio = NULL;
   BIO *network_bio = NULL;
   SSL *ssl = NULL;
+  cnet_tls_boringssl_state *engine = NULL;
   unsigned char *read_buffer = NULL;
   unsigned char *write_buffer = NULL;
   int status = SALTS_OK;
@@ -416,13 +429,14 @@ int cnet_tls_state_init(cnet_tls_state *state, cnet_tls_context *context, bool s
       io_buffer_bytes < CNET_TLS_MIN_IO_BUFFER_BYTES || io_buffer_bytes > INT_MAX ||
       (!server && (server_name == NULL || server_name[0] == '\0')))
     return SALTS_EINVAL;
-  if (state->ssl != NULL || state->network_bio != NULL || state->context != NULL)
+  if (CNET_TLS_SSL(state) != NULL || CNET_TLS_BIO(state) != NULL || state->context != NULL)
     return SALTS_EALREADY;
 
   read_buffer = (unsigned char *)malloc(io_buffer_bytes);
   write_buffer = (unsigned char *)malloc(io_buffer_bytes);
+  engine = (cnet_tls_boringssl_state *)calloc(1u, sizeof(*engine));
   ssl = SSL_new(context->ssl);
-  if (read_buffer == NULL || write_buffer == NULL || ssl == NULL) {
+  if (read_buffer == NULL || write_buffer == NULL || engine == NULL || ssl == NULL) {
     status = SALTS_ENOMEM;
     goto fail;
   }
@@ -451,9 +465,10 @@ int cnet_tls_state_init(cnet_tls_state *state, cnet_tls_context *context, bool s
     SSL_set_connect_state(ssl);
   }
 
+  engine->ssl = ssl;
+  engine->network_bio = network_bio;
   state->context = context;
-  state->ssl = ssl;
-  state->network_bio = network_bio;
+  state->engine = engine;
   state->read_buffer = read_buffer;
   state->write_buffer = write_buffer;
   state->io_buffer_bytes = io_buffer_bytes;
@@ -464,6 +479,7 @@ fail:
   BIO_free(ssl_bio);
   BIO_free(network_bio);
   SSL_free(ssl);
+  free(engine);
   free(write_buffer);
   free(read_buffer);
   return status;
@@ -471,10 +487,15 @@ fail:
 
 void cnet_tls_state_destroy(cnet_tls_state *state) {
   cnet_tls_context *context;
+  cnet_tls_boringssl_state *engine;
   if (state == NULL) return;
   context = state->context;
-  SSL_free(state->ssl);
-  BIO_free(state->network_bio);
+  engine = CNET_TLS_ENGINE(state);
+  if (engine != NULL) {
+    SSL_free(engine->ssl);
+    BIO_free(engine->network_bio);
+    free(engine);
+  }
   free(state->write_buffer);
   free(state->read_buffer);
   memset(state, 0, sizeof(*state));
@@ -491,15 +512,15 @@ int cnet_tls_handshake(cnet_tls_state *state, bool *out_complete) {
   const unsigned char *alpn = NULL;
   unsigned int alpn_size = 0u;
   int result;
-  if (state == NULL || state->ssl == NULL || out_complete == NULL) return SALTS_EINVAL;
+  if (state == NULL || CNET_TLS_SSL(state) == NULL || out_complete == NULL) return SALTS_EINVAL;
   *out_complete = state->handshake_complete;
   if (state->handshake_complete) return SALTS_OK;
 
   ERR_clear_error();
-  result = SSL_do_handshake(state->ssl);
-  if (result != 1) return cnet_tls_retry_or_error(state->ssl, result, SALTS_ECONNABORTED);
-  if (!state->server && SSL_get_verify_result(state->ssl) != X509_V_OK) return SALTS_ECONNABORTED;
-  SSL_get0_alpn_selected(state->ssl, &alpn, &alpn_size);
+  result = SSL_do_handshake(CNET_TLS_SSL(state));
+  if (result != 1) return cnet_tls_retry_or_error(CNET_TLS_SSL(state), result, SALTS_ECONNABORTED);
+  if (!state->server && SSL_get_verify_result(CNET_TLS_SSL(state)) != X509_V_OK) return SALTS_ECONNABORTED;
+  SSL_get0_alpn_selected(CNET_TLS_SSL(state), &alpn, &alpn_size);
   if (alpn_size > CNET_TLS_ALPN_NAME_MAX_BYTES) return SALTS_EPROTO;
   if (alpn_size != 0u) memcpy(state->negotiated_alpn, alpn, alpn_size);
   state->negotiated_alpn_size = alpn_size;
@@ -508,19 +529,78 @@ int cnet_tls_handshake(cnet_tls_state *state, bool *out_complete) {
   return SALTS_OK;
 }
 
+bool cnet_tls_state_handshake_complete(const cnet_tls_state *state) {
+  return state != NULL && state->handshake_complete;
+}
+
+static int cnet_tls_protocol_native(cnet_tls_protocol_version version, int *out_version) {
+  if (out_version == NULL) return SALTS_EINVAL;
+  switch (version) {
+  case CNET_TLS_PROTOCOL_VERSION_DEFAULT:
+    *out_version = 0;
+    return SALTS_OK;
+  case CNET_TLS_PROTOCOL_VERSION_1_2:
+    *out_version = TLS1_2_VERSION;
+    return SALTS_OK;
+  case CNET_TLS_PROTOCOL_VERSION_1_3:
+#if defined(TLS1_3_VERSION)
+    *out_version = TLS1_3_VERSION;
+    return SALTS_OK;
+#else
+    return SALTS_ENOTSUP;
+#endif
+  default:
+    return SALTS_EINVAL;
+  }
+}
+
+int cnet_tls_state_set_protocol_range(cnet_tls_state *state,
+                                      cnet_tls_protocol_version minimum,
+                                      cnet_tls_protocol_version maximum) {
+  SSL *ssl;
+  int min_native = 0;
+  int max_native = 0;
+  int status;
+  if (state == NULL || (ssl = CNET_TLS_SSL(state)) == NULL || state->handshake_complete)
+    return SALTS_EINVAL;
+  status = cnet_tls_protocol_native(minimum, &min_native);
+  if (status != SALTS_OK) return status;
+  status = cnet_tls_protocol_native(maximum, &max_native);
+  if (status != SALTS_OK) return status;
+  if (minimum != CNET_TLS_PROTOCOL_VERSION_DEFAULT &&
+      maximum != CNET_TLS_PROTOCOL_VERSION_DEFAULT && minimum > maximum)
+    return SALTS_EINVAL;
+  if (SSL_set_min_proto_version(ssl, min_native) != 1 ||
+      SSL_set_max_proto_version(ssl, max_native) != 1)
+    return SALTS_EIO;
+  return SALTS_OK;
+}
+
+void *cnet_tls_state_read_buffer(cnet_tls_state *state) {
+  return state != NULL ? state->read_buffer : NULL;
+}
+
+void *cnet_tls_state_write_buffer(cnet_tls_state *state) {
+  return state != NULL ? state->write_buffer : NULL;
+}
+
+size_t cnet_tls_state_io_buffer_bytes(const cnet_tls_state *state) {
+  return state != NULL ? state->io_buffer_bytes : 0u;
+}
+
 size_t cnet_tls_cipher_input_capacity(const cnet_tls_state *state) {
-  if (state == NULL || state->network_bio == NULL) return 0u;
-  return BIO_ctrl_get_write_guarantee(state->network_bio);
+  if (state == NULL || CNET_TLS_BIO(state) == NULL) return 0u;
+  return BIO_ctrl_get_write_guarantee(CNET_TLS_BIO(state));
 }
 
 int cnet_tls_feed_cipher(cnet_tls_state *state, const void *data, size_t size) {
   int written;
-  if (state == NULL || state->network_bio == NULL || data == NULL || size == 0u)
+  if (state == NULL || CNET_TLS_BIO(state) == NULL || data == NULL || size == 0u)
     return SALTS_EINVAL;
   if (size > INT_MAX) return SALTS_ERANGE;
   if (size > cnet_tls_cipher_input_capacity(state)) return SALTS_ENOBUFS;
-  written = BIO_write(state->network_bio, data, (int)size);
-  if (written <= 0) return BIO_should_retry(state->network_bio) ? SALTS_ENOBUFS : SALTS_EIO;
+  written = BIO_write(CNET_TLS_BIO(state), data, (int)size);
+  if (written <= 0) return BIO_should_retry(CNET_TLS_BIO(state)) ? SALTS_ENOBUFS : SALTS_EIO;
   return (size_t)written == size ? SALTS_OK : SALTS_EIO;
 }
 
@@ -528,31 +608,31 @@ int cnet_tls_take_cipher(cnet_tls_state *state, void *buffer, size_t capacity, s
   int read_size;
   if (out_size == NULL) return SALTS_EINVAL;
   *out_size = 0u;
-  if (state == NULL || state->network_bio == NULL || buffer == NULL || capacity == 0u)
+  if (state == NULL || CNET_TLS_BIO(state) == NULL || buffer == NULL || capacity == 0u)
     return SALTS_EINVAL;
   if (capacity > INT_MAX) return SALTS_ERANGE;
-  if (BIO_ctrl_pending(state->network_bio) == 0u) return SALTS_ENOENT;
-  read_size = BIO_read(state->network_bio, buffer, (int)capacity);
-  if (read_size <= 0) return BIO_should_retry(state->network_bio) ? SALTS_ENOENT : SALTS_EIO;
+  if (BIO_ctrl_pending(CNET_TLS_BIO(state)) == 0u) return SALTS_ENOENT;
+  read_size = BIO_read(CNET_TLS_BIO(state), buffer, (int)capacity);
+  if (read_size <= 0) return BIO_should_retry(CNET_TLS_BIO(state)) ? SALTS_ENOENT : SALTS_EIO;
   *out_size = (size_t)read_size;
   return SALTS_OK;
 }
 
 int cnet_tls_write(cnet_tls_state *state, const void *data, size_t size, bool *out_complete) {
   int result;
-  if (state == NULL || state->ssl == NULL || data == NULL || size == 0u || out_complete == NULL)
+  if (state == NULL || CNET_TLS_SSL(state) == NULL || data == NULL || size == 0u || out_complete == NULL)
     return SALTS_EINVAL;
   *out_complete = false;
   if (!state->handshake_complete || state->close_notify_started) return SALTS_ENOTCONN;
   if (size > INT_MAX) return SALTS_ERANGE;
   ERR_clear_error();
-  result = SSL_write(state->ssl, data, (int)size);
+  result = SSL_write(CNET_TLS_SSL(state), data, (int)size);
   if (result > 0) {
     if ((size_t)result != size) return SALTS_EIO;
     *out_complete = true;
     return SALTS_OK;
   }
-  return cnet_tls_retry_or_error(state->ssl, result, SALTS_EPROTO);
+  return cnet_tls_retry_or_error(CNET_TLS_SSL(state), result, SALTS_EPROTO);
 }
 
 int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity, size_t *out_size,
@@ -562,7 +642,7 @@ int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity, size_t *
   if (out_size == NULL || out_peer_closed == NULL) return SALTS_EINVAL;
   *out_size = 0u;
   *out_peer_closed = false;
-  if (state == NULL || state->ssl == NULL || buffer == NULL || capacity == 0u) return SALTS_EINVAL;
+  if (state == NULL || CNET_TLS_SSL(state) == NULL || buffer == NULL || capacity == 0u) return SALTS_EINVAL;
   if (!state->handshake_complete) return SALTS_ENOTCONN;
   if (capacity > INT_MAX) return SALTS_ERANGE;
   if (state->peer_close_notify) {
@@ -571,12 +651,12 @@ int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity, size_t *
   }
 
   ERR_clear_error();
-  result = SSL_read(state->ssl, buffer, (int)capacity);
+  result = SSL_read(CNET_TLS_SSL(state), buffer, (int)capacity);
   if (result > 0) {
     *out_size = (size_t)result;
     return SALTS_OK;
   }
-  error = SSL_get_error(state->ssl, result);
+  error = SSL_get_error(CNET_TLS_SSL(state), result);
   if (error == SSL_ERROR_ZERO_RETURN) {
     state->peer_close_notify = true;
     *out_peer_closed = true;
@@ -595,7 +675,7 @@ int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed,
   if (out_peer_closed == NULL || out_plaintext_pending == NULL) return SALTS_EINVAL;
   *out_peer_closed = false;
   *out_plaintext_pending = false;
-  if (state == NULL || state->ssl == NULL) return SALTS_EINVAL;
+  if (state == NULL || CNET_TLS_SSL(state) == NULL) return SALTS_EINVAL;
   if (!state->handshake_complete) return SALTS_ENOTCONN;
   if (state->peer_close_notify) {
     *out_peer_closed = true;
@@ -603,12 +683,12 @@ int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed,
   }
 
   ERR_clear_error();
-  result = SSL_peek(state->ssl, &byte, 1);
+  result = SSL_peek(CNET_TLS_SSL(state), &byte, 1);
   if (result > 0) {
     *out_plaintext_pending = true;
     return SALTS_OK;
   }
-  error = SSL_get_error(state->ssl, result);
+  error = SSL_get_error(CNET_TLS_SSL(state), result);
   if (error == SSL_ERROR_ZERO_RETURN) {
     state->peer_close_notify = true;
     *out_peer_closed = true;
@@ -621,16 +701,16 @@ int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed,
 int cnet_tls_shutdown(cnet_tls_state *state, bool *out_notify_generated) {
   int result;
   int error;
-  if (state == NULL || state->ssl == NULL || out_notify_generated == NULL) return SALTS_EINVAL;
+  if (state == NULL || CNET_TLS_SSL(state) == NULL || out_notify_generated == NULL) return SALTS_EINVAL;
   *out_notify_generated = false;
   if (!state->handshake_complete) return SALTS_ENOTCONN;
 
   ERR_clear_error();
-  result = SSL_shutdown(state->ssl);
-  state->close_notify_started = (SSL_get_shutdown(state->ssl) & SSL_SENT_SHUTDOWN) != 0;
+  result = SSL_shutdown(CNET_TLS_SSL(state));
+  state->close_notify_started = (SSL_get_shutdown(CNET_TLS_SSL(state)) & SSL_SENT_SHUTDOWN) != 0;
   *out_notify_generated = state->close_notify_started;
   if (result >= 0) return SALTS_OK;
-  error = SSL_get_error(state->ssl, result);
+  error = SSL_get_error(CNET_TLS_SSL(state), result);
   if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) return SALTS_OK;
   return SALTS_EPROTO;
 }
@@ -640,7 +720,7 @@ int cnet_tls_get_negotiated_alpn(const cnet_tls_state *state, const unsigned cha
   if (out_data == NULL || out_size == NULL) return SALTS_EINVAL;
   *out_data = NULL;
   *out_size = 0u;
-  if (state == NULL || state->ssl == NULL) return SALTS_EINVAL;
+  if (state == NULL || CNET_TLS_SSL(state) == NULL) return SALTS_EINVAL;
   if (!state->handshake_complete) return SALTS_ENOTCONN;
   if (state->negotiated_alpn_size == 0u) return SALTS_ENOENT;
   *out_data = state->negotiated_alpn;
@@ -655,7 +735,7 @@ static int cnet_tls_state_copy_session_string(const cnet_tls_state *state, const
   *out_size = 0u;
   if (state == NULL || buffer == NULL || capacity == 0u) return SALTS_EINVAL;
   buffer[0] = '\0';
-  if (state->ssl == NULL || !state->handshake_complete) return SALTS_ENOTCONN;
+  if (CNET_TLS_SSL(state) == NULL || !state->handshake_complete) return SALTS_ENOTCONN;
   if (value == NULL || value[0] == '\0') return SALTS_ENOENT;
   size = strlen(value);
   if (capacity <= size) return SALTS_EMSGSIZE;
@@ -667,14 +747,14 @@ static int cnet_tls_state_copy_session_string(const cnet_tls_state *state, const
 int cnet_tls_state_negotiated_version(const cnet_tls_state *state, char *buffer, size_t capacity,
                                       size_t *out_size) {
   const char *version =
-      state != NULL && state->ssl != NULL ? SSL_get_version((const SSL *)state->ssl) : NULL;
+      state != NULL && CNET_TLS_SSL(state) != NULL ? SSL_get_version((const SSL *)CNET_TLS_SSL(state)) : NULL;
   return cnet_tls_state_copy_session_string(state, version, buffer, capacity, out_size);
 }
 
 int cnet_tls_state_negotiated_cipher(const cnet_tls_state *state, char *buffer, size_t capacity,
                                      size_t *out_size) {
   const SSL_CIPHER *cipher =
-      state != NULL && state->ssl != NULL ? SSL_get_current_cipher((const SSL *)state->ssl) : NULL;
+      state != NULL && CNET_TLS_SSL(state) != NULL ? SSL_get_current_cipher((const SSL *)CNET_TLS_SSL(state)) : NULL;
   const char *name = cipher != NULL ? SSL_CIPHER_get_name(cipher) : NULL;
   return cnet_tls_state_copy_session_string(state, name, buffer, capacity, out_size);
 }
@@ -690,8 +770,8 @@ int cnet_tls_state_peer_certificate_sha256(
 
   if (state == NULL || buffer == NULL) return SALTS_EINVAL;
   buffer[0] = '\0';
-  if (state->ssl == NULL || !state->handshake_complete) return SALTS_ENOTCONN;
-  certificate = SSL_get_peer_certificate((const SSL *)state->ssl);
+  if (CNET_TLS_SSL(state) == NULL || !state->handshake_complete) return SALTS_ENOTCONN;
+  certificate = SSL_get_peer_certificate((const SSL *)CNET_TLS_SSL(state));
   if (certificate == NULL) return SALTS_ENOENT;
   if (X509_digest(certificate, EVP_sha256(), digest, &digest_size) != 1) {
     X509_free(certificate);
@@ -712,8 +792,8 @@ int cnet_tls_state_export_channel_binding(
   static const char exporter_label[] = "EXPORTER-Channel-Binding";
   if (output == NULL) return SALTS_EINVAL;
   memset(output, 0, CNET_TLS_CHANNEL_BINDING_BYTES);
-  if (state == NULL || state->ssl == NULL || !state->handshake_complete) return SALTS_ENOTCONN;
-  return SSL_export_keying_material((SSL *)state->ssl, output, CNET_TLS_CHANNEL_BINDING_BYTES,
+  if (state == NULL || CNET_TLS_SSL(state) == NULL || !state->handshake_complete) return SALTS_ENOTCONN;
+  return SSL_export_keying_material((SSL *)CNET_TLS_SSL(state), output, CNET_TLS_CHANNEL_BINDING_BYTES,
                                     exporter_label, sizeof(exporter_label) - 1u, NULL, 0u, 1) == 1
              ? SALTS_OK
              : SALTS_EIO;

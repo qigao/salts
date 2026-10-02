@@ -389,8 +389,14 @@ spec("CNet bounded TLS engine") {
     size_t version_size = 0u;
 
     check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
-    check_equal(SSL_set_max_proto_version((SSL *)pair.client.ssl, TLS1_2_VERSION), 1);
-    check_equal(SSL_set_max_proto_version((SSL *)pair.server.ssl, TLS1_2_VERSION), 1);
+    check_equal(cnet_tls_state_set_protocol_range(&pair.client,
+                                                   CNET_TLS_PROTOCOL_VERSION_DEFAULT,
+                                                   CNET_TLS_PROTOCOL_VERSION_1_2),
+                SALTS_OK);
+    check_equal(cnet_tls_state_set_protocol_range(&pair.server,
+                                                   CNET_TLS_PROTOCOL_VERSION_DEFAULT,
+                                                   CNET_TLS_PROTOCOL_VERSION_1_2),
+                SALTS_OK);
     check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
     check_equal(cnet_tls_state_negotiated_version(&pair.client, version, sizeof(version),
                                                   &version_size),
@@ -407,8 +413,14 @@ spec("CNet bounded TLS engine") {
     size_t version_size = 0u;
 
     check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
-    check_equal(SSL_set_min_proto_version((SSL *)pair.client.ssl, TLS1_3_VERSION), 1);
-    check_equal(SSL_set_min_proto_version((SSL *)pair.server.ssl, TLS1_3_VERSION), 1);
+    check_equal(cnet_tls_state_set_protocol_range(&pair.client,
+                                                   CNET_TLS_PROTOCOL_VERSION_1_3,
+                                                   CNET_TLS_PROTOCOL_VERSION_DEFAULT),
+                SALTS_OK);
+    check_equal(cnet_tls_state_set_protocol_range(&pair.server,
+                                                   CNET_TLS_PROTOCOL_VERSION_1_3,
+                                                   CNET_TLS_PROTOCOL_VERSION_DEFAULT),
+                SALTS_OK);
     check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
     check_equal(cnet_tls_state_negotiated_version(&pair.client, version, sizeof(version),
                                                   &version_size),
