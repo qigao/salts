@@ -10,7 +10,17 @@ if(poll_marker EQUAL -1)
   message(FATAL_ERROR "CNet client poll marker missing")
 endif()
 
-string(SUBSTRING "${client}" 0 ${poll_marker} data_path)
+# External-progress functions are serialized control-plane entry points. They
+# intentionally use control_lock and must not weaken the existing invariant
+# that send/receive/close hot paths before them remain owner-local and lock-free.
+string(FIND "${client}" "static int cnet_client_external_progress_begin(" external_marker)
+if(external_marker EQUAL -1)
+  set(data_path_end ${poll_marker})
+else()
+  set(data_path_end ${external_marker})
+endif()
+
+string(SUBSTRING "${client}" 0 ${data_path_end} data_path)
 string(FIND "${data_path}" "salts_mutex_lock(&impl->control_lock)" data_lock)
 if(NOT data_lock EQUAL -1)
   message(FATAL_ERROR "CNet single-owner data path reacquired the control mutex")
