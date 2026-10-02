@@ -112,8 +112,12 @@ static void test_uring_accept_take_once(void) {
     int peer;
     int child_flags;
 
-    if (fixture_init(&fixture) == SALTS_ENOTSUP)
-        return;
+    {
+        const int status = fixture_init(&fixture);
+        if (status == SALTS_ENOTSUP)
+            return;
+        assert(status == SALTS_OK);
+    }
 
     assert(native_io_internal_submit_stream_accept(
                &fixture.backend, fixture.endpoint,
@@ -158,8 +162,12 @@ static void test_uring_accept_cancel_has_no_child(void) {
     uintptr_t accepted = UINTPTR_MAX;
     int cancel_status;
 
-    if (fixture_init(&fixture) == SALTS_ENOTSUP)
-        return;
+    {
+        const int status = fixture_init(&fixture);
+        if (status == SALTS_ENOTSUP)
+            return;
+        assert(status == SALTS_OK);
+    }
 
     assert(native_io_internal_submit_stream_accept(
                &fixture.backend, fixture.endpoint,
@@ -189,8 +197,12 @@ static void test_uring_close_retires_unclaimed_child(void) {
     uintptr_t accepted = UINTPTR_MAX;
     int peer;
 
-    if (fixture_init(&fixture) == SALTS_ENOTSUP)
-        return;
+    {
+        const int status = fixture_init(&fixture);
+        if (status == SALTS_ENOTSUP)
+            return;
+        assert(status == SALTS_OK);
+    }
 
     assert(native_io_internal_submit_stream_accept(
                &fixture.backend, fixture.endpoint,
