@@ -41,7 +41,12 @@ spec("CNet private multi-owner shards") {
     check_equal(cnet_shards_wake(&shards), SALTS_EINVAL);
     check_equal(cnet_shards_poll_owner(&shards, 2u, 0u), SALTS_EINVAL);
     check_equal(cnet_shards_wake_owner(&shards, 2u), SALTS_EINVAL);
+    check_equal(cnet_shards_poll_owner(&shards, 0u, 0u), SALTS_EBUSY);
+    check_equal(cnet_shards_poll_owner(&shards, 1u, 0u), SALTS_EBUSY);
 
+    check_equal(cnet_shards_init_owner_experimental(&shards, 0u), SALTS_OK);
+    check_equal(cnet_shards_init_owner_experimental(&shards, 1u), SALTS_OK);
+    check_equal(cnet_shards_init_owner_experimental(&shards, 1u), SALTS_EALREADY);
     check_equal(cnet_shards_poll_owner(&shards, 0u, 0u), SALTS_OK);
     check_equal(cnet_shards_poll_owner(&shards, 1u, 0u), SALTS_OK);
     check_equal(cnet_shards_wake_owner(&shards, 0u), SALTS_OK);
