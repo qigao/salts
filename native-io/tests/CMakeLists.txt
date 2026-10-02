@@ -15,6 +15,7 @@ set_target_properties(native_io_accept_escrow_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+add_dependencies(native_io_test native_io_accept_escrow_test)
 
 cmake_add_test(native_io_internal_accept_test
   SOURCES native_io_internal_accept_test.c
@@ -26,6 +27,7 @@ set_target_properties(native_io_internal_accept_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+add_dependencies(native_io_test native_io_internal_accept_test)
 
 cmake_add_test(native_io_sharded_test
   SOURCES native_io_sharded_test.c
@@ -54,6 +56,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF)
+  add_dependencies(native_io_test native_io_uring_accept_test)
 endif()
 
 if(WIN32)
@@ -69,6 +72,7 @@ if(WIN32)
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF)
+  add_dependencies(native_io_test native_io_iocp_accept_test)
 endif()
 
 if(NOT WIN32)
@@ -82,6 +86,7 @@ if(NOT WIN32)
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF)
+  add_dependencies(native_io_test native_io_readiness_accept_test)
 endif()
 
 cmake_add_test(native_io_header_cpp_test
