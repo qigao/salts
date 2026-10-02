@@ -149,10 +149,10 @@ static cnet_session_stage cnet_owner_request_stage(const cnet_owner_session *ses
                                                    cnet_owner_request_role role) {
   if (role == CNET_OWNER_REQUEST_RECEIVE) return CNET_SESSION_STAGE_READ;
   if (role == CNET_OWNER_REQUEST_TLS_READ)
-    return session->tls.handshake_complete ? CNET_SESSION_STAGE_READ : CNET_SESSION_STAGE_HANDSHAKE;
+    return cnet_tls_state_handshake_complete(&session->tls) ? CNET_SESSION_STAGE_READ : CNET_SESSION_STAGE_HANDSHAKE;
   if (role == CNET_OWNER_REQUEST_SEND) return CNET_SESSION_STAGE_WRITE;
   if (role == CNET_OWNER_REQUEST_TLS_WRITE)
-    return session->tls.handshake_complete ? CNET_SESSION_STAGE_WRITE
+    return cnet_tls_state_handshake_complete(&session->tls) ? CNET_SESSION_STAGE_WRITE
                                            : CNET_SESSION_STAGE_HANDSHAKE;
   return CNET_SESSION_STAGE_CONNECT;
 }
@@ -162,9 +162,9 @@ static uint32_t cnet_owner_request_timeout(const cnet_owner_session *session,
   if (role == CNET_OWNER_REQUEST_RECEIVE) return session->peer.read_timeout_ms;
   if (role == CNET_OWNER_REQUEST_SEND) return session->peer.write_timeout_ms;
   if (role == CNET_OWNER_REQUEST_TLS_READ)
-    return session->tls.handshake_complete ? session->peer.read_timeout_ms : 0u;
+    return cnet_tls_state_handshake_complete(&session->tls) ? session->peer.read_timeout_ms : 0u;
   if (role == CNET_OWNER_REQUEST_TLS_WRITE)
-    return session->tls.handshake_complete ? session->peer.write_timeout_ms : 0u;
+    return cnet_tls_state_handshake_complete(&session->tls) ? session->peer.write_timeout_ms : 0u;
   return 0u;
 }
 
@@ -1013,13 +1013,13 @@ static int cnet_owner_tls_start_write(cnet_owner_impl *impl, cnet_owner_session 
   if (out_started == NULL) return SALTS_EINVAL;
   *out_started = false;
   if (session->write_active) return SALTS_OK;
-  status = cnet_tls_take_cipher(&session->tls, session->tls.write_buffer,
-                                session->tls.io_buffer_bytes, &size);
+  status = cnet_tls_take_cipher(&session->tls, cnet_tls_state_write_buffer(&session->tls),
+                                cnet_tls_state_io_buffer_bytes(&session->tls), &size);
   if (status == SALTS_ENOENT) return SALTS_OK;
   if (status != SALTS_OK) return status;
   operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_STREAM_SEND,
                                     .endpoint = cnet_transport_write_endpoint(&session->transport),
-                                    .buffer = session->tls.write_buffer,
+                                    .buffer = cnet_tls_state_write_buffer(&session->tls),
                                     .length = size};
   status = cnet_owner_start_request(impl, session, NULL, NULL, CNET_OWNER_REQUEST_TLS_WRITE, &operation,
                                     false, false);
@@ -1033,10 +1033,10 @@ static int cnet_owner_tls_start_read(cnet_owner_impl *impl, cnet_owner_session *
   if (session->read_active || session->close_requested) return SALTS_OK;
   capacity = cnet_tls_cipher_input_capacity(&session->tls);
   if (capacity == 0u) return SALTS_OK;
-  if (capacity > session->tls.io_buffer_bytes) capacity = session->tls.io_buffer_bytes;
+  if (capacity > cnet_tls_state_io_buffer_bytes(&session->tls)) capacity = cnet_tls_state_io_buffer_bytes(&session->tls);
   operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_STREAM_RECV,
                                     .endpoint = cnet_transport_read_endpoint(&session->transport),
-                                    .buffer = session->tls.read_buffer,
+                                    .buffer = cnet_tls_state_read_buffer(&session->tls),
                                     .length = capacity};
   return cnet_owner_start_request(impl, session, NULL, NULL, CNET_OWNER_REQUEST_TLS_READ, &operation,
                                   false, false);
@@ -1145,7 +1145,7 @@ static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *sessio
   bool started = false;
   int status;
 
-  if (!session->tls.handshake_complete) {
+  if (!cnet_tls_state_handshake_complete(&session->tls)) {
     bool complete = false;
     status = cnet_tls_handshake(&session->tls, &complete);
     if (status != SALTS_OK) return status;
@@ -1695,7 +1695,7 @@ static int cnet_owner_progress_close(cnet_owner_impl *impl, cnet_owner_session *
     if (status != SALTS_OK) cnet_owner_record_failure(session, status, CNET_SESSION_STAGE_SHUTDOWN);
     return SALTS_OK;
   }
-  if (session->peer.scheme == CNET_URI_TLS && session->tls.handshake_complete) {
+  if (session->peer.scheme == CNET_URI_TLS && cnet_tls_state_handshake_complete(&session->tls)) {
     status = cnet_owner_cancel_receive_requests(impl, session->handle);
     if (status != SALTS_OK)
       return cnet_owner_fail_session(impl, session, status, CNET_SESSION_STAGE_SHUTDOWN);
@@ -1783,9 +1783,9 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
 
   if (role == CNET_OWNER_REQUEST_TLS_READ) {
     if (completion->kind == NATIVE_IO_COMPLETION_OK) {
-      if (completion->bytes == 0u || completion->bytes > session->tls.io_buffer_bytes)
+      if (completion->bytes == 0u || completion->bytes > cnet_tls_state_io_buffer_bytes(&session->tls))
         return cnet_owner_fail_session(impl, session, SALTS_EIO, request_stage);
-      status = cnet_tls_feed_cipher(&session->tls, session->tls.read_buffer, completion->bytes);
+      status = cnet_tls_feed_cipher(&session->tls, cnet_tls_state_read_buffer(&session->tls), completion->bytes);
       if (status == SALTS_OK) status = cnet_owner_tls_pump(impl, session);
       if (status == SALTS_OK && session->occupied && !session->close_requested &&
           session->receive_demand == 0u)
@@ -1794,7 +1794,7 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
                                 : cnet_owner_fail_session(impl, session, status, request_stage);
     }
     if (completion->kind == NATIVE_IO_COMPLETION_CANCELLED) {
-      if (session->close_requested && session->tls.handshake_complete) {
+      if (session->close_requested && cnet_tls_state_handshake_complete(&session->tls)) {
         status = cnet_owner_tls_pump(impl, session);
         return status == SALTS_OK
                    ? SALTS_OK
