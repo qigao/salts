@@ -143,6 +143,8 @@ jobs:
         id: shared_deps
         uses: ./.github/actions/setup-re2c-tools
 
+      # PRs run only benchmark families touched by the change; master/manual
+      # runs deliberately keep the exhaustive matrix for historical evidence.
       - name: Select affected benchmark layers
         id: scope
         shell: pwsh
