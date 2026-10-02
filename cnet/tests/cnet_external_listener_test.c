@@ -9,6 +9,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #if defined(_WIN32)
@@ -191,8 +192,13 @@ static void test_external_listener_accept_shared_progress(void) {
                &listener, 0u, &ready) == SALTS_ENOTSUP);
   }
 
-  assert(cnet_listener_submit_external_accept(
-             &listener, &first) == SALTS_OK);
+  status = cnet_listener_submit_external_accept(
+      &listener, &first);
+  if (status != SALTS_OK)
+    fprintf(stderr,
+            "initial external listener accept submit failed: %d\n",
+            status);
+  assert(status == SALTS_OK);
   assert(native_io_request_valid(first));
   assert(cnet_listener_submit_external_accept(
              &listener, &duplicate) == SALTS_OK);
