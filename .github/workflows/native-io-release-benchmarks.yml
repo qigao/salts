@@ -101,7 +101,6 @@ jobs:
     timeout-minutes: 5
     outputs:
       profile: ${{ steps.scope.outputs.profile }}
-      adapted: ${{ steps.scope.outputs.adapted }}
       evidence: ${{ steps.scope.outputs.evidence }}
       contracts: ${{ steps.scope.outputs.contracts }}
       native_contracts: ${{ steps.scope.outputs.native_contracts }}
@@ -135,7 +134,6 @@ jobs:
           $runFull = "${{ github.event_name }}" -ne "pull_request"
           $benchmarkProfile = if ($runFull) { "full" } else { "pr" }
           if ($runFull) {
-            $runAdapted = $true
             $runCnetCompare = $true
             $runNativeOwner = $true
             $runNativeStyle = $true
@@ -155,7 +153,6 @@ jobs:
           } else {
             $base = "${{ github.event.pull_request.base.sha }}"
             if ([string]::IsNullOrWhiteSpace($base) -or $base -match "^0+$") {
-              $runAdapted = $true
               $runCnetCompare = $true
               $runNativeOwner = $true
               $runNativeStyle = $true
@@ -177,18 +174,8 @@ jobs:
               $changed = @(git diff --name-only $base $head)
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-              $workflowChanged = @($changed | Where-Object {
-                  $_ -eq ".github/workflows/native-io-release-benchmarks.yml" -or
-                  $_ -like ".github/actions/setup-re2c-tools/*"
-                }).Count -gt 0
               $verdictRendererChanged = @($changed | Where-Object {
                   $_ -eq "cmake/ci/render-benchmark-verdicts.ps1"
-                }).Count -gt 0
-              $policyChanged = @($changed | Where-Object {
-                  $_ -like "cmake/ci/benchmark-policy.json" -or
-                  $_ -like "cmake/ci/*benchmark*policy*.ps1" -or
-                  $_ -like "cmake/ci/render-benchmark-verdicts.ps1" -or
-                  $_ -like "cmake/ci/prune-benchmark-artifacts.ps1"
                 }).Count -gt 0
               $buildChanged = @($changed | Where-Object {
                   (($_ -like "cmake/*.cmake" -or $_ -like "cmake/**/*.cmake") -and
@@ -311,10 +298,6 @@ jobs:
                 $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
                 $cnetTestsChanged -or $buildChanged -or $dependencyChanged
 
-              $runAdapted = $runNativeOwner -or $runNativeStyle -or
-                $runCnetOwner -or $runCnetIo -or $runCnetSg -or
-                $runCoroutine -or $runCflow -or $runNativeUring -or
-                $runForensic -or $workflowChanged -or $policyChanged
             }
           }
 
@@ -324,7 +307,6 @@ jobs:
           $runWork = $runEvidence -or $runContracts
 
           "profile=$benchmarkProfile" >> $env:GITHUB_OUTPUT
-          "adapted=$($runAdapted.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "evidence=$($runEvidence.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "contracts=$($runContracts.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "native_contracts=$($runNativeContracts.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
