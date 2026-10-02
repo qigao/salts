@@ -3,6 +3,7 @@
 #endif
 
 #include "native_io_internal.h"
+#include "native_io_accept_escrow.h"
 
 #include <salts/clock.h>
 #include <salts/error_codes.h>
@@ -67,6 +68,7 @@ typedef struct salts_io_uring_endpoint {
   int fd;
   uint32_t generation;
   size_t active_requests;
+  size_t retained_accepts;
   salts_io_uring_lane read_lane;
   salts_io_uring_lane write_lane;
   salts_io_resource_kind resource_kind;
@@ -94,12 +96,22 @@ typedef struct salts_io_uring_request_record {
   bool write_lane;
   bool in_flight;
   bool cancel_requested;
+  bool stream_accept;
 } salts_io_uring_request_record;
+
+typedef struct salts_io_uring_accept_result {
+  native_io_request request;
+  native_io_endpoint listener;
+  int child_fd;
+  bool live;
+} salts_io_uring_accept_result;
 
 typedef struct salts_io_uring_impl {
   salts_io_impl base;
   salts_io_uring_endpoint *endpoints;
   salts_io_uring_request_record *requests;
+  salts_io_uring_accept_result *accept_results;
+  native_io_accept_escrow accept_escrow;
   uint32_t *free_endpoints;
   uint32_t *free_requests;
   /* Terminal records stay borrowed until observe copies their completion. */
@@ -166,6 +178,126 @@ static void uring_counter_increment(uint64_t *counter) {
 static uint32_t uring_next_generation(uint32_t generation) {
   ++generation;
   return generation == 0u ? 1u : generation;
+}
+
+static salts_io_uring_endpoint *uring_endpoint(
+    salts_io_uring_impl *impl, native_io_endpoint endpoint);
+
+static salts_io_uring_accept_result *uring_accept_result_from_token(
+    salts_io_uring_impl *impl, uintptr_t token) {
+  const uintptr_t base = (uintptr_t)impl->accept_results;
+  const uintptr_t value = token;
+  const size_t bytes =
+      impl->request_capacity * sizeof(*impl->accept_results);
+  uintptr_t offset;
+  if (impl->accept_results == NULL || value < base ||
+      value - base >= bytes)
+    return NULL;
+  offset = value - base;
+  if (offset % sizeof(*impl->accept_results) != 0u)
+    return NULL;
+  return &impl->accept_results[
+      offset / sizeof(*impl->accept_results)];
+}
+
+static int uring_retire_accept_result(
+    void *context, uintptr_t transport) {
+  salts_io_uring_impl *impl =
+      (salts_io_uring_impl *)context;
+  salts_io_uring_accept_result *result =
+      uring_accept_result_from_token(impl, transport);
+  salts_io_uring_endpoint *listener;
+  int status = SALTS_OK;
+
+  if (result == NULL || !result->live)
+    return SALTS_EINVAL;
+  listener = uring_endpoint(impl, result->listener);
+  if (result->child_fd >= 0 && close(result->child_fd) != 0)
+    status = -errno;
+  if (listener != NULL && listener->retained_accepts != 0u)
+    --listener->retained_accepts;
+  memset(result, 0, sizeof(*result));
+  result->child_fd = -1;
+  return status;
+}
+
+static salts_io_uring_accept_result *uring_accept_result_reserve(
+    salts_io_uring_impl *impl,
+    native_io_request request,
+    native_io_endpoint listener,
+    int child_fd) {
+  size_t index;
+  for (index = 0u; index < impl->request_capacity; ++index) {
+    salts_io_uring_accept_result *result =
+        &impl->accept_results[index];
+    if (result->live)
+      continue;
+    result->request = request;
+    result->listener = listener;
+    result->child_fd = child_fd;
+    result->live = true;
+    return result;
+  }
+  return NULL;
+}
+
+static int uring_publish_accept_result(
+    salts_io_uring_impl *impl,
+    salts_io_uring_request_record *request,
+    int child_fd) {
+  salts_io_uring_accept_result *result;
+  salts_io_uring_endpoint *listener;
+  int status;
+
+  if (child_fd < 0)
+    return SALTS_EINVAL;
+  result = uring_accept_result_reserve(
+      impl, request->request, request->endpoint, child_fd);
+  if (result == NULL) {
+    (void)close(child_fd);
+    return SALTS_ENOBUFS;
+  }
+
+  status = native_io_accept_escrow_publish(
+      &impl->accept_escrow, request->request,
+      (uintptr_t)result);
+  if (status != SALTS_OK) {
+    (void)close(child_fd);
+    memset(result, 0, sizeof(*result));
+    result->child_fd = -1;
+    return status;
+  }
+
+  listener = uring_endpoint(impl, request->endpoint);
+  if (listener == NULL) {
+    (void)native_io_accept_escrow_discard(
+        &impl->accept_escrow, request->request);
+    return SALTS_ENOENT;
+  }
+  ++listener->retained_accepts;
+  return SALTS_OK;
+}
+
+static int uring_discard_listener_accepts(
+    salts_io_uring_impl *impl,
+    native_io_endpoint listener_handle) {
+  int first_status = SALTS_OK;
+  size_t index;
+  for (index = 0u; index < impl->request_capacity; ++index) {
+    salts_io_uring_accept_result *result =
+        &impl->accept_results[index];
+    int status;
+    if (!result->live ||
+        result->listener.slot != listener_handle.slot ||
+        result->listener.generation !=
+            listener_handle.generation)
+      continue;
+    status = native_io_accept_escrow_discard(
+        &impl->accept_escrow, result->request);
+    if (first_status == SALTS_OK && status != SALTS_OK)
+      first_status = status;
+  }
+  return first_status;
 }
 
 static uint64_t uring_request_token(uint32_t index, uint32_t generation) {
@@ -340,6 +472,13 @@ static void uring_prepare_operation(salts_io_uring_request_record *record, struc
   memset(sqe, 0, sizeof(*sqe));
   sqe->fd = fd;
   sqe->user_data = record->native_token;
+  if (record->stream_accept) {
+    sqe->opcode = IORING_OP_ACCEPT;
+    sqe->addr = 0u;
+    sqe->off = 0u;
+    sqe->accept_flags = SOCK_NONBLOCK | SOCK_CLOEXEC;
+    return;
+  }
   if (record->vector_write) {
     if (record->operation.kind == NATIVE_IO_OPERATION_PIPE_WRITE) {
       sqe->opcode = IORING_OP_WRITEV;
@@ -424,6 +563,7 @@ static void uring_release_request(salts_io_uring_impl *impl, salts_io_uring_requ
   request->write_lane = false;
   request->in_flight = false;
   request->cancel_requested = false;
+  request->stream_accept = false;
   impl->free_requests[impl->free_request_count++] = index;
   --impl->active_requests;
 }
@@ -477,6 +617,11 @@ static void uring_queue_terminal(salts_io_uring_impl *impl, salts_io_uring_reque
   const size_t tail = (impl->terminal_head + impl->terminal_count) % impl->request_capacity;
   request->in_flight = false;
   request->native_token = 0u;
+  if (request->stream_accept && result >= 0) {
+    const int publish_status =
+        uring_publish_accept_result(impl, request, result);
+    result = publish_status == SALTS_OK ? 0 : publish_status;
+  }
   uring_make_completion(impl, request, result, &request->completion);
   request->phase = SALTS_IO_URING_TERMINAL;
   impl->terminal_requests[tail] = index;
@@ -581,6 +726,7 @@ static int uring_attach_endpoint(salts_io_uring_impl *impl, int fd,
   endpoint->fd = fd;
   endpoint->generation = uring_next_generation(endpoint->generation);
   endpoint->active_requests = 0u;
+  endpoint->retained_accepts = 0u;
   endpoint->read_lane = (salts_io_uring_lane){SALTS_IO_URING_INDEX_NONE, SALTS_IO_URING_INDEX_NONE};
   endpoint->write_lane =
       (salts_io_uring_lane){SALTS_IO_URING_INDEX_NONE, SALTS_IO_URING_INDEX_NONE};
@@ -648,10 +794,24 @@ static int uring_release_endpoint(salts_io_uring_impl *impl, native_io_endpoint 
                       : endpoint->resource_kind != SALTS_IO_RESOURCE_BYTE_PIPE)
     return SALTS_EINVAL;
   if (endpoint->active_requests != 0u) return SALTS_EBUSY;
+  if (endpoint->retained_accepts != 0u) {
+    int retire_status;
+    if (impl->admission_open)
+      return SALTS_EBUSY;
+    retire_status = uring_discard_listener_accepts(
+        impl, endpoint_handle);
+    if (endpoint->retained_accepts != 0u)
+      return retire_status == SALTS_OK
+                 ? SALTS_EPROTO
+                 : retire_status;
+    if (retire_status != SALTS_OK)
+      return retire_status;
+  }
   index = endpoint_handle.slot - 1u;
   endpoint->active = false;
   endpoint->fd = -1;
   endpoint->resource_kind = (salts_io_resource_kind)0;
+  endpoint->retained_accepts = 0u;
   endpoint->connected = false;
   endpoint->connect_active = false;
   impl->free_endpoints[impl->free_endpoint_count++] = index;
@@ -759,6 +919,125 @@ static int uring_submit_vector(salts_io_impl *base,
 static int uring_prepare(salts_io_impl *base, const native_io_operation *operation,
                          native_io_request *out_request) {
   return uring_admit(base, operation, NULL, out_request, true);
+}
+
+static int uring_submit_stream_accept(
+    salts_io_impl *base,
+    native_io_endpoint listener_handle,
+    native_io_request *out_request) {
+  salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
+  salts_io_uring_endpoint *listener;
+  salts_io_uring_request_record *request;
+  salts_io_uring_lane *lane;
+  int accepting = 0;
+  socklen_t option_length = (socklen_t)sizeof(accepting);
+  uint32_t index;
+  int status;
+
+  if (out_request != NULL)
+    *out_request = (native_io_request){0};
+  if (!impl->admission_open || out_request == NULL)
+    return !impl->admission_open
+               ? SALTS_ESHUTDOWN
+               : SALTS_EINVAL;
+  listener = uring_endpoint(impl, listener_handle);
+  if (listener == NULL)
+    return SALTS_ENOENT;
+  if (listener->resource_kind != SALTS_IO_RESOURCE_STREAM_SOCKET ||
+      listener->connected || listener->connect_active)
+    return SALTS_EINVAL;
+  if (getsockopt(listener->fd, SOL_SOCKET, SO_ACCEPTCONN,
+                 &accepting, &option_length) != 0)
+    return -errno;
+  if (!accepting)
+    return SALTS_EINVAL;
+  if (listener->active_requests != 0u)
+    return SALTS_EBUSY;
+  if (impl->free_request_count == 0u) {
+    uring_counter_increment(&impl->rejected_full);
+    return SALTS_ENOBUFS;
+  }
+
+  index = impl->free_requests[--impl->free_request_count];
+  request = &impl->requests[index];
+  request->phase = SALTS_IO_URING_PENDING;
+  request->request = (native_io_request){
+      index + 1u,
+      uring_next_generation(request->request.generation)};
+  request->endpoint = listener_handle;
+  request->operation = (native_io_operation){0};
+  request->vector_count = 0u;
+  request->vector_write = false;
+  request->native_token =
+      uring_request_token(index, request->request.generation);
+  request->completion = (native_io_completion){0};
+  request->previous = SALTS_IO_URING_INDEX_NONE;
+  request->next = SALTS_IO_URING_INDEX_NONE;
+  request->staged_previous = SALTS_IO_URING_INDEX_NONE;
+  request->staged_next = SALTS_IO_URING_INDEX_NONE;
+  request->staged = false;
+  request->write_lane = false;
+  request->in_flight = false;
+  request->cancel_requested = false;
+  request->stream_accept = true;
+  ++listener->active_requests;
+  ++impl->active_requests;
+
+  lane = &listener->read_lane;
+  uring_lane_push(impl, listener, index);
+  if (lane->head != index) {
+    uring_counter_increment(&impl->submitted);
+    *out_request = request->request;
+    return SALTS_OK;
+  }
+
+  status = uring_start_request(impl, request, listener->fd);
+  if (status != SALTS_OK) {
+    uring_lane_remove(impl, listener, index);
+    uring_release_request(impl, request, index);
+    uring_counter_increment(&impl->native_submit_errors);
+    return status;
+  }
+
+  uring_counter_increment(&impl->submitted);
+  *out_request = request->request;
+  return SALTS_OK;
+}
+
+static int uring_take_stream_accept(
+    salts_io_impl *base,
+    native_io_request request,
+    uintptr_t *out_transport) {
+  salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
+  uintptr_t token = UINTPTR_MAX;
+  salts_io_uring_accept_result *result;
+  salts_io_uring_endpoint *listener;
+  int child_fd;
+  int status;
+
+  if (out_transport == NULL)
+    return SALTS_EINVAL;
+  *out_transport = UINTPTR_MAX;
+  status = native_io_accept_escrow_take(
+      &impl->accept_escrow, request, &token);
+  if (status != SALTS_OK)
+    return status;
+  result = uring_accept_result_from_token(impl, token);
+  if (result == NULL || !result->live ||
+      result->request.slot != request.slot ||
+      result->request.generation != request.generation)
+    return SALTS_EPROTO;
+
+  listener = uring_endpoint(impl, result->listener);
+  child_fd = result->child_fd;
+  if (listener != NULL && listener->retained_accepts != 0u)
+    --listener->retained_accepts;
+  memset(result, 0, sizeof(*result));
+  result->child_fd = -1;
+  if (child_fd < 0)
+    return SALTS_EPROTO;
+  *out_transport = (uintptr_t)child_fd;
+  return SALTS_OK;
 }
 
 static bool uring_supports_vector_write(const salts_io_impl *base,
@@ -1196,14 +1475,20 @@ static void uring_unmap(salts_io_uring_impl *impl) {
 
 static int uring_destroy(salts_io_impl *base) {
   salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
+  int escrow_status;
   if (impl->admission_open || impl->active_requests != 0u || impl->endpoint_count != 0u)
     return SALTS_EBUSY;
+  escrow_status = native_io_accept_escrow_destroy(
+      &impl->accept_escrow);
+  if (escrow_status != SALTS_OK)
+    return escrow_status;
   uring_unmap(impl);
   if (impl->ring_fd >= 0) (void)close(impl->ring_fd);
   if (impl->wake_fd >= 0) (void)close(impl->wake_fd);
   free(impl->free_requests);
   free(impl->free_endpoints);
   free(impl->terminal_requests);
+  free(impl->accept_results);
   free(impl->requests);
   free(impl->endpoints);
   free(impl);
@@ -1228,11 +1513,23 @@ static bool uring_get_stats(const salts_io_impl *base, native_io_backend_stats *
 }
 
 static const salts_io_impl_ops uring_ops = {
-    uring_attach_socket, uring_release_socket, uring_submit,      uring_cancel,
-    uring_observe,       uring_wake,           uring_close,       uring_destroy,
-    uring_get_stats,     uring_attach_pipe,    uring_release_pipe,
-    uring_prepare,       uring_flush,          uring_submit_vector,
-    uring_supports_vector_write};
+    .attach_socket = uring_attach_socket,
+    .release_socket = uring_release_socket,
+    .submit = uring_submit,
+    .cancel = uring_cancel,
+    .observe = uring_observe,
+    .wake = uring_wake,
+    .close = uring_close,
+    .destroy = uring_destroy,
+    .get_stats = uring_get_stats,
+    .attach_pipe = uring_attach_pipe,
+    .release_pipe = uring_release_pipe,
+    .prepare = uring_prepare,
+    .flush = uring_flush,
+    .submit_vector = uring_submit_vector,
+    .supports_vector_write = uring_supports_vector_write,
+    .submit_stream_accept = uring_submit_stream_accept,
+    .take_stream_accept = uring_take_stream_accept};
 
 static bool uring_mapped_extent(size_t offset, size_t count, size_t element_size, size_t *out) {
   if (element_size == 0u || count > (SIZE_MAX - offset) / element_size) return false;
@@ -1302,7 +1599,9 @@ static void uring_free_partial(salts_io_uring_impl *impl) {
   if (impl->wake_fd >= 0) (void)close(impl->wake_fd);
   free(impl->free_requests);
   free(impl->free_endpoints);
+  (void)native_io_accept_escrow_destroy(&impl->accept_escrow);
   free(impl->terminal_requests);
+  free(impl->accept_results);
   free(impl->requests);
   free(impl->endpoints);
   free(impl);
@@ -1317,6 +1616,7 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
   if (config->request_capacity > UINT32_MAX / 2u ||
       config->endpoint_capacity > SIZE_MAX / sizeof(salts_io_uring_endpoint) ||
       config->request_capacity > SIZE_MAX / sizeof(salts_io_uring_request_record) ||
+      config->request_capacity > SIZE_MAX / sizeof(salts_io_uring_accept_result) ||
       config->endpoint_capacity > SIZE_MAX / sizeof(uint32_t) ||
       config->request_capacity > SIZE_MAX / sizeof(uint32_t))
     return SALTS_ERANGE;
@@ -1333,10 +1633,14 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
       (salts_io_uring_endpoint *)calloc(config->endpoint_capacity, sizeof(*impl->endpoints));
   impl->requests =
       (salts_io_uring_request_record *)calloc(config->request_capacity, sizeof(*impl->requests));
+  impl->accept_results =
+      (salts_io_uring_accept_result *)calloc(
+          config->request_capacity, sizeof(*impl->accept_results));
   impl->free_endpoints = (uint32_t *)calloc(config->endpoint_capacity, sizeof(uint32_t));
   impl->free_requests = (uint32_t *)calloc(config->request_capacity, sizeof(uint32_t));
   impl->terminal_requests = (uint32_t *)calloc(config->request_capacity, sizeof(uint32_t));
-  if (impl->endpoints == NULL || impl->requests == NULL || impl->free_endpoints == NULL ||
+  if (impl->endpoints == NULL || impl->requests == NULL ||
+      impl->accept_results == NULL || impl->free_endpoints == NULL ||
       impl->free_requests == NULL || impl->terminal_requests == NULL) {
     uring_free_partial(impl);
     return SALTS_ENOMEM;
@@ -1349,13 +1653,23 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
   impl->free_endpoint_count = config->endpoint_capacity;
   impl->free_request_count = config->request_capacity;
   impl->admission_open = true;
+  status = native_io_accept_escrow_init(
+      &impl->accept_escrow, config->request_capacity,
+      uring_retire_accept_result, impl);
+  if (status != SALTS_OK) {
+    uring_free_partial(impl);
+    return status;
+  }
   atomic_init(&impl->wake_pending, false);
   for (size_t index = 0u; index < config->endpoint_capacity; ++index) {
     impl->free_endpoints[index] = (uint32_t)(config->endpoint_capacity - index - 1u);
     impl->endpoints[index].fd = -1;
   }
-  for (size_t index = 0u; index < config->request_capacity; ++index)
-    impl->free_requests[index] = (uint32_t)(config->request_capacity - index - 1u);
+  for (size_t index = 0u; index < config->request_capacity; ++index) {
+    impl->free_requests[index] =
+        (uint32_t)(config->request_capacity - index - 1u);
+    impl->accept_results[index].child_fd = -1;
+  }
   impl->wake_fd = eventfd(0u, EFD_CLOEXEC | EFD_NONBLOCK);
   if (impl->wake_fd < 0) {
     status = -errno;
