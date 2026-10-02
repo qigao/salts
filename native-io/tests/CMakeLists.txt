@@ -43,6 +43,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "native-io/tests")
   add_test(NAME native_io_uring_batch_test COMMAND native_io_uring_batch_test)
   add_dependencies(native_io_test native_io_uring_batch_test)
+
+  cmake_add_test(native_io_uring_accept_test
+    SOURCES native_io_uring_accept_test.c
+    LIBS Salts::NativeIO
+    FOLDER "native-io/tests")
+  target_include_directories(native_io_uring_accept_test
+    PRIVATE "${PROJECT_SOURCE_DIR}/native-io/src")
+  set_target_properties(native_io_uring_accept_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF)
 endif()
 
 if(WIN32)
