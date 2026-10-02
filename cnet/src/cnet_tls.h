@@ -12,8 +12,7 @@ typedef struct cnet_tls_context cnet_tls_context;
 
 typedef struct cnet_tls_state {
   cnet_tls_context *context;
-  void *ssl;
-  void *network_bio;
+  void *engine;
   unsigned char *read_buffer;
   unsigned char *write_buffer;
   size_t io_buffer_bytes;
@@ -39,6 +38,10 @@ int cnet_tls_state_init(cnet_tls_state *state, cnet_tls_context *context, bool s
 void cnet_tls_state_destroy(cnet_tls_state *state);
 
 int cnet_tls_handshake(cnet_tls_state *state, bool *out_complete);
+bool cnet_tls_state_handshake_complete(const cnet_tls_state *state);
+void *cnet_tls_state_read_buffer(cnet_tls_state *state);
+void *cnet_tls_state_write_buffer(cnet_tls_state *state);
+size_t cnet_tls_state_io_buffer_bytes(const cnet_tls_state *state);
 size_t cnet_tls_cipher_input_capacity(const cnet_tls_state *state);
 int cnet_tls_feed_cipher(cnet_tls_state *state, const void *data, size_t size);
 int cnet_tls_take_cipher(cnet_tls_state *state, void *buffer, size_t capacity, size_t *out_size);
