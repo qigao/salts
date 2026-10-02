@@ -151,6 +151,23 @@ set_target_properties(
              C_EXTENSIONS OFF
              LINKER_LANGUAGE CXX)
 
+find_package(GmSSL CONFIG REQUIRED)
+
+add_executable(cnet_gmssl_contract_test cnet_gmssl_contract_test.c)
+target_link_libraries(cnet_gmssl_contract_test PRIVATE GmSSL::GmSSL)
+set_target_properties(
+  cnet_gmssl_contract_test
+  PROPERTIES C_STANDARD 11
+             C_STANDARD_REQUIRED ON
+             C_EXTENSIONS OFF
+             FOLDER "cnet/tests")
+add_test(NAME cnet_gmssl_contract_test COMMAND cnet_gmssl_contract_test)
+
+# The unified release workflow explicitly builds cnet_tls_test before running
+# the cnet_* CTest contract set. Keep the provider probe in that build closure
+# so a registered test can never become "Not Run" due to a missing executable.
+add_dependencies(cnet_tls_test cnet_gmssl_contract_test)
+
 cmake_add_test(
   cnet_transport_test
   SOURCES
