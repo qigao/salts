@@ -23,6 +23,7 @@ foreach ($family in $families) {
   if ([string]::IsNullOrWhiteSpace($scope)) { throw "benchmark family has empty scope: $id" }
   if ($allowedPrModes -notcontains $prMode) { throw "invalid PR mode for $id : $prMode" }
   if ([string]::IsNullOrWhiteSpace($anchor)) { throw "benchmark family has no anchor: $id" }
+  if (@($family.evidence).Count -eq 0) { throw "benchmark family has no evidence mapping: $id" }
   if (-not [string]::IsNullOrWhiteSpace($verifier)) {
     $verifierPath = Join-Path $ProjectRoot $verifier
     if (-not (Test-Path -LiteralPath $verifierPath -PathType Leaf)) { throw "benchmark verifier missing for $id : $verifier" }
