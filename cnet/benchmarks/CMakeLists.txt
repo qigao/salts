@@ -79,6 +79,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     SOURCES cnet_central_callback_benchmark.c cnet_io_benchmark_config.c
     LIBS cnet_profile Salts::Platform
     FOLDER "cnet/benchmarks")
+  cmake_add_benchmark(cnet_external_owner_parallel_benchmark
+    SOURCES cnet_external_owner_parallel_benchmark.c cnet_io_benchmark_config.c
+    LIBS Salts::CNet Salts::Platform Salts::NativeIO
+    FOLDER "cnet/benchmarks")
+  target_include_directories(cnet_external_owner_parallel_benchmark PRIVATE ../src)
+  set_target_properties(cnet_external_owner_parallel_benchmark PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    LINKER_LANGUAGE CXX)
+
   target_include_directories(cnet_central_callback_benchmark PRIVATE ../src)
   set_target_properties(cnet_central_callback_benchmark PROPERTIES
     C_STANDARD 11
