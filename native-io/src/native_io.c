@@ -323,6 +323,36 @@ bool native_io_backend_endpoint_supports_vector_write(const native_io_backend *b
   return impl->ops->supports_vector_write(impl, endpoint);
 }
 
+int native_io_internal_submit_stream_accept(
+    native_io_backend *backend,
+    native_io_endpoint listener,
+    native_io_request *out_request) {
+  salts_io_impl *impl = native_io_impl(backend);
+  if (out_request != NULL) *out_request = (native_io_request){0};
+  if (impl == NULL || impl->ops == NULL ||
+      !native_io_endpoint_valid(listener) || out_request == NULL)
+    return SALTS_EINVAL;
+  if (impl->ops->submit_stream_accept == NULL)
+    return SALTS_ENOTSUP;
+  return impl->ops->submit_stream_accept(
+      impl, listener, out_request);
+}
+
+int native_io_internal_take_stream_accept(
+    native_io_backend *backend,
+    native_io_request request,
+    uintptr_t *out_transport) {
+  salts_io_impl *impl = native_io_impl(backend);
+  if (out_transport != NULL) *out_transport = UINTPTR_MAX;
+  if (impl == NULL || impl->ops == NULL ||
+      !native_io_request_valid(request) || out_transport == NULL)
+    return SALTS_EINVAL;
+  if (impl->ops->take_stream_accept == NULL)
+    return SALTS_ENOTSUP;
+  return impl->ops->take_stream_accept(
+      impl, request, out_transport);
+}
+
 int native_io_backend_submit(native_io_backend *backend, const native_io_operation *operation,
                              native_io_request *out_request) {
   salts_io_impl *impl = native_io_impl(backend);

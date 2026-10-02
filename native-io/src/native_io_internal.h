@@ -59,6 +59,16 @@ typedef struct salts_io_impl_ops {
   int (*submit_vector)(salts_io_impl *impl, const native_io_vector_operation *operation,
                        native_io_request *out_request);
   bool (*supports_vector_write)(const salts_io_impl *impl, native_io_endpoint endpoint);
+
+  /*
+   * Private listener-accept seam for CNet/shared-progress composition.
+   * Existing backends leave these NULL until #698 backend work supplies them.
+   * Accepted native transports never enter the public NativeIO ABI.
+   */
+  int (*submit_stream_accept)(salts_io_impl *impl, native_io_endpoint listener,
+                              native_io_request *out_request);
+  int (*take_stream_accept)(salts_io_impl *impl, native_io_request request,
+                            uintptr_t *out_transport);
 } salts_io_impl_ops;
 
 struct salts_io_impl {
@@ -73,5 +83,15 @@ bool native_io_platform_backend_supported(native_io_backend_kind kind);
 bool native_io_platform_pipe_supported(native_io_backend_kind kind);
 int native_io_platform_backend_init(native_io_backend *backend,
                                     const native_io_backend_config *config);
+
+int native_io_internal_submit_stream_accept(
+    native_io_backend *backend,
+    native_io_endpoint listener,
+    native_io_request *out_request);
+
+int native_io_internal_take_stream_accept(
+    native_io_backend *backend,
+    native_io_request request,
+    uintptr_t *out_transport);
 
 #endif /* SALTS_NATIVE_IO_INTERNAL_H */
