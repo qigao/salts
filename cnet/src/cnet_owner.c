@@ -134,7 +134,8 @@ static uint64_t cnet_owner_system_now(void *context) {
 static void cnet_owner_discard_backend(cnet_owner_impl *impl) {
   if (impl == NULL || impl->backend.impl == NULL) return;
   if (!impl->backend_borrowed) {
-    cnet_owner_discard_backend(impl);
+    (void)native_io_backend_close(&impl->backend);
+    (void)native_io_backend_destroy(&impl->backend);
   }
   impl->backend.impl = NULL;
 }
