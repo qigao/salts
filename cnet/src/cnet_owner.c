@@ -2636,6 +2636,51 @@ int cnet_owner_external_timeout(cnet_owner *owner, uint32_t max_wait_ms,
   return SALTS_OK;
 }
 
+int cnet_owner_external_requests(cnet_owner *owner,
+                                 cnet_session_handle session,
+                                 native_io_request *out_requests,
+                                 size_t capacity,
+                                 size_t *out_count) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  size_t required = 0u;
+  size_t i;
+
+  if (out_count == NULL) return SALTS_EINVAL;
+  *out_count = 0u;
+  if (impl == NULL || !cnet_session_handle_valid(session))
+    return SALTS_EINVAL;
+  if (!impl->backend_borrowed) return SALTS_ENOTSUP;
+  if (cnet_owner_find_session(impl, session) == NULL)
+    return SALTS_ENOENT;
+
+  for (i = 0u; i < impl->request_capacity; ++i) {
+    const cnet_owner_request *request = &impl->request_records[i];
+    if (request->active &&
+        request->session.slot == session.slot &&
+        request->session.generation == session.generation) {
+      if (!native_io_request_valid(request->native_request))
+        return SALTS_EPROTO;
+      ++required;
+    }
+  }
+
+  *out_count = required;
+  if (required == 0u) return SALTS_OK;
+  if (out_requests == NULL || capacity < required)
+    return SALTS_ENOBUFS;
+
+  required = 0u;
+  for (i = 0u; i < impl->request_capacity; ++i) {
+    const cnet_owner_request *request = &impl->request_records[i];
+    if (request->active &&
+        request->session.slot == session.slot &&
+        request->session.generation == session.generation)
+      out_requests[required++] = request->native_request;
+  }
+  *out_count = required;
+  return SALTS_OK;
+}
+
 #if defined(CNET_INTERNAL_TESTING)
 bool cnet_owner_test_backend_stats(const cnet_owner *owner,
                                    native_io_backend_stats *out_native,
