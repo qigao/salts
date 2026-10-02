@@ -514,6 +514,14 @@ static void *shards_parallel_owner_entry(void *user) {
     return NULL;
   }
 
+  status = cnet_shards_init_owner_experimental(
+      lane->shards, lane->connection.shard);
+  if (status != SALTS_OK) {
+    arg->status = status;
+    shards_parallel_gate_fail(arg->gate, status);
+    return NULL;
+  }
+
   status = shards_parallel_wait_connected(lane);
   if (status == SALTS_OK)
     status = cnet_shards_receive_direct(
