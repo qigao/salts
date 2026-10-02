@@ -54,6 +54,17 @@ typedef struct cnet_tls_boringssl_state {
 #define CNET_TLS_BIO(state) \
   (CNET_TLS_ENGINE(state) != NULL ? CNET_TLS_ENGINE(state)->network_bio : NULL)
 
+typedef struct cnet_tls_boringssl_state {
+  SSL *ssl;
+  BIO *network_bio;
+} cnet_tls_boringssl_state;
+
+#define CNET_TLS_ENGINE(state) ((cnet_tls_boringssl_state *)((state)->engine))
+#define CNET_TLS_SSL(state) \
+  (CNET_TLS_ENGINE(state) != NULL ? CNET_TLS_ENGINE(state)->ssl : NULL)
+#define CNET_TLS_BIO(state) \
+  (CNET_TLS_ENGINE(state) != NULL ? CNET_TLS_ENGINE(state)->network_bio : NULL)
+
 static bool cnet_tls_bounded_string(const char *value, size_t max_bytes, size_t *out_size) {
   size_t size;
   if (value == NULL) {
