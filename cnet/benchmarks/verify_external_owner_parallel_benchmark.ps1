@@ -122,8 +122,13 @@ $cpuVsShared = @{
 }
 
 foreach ($row in $rows) {
-  if ($row.mode -notin @("one_owner_serial", "two_owner_parallel")) {
+  if ($row.mode -notin @("one_owner_serial", "two_external_parallel")) {
     throw "unexpected external mode: $($row.mode)"
+  }
+  $controlMode = if ($row.mode -eq "two_external_parallel") {
+    "two_owner_parallel"
+  } else {
+    $row.mode
   }
 
   $payload = Parse-U64 $row.payload_bytes "payload_bytes"
@@ -190,10 +195,11 @@ foreach ($row in $rows) {
   }
   $seen[$key] = $true
 
-  if (-not $controlByKey.ContainsKey($key)) {
-    throw "missing ordinary control row: $key"
+  $controlKey = "$payload/$controlMode/$repeat"
+  if (-not $controlByKey.ContainsKey($controlKey)) {
+    throw "missing ordinary control row: $controlKey"
   }
-  $control = $controlByKey[$key]
+  $control = $controlByKey[$controlKey]
   if ($control.backend -ne $row.backend -or
       $control.topology -ne $row.topology) {
     throw "ordinary control backend/topology mismatch for $key"
@@ -243,7 +249,7 @@ foreach ($row in $rows) {
 
 foreach ($payload in @(1024, 65536)) {
   foreach ($repeat in 1..7) {
-    foreach ($mode in @("one_owner_serial", "two_owner_parallel")) {
+    foreach ($mode in @("one_owner_serial", "two_external_parallel")) {
       $key = "$payload/$mode/$repeat"
       if (-not $seen.ContainsKey($key)) {
         throw "missing external row: $key"
