@@ -71,6 +71,19 @@ if(WIN32)
     C_EXTENSIONS OFF)
 endif()
 
+if(NOT WIN32)
+  cmake_add_test(native_io_readiness_accept_test
+    SOURCES native_io_readiness_accept_test.c
+    LIBS Salts::NativeIO
+    FOLDER "native-io/tests")
+  target_include_directories(native_io_readiness_accept_test
+    PRIVATE "${PROJECT_SOURCE_DIR}/native-io/src")
+  set_target_properties(native_io_readiness_accept_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF)
+endif()
+
 cmake_add_test(native_io_header_cpp_test
   SOURCES native_io_header_cpp_test.cpp
   LIBS Salts::NativeIO
