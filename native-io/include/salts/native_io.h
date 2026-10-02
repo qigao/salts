@@ -416,6 +416,14 @@ SALTS_NATIVE_IO_C_API int native_io_backend_destroy(native_io_backend *backend);
 SALTS_NATIVE_IO_C_API bool native_io_backend_get_stats(const native_io_backend *backend,
                                                        native_io_backend_stats *out_stats);
 
+/**
+ * Queries the immutable backend kind/capacity contract selected at init.
+ * The returned structure contains no native handle or mutable runtime state.
+ */
+SALTS_NATIVE_IO_C_API bool native_io_backend_get_config(
+    const native_io_backend *backend,
+    native_io_backend_config *out_config);
+
 /** Queries versioned coroutine-owner capacity and retention statistics. */
 SALTS_NATIVE_IO_C_API bool
 native_io_backend_get_coroutine_stats(const native_io_backend *backend,

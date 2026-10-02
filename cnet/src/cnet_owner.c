@@ -84,6 +84,7 @@ enum { CNET_OWNER_RESOLVER_POLL_INTERVAL_MS = 1u };
 
 struct cnet_owner_impl {
   native_io_backend backend;
+  bool backend_borrowed;
   cnet_resolver resolver;
   salts_deadline_queue deadlines;
   cnet_write_queue writes;
@@ -128,6 +129,15 @@ struct cnet_owner_impl {
 static uint64_t cnet_owner_system_now(void *context) {
   (void)context;
   return salts_monotonic_ms();
+}
+
+static void cnet_owner_discard_backend(cnet_owner_impl *impl) {
+  if (impl == NULL || impl->backend.impl == NULL) return;
+  if (!impl->backend_borrowed) {
+    (void)native_io_backend_close(&impl->backend);
+    (void)native_io_backend_destroy(&impl->backend);
+  }
+  impl->backend.impl = NULL;
 }
 
 static uint64_t cnet_owner_deadline_after(cnet_owner_impl *impl, uint32_t timeout_ms) {
@@ -1971,21 +1981,35 @@ static int cnet_owner_fail_direct_request(cnet_owner_impl *impl, cnet_owner_requ
   return status;
 }
 
+static bool cnet_owner_completion_owned(
+    const cnet_owner_impl *impl,
+    const native_io_completion *completion) {
+  const cnet_owner_request *request;
+  size_t index;
+
+  if (impl == NULL || completion == NULL ||
+      completion->user_data == 0u ||
+      completion->user_data > (uintptr_t)impl->request_capacity)
+    return false;
+  index = (size_t)completion->user_data - 1u;
+  request = &impl->request_records[index];
+  return request->active && request->owner == impl &&
+         native_io_request_valid(request->native_request) &&
+         cnet_owner_native_request_equal(
+             request->native_request, completion->request) &&
+         cnet_owner_native_endpoint_equal(
+             request->operation.endpoint, completion->endpoint);
+}
+
 static int cnet_owner_route_completion(cnet_owner_impl *impl,
                                        const native_io_completion *completion) {
   cnet_owner_request *request;
   size_t index;
 
-  if (completion == NULL || completion->user_data == 0u ||
-      completion->user_data > (uintptr_t)impl->request_capacity)
+  if (!cnet_owner_completion_owned(impl, completion))
     return SALTS_EPROTO;
   index = (size_t)completion->user_data - 1u;
   request = &impl->request_records[index];
-  if (!request->active || request->owner != impl ||
-      !native_io_request_valid(request->native_request) ||
-      !cnet_owner_native_request_equal(request->native_request, completion->request) ||
-      !cnet_owner_native_endpoint_equal(request->operation.endpoint, completion->endpoint))
-    return SALTS_EPROTO;
 
   if ((request->role == CNET_OWNER_REQUEST_SEND ||
        request->role == CNET_OWNER_REQUEST_TLS_WRITE) &&
@@ -2115,6 +2139,7 @@ static uint32_t cnet_owner_observe_timeout(cnet_owner_impl *impl, uint32_t reque
 int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
   cnet_owner_impl *impl;
   native_io_backend_config backend_config;
+  native_io_backend_config borrowed_config = {0};
   cnet_event_queue_config event_config;
   cnet_resolver_config resolver_config;
   int status;
@@ -2132,6 +2157,14 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
   if (!cnet_event_queue_get_config(config->events, &event_config) ||
       config->receive_buffer_bytes > event_config.max_payload_bytes)
     return SALTS_EINVAL;
+  if (config->borrowed_backend != NULL) {
+    if (!native_io_backend_get_config(config->borrowed_backend, &borrowed_config) ||
+        borrowed_config.kind != config->backend_kind ||
+        borrowed_config.endpoint_capacity < config->connection_capacity * 2u ||
+        borrowed_config.request_capacity < config->request_capacity ||
+        borrowed_config.completion_batch_capacity < config->completion_batch_capacity)
+      return SALTS_EINVAL;
+  }
   if (config->completion_batch_capacity > SIZE_MAX - 2u ||
       config->connection_capacity > SIZE_MAX - config->request_capacity ||
       config->connection_capacity > SIZE_MAX / sizeof(cnet_owner_session) ||
@@ -2169,7 +2202,13 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
   backend_config =
       (native_io_backend_config){config->backend_kind, config->connection_capacity * 2u,
                                  config->request_capacity, config->completion_batch_capacity};
-  status = native_io_backend_init(&impl->backend, &backend_config);
+  if (config->borrowed_backend != NULL) {
+    impl->backend = *config->borrowed_backend;
+    impl->backend_borrowed = true;
+    status = SALTS_OK;
+  } else {
+    status = native_io_backend_init(&impl->backend, &backend_config);
+  }
   if (status != SALTS_OK) {
     free(impl->completions);
     free(impl->pending_events);
@@ -2183,8 +2222,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
   resolver_config = (cnet_resolver_config){config->connection_capacity};
   status = cnet_resolver_init(&impl->resolver, &resolver_config);
   if (status != SALTS_OK) {
-    (void)native_io_backend_close(&impl->backend);
-    (void)native_io_backend_destroy(&impl->backend);
+    cnet_owner_discard_backend(impl);
     free(impl->completions);
     free(impl->pending_events);
     free(impl->session_work);
@@ -2199,8 +2237,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
   if (status != SALTS_OK) {
     (void)cnet_resolver_close(&impl->resolver, 0u);
     (void)cnet_resolver_destroy(&impl->resolver);
-    (void)native_io_backend_close(&impl->backend);
-    (void)native_io_backend_destroy(&impl->backend);
+    cnet_owner_discard_backend(impl);
     free(impl->completions);
     free(impl->pending_events);
     free(impl->session_work);
@@ -2325,6 +2362,13 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
   /* Work that did not start asynchronous I/O must not turn a drive into an idle wait. */
   if (processed != 0u && impl->active_requests == 0u && !cnet_resolver_has_pending(&impl->resolver))
     return SALTS_OK;
+
+  /*
+   * A borrowed backend has exactly one external observation owner. CNet still
+   * owns command/session/deadline semantics, but must never dequeue NativeIO
+   * completions itself in this mode.
+   */
+  if (impl->backend_borrowed) return SALTS_OK;
 
   for (;;) {
     const uint64_t elapsed_ms = salts_monotonic_ms() - started_ms;
@@ -2551,6 +2595,91 @@ int cnet_owner_wake(cnet_owner *owner) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
   if (impl == NULL) return SALTS_EINVAL;
   return native_io_backend_wake(&impl->backend);
+}
+
+int cnet_owner_advance_external(cnet_owner *owner) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  if (impl == NULL) return SALTS_EINVAL;
+  if (!impl->backend_borrowed) return SALTS_ENOTSUP;
+  return cnet_owner_drive(owner, 0u);
+}
+
+int cnet_owner_route_external_completion(
+    cnet_owner *owner,
+    const native_io_completion *completion,
+    bool *out_consumed) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  int status;
+
+  if (out_consumed == NULL) return SALTS_EINVAL;
+  *out_consumed = false;
+  if (impl == NULL || completion == NULL) return SALTS_EINVAL;
+  if (!impl->backend_borrowed) return SALTS_ENOTSUP;
+  if (!cnet_owner_completion_owned(impl, completion))
+    return SALTS_OK;
+
+  *out_consumed = true;
+  status = cnet_owner_route_completion(impl, completion);
+  if (status != SALTS_OK) return status;
+  return cnet_owner_process_deadlines(impl);
+}
+
+int cnet_owner_external_timeout(cnet_owner *owner, uint32_t max_wait_ms,
+                                uint32_t *out_timeout_ms) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  if (out_timeout_ms == NULL) return SALTS_EINVAL;
+  *out_timeout_ms = 0u;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (!impl->backend_borrowed) return SALTS_ENOTSUP;
+  if (impl->closed) return SALTS_ESHUTDOWN;
+  *out_timeout_ms =
+      cnet_owner_observe_timeout(impl, max_wait_ms, false);
+  return SALTS_OK;
+}
+
+int cnet_owner_external_requests(cnet_owner *owner,
+                                 cnet_session_handle session,
+                                 native_io_request *out_requests,
+                                 size_t capacity,
+                                 size_t *out_count) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  size_t required = 0u;
+  size_t i;
+
+  if (out_count == NULL) return SALTS_EINVAL;
+  *out_count = 0u;
+  if (impl == NULL || !cnet_session_handle_valid(session))
+    return SALTS_EINVAL;
+  if (!impl->backend_borrowed) return SALTS_ENOTSUP;
+  if (cnet_owner_find_session(impl, session) == NULL)
+    return SALTS_ENOENT;
+
+  for (i = 0u; i < impl->request_capacity; ++i) {
+    const cnet_owner_request *request = &impl->request_records[i];
+    if (request->active &&
+        request->session.slot == session.slot &&
+        request->session.generation == session.generation) {
+      if (!native_io_request_valid(request->native_request))
+        return SALTS_EPROTO;
+      ++required;
+    }
+  }
+
+  *out_count = required;
+  if (required == 0u) return SALTS_OK;
+  if (out_requests == NULL || capacity < required)
+    return SALTS_ENOBUFS;
+
+  required = 0u;
+  for (i = 0u; i < impl->request_capacity; ++i) {
+    const cnet_owner_request *request = &impl->request_records[i];
+    if (request->active &&
+        request->session.slot == session.slot &&
+        request->session.generation == session.generation)
+      out_requests[required++] = request->native_request;
+  }
+  *out_count = required;
+  return SALTS_OK;
 }
 
 #if defined(CNET_INTERNAL_TESTING)
@@ -2896,6 +3025,10 @@ int cnet_owner_close(cnet_owner *owner) {
     if (status != SALTS_OK) return status;
     impl->resolver_closed = true;
   }
+  if (impl->backend_borrowed) {
+    impl->closed = true;
+    return SALTS_OK;
+  }
   status = native_io_backend_close(&impl->backend);
   if (status == SALTS_OK) impl->closed = true;
   return status;
@@ -2910,8 +3043,11 @@ int cnet_owner_destroy(cnet_owner *owner) {
     return SALTS_EBUSY;
   status = cnet_resolver_destroy(&impl->resolver);
   if (status != SALTS_OK) return status;
-  status = native_io_backend_destroy(&impl->backend);
-  if (status != SALTS_OK) return status;
+  if (!impl->backend_borrowed) {
+    status = native_io_backend_destroy(&impl->backend);
+    if (status != SALTS_OK) return status;
+  }
+  impl->backend.impl = NULL;
   status = salts_deadline_queue_destroy(&impl->deadlines);
   if (status != SALTS_OK) return status;
   status = cnet_write_queue_destroy(&impl->writes);
