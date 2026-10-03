@@ -1114,27 +1114,20 @@ static int cnet_owner_tls_accept_write(cnet_owner_impl *impl,
     return cnet_tls_write(&session->tls, write->data, write->remaining, out_complete);
 
   while (write->remaining != 0u) {
-    native_io_buffer_span spans[NATIVE_IO_VECTOR_MAX];
-    size_t span_count = 0u;
-    size_t span_bytes = 0u;
+    const void *data = NULL;
+    size_t bytes = 0u;
+    bool prefix_complete = false;
 
-    status = cnet_write_queue_build_vector(&impl->writes, write, (size_t)INT_MAX,
-                                           spans, &span_count, &span_bytes);
+    status = cnet_write_queue_build_contiguous(&impl->writes, write, (size_t)INT_MAX,
+                                               &data, &bytes);
     if (status != SALTS_OK) return status;
-    if (span_count == 0u || span_bytes == 0u) return SALTS_EPROTO;
+    if (data == NULL || bytes == 0u || bytes > (size_t)INT_MAX) return SALTS_EPROTO;
 
-    for (size_t index = 0u; index < span_count; ++index) {
-      bool span_complete = false;
-      if (spans[index].data == NULL || spans[index].length == 0u ||
-          spans[index].length > (size_t)INT_MAX)
-        return SALTS_EPROTO;
-      status = cnet_tls_write(&session->tls, spans[index].data, spans[index].length,
-                              &span_complete);
-      if (status != SALTS_OK) return status;
-      if (!span_complete) return SALTS_OK;
-      status = cnet_write_queue_advance(&impl->writes, write, spans[index].length);
-      if (status != SALTS_OK) return status;
-    }
+    status = cnet_tls_write(&session->tls, data, bytes, &prefix_complete);
+    if (status != SALTS_OK) return status;
+    if (!prefix_complete) return SALTS_OK;
+    status = cnet_write_queue_advance(&impl->writes, write, bytes);
+    if (status != SALTS_OK) return status;
   }
 
   *out_complete = true;

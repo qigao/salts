@@ -13,10 +13,11 @@ if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
 
 $rows = @(Import-Csv -LiteralPath $Path)
 $payloads = @(1024, 8192, 32768, 65536)
-$segments = @(1, 2, 4, 8, 16)
+$segments = @(2, 4, 8, 16)
+$expectedRows = $payloads.Count * (1 + 2 * $segments.Count)
 
-if ($rows.Count -ne ($payloads.Count * $segments.Count)) {
-  throw "expected 20 TLS SG rows, got $($rows.Count)"
+if ($rows.Count -ne $expectedRows) {
+  throw "expected $expectedRows TLS SG rows, got $($rows.Count)"
 }
 
 function Parse-Double([string]$value, [string]$name) {
@@ -31,45 +32,86 @@ function Parse-Double([string]$value, [string]$name) {
   return $parsed
 }
 
-foreach ($payload in $payloads) {
-  foreach ($segmentCount in $segments) {
-    $match = @($rows | Where-Object {
-      [int]$_.payload_bytes -eq $payload -and
-      [int]$_.segment_count -eq $segmentCount
-    })
-    if ($match.Count -ne 1) {
-      throw "expected exactly one row payload=$payload segments=$segmentCount, got $($match.Count)"
-    }
-    $row = $match[0]
-    if ($row.backend -ne $Backend) {
-      throw "backend mismatch: expected=$Backend actual=$($row.backend)"
-    }
+function Get-OneRow([int]$payload, [int]$segmentCount, [string]$style) {
+  $match = @($rows | Where-Object {
+    [int]$_.payload_bytes -eq $payload -and
+    [int]$_.segment_count -eq $segmentCount -and
+    $_.style -eq $style
+  })
+  if ($match.Count -ne 1) {
+    throw "expected exactly one row payload=$payload segments=$segmentCount style=$style, got $($match.Count)"
+  }
+  return $match[0]
+}
 
-    $expectedStyle = if ($segmentCount -eq 1) { "retained_contiguous" } else { "retained_slicev" }
-    if ($row.style -ne $expectedStyle) {
-      throw "style mismatch payload=$payload segments=$segmentCount expected=$expectedStyle actual=$($row.style)"
-    }
+function Validate-Row($row, [int]$payload, [int]$segmentCount,
+                      [string]$style, [int]$expectedOwners) {
+  if ($row.backend -ne $Backend) {
+    throw "backend mismatch: expected=$Backend actual=$($row.backend)"
+  }
 
-    $iterations = [int]$row.iterations_per_replicate
-    $replicates = [int]$row.replicates
-    $p50 = Parse-Double $row.p50_ns_per_op "p50_ns_per_op"
-    $p95 = Parse-Double $row.p95_ns_per_op "p95_ns_per_op"
-    $rate = Parse-Double $row.median_bytes_per_second "median_bytes_per_second"
-    $writes = Parse-Double $row.median_tls_write_calls_per_op "median_tls_write_calls_per_op"
-    $cipher = Parse-Double $row.median_cipher_bytes_per_op "median_cipher_bytes_per_op"
-    if ($iterations -le 0 -or $replicates -ne 11) {
-      throw "invalid benchmark sample dimensions payload=$payload segments=$segmentCount iterations=$iterations replicates=$replicates"
-    }
-    if ($p50 -le 0.0 -or $p95 -lt $p50 -or $rate -le 0.0) {
-      throw "invalid timing/rate payload=$payload segments=$segmentCount p50=$p50 p95=$p95 rate=$rate"
-    }
-    if ($writes + 1e-9 -lt [double]$segmentCount) {
-      throw "TLS writes/op lower than plaintext segment count payload=$payload segments=$segmentCount writes=$writes"
-    }
-    if ($cipher -le [double]$payload) {
-      throw "cipher bytes/op must exceed plaintext bytes payload=$payload segments=$segmentCount cipher=$cipher"
-    }
+  $iterations = [int]$row.iterations_per_replicate
+  $replicates = [int]$row.replicates
+  $p50 = Parse-Double $row.p50_ns_per_op "p50_ns_per_op"
+  $p95 = Parse-Double $row.p95_ns_per_op "p95_ns_per_op"
+  $rate = Parse-Double $row.median_bytes_per_second "median_bytes_per_second"
+  $writes = Parse-Double $row.median_tls_write_calls_per_op "median_tls_write_calls_per_op"
+  $cipher = Parse-Double $row.median_cipher_bytes_per_op "median_cipher_bytes_per_op"
+  $copied = Parse-Double $row.plaintext_copied_bytes_per_op "plaintext_copied_bytes_per_op"
+  $owners = [int]$row.retained_owner_count
+
+  if ($iterations -le 0 -or $replicates -ne 11) {
+    throw "invalid benchmark sample dimensions payload=$payload segments=$segmentCount style=$style iterations=$iterations replicates=$replicates"
+  }
+  if ($p50 -le 0.0 -or $p95 -lt $p50 -or $rate -le 0.0 -or $writes -le 0.0) {
+    throw "invalid timing/rate/calls payload=$payload segments=$segmentCount style=$style p50=$p50 p95=$p95 rate=$rate writes=$writes"
+  }
+  if ($cipher -le [double]$payload) {
+    throw "cipher bytes/op must exceed plaintext bytes payload=$payload segments=$segmentCount style=$style cipher=$cipher"
+  }
+  if ([math]::Abs($copied) -gt 0.000001) {
+    throw "retained TLS benchmark copied plaintext payload=$payload segments=$segmentCount style=$style copied=$copied"
+  }
+  if ($owners -ne $expectedOwners) {
+    throw "retained owner count mismatch payload=$payload segments=$segmentCount style=$style expected=$expectedOwners actual=$owners"
+  }
+
+  return @{
+    Row = $row
+    P50 = $p50
+    P95 = $p95
+    Rate = $rate
+    Writes = $writes
+    Cipher = $cipher
   }
 }
 
-Write-Host "TLS retained SG benchmark contract passed: backend=$Backend rows=$($rows.Count)"
+foreach ($payload in $payloads) {
+  $contiguousRow = Get-OneRow $payload 1 "retained_contiguous"
+  $contiguous = Validate-Row $contiguousRow $payload 1 "retained_contiguous" 1
+
+  foreach ($segmentCount in $segments) {
+    $adjacentRow = Get-OneRow $payload $segmentCount "retained_slicev_adjacent"
+    $discontiguousRow = Get-OneRow $payload $segmentCount "retained_slicev_discontiguous"
+    $adjacent = Validate-Row $adjacentRow $payload $segmentCount "retained_slicev_adjacent" 1
+    $discontiguous = Validate-Row $discontiguousRow $payload $segmentCount "retained_slicev_discontiguous" $segmentCount
+
+    if ([math]::Abs($adjacent.Writes - $contiguous.Writes) -gt 0.000001) {
+      throw "adjacent same-backing slices did not collapse to contiguous provider-call count payload=$payload segments=$segmentCount contiguous=$($contiguous.Writes) adjacent=$($adjacent.Writes)"
+    }
+    if ($discontiguous.Writes + 0.000001 -lt [double]$segmentCount) {
+      throw "discontiguous TLS writes/op lower than plaintext segment count payload=$payload segments=$segmentCount writes=$($discontiguous.Writes)"
+    }
+    if ($segmentCount -ge 8 -and $adjacent.Writes + 0.000001 -ge $discontiguous.Writes) {
+      throw "8/16-slice adjacent layout did not reduce TLS provider calls payload=$payload segments=$segmentCount adjacent=$($adjacent.Writes) discontiguous=$($discontiguous.Writes)"
+    }
+
+    $p50Delta = ($adjacent.P50 / $discontiguous.P50 - 1.0) * 100.0
+    $p95Delta = ($adjacent.P95 / $discontiguous.P95 - 1.0) * 100.0
+    $rateDelta = ($adjacent.Rate / $discontiguous.Rate - 1.0) * 100.0
+    $message = ("TLS SG adjacent evidence payload={0} segments={1}: calls={2:F3} vs {3:F3}, p50_delta={4:+0.00;-0.00;0.00}%, p95_delta={5:+0.00;-0.00;0.00}%, rate_delta={6:+0.00;-0.00;0.00}%" -f $payload, $segmentCount, $adjacent.Writes, $discontiguous.Writes, $p50Delta, $p95Delta, $rateDelta)
+    Write-Host $message
+  }
+}
+
+Write-Host "TLS retained SG benchmark contract passed: backend=$Backend rows=$($rows.Count), adjacent/discontiguous layouts, zero plaintext copies, retained-owner counts, provider-call collapse"
