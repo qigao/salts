@@ -150,20 +150,17 @@ set_target_properties(
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/ip-test-root-cert.pem" CNET_TLS_TEST_IP_CA)
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/ip-test-server-cert.pem" CNET_TLS_TEST_IP_CERT)
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/ip-test-server-key.pem" CNET_TLS_TEST_IP_KEY)
-file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/p256-test-root-cert.pem" CNET_TLS_TEST_P256_CA)
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/p256-test-server-cert.pem" CNET_TLS_TEST_P256_CERT)
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/p256-test-server-key.pem" CNET_TLS_TEST_P256_KEY)
 target_compile_definitions(cnet_tls_test PRIVATE
   "CNET_TLS_TEST_IP_CA=\"${CNET_TLS_TEST_IP_CA}\""
   "CNET_TLS_TEST_IP_CERT=\"${CNET_TLS_TEST_IP_CERT}\""
   "CNET_TLS_TEST_IP_KEY=\"${CNET_TLS_TEST_IP_KEY}\""
-  "CNET_TLS_TEST_P256_CA=\"${CNET_TLS_TEST_P256_CA}\""
   "CNET_TLS_TEST_P256_CERT=\"${CNET_TLS_TEST_P256_CERT}\""
   "CNET_TLS_TEST_P256_KEY=\"${CNET_TLS_TEST_P256_KEY}\"")
 unset(CNET_TLS_TEST_IP_CA)
 unset(CNET_TLS_TEST_IP_CERT)
 unset(CNET_TLS_TEST_IP_KEY)
-unset(CNET_TLS_TEST_P256_CA)
 unset(CNET_TLS_TEST_P256_CERT)
 unset(CNET_TLS_TEST_P256_KEY)
 
