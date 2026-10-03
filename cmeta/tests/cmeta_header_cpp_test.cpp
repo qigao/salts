@@ -65,11 +65,6 @@ Enum(cmeta_cpp_state,
 
 CMETA_INTERFACE(cmeta_cpp_reflected_interface, CMETA_CPP_INTERFACE_METHODS);
 
-static_assert(
-    cmeta_cpp_reflected_interface_owned_value_function()->result_flags ==
-        (CMETA_RESULT_OWNED | CMETA_RESULT_NULLABLE),
-    "result-aware reflected interface rows preserve canonical result semantics");
-
 TypeFunction(CMetaCppStorage,
     (small, int),
     (wide, long)
@@ -235,7 +230,7 @@ spec("CMeta C++ public headers") {
 
     check_true(cmeta_interface_desc_valid(meta));
     check_true(cmeta_interface_desc_equal(meta, meta));
-    check_equal(meta->method_count, static_cast<size_t>(2));
+    check_equal(meta->method_count, static_cast<size_t>(3));
     check_true(cmeta_interface_method_reflection_valid(&meta->methods[0]));
     check_equal(meta->methods[0].function->name,
                 "cmeta_cpp_reflected_interface.add");
@@ -243,6 +238,13 @@ spec("CMeta C++ public headers") {
                 static_cast<size_t>(1));
     check_equal(meta->methods[0].abi->return_carrier,
                 CMETA_ABI_SCALAR);
+    check_true(cmeta_interface_method_reflection_valid(&meta->methods[2]));
+    check_equal(
+        meta->methods[2].function->result_flags,
+        static_cast<cmeta_result_flags>(
+            CMETA_RESULT_OWNED | CMETA_RESULT_NULLABLE));
+    check_equal(meta->methods[2].abi->return_carrier,
+                CMETA_ABI_OBJECT_POINTER);
   }
 
   it("exposes the fixed-value facade without C-only types") {
