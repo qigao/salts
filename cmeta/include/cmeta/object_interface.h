@@ -31,10 +31,14 @@ typedef struct cmeta_interface_projection {
 #ifdef __cplusplus
 #define CMETA_INTERFACE_PROJECTION_INIT \
     { sizeof(cmeta_interface_projection), nullptr, nullptr, nullptr }
+#define CMETA_OBJECT_INTERFACE_DISPATCH_CAST(I, value) \
+    static_cast<const I##_vtable *>(value)
 #else
 #define CMETA_INTERFACE_PROJECTION_INIT \
     { .size = sizeof(cmeta_interface_projection), .interface = NULL, \
       .self = NULL, .dispatch = NULL }
+#define CMETA_OBJECT_INTERFACE_DISPATCH_CAST(I, value) \
+    ((const I##_vtable *)(value))
 #endif
 
 typedef cmeta_status (*cmeta_object_interface_project_fn)(
@@ -139,7 +143,8 @@ cmeta_object_interface_project_borrowed(
         if (status != CMETA_OK) \
             return status; \
         *out = I##_bind( \
-            projection.self, (const I##_vtable *)projection.dispatch); \
+            projection.self, \
+            CMETA_OBJECT_INTERFACE_DISPATCH_CAST(I, projection.dispatch)); \
         if (!I##_valid(out)) { \
             *out = I##_bind(NULL, NULL); \
             return CMETA_CALLBACK_ERROR; \
