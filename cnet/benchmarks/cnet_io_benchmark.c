@@ -2141,6 +2141,91 @@ cleanup:
   return status;
 }
 
+static int io_bench_write_cnet_retained_attribution(
+    const char *prefix, const char *backend, const io_bench_series *rows, size_t count) {
+  char path[IO_BENCH_CSV_LINE_CAPACITY];
+  salts_file_t file = SALTS_INVALID_FILE;
+  int status = SALTS_OK;
+  int length;
+
+  if (prefix == NULL) return SALTS_OK;
+  if (*prefix == '\0' || backend == NULL || rows == NULL) return SALTS_EINVAL;
+  length = snprintf(path, sizeof(path), "%s.cnet-retained-attribution.csv", prefix);
+  if (length < 0 || (size_t)length >= sizeof(path)) return SALTS_ERANGE;
+  file = salts_fs_open(path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
+                       SALTS_FS_DEFAULT_MODE);
+  if (file == SALTS_INVALID_FILE) return SALTS_EIO;
+
+  status = io_bench_csv_line(
+      file,
+      "backend,payload_bytes,repeat,round_trips,p50_ns,p95_ns,"
+      "client_cpu_ns_per_rt,client_cpu_cycles_per_rt,send_admission_ns_per_rt,"
+      "total_budget_ns,send_public_control_ns,queue_control_ns,payload_copy_ns,"
+      "client_poll_wrapper_ns,owner_control_ns,request_control_ns,"
+      "native_request_start_ns,native_request_resubmit_ns,native_observe_ns,"
+      "completion_control_ns,event_publish_residual_ns,dispatcher_prepare_ns,"
+      "dispatcher_invoke_framework_ns,client_observer_control_ns,dispatcher_release_ns,"
+      "benchmark_payload_check_ns,benchmark_callback_residual_ns,fixed_control_total_ns,"
+      "shared_native_total_ns,benchmark_work_total_ns,closure_residual_ns\n");
+
+  for (size_t row = 0u; status == SALTS_OK && row < count; ++row) {
+    for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+      const io_bench_result *result = &rows[row].stage_profile_runs[repeat];
+      cnet_benchmark_fixed_control_attribution attribution;
+      const double round_trips = (double)result->round_trips;
+
+      if (result->round_trips == 0u) {
+        status = SALTS_EPROTO;
+        break;
+      }
+      status = io_bench_fixed_control_attribution(result, &attribution);
+      if (status != SALTS_OK) break;
+
+      status = io_bench_csv_line(
+          file,
+          "%s,%zu,%zu,%zu,%llu,%llu,%.3f,%.3f,%.3f,"
+          "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
+          "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.6f\n",
+          backend, result->payload_size, repeat + 1u, result->round_trips,
+          (unsigned long long)result->p50_ns, (unsigned long long)result->p95_ns,
+          (double)result->cpu_ns / round_trips,
+          (double)result->cpu_cycles / round_trips,
+          (double)result->cnet_send_admission_ns / round_trips,
+          attribution.total_budget_ns,
+          attribution.send_public_control_ns,
+          attribution.queue_control_ns,
+          attribution.payload_copy_ns,
+          attribution.client_poll_wrapper_ns,
+          attribution.owner_control_ns,
+          attribution.request_control_ns,
+          attribution.native_request_start_ns,
+          attribution.native_request_resubmit_ns,
+          attribution.native_observe_ns,
+          attribution.completion_control_ns,
+          attribution.event_publish_residual_ns,
+          attribution.dispatcher_prepare_ns,
+          attribution.dispatcher_invoke_framework_ns,
+          attribution.client_observer_control_ns,
+          attribution.dispatcher_release_ns,
+          attribution.benchmark_payload_check_ns,
+          attribution.benchmark_callback_residual_ns,
+          attribution.fixed_control_total_ns,
+          attribution.shared_native_total_ns,
+          attribution.benchmark_work_total_ns,
+          attribution.closure_residual_ns);
+    }
+  }
+
+  {
+    const int close_status = salts_fs_close(file);
+    if (status == SALTS_OK) status = close_status;
+  }
+  if (status != SALTS_OK)
+    fprintf(stderr, "CNet retained attribution write failed: prefix=%s status=%d\n",
+            prefix, status);
+  return status;
+}
+
 static int io_bench_run_row(io_bench_protocol protocol, size_t payload, size_t row,
                             io_bench_series *libuv, io_bench_series *native,
                             io_bench_series *coroutine, io_bench_series *cnet,
@@ -2814,6 +2899,9 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
     check_equal(io_bench_print_diagnostics("UDP", udp[0], udp[1], udp[2], udp[3], UDP_ROWS), SALTS_OK);
     check_equal(io_bench_write_artifacts(output_prefix, backend.name, datasets,
                                           sizeof(datasets) / sizeof(datasets[0])), SALTS_OK);
+    check_equal(io_bench_write_cnet_retained_attribution(
+                    output_prefix, backend.name, tcp[IO_BENCH_CNET], TCP_ROWS),
+                SALTS_OK);
     printf("Raw artifacts: %s\n", output_prefix == NULL
         ? "not requested; set CNET_IO_BENCHMARK_OUTPUT to a path prefix" : output_prefix);
   }
