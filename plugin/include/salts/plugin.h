@@ -20,7 +20,7 @@ extern "C" {
  * not negotiate or retry older layouts. A plugin built for another epoch must
  * be rebuilt.
  */
-#define SALTS_PLUGIN_ABI_VERSION 2u
+#define SALTS_PLUGIN_ABI_VERSION 3u
 #define SALTS_PLUGIN_QUERY_SYMBOL "salts_plugin_query"
 
 #define SALTS_PLUGIN_MAX_EXPORTS 256u
