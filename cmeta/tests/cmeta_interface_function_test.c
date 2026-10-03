@@ -12,7 +12,7 @@ static void check_reflected_counter(const cmeta_interface_desc *meta) {
 
     check_true(cmeta_interface_desc_valid(meta));
     check_equal(meta->name, "cmeta_reflected_counter");
-    check_equal(meta->method_count, (size_t)3);
+    check_equal(meta->method_count, (size_t)4);
 
     add = &meta->methods[0];
     check_true(cmeta_interface_method_reflection_valid(add));
@@ -41,7 +41,31 @@ static void check_reflected_counter(const cmeta_interface_desc *meta) {
                 (cmeta_abi_carrier)CMETA_ABI_SCALAR);
 
     check_true(cmeta_interface_method_reflection_valid(&meta->methods[1]));
-    check_true(cmeta_interface_method_reflection_valid(&meta->methods[2]));
+
+    {
+        const cmeta_interface_method_desc *owned = &meta->methods[2];
+        const cmeta_function_desc *owned_fn =
+            cmeta_interface_method_function(owned);
+        const cmeta_function_abi_desc *owned_abi =
+            cmeta_interface_method_abi(owned);
+
+        check_true(cmeta_interface_method_reflection_valid(owned));
+        check_equal(owned->name, "owned_value");
+        check_equal(cmeta_interface_method_arity(owned), (size_t)0u);
+        check_not_null(owned_fn);
+        check_not_null(owned_abi);
+        check_true(cmeta_type_equal(
+            owned_fn->return_type, &cmeta_type_size_ptr));
+        check_equal(
+            owned_fn->result_flags,
+            (cmeta_result_flags)(CMETA_RESULT_OWNED |
+                                 CMETA_RESULT_NULLABLE));
+        check_equal(
+            owned_abi->return_carrier,
+            (cmeta_abi_carrier)CMETA_ABI_OBJECT_POINTER);
+    }
+
+    check_true(cmeta_interface_method_reflection_valid(&meta->methods[3]));
 }
 
 static void reflected_owner_destroy(void *self) {
