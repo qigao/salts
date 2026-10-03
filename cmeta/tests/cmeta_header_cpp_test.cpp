@@ -6,6 +6,7 @@
 #include "cmeta_fixed_bytes_fixture.h"
 #include <cmeta/range.h>
 #include <cmeta/meta.h>
+#include <cmeta/object_interface.h>
 #include "tinytest.hpp"
 
 #include <cstddef>
@@ -35,6 +36,10 @@ static_assert(std::is_standard_layout_v<cmeta_object_field_provider>,
               "object field providers remain a C ABI");
 static_assert(std::is_standard_layout_v<cmeta_object_ref>,
               "canonical native object references remain a C ABI");
+static_assert(std::is_standard_layout_v<cmeta_interface_projection>,
+              "interface projection carriers remain a C ABI");
+static_assert(std::is_standard_layout_v<cmeta_object_interface_provider>,
+              "object interface providers remain a C ABI");
 static_assert(std::is_standard_layout_v<cmeta_interface_method_desc>,
               "interface method reflection remains a C ABI");
 static_assert(std::is_standard_layout_v<cmeta_interface_desc>,
@@ -64,6 +69,7 @@ Enum(cmeta_cpp_state,
       CMETA_RESULT_OWNED | CMETA_RESULT_NULLABLE)
 
 CMETA_INTERFACE(cmeta_cpp_reflected_interface, CMETA_CPP_INTERFACE_METHODS);
+CMETA_OBJECT_INTERFACE_ADAPTER(cmeta_cpp_reflected_interface);
 
 TypeFunction(CMetaCppStorage,
     (small, int),
