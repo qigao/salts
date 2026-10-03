@@ -1149,8 +1149,12 @@ static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *sessio
     if (debug_status == SALTS_OK &&
         (debug_queued_writes != 0u ||
          cnet_write_handle_valid(session->tls_send_write.handle))) {
-      printf("CNET_TLS_PUMP enter slot=%u gen=%u queued=%zu handle=%u remaining=%zu accepted=%d read_active=%d write_active=%d\n",
+      cnet_session_state debug_state = CNET_SESSION_FREE;
+      (void)cnet_session_table_state(impl->sessions, session->handle, &debug_state);
+      printf("CNET_TLS_PUMP enter slot=%u gen=%u state=%d hs=%d queued=%zu handle=%u remaining=%zu accepted=%d read_active=%d write_active=%d\n",
              session->handle.slot, session->handle.generation,
+             (int)debug_state,
+             cnet_tls_state_handshake_complete(&session->tls) ? 1 : 0,
              debug_queued_writes,
              cnet_write_handle_valid(session->tls_send_write.handle) ? 1u : 0u,
              session->tls_send_write.remaining,
