@@ -76,8 +76,9 @@ typedef struct cnet_tls_test_pair {
   cnet_tls_server server_context;
   cnet_tls_state client;
   cnet_tls_state server;
-  char *cert_path;
-  char *key_path;
+  const char *ca_path;
+  const char *cert_path;
+  const char *key_path;
 } cnet_tls_test_pair;
 
 static int cnet_tls_test_transfer(cnet_tls_state *source, cnet_tls_state *target) {
@@ -103,13 +104,9 @@ static int cnet_tls_test_pair_init(cnet_tls_test_pair *pair) {
   int status;
 
   memset(pair, 0, sizeof(*pair));
-  pair->cert_path = tt_make_temp_file("cnet-cert", ".pem");
-  pair->key_path = tt_make_temp_file("cnet-key", ".pem");
-  if (pair->cert_path == NULL || pair->key_path == NULL) return SALTS_ENOMEM;
-  if (tt_write_file(pair->cert_path, CNET_TLS_TEST_CERTIFICATE,
-                    sizeof(CNET_TLS_TEST_CERTIFICATE) - 1u) != 0 ||
-      tt_write_file(pair->key_path, CNET_TLS_TEST_KEY, sizeof(CNET_TLS_TEST_KEY) - 1u) != 0)
-    return SALTS_EIO;
+  pair->ca_path = CNET_TLS_TEST_IP_CA;
+  pair->cert_path = CNET_TLS_TEST_IP_CERT;
+  pair->key_path = CNET_TLS_TEST_IP_KEY;
 
   server_config = (cnet_tls_server_config){.size = sizeof(server_config),
                                            .cert_file = pair->cert_path,
@@ -120,7 +117,7 @@ static int cnet_tls_test_pair_init(cnet_tls_test_pair *pair) {
   status = cnet_tls_server_init(&pair->server_context, &server_config);
   if (status != SALTS_OK) return status;
   client_config = (cnet_tls_client_config){.size = sizeof(client_config),
-                                           .ca_file = pair->cert_path,
+                                           .ca_file = pair->ca_path,
                                            .alpn_protocols = client_alpn,
                                            .alpn_protocol_count = 2u};
   status = cnet_tls_client_context_create(&client_config, &client_context);
@@ -154,6 +151,9 @@ static int cnet_tls_test_fixture_pair_init(cnet_tls_test_pair *pair,
       key_file == NULL || server_name == NULL)
     return SALTS_EINVAL;
   memset(pair, 0, sizeof(*pair));
+  pair->ca_path = ca_file;
+  pair->cert_path = cert_file;
+  pair->key_path = key_file;
 
   server_config = (cnet_tls_server_config){
       .size = sizeof(server_config),
@@ -195,14 +195,7 @@ static void cnet_tls_test_pair_destroy(cnet_tls_test_pair *pair) {
   cnet_tls_state_destroy(&pair->server);
   cnet_tls_state_destroy(&pair->client);
   (void)cnet_tls_server_destroy(&pair->server_context);
-  if (pair->cert_path != NULL) {
-    (void)tt_remove_file(pair->cert_path);
-    free(pair->cert_path);
-  }
-  if (pair->key_path != NULL) {
-    (void)tt_remove_file(pair->key_path);
-    free(pair->key_path);
-  }
+  memset(pair, 0, sizeof(*pair));
 }
 
 static int cnet_tls_test_handshake(cnet_tls_test_pair *pair) {
@@ -442,13 +435,14 @@ spec("CNet bounded TLS engine") {
   }
 
   it("loads an unencrypted P-256 PKCS8 identity when key_password is null") {
-    cnet_tls_test_pair pair;
-    check_equal(cnet_tls_test_fixture_pair_init(
-                    &pair, CNET_TLS_TEST_P256_CA, CNET_TLS_TEST_P256_CERT,
-                    CNET_TLS_TEST_P256_KEY, "localhost"),
-                SALTS_OK);
-    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
-    cnet_tls_test_pair_destroy(&pair);
+    cnet_tls_server server = {0};
+    cnet_tls_server_config config = {
+        .size = sizeof(config),
+        .cert_file = CNET_TLS_TEST_P256_CERT,
+        .key_file = CNET_TLS_TEST_P256_KEY,
+        .client_auth = CNET_TLS_CLIENT_AUTH_NONE};
+    check_equal(cnet_tls_server_init(&server, &config), SALTS_OK);
+    check_equal(cnet_tls_server_destroy(&server), SALTS_OK);
   }
 
   it("verifies an IP literal against subjectAltName iPAddress without SNI") {
@@ -663,7 +657,7 @@ spec("CNet bounded TLS engine") {
     cnet_tls_client_config config;
 
     check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
-    config = (cnet_tls_client_config){.size = sizeof(config), .ca_file = pair.cert_path};
+    config = (cnet_tls_client_config){.size = sizeof(config), .ca_file = pair.ca_path};
     check_equal(cnet_tls_test_reset_client(&pair, &config, "example.com"), SALTS_OK);
     check_equal(cnet_tls_test_handshake(&pair), SALTS_ECONNABORTED);
     cnet_tls_test_pair_destroy(&pair);
@@ -692,11 +686,11 @@ spec("CNet bounded TLS engine") {
     server_config = (cnet_tls_server_config){.size = sizeof(server_config),
                                              .cert_file = pair.cert_path,
                                              .key_file = pair.key_path,
-                                             .ca_file = pair.cert_path,
+                                             .ca_file = pair.ca_path,
                                              .client_auth = CNET_TLS_CLIENT_AUTH_REQUIRED};
     check_equal(cnet_tls_server_init(&pair.server_context, &server_config), SALTS_OK);
     client_config = (cnet_tls_client_config){.size = sizeof(client_config),
-                                             .ca_file = pair.cert_path,
+                                             .ca_file = pair.ca_path,
                                              .cert_file = pair.cert_path,
                                              .key_file = pair.key_path};
     check_equal(cnet_tls_test_reset_client(&pair, &client_config, "localhost"), SALTS_OK);
