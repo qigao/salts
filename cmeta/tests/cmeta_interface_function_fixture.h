@@ -9,6 +9,9 @@
       (int,delta,CMETA_PARAM_IN,&cmeta_type_int,CMETA_ABI_SCALAR)) \
     X(I,F0,int,value,value, \
       &cmeta_type_int,CMETA_ABI_SCALAR) \
+    X(I,FR0,size_t *,owned_value,stateful, \
+      &cmeta_type_size_ptr,CMETA_ABI_OBJECT_POINTER, \
+      CMETA_RESULT_OWNED | CMETA_RESULT_NULLABLE) \
     X(I,FV0,void,reset,stateful, \
       &cmeta_type_void,CMETA_ABI_VOID)
 
