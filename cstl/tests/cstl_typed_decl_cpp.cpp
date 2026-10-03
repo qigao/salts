@@ -1,6 +1,7 @@
 #include <cstl/typed.h>
 
 #include <cstddef>
+#include <cstring>
 #include <type_traits>
 
 cstl_typed_decl(Vec, DeclIntVec, int);
