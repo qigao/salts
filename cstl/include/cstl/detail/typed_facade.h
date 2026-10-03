@@ -329,7 +329,8 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
    sizeof(cmeta_function_desc), \
    CMETA_CONTAINER_STR(name) "_" CMETA_CONTAINER_STR(pub), &cmeta_type_int, \
    name##_##pub##__function_params, 2u, \
-   CMETA_EFFECT_STATEFUL | CMETA_EFFECT_MAY_FAIL, CMETA_PROP_NONE \
+   CMETA_EFFECT_STATEFUL | CMETA_EFFECT_MAY_FAIL, CMETA_PROP_NONE, \
+   CMETA_RESULT_UNKNOWN \
  }; \
  CMETA_LOCAL const cmeta_abi_carrier name##_##pub##__function_param_abi[] = { \
    CMETA_ABI_OBJECT_POINTER, CMETA_ABI_UNSPECIFIED \
@@ -356,7 +357,8 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
    sizeof(cmeta_function_desc), \
    CMETA_CONTAINER_STR(name) "_" CMETA_CONTAINER_STR(pub), &cmeta_type_int, \
    name##_##pub##__function_params, 3u, \
-   CMETA_EFFECT_STATEFUL | CMETA_EFFECT_MAY_FAIL, CMETA_PROP_NONE \
+   CMETA_EFFECT_STATEFUL | CMETA_EFFECT_MAY_FAIL, CMETA_PROP_NONE, \
+   CMETA_RESULT_UNKNOWN \
  }; \
  CMETA_LOCAL const cmeta_abi_carrier name##_##pub##__function_param_abi[] = { \
    CMETA_ABI_OBJECT_POINTER, CMETA_ABI_UNSPECIFIED, CMETA_ABI_UNSPECIFIED \
