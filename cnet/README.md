@@ -423,19 +423,17 @@ TCP endpoints. Set both `cnet_client_config.tls_io_buffer_bytes` (at least
 connections. Leaving both zero preserves a TLS-free client and makes a
 `tls://` connect fail with `SALTS_ENOTSUP`.
 
-The repository manifest selects BoringSSL. CMake consumes its conventional
-`find_package(OpenSSL REQUIRED)` compatibility targets only as private build
-dependencies; Salts never exports those targets in CNet's public CMake link
-interface. The Windows native SDK uses the dynamic `x64-windows` vcpkg
-triplet, so its package bundles the private `ssl.dll` and `crypto.dll`
-runtime artifacts beside `cnet.dll`. They remain implementation details, not
-public SDK link dependencies.
+The repository manifest selects the canonical GmSSL overlay. CMake consumes
+`GmSSL::GmSSL` only as a private implementation dependency; Salts never
+exports that target in CNet's public CMake link interface. The overlay packages
+GmSSL statically, so the Windows native SDK ships no private TLS-provider DLL
+beside `cnet.dll`.
 
 `cnet_connect()` accepts either a one-shot `cnet_tls_client_config` or a reusable
 `cnet_tls_client`; the two fields are mutually exclusive. NULL uses the platform
 trust store and the URI host as the verified identity. An explicit configuration
 can select CA file/path, client certificate/key, SNI/identity, and an ordered
-ALPN offer. `cnet_tls_client_init()` builds an immutable BoringSSL context and
+ALPN offer. `cnet_tls_client_init()` builds immutable GmSSL provider contexts and
 consumes all input synchronously. A successful connect retains that context, so
 the public wrapper may be destroyed after admission while the connection remains
 valid. Certificate-chain and hostname/IP verification are mandatory; CNet
@@ -486,18 +484,18 @@ context is retained by the bounded command and may be destroyed by the caller
 after success. Queue exhaustion is reported immediately, and the existing
 client TLS buffer and handshake-timeout bounds apply unchanged.
 
-Each TLS session owns two fixed-capacity BIO directions and two fixed-capacity
-I/O scratch buffers. Handshake, encrypted reads/writes, ALPN, cancellation,
-and `close_notify` stay on the CNet progress owner; TLS creates no worker
-thread. Handshake timeout is reported with stage `handshake`, malformed or
+Each TLS session owns bounded ciphertext input/output rings plus fixed-capacity
+I/O scratch buffers. GmSSL consumes and emits ciphertext only through CNet's
+external-I/O callbacks; NativeIO remains the sole transport/socket authority.
+Handshake, encrypted reads/writes, ALPN, cancellation, and `close_notify`
+stay on the CNet progress owner; TLS creates no worker thread. Handshake timeout is reported with stage `handshake`, malformed or
 truncated TLS never falls back to plaintext, and user close during a handshake
 cancels the in-flight transport without publishing CONNECTED.
 
-The adapter follows BoringSSL's OpenSSL-compatible
-[BIO pair](https://boringssl.googlesource.com/boringssl/+/HEAD/include/openssl/bio.h)
-and [hostname validation](https://boringssl.googlesource.com/boringssl/+/HEAD/include/openssl/ssl.h)
-contracts;
-ALPN wire behavior follows [RFC 7301](https://www.rfc-editor.org/rfc/rfc7301).
+The adapter uses GmSSL's bounded `TLS_IO` callback contract and performs DNS
+hostname or IP-address SAN verification without transferring socket ownership
+to the provider. ALPN wire behavior follows
+[RFC 7301](https://www.rfc-editor.org/rfc/rfc7301).
 
 ## Ownership and progress
 
@@ -727,7 +725,7 @@ CNET_IO_BENCHMARK_BACKEND=epoll CNET_IO_BENCHMARK_TRACE=native:tcp:32768 \
 ### TLS logical write ownership
 
 Steady-state TLS payload ownership uses the same bounded write FIFO as plain
-streams. A plaintext write slot remains the logical owner while BoringSSL may
+streams. A plaintext write slot remains the logical owner while GmSSL may
 generate one or more ciphertext NativeIO writes; ciphertext requests borrow
 only the TLS scratch buffer and never own application plaintext. The logical
 slot settles only after all ciphertext generated for that plaintext has reached
