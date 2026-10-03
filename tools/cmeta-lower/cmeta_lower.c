@@ -869,6 +869,10 @@ static int cmeta_lower_transform(
     size_t size = context->source_size;
     size_t i = 0u;
     unsigned depth = 0u;
+    unsigned paren_depth = 0u;
+    unsigned active_control_blocks = 0u;
+    unsigned char control_scope[256] = {0};
+    int pending_control = 0;
     int statement_start = 1;
 
     while (i < size) {
@@ -908,8 +912,25 @@ static int cmeta_lower_transform(
         if (cmeta_lower_ident_start(source[i]) &&
             cmeta_lower_identifier(source, size, i, ident, sizeof(ident), &end)) {
             const cmeta_lower_type *known_type;
+            const cmeta_lower_symbol *live_owned;
             size_t next = end;
             int rewrite;
+
+            live_owned = cmeta_lower_find_live_owned(context);
+            if (strcmp(ident, "return") == 0 && live_owned != NULL) {
+                cmeta_lower_set_errorf(
+                    context, i, "early return exits live owned value '",
+                    live_owned->name, "'");
+                return 0;
+            }
+            if (cmeta_lower_escape_keyword(ident) && live_owned != NULL) {
+                cmeta_lower_set_errorf(
+                    context, i, "control-flow escape exits live owned value '",
+                    live_owned->name, "'");
+                return 0;
+            }
+            if (cmeta_lower_control_keyword(ident))
+                pending_control = 1;
 
             if (statement_start && strcmp(ident, "owned") == 0) {
                 rewrite = cmeta_lower_try_owned_declaration(
@@ -936,7 +957,8 @@ static int cmeta_lower_transform(
             }
 
             rewrite = cmeta_lower_try_move(
-                context, output, i, end, ident, &next);
+                context, output, i, end, ident,
+                pending_control || active_control_blocks != 0u, &next);
             if (rewrite < 0)
                 return 0;
             if (rewrite > 0) {
@@ -971,20 +993,52 @@ static int cmeta_lower_transform(
             continue;
         }
 
-        if (!cmeta_lower_buffer_append(output, source + i, 1u))
-            goto oom;
-
-        if (source[i] == '{') {
-            ++depth;
-            statement_start = 1;
-        } else if (source[i] == '}') {
+        if (source[i] == '}') {
+            if (depth != 0u &&
+                !cmeta_lower_emit_scope_cleanup(context, output, depth, i))
+                return 0;
+            if (!cmeta_lower_buffer_append(output, source + i, 1u))
+                goto oom;
             if (depth != 0u) {
+                if (depth < sizeof(control_scope) &&
+                    control_scope[depth] != 0u) {
+                    control_scope[depth] = 0u;
+                    if (active_control_blocks != 0u)
+                        --active_control_blocks;
+                }
                 cmeta_lower_leave_scope(context, depth);
                 --depth;
             }
             statement_start = 0;
+            ++i;
+            continue;
+        }
+
+        if (!cmeta_lower_buffer_append(output, source + i, 1u))
+            goto oom;
+
+        if (source[i] == '(') {
+            ++paren_depth;
+        } else if (source[i] == ')') {
+            if (paren_depth != 0u)
+                --paren_depth;
+        } else if (source[i] == '{') {
+            ++depth;
+            if (depth >= sizeof(control_scope)) {
+                cmeta_lower_set_error(
+                    context, i, "control-flow nesting exceeds compiler limit");
+                return 0;
+            }
+            if (pending_control) {
+                control_scope[depth] = 1u;
+                ++active_control_blocks;
+                pending_control = 0;
+            }
+            statement_start = 1;
         } else if (source[i] == ';') {
             statement_start = 1;
+            if (pending_control && paren_depth == 0u)
+                pending_control = 0;
         } else if (!isspace((unsigned char)source[i]) && source[i] != ',') {
             if (statement_start && source[i] != '(')
                 statement_start = 0;
