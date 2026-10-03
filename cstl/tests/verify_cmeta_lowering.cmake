@@ -26,7 +26,7 @@ foreach(expected
     "moved_sink = moved_source"
     "IntList transfer = {0}"
     "IntList_add(&transfer,60)"
-    "inner_received = transfer"
+    "inner_received = inner_transfer"
     "IntList_add(&transfer,61)"
     "received = transfer"
     "\"list.add(99); List_add(&list, 99);\""
