@@ -97,11 +97,16 @@ jobs:
           }
 
           $targets = Get-Content -LiteralPath (Join-Path $prefix "lib\cmake\Salts\SaltsTargets.cmake") -Raw
-          if ($targets -match "OpenSSL::SSL|OpenSSL::Crypto") {
+          if ($targets -match "OpenSSL::SSL|OpenSSL::Crypto|GmSSL::GmSSL") {
             throw "private TLS implementation dependency leaked into Salts public CMake targets"
           }
+          foreach ($unexpected in @("ssl.dll", "crypto.dll", "gmssl.dll")) {
+            if (Test-Path -LiteralPath (Join-Path $prefix "bin\\$unexpected") -PathType Leaf) {
+              throw "unexpected private TLS runtime in SDK: $unexpected"
+            }
+          }
 
-          Write-Host "Windows SDK runtime payload is self-contained."
+          Write-Host "Windows SDK runtime payload is self-contained and statically linked to GmSSL."
 
       - name: Verify CNet PE runtime contract
         shell: cmd
