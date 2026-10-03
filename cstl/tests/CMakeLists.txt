@@ -149,6 +149,38 @@ if(NOT CMAKE_CROSSCOMPILING)
     cstl_cmeta_lower_unknown_owned
     unknown_owned.cmeta.c
     "owned type 'MissingResource' has no canonical typed lifecycle binding")
+  cstl_add_cmeta_lower_rejection_test(
+    cstl_cmeta_lower_early_return_cleanup
+    early_return_cleanup.cmeta.c
+    "early return exits live owned value 'value'")
+  cstl_add_cmeta_lower_rejection_test(
+    cstl_cmeta_lower_conditional_move
+    conditional_move.cmeta.c
+    "owned value 'value' crosses unsupported control flow 'if'")
+  cstl_add_cmeta_lower_rejection_test(
+    cstl_cmeta_lower_loop_move
+    loop_move.cmeta.c
+    "owned value 'value' crosses unsupported control flow 'while'")
+  cstl_add_cmeta_lower_rejection_test(
+    cstl_cmeta_lower_break_cleanup
+    break_cleanup.cmeta.c
+    "break exits or crosses live owned value 'value'")
+  cstl_add_cmeta_lower_rejection_test(
+    cstl_cmeta_lower_continue_cleanup
+    continue_cleanup.cmeta.c
+    "continue exits or crosses live owned value 'value'")
+  cstl_add_cmeta_lower_rejection_test(
+    cstl_cmeta_lower_goto_cleanup
+    goto_cleanup.cmeta.c
+    "goto exits or crosses live owned value 'value'")
+  cstl_add_cmeta_lower_rejection_test(
+    cstl_cmeta_lower_short_circuit_move
+    short_circuit_move.cmeta.c
+    "live owned value crosses unsupported conditional expression")
+  cstl_add_cmeta_lower_rejection_test(
+    cstl_cmeta_lower_nonzero_initializer
+    nonzero_owned_initializer.cmeta.c
+    "owned initializer must be canonical zero {0}")
 endif()
 
 
