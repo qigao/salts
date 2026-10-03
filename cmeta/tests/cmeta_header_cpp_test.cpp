@@ -58,7 +58,10 @@ Enum(cmeta_cpp_state,
       &cmeta_type_int,CMETA_ABI_SCALAR, \
       (int,delta,CMETA_PARAM_IN,&cmeta_type_int,CMETA_ABI_SCALAR)) \
     X(I,F0,int,value,value, \
-      &cmeta_type_int,CMETA_ABI_SCALAR)
+      &cmeta_type_int,CMETA_ABI_SCALAR) \
+    X(I,FR0,size_t *,owned_value,stateful, \
+      &cmeta_type_size_ptr,CMETA_ABI_OBJECT_POINTER, \
+      CMETA_RESULT_OWNED | CMETA_RESULT_NULLABLE)
 
 CMETA_INTERFACE(cmeta_cpp_reflected_interface, CMETA_CPP_INTERFACE_METHODS);
 
@@ -227,7 +230,7 @@ spec("CMeta C++ public headers") {
 
     check_true(cmeta_interface_desc_valid(meta));
     check_true(cmeta_interface_desc_equal(meta, meta));
-    check_equal(meta->method_count, static_cast<size_t>(2));
+    check_equal(meta->method_count, static_cast<size_t>(3));
     check_true(cmeta_interface_method_reflection_valid(&meta->methods[0]));
     check_equal(meta->methods[0].function->name,
                 "cmeta_cpp_reflected_interface.add");
@@ -235,6 +238,13 @@ spec("CMeta C++ public headers") {
                 static_cast<size_t>(1));
     check_equal(meta->methods[0].abi->return_carrier,
                 CMETA_ABI_SCALAR);
+    check_true(cmeta_interface_method_reflection_valid(&meta->methods[2]));
+    check_equal(
+        meta->methods[2].function->result_flags,
+        static_cast<cmeta_result_flags>(
+            CMETA_RESULT_OWNED | CMETA_RESULT_NULLABLE));
+    check_equal(meta->methods[2].abi->return_carrier,
+                CMETA_ABI_OBJECT_POINTER);
   }
 
   it("exposes the fixed-value facade without C-only types") {
