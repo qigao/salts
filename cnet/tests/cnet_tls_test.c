@@ -533,6 +533,42 @@ spec("CNet bounded TLS engine") {
     cnet_tls_test_pair_destroy(&pair);
   }
 
+  it("carries one maximum TLS plaintext record with the public minimum IO buffer") {
+    enum { payload_size = 16 * 1024 };
+    cnet_tls_test_pair pair;
+    unsigned char *payload = NULL;
+    unsigned char *received = NULL;
+    size_t received_size = 0u;
+    bool complete = false;
+    bool peer_closed = false;
+
+    payload = (unsigned char *)malloc(payload_size);
+    received = (unsigned char *)malloc(payload_size);
+    check_not_null(payload);
+    check_not_null(received);
+    memset(payload, 0xa5, payload_size);
+    memset(received, 0, payload_size);
+
+    check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+    check_equal(cnet_tls_state_io_buffer_bytes(&pair.client),
+                (size_t)CNET_TLS_MIN_IO_BUFFER_BYTES);
+
+    check_equal(cnet_tls_write(&pair.client, payload, payload_size, &complete), SALTS_OK);
+    check_true(complete);
+    check_equal(cnet_tls_test_transfer(&pair.client, &pair.server), SALTS_OK);
+    check_equal(cnet_tls_read(&pair.server, received, payload_size, &received_size,
+                              &peer_closed),
+                SALTS_OK);
+    check_equal(received_size, (size_t)payload_size);
+    check_equal(memcmp(received, payload, payload_size), 0);
+    check_false(peer_closed);
+
+    cnet_tls_test_pair_destroy(&pair);
+    free(received);
+    free(payload);
+  }
+
   it("keeps GmSSL recv state clean when probing empty ciphertext before a write") {
     cnet_tls_test_pair pair;
     static const unsigned char payload = 0x6bu;
