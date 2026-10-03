@@ -81,7 +81,12 @@ typedef uint32_t cmeta_interface_method_flags;
 
 enum {
     CMETA_INTERFACE_METHOD_NONE = 0u,
-    /* Dispatch invalidates the owning interface handle after the call. */
+    /*
+     * Dispatch consumes the Interface capability's self ownership and
+     * invalidates that handle after the call. A borrowed Interface projection
+     * over another live owner (for example cmeta_object_ref) must not expose
+     * this authority without an explicit ownership transfer.
+     */
     CMETA_INTERFACE_METHOD_OWNS_SELF = 1u << 0,
     CMETA_INTERFACE_METHOD_FLAG_MASK = CMETA_INTERFACE_METHOD_OWNS_SELF
 };
@@ -119,6 +124,14 @@ cmeta_interface_method_arity(const cmeta_interface_method_desc *method) {
     if (method == NULL) return 0u;
     return method->function != NULL ? method->function->param_count
                                     : CMETA_IFACE_SIZE_CAST(method->dispatch_arity);
+}
+
+/* True only for a method whose dispatch consumes the Interface self owner. */
+CMETA_INLINE bool
+cmeta_interface_method_owns_self(const cmeta_interface_method_desc *method) {
+    return method != NULL &&
+           (method->flags &
+            CMETA_IFACE_METHOD_FLAGS_CAST(CMETA_INTERFACE_METHOD_OWNS_SELF)) != 0u;
 }
 
 CMETA_INLINE bool
@@ -163,6 +176,23 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
             return false;
     }
     return true;
+}
+
+/*
+ * Report whether a valid Interface contract contains any dispatch that owns
+ * self. This is a semantic query only: it does not grant ownership authority
+ * or make an Interface projection safe. Runtime-selected object adapters must
+ * use it to fail closed unless ownership is explicitly transferred.
+ */
+CMETA_INLINE bool
+cmeta_interface_desc_has_owning_method(const cmeta_interface_desc *desc) {
+    size_t i;
+    if (!cmeta_interface_desc_valid(desc))
+        return false;
+    for (i = 0u; i < desc->method_count; ++i)
+        if (cmeta_interface_method_owns_self(&desc->methods[i]))
+            return true;
+    return false;
 }
 
 #define CMETA_IFACE_ARITY_R0 0u
