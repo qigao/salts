@@ -651,6 +651,15 @@ cmeta_status cmeta_data_value_init_zero(
     const cmeta_data_desc *desc, void *object);
 cmeta_status cmeta_data_value_restore_zero(
     const cmeta_data_desc *desc, void *object);
+/**
+ * Destroy one canonical value through its semantic restore-to-zero lifecycle.
+ *
+ * Unlike cmeta_data_trait_destroy(), this destroy-only facade does not require
+ * copy or move support. Invalid arguments or a failed restore contract are
+ * fatal provider/compile-contract violations.
+ */
+void cmeta_data_value_destroy(
+    const cmeta_data_desc *desc, void *object);
 bool cmeta_data_value_copy_supported(const cmeta_data_desc *desc);
 /**
  * Copy one canonical value into semantic-zero destination storage.
