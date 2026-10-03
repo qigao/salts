@@ -23,6 +23,7 @@
 #elif defined(__APPLE__)
   #include <arpa/inet.h>
   #include <dirent.h>
+  #include <TargetConditionals.h>
   #include <CoreFoundation/CoreFoundation.h>
   #include <Security/Security.h>
 #else
@@ -306,7 +307,7 @@ static int cnet_tls_append_windows_store(cnet_tls_der_bundle *bundle, const char
 }
 #endif
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) && TARGET_OS_OSX
 static int cnet_tls_load_apple_anchors(cnet_tls_der_bundle *bundle) {
   CFArrayRef anchors = NULL;
   CFIndex index;
@@ -352,15 +353,26 @@ static int cnet_tls_load_system_trust(TLS_CTX *tls) {
   cnet_tls_der_bundle_dispose(&bundle);
   return status;
 #elif defined(__APPLE__)
-  cnet_tls_der_bundle bundle = {0};
-  int status = cnet_tls_load_apple_anchors(&bundle);
-  if (status == SALTS_OK && bundle.size == 0u) status = SALTS_EIO;
-  if (status == SALTS_OK &&
-      tls_ctx_set_ca_certificates_der(tls, bundle.data, bundle.size,
-                                      TLS_DEFAULT_VERIFY_DEPTH) != 1)
-    status = SALTS_EIO;
-  cnet_tls_der_bundle_dispose(&bundle);
-  return status;
+  #if TARGET_OS_OSX
+    cnet_tls_der_bundle bundle = {0};
+    int status = cnet_tls_load_apple_anchors(&bundle);
+    if (status == SALTS_OK && bundle.size == 0u) status = SALTS_EIO;
+    if (status == SALTS_OK &&
+        tls_ctx_set_ca_certificates_der(tls, bundle.data, bundle.size,
+                                        TLS_DEFAULT_VERIFY_DEPTH) != 1)
+      status = SALTS_EIO;
+    cnet_tls_der_bundle_dispose(&bundle);
+    return status;
+  #else
+    /*
+     * iOS does not expose a public system-root enumeration API equivalent to
+     * macOS SecTrustCopyAnchorCertificates(). Explicit ca_file/ca_path remains
+     * supported; default platform trust fails closed until the Security.framework
+     * peer-chain verification bridge tracked separately is implemented.
+     */
+    (void)tls;
+    return SALTS_ENOTSUP;
+  #endif
 #elif defined(__ANDROID__)
   return cnet_tls_load_explicit_trust(
       tls, NULL, "/system/etc/security/cacerts");
