@@ -755,6 +755,102 @@ spec("CNet public client API") {
   }
 #endif
 
+  it("moves one detached accepted stream into exactly one final owner") {
+    cnet_client client = {0};
+    cnet_listener listener = {0};
+    cnet_client_config config = cnet_api_test_config();
+    cnet_listener_config listener_config = {
+        .backend = config.backend, .host = "127.0.0.1", .port = 0u, .backlog = 2u};
+    cnet_api_test_listener_probe probe = {0};
+    cnet_api_test_socket peer = CNET_API_TEST_INVALID_SOCKET;
+    cnet_api_test_socket peer_closed = CNET_API_TEST_INVALID_SOCKET;
+    struct sockaddr_in address;
+    cnet_accepted_stream accepted = CNET_ACCEPTED_STREAM_INIT;
+    cnet_accepted_stream closed = CNET_ACCEPTED_STREAM_INIT;
+    cnet_connection connection = {0};
+    cnet_connection duplicate = {17u, 19u};
+    cnet_observer observer = {.on_state = cnet_api_test_listener_state,
+                              .on_receive = cnet_api_test_listener_receive,
+                              .on_send = cnet_api_test_listener_send,
+                              .user = &probe};
+    uint16_t port = 0u;
+    int ready = 0;
+
+    atomic_init(&probe.connected, 0);
+    atomic_init(&probe.received, 0);
+    atomic_init(&probe.sent, 0);
+    atomic_init(&probe.terminal, 0);
+    atomic_init(&probe.failed, 0);
+
+    check_equal(cnet_accepted_stream_close(&accepted), SALTS_EALREADY);
+    check_equal(cnet_client_adopt_accepted(&client, &accepted, &observer, &duplicate),
+                SALTS_EALREADY);
+    check_equal(duplicate.slot, 0u);
+    check_equal(duplicate.generation, 0u);
+
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_listener_init(&listener, &listener_config), SALTS_OK);
+    check_equal(cnet_listener_port(&listener, &port), SALTS_OK);
+    check_true(port != 0u);
+
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons(port);
+
+    peer = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    check_true(peer != CNET_API_TEST_INVALID_SOCKET);
+    check_equal(connect(peer, (const struct sockaddr *)&address,
+                        (int)sizeof(address)),
+                0);
+    check_equal(cnet_listener_wait(&listener, CNET_API_TEST_TIMEOUT_MS, &ready),
+                SALTS_OK);
+    check_equal(ready, 1);
+    check_equal(cnet_listener_accept_detached(&listener, &accepted), SALTS_OK);
+    check_equal(accepted.peer.family, CNET_DATAGRAM_ADDRESS_IPV4);
+    check_equal(accepted.peer.address[0], (uint8_t)127u);
+    check_true(accepted.peer.port != 0u);
+
+    /* A live move token cannot be overwritten by another accept. */
+    check_equal(cnet_listener_accept_detached(&listener, &accepted), SALTS_EALREADY);
+
+    check_equal(cnet_client_adopt_accepted(&client, &accepted, &observer, &connection),
+                SALTS_OK);
+    check_equal(cnet_accepted_stream_close(&accepted), SALTS_EALREADY);
+    duplicate = (cnet_connection){17u, 19u};
+    check_equal(cnet_client_adopt_accepted(&client, &accepted, &observer, &duplicate),
+                SALTS_EALREADY);
+    check_equal(duplicate.slot, 0u);
+    check_equal(duplicate.generation, 0u);
+    /* Copied peer metadata survives consumption of the socket owner. */
+    check_equal(accepted.peer.family, CNET_DATAGRAM_ADDRESS_IPV4);
+    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
+
+    check_equal(cnet_close(&client, connection), SALTS_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
+
+    peer_closed = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    check_true(peer_closed != CNET_API_TEST_INVALID_SOCKET);
+    check_equal(connect(peer_closed, (const struct sockaddr *)&address,
+                        (int)sizeof(address)),
+                0);
+    ready = 0;
+    check_equal(cnet_listener_wait(&listener, CNET_API_TEST_TIMEOUT_MS, &ready),
+                SALTS_OK);
+    check_equal(ready, 1);
+    check_equal(cnet_listener_accept_detached(&listener, &closed), SALTS_OK);
+    check_equal(cnet_accepted_stream_close(&closed), SALTS_OK);
+    check_equal(cnet_accepted_stream_close(&closed), SALTS_EALREADY);
+    check_equal(closed.peer.family, CNET_DATAGRAM_ADDRESS_IPV4);
+
+    check_equal(cnet_listener_close(&listener), SALTS_OK);
+    check_equal(cnet_listener_destroy(&listener), SALTS_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+    cnet_api_test_close_socket(peer_closed);
+    cnet_api_test_close_socket(peer);
+  }
+
   it("accepts a TCP connection and closes only after the final retained send") {
     cnet_client client = {0};
     cnet_listener listener = {0};
