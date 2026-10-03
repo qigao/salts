@@ -65,6 +65,16 @@ int cnet_write_queue_peek(cnet_write_queue *queue, cnet_session_handle connectio
                           cnet_write_view *out_view);
 
 /**
+ * Returns the largest current retained-vector prefix that is byte-contiguous
+ * inside one backing buffer. This is a read-only view for consumers such as
+ * TLS that accept contiguous plaintext; the logical vector boundaries remain
+ * unchanged for NativeIO scatter/gather submission.
+ */
+int cnet_write_queue_build_contiguous(cnet_write_queue *queue,
+                                      const cnet_write_view *view, size_t max_bytes,
+                                      const void **out_data, size_t *out_bytes);
+
+/**
  * Rebuilds the current retained-vector suffix directly from stable write-slot
  * ownership. max_bytes bounds this one native submission without mutating the
  * logical cursor.
