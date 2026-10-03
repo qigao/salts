@@ -15,6 +15,7 @@ int main(void) {
     IntSet set = {0};
     IntMap map = {0};
     const int *value;
+    int ownership_status = 0;
 
     /* list.add(77); List_add(&list, 77); */
     /* owned(IntList) fake = {0}; move(fake); */
@@ -57,26 +58,68 @@ int main(void) {
     {
         owned(IntList) transfer = {0};
         IntList received = {0};
-
-        if (IntList_init(&transfer, 4u) != STL_OK) return 91;
-        if (transfer.add(60) != STL_OK) return 92;
+        int transfer_init = IntList_init(&transfer, 4u);
+        int transfer_add =
+            transfer_init == STL_OK ? transfer.add(60) : transfer_init;
 
         {
             owned(IntList) transfer = {0};
             IntList inner_received = {0};
+            int inner_init = IntList_init(&transfer, 2u);
+            int inner_add =
+                inner_init == STL_OK ? transfer.add(70) : inner_init;
 
-            if (IntList_init(&transfer, 2u) != STL_OK) return 93;
-            if (transfer.add(70) != STL_OK) return 94;
             inner_received = move(transfer);
-            if (IntList_size(&inner_received) != 1u) return 95;
+            if (inner_init != STL_OK)
+                ownership_status = 93;
+            else if (inner_add != STL_OK)
+                ownership_status = 94;
+            else if (IntList_size(&inner_received) != 1u)
+                ownership_status = 95;
             IntList_destroy(&inner_received);
         }
 
-        if (transfer.add(61) != STL_OK) return 96;
-        received = move(transfer);
-        if (IntList_size(&received) != 2u) return 97;
+        {
+            int transfer_add_second =
+                transfer_add == STL_OK ? transfer.add(61) : transfer_add;
+            received = move(transfer);
+            if (transfer_init != STL_OK)
+                ownership_status = 91;
+            else if (transfer_add != STL_OK)
+                ownership_status = 92;
+            else if (transfer_add_second != STL_OK)
+                ownership_status = 96;
+            else if (IntList_size(&received) != 2u)
+                ownership_status = 97;
+        }
         IntList_destroy(&received);
     }
+
+    {
+        owned(IntList) automatic;
+        int automatic_init = IntList_init(&automatic, 2u);
+        int automatic_add =
+            automatic_init == STL_OK ? automatic.add(80) : automatic_init;
+        if (automatic_init != STL_OK)
+            ownership_status = 98;
+        else if (automatic_add != STL_OK)
+            ownership_status = 99;
+    }
+
+    {
+        owned(IntList) first = {0};
+        owned(IntList) second = {0};
+        int first_init = IntList_init(&first, 1u);
+        int second_init = IntList_init(&second, 1u);
+
+        if (first_init != STL_OK)
+            ownership_status = 100;
+        else if (second_init != STL_OK)
+            ownership_status = 101;
+    }
+
+    if (ownership_status != 0)
+        return ownership_status;
 
     if (IntList_size(&list) != 3u ||
         IntVec_size(&vec) != 2u ||
