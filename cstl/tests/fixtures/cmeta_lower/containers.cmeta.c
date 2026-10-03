@@ -8,6 +8,8 @@ typed(Map, IntMap, int, int);
 
 int main(void) {
     const char *literal = "list.add(99); List_add(&list, 99);";
+    const char *ownership_literal =
+        "owned(IntList) fake = {0}; move(fake);";
     IntList list = {0};
     IntVec vec = {0};
     IntSet set = {0};
@@ -15,9 +17,13 @@ int main(void) {
     const int *value;
 
     /* list.add(77); List_add(&list, 77); */
+    /* owned(IntList) fake = {0}; move(fake); */
 
     if (strcmp(literal, "list.add(99); List_add(&list, 99);") != 0)
         return 1;
+    if (strcmp(ownership_literal,
+               "owned(IntList) fake = {0}; move(fake);") != 0)
+        return 90;
 
     if (IntList_init(&list, 8u) != STL_OK ||
         IntVec_init(&vec, 8u) != STL_OK ||
@@ -47,6 +53,30 @@ int main(void) {
     }
 
     if (list.add(50) != STL_OK) return 15;
+
+    {
+        owned(IntList) transfer = {0};
+        IntList received = {0};
+
+        if (IntList_init(&transfer, 4u) != STL_OK) return 91;
+        if (transfer.add(60) != STL_OK) return 92;
+
+        {
+            owned(IntList) transfer = {0};
+            IntList inner_received = {0};
+
+            if (IntList_init(&transfer, 2u) != STL_OK) return 93;
+            if (transfer.add(70) != STL_OK) return 94;
+            inner_received = move(transfer);
+            if (IntList_size(&inner_received) != 1u) return 95;
+            IntList_destroy(&inner_received);
+        }
+
+        if (transfer.add(61) != STL_OK) return 96;
+        received = move(transfer);
+        if (IntList_size(&received) != 2u) return 97;
+        IntList_destroy(&received);
+    }
 
     if (IntList_size(&list) != 3u ||
         IntVec_size(&vec) != 2u ||
