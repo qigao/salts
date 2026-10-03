@@ -33,7 +33,6 @@
 enum {
   CNET_TLS_PATH_MAX_BYTES = 4095,
   CNET_TLS_PASSWORD_MAX_BYTES = 1023,
-  CNET_TLS_GMSSL_ALPN_MAX_COUNT = 4,
   CNET_TLS_TRUST_MAX_BYTES = 16 * 1024 * 1024,
   CNET_TLS_CERT_MAX_BYTES = 64 * 1024,
   CNET_TLS_PATH_BUFFER_BYTES = CNET_TLS_PATH_MAX_BYTES + 512
@@ -401,23 +400,30 @@ static void cnet_tls_alpn_dispose(cnet_tls_context *context) {
 static int cnet_tls_alpn_copy(cnet_tls_context *context,
                               const char *const *protocols, size_t count) {
   size_t index;
+  size_t wire_size = 0u;
+
   if (context == NULL) return SALTS_EINVAL;
   if (count == 0u) return protocols == NULL ? SALTS_OK : SALTS_EINVAL;
   if (protocols == NULL) return SALTS_EINVAL;
-  if (count > CNET_TLS_GMSSL_ALPN_MAX_COUNT) return SALTS_ERANGE;
 
-  context->alpn_protocols = (char **)calloc(count, sizeof(char *));
-  if (context->alpn_protocols == NULL) return SALTS_ENOMEM;
-  context->alpn_protocol_count = count;
   for (index = 0u; index < count; ++index) {
     size_t length = 0u;
     if (protocols[index] == NULL ||
         !cnet_tls_bounded_string(protocols[index],
                                  CNET_TLS_ALPN_NAME_MAX_BYTES, &length) ||
-        length == 0u) {
-      cnet_tls_alpn_dispose(context);
+        length == 0u)
       return SALTS_EINVAL;
-    }
+    if (wire_size > UINT16_MAX - 1u - length) return SALTS_ERANGE;
+    wire_size += 1u + length;
+  }
+
+  if (count > SIZE_MAX / sizeof(char *)) return SALTS_ERANGE;
+  context->alpn_protocols = (char **)calloc(count, sizeof(char *));
+  if (context->alpn_protocols == NULL) return SALTS_ENOMEM;
+  context->alpn_protocol_count = count;
+
+  for (index = 0u; index < count; ++index) {
+    size_t length = strlen(protocols[index]);
     context->alpn_protocols[index] = (char *)malloc(length + 1u);
     if (context->alpn_protocols[index] == NULL) {
       cnet_tls_alpn_dispose(context);
