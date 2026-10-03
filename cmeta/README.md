@@ -310,6 +310,20 @@ implements(Source, file_source, capabilities,
 
 This is a `{ self, vtable }` protocol mechanism, not a class hierarchy.
 
+An Interface is a typed protocol/capability view, not the canonical runtime
+identity/lifetime container for an arbitrary native object. Runtime-selected
+identity and BORROWED/SHARED/OWNED authority live in `cmeta_object_ref`.
+Projecting one object into an Interface therefore creates a borrowed capability
+relation over the same provider; it must not copy the native object or infer
+ownership from `self`, the vtable layout, or descriptor equality.
+
+Interfaces containing `CMETA_INTERFACE_METHOD_OWNS_SELF` are ownership-bearing
+capabilities. A borrowed ObjectRef-to-Interface projection must reject them
+unless ownership is explicitly transferred; otherwise Interface destruction
+could invalidate an object while its ObjectRef still claims to be live.
+`cmeta_interface_desc_has_owning_method()` is the canonical semantic query for
+that admission decision. Static compile-time-known Interface calls remain direct
+typed vtable dispatch and do not route through ObjectRef.
 
 Interface method schemas have two reflection levels. Historical `R0..R4`,
 `V0..V4`, and `D0` rows define the exact dispatch ABI only; their method
