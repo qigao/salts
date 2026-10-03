@@ -84,11 +84,7 @@ jobs:
           ctest --test-dir build/linux-gcc-release \
             --no-tests=error \
             --output-on-failure \
-            -R '^(test_salts_cmeta_data|cstl_typed_decl_cpp_test)
-      - name: Source hygiene
-        shell: bash
-        run: git diff --check
-
+            -R '^(test_salts_cmeta_data|cstl_typed_decl_cpp_test)$'
 
       - name: Source hygiene
         shell: bash
