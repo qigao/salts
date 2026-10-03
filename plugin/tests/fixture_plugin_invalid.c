@@ -2,7 +2,7 @@
 
 static const salts_plugin_manifest fixture_manifest = {
     .struct_size = SALTS_PLUGIN_MANIFEST_SIZE,
-    .abi_version = SALTS_PLUGIN_ABI_VERSION + 1u,
+    .abi_version = SALTS_PLUGIN_ABI_VERSION - 1u,
     .plugin_id = "test.loader.invalid",
     .version = {1u, 0u, 0u},
 };
