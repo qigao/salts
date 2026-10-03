@@ -21,6 +21,8 @@ typedef struct external_probe {
   bool terminal;
   bool failed;
   size_t callbacks;
+  size_t sends;
+  size_t receives;
 } external_probe;
 
 static native_io_backend_kind test_backend_kind(void) {
@@ -65,6 +67,29 @@ static void on_state(void *user, cnet_connection connection,
     if (state == CNET_CONNECTION_FAILED || error != NULL)
       probe->failed = true;
   }
+}
+
+static void on_send(void *user, cnet_connection connection,
+                    size_t size) {
+  external_probe *probe = (external_probe *)user;
+  (void)connection;
+  assert(probe != NULL);
+  assert(size != 0u);
+  ++probe->sends;
+}
+
+static void on_receive_slice(
+    void *user,
+    cnet_connection connection,
+    mem_slice_t slice,
+    cnet_message_kind kind) {
+  external_probe *probe = (external_probe *)user;
+  (void)connection;
+  (void)kind;
+  assert(probe != NULL);
+  ++probe->receives;
+  if (slice.buffer != NULL)
+    mem_slice_release(&slice);
 }
 
 static int drive_external_once(cnet_client *client,
@@ -164,6 +189,7 @@ static void test_external_native_io_progress(void) {
              &outbound, test_backend_kind(),
              CNET_DATAGRAM_ADDRESS_IPV4) == SALTS_OK);
   observer.on_state = on_state;
+  observer.on_send = on_send;
   observer.user = &probe;
   assert(cnet_listener_connect_endpoint(
              &outbound, &client, &remote,
@@ -203,11 +229,110 @@ static void test_external_native_io_progress(void) {
   assert(probe.connected);
   assert(!probe.failed);
 
-  interest_count = SIZE_MAX;
+  /*
+   * A live connection may own receive and send NativeIO requests
+   * concurrently. The typed snapshot must distinguish them without exposing
+   * endpoint/native-handle state.
+   */
+  {
+    cnet_external_request_snapshot snapshots[TEST_BATCH] = {{0}};
+    cnet_external_request_snapshot sentinel = {
+        {UINT32_C(0x1234), UINT32_C(0x5678)},
+        (native_io_operation_kind)UINT32_C(0x7fffffff)};
+    native_io_request untyped[TEST_BATCH] = {{0}};
+    mem_buffer_t *send_buffer;
+    size_t typed_count = 0u;
+    size_t untyped_count = 0u;
+    bool saw_recv = false;
+    bool saw_send = false;
+
+    assert(cnet_set_receive_slice_handler(
+               &client, connection,
+               on_receive_slice, &probe) == SALTS_OK);
+    assert(cnet_receive(
+               &client, connection, 1u) == SALTS_OK);
+
+    send_buffer = mem_get_buffer(mem_global(), 4u);
+    assert(send_buffer != NULL);
+    memcpy(mem_buffer_data(send_buffer), "ping", 4u);
+    mem_set_used(send_buffer, 4u);
+    assert(cnet_send_buffer(
+               &client, connection,
+               send_buffer) == SALTS_OK);
+    mem_buffer_release(send_buffer);
+
+    assert(cnet_client_advance_external(
+               &client, &events) == SALTS_OK);
+
+    assert(cnet_client_external_request_snapshots(
+               &client, connection,
+               NULL, 0u,
+               &typed_count) == SALTS_ENOBUFS);
+    assert(typed_count == 2u);
+
+    snapshots[0] = sentinel;
+    typed_count = 0u;
+    assert(cnet_client_external_request_snapshots(
+               &client, connection,
+               snapshots, 1u,
+               &typed_count) == SALTS_ENOBUFS);
+    assert(typed_count == 2u);
+    assert(snapshots[0].request.slot ==
+           sentinel.request.slot);
+    assert(snapshots[0].request.generation ==
+           sentinel.request.generation);
+    assert(snapshots[0].operation_kind ==
+           sentinel.operation_kind);
+
+    assert(cnet_client_external_request_snapshots(
+               &client, connection,
+               snapshots, TEST_BATCH,
+               &typed_count) == SALTS_OK);
+    assert(typed_count == 2u);
+
+    assert(cnet_client_external_requests(
+               &client, connection,
+               untyped, TEST_BATCH,
+               &untyped_count) == SALTS_OK);
+    assert(untyped_count == typed_count);
+
+    for (i = 0u; i < typed_count; ++i) {
+      bool found_untyped = false;
+      size_t j;
+
+      assert(native_io_request_valid(
+          snapshots[i].request));
+      for (j = 0u; j < untyped_count; ++j) {
+        if (snapshots[i].request.slot ==
+                untyped[j].slot &&
+            snapshots[i].request.generation ==
+                untyped[j].generation) {
+          found_untyped = true;
+          break;
+        }
+      }
+      assert(found_untyped);
+
+      if (snapshots[i].operation_kind ==
+          NATIVE_IO_OPERATION_STREAM_RECV)
+        saw_recv = true;
+      else if (snapshots[i].operation_kind ==
+               NATIVE_IO_OPERATION_STREAM_SEND)
+        saw_send = true;
+      else
+        assert(!"unexpected typed external TCP operation");
+    }
+    assert(saw_recv);
+    assert(saw_send);
+  }
+
+  interest_count = 0u;
   assert(cnet_client_external_requests(
              &client, connection, interests, TEST_BATCH,
              &interest_count) == SALTS_OK);
-  assert(interest_count == 0u);
+  assert(interest_count <= TEST_BATCH);
+  for (i = 0u; i < interest_count; ++i)
+    assert(native_io_request_valid(interests[i]));
 
   assert(cnet_close(&client, connection) == SALTS_OK);
   deadline = salts_monotonic_ms() + TEST_TIMEOUT_MS;

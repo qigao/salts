@@ -1005,6 +1005,26 @@ int cnet_client_external_requests(cnet_client *client,
                                   size_t *out_count);
 
 /**
+ * Typed counterpart of cnet_client_external_requests().
+ *
+ * operation_kind is the exact NativeIO operation currently associated with
+ * request. Endpoint/native-handle state and CNet-private request role/stage
+ * remain private. The snapshot has the same transient lifetime and
+ * SALTS_ENOBUFS all-or-nothing capacity contract as the untyped API.
+ */
+typedef struct cnet_external_request_snapshot {
+  native_io_request request;
+  native_io_operation_kind operation_kind;
+} cnet_external_request_snapshot;
+
+int cnet_client_external_request_snapshots(
+    cnet_client *client,
+    cnet_connection connection,
+    cnet_external_request_snapshot *out_requests,
+    size_t capacity,
+    size_t *out_count);
+
+/**
  * Completes teardown for an external-progress client only after every live
  * connection has reached its terminal callback. It never observes NativeIO.
  * SALTS_EBUSY means the embedding runtime must continue routing/advancing.
