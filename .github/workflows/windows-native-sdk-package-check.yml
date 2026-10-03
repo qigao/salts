@@ -3,7 +3,9 @@ name: Windows native SDK package check
 on:
   pull_request:
     paths:
-      - "cnet/**"
+      - "cnet/src/**"
+      - "cnet/include/**"
+      - "cnet/CMakeLists.txt"
       - "cmake/ci/stage-windows-cnet-runtime.ps1"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/workflows/windows-native-sdk-package-check.yml"
