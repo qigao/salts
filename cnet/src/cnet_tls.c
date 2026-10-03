@@ -62,6 +62,9 @@ typedef struct cnet_tls_gmssl_state {
   size_t output_size;
   size_t plaintext_pending_offset;
   size_t plaintext_pending_size;
+  const unsigned char *write_source;
+  size_t write_size;
+  size_t write_offset;
   cnet_tls_variant variant;
   bool connection_ready;
   char server_name[CNET_TLS_SERVER_NAME_CAPACITY];
@@ -928,8 +931,7 @@ int cnet_tls_take_cipher(cnet_tls_state *state, void *buffer,
 int cnet_tls_write(cnet_tls_state *state, const void *data, size_t size,
                    bool *out_complete) {
   cnet_tls_gmssl_state *engine;
-  size_t sent_size = 0u;
-  int result;
+  const unsigned char *bytes = (const unsigned char *)data;
   if (state == NULL || data == NULL || size == 0u ||
       out_complete == NULL ||
       (engine = CNET_TLS_ENGINE(state)) == NULL)
@@ -938,15 +940,38 @@ int cnet_tls_write(cnet_tls_state *state, const void *data, size_t size,
   if (!state->handshake_complete || state->close_notify_started)
     return SALTS_ENOTCONN;
 
-  result = tls_send(&engine->connection, (const uint8_t *)data, size,
-                    &sent_size);
-  if (result == 1) {
-    if (sent_size != size) return SALTS_EPROTO;
-    *out_complete = true;
-    return SALTS_OK;
+  if (engine->write_size == 0u) {
+    engine->write_source = bytes;
+    engine->write_size = size;
+    engine->write_offset = 0u;
+  } else if (engine->write_source != bytes || engine->write_size != size ||
+             engine->write_offset >= engine->write_size) {
+    return SALTS_EBUSY;
   }
-  if (cnet_tls_retryable(result)) return SALTS_OK;
-  return SALTS_EPROTO;
+
+  while (engine->write_offset < engine->write_size) {
+    size_t sent_size = 0u;
+    size_t remaining = engine->write_size - engine->write_offset;
+    int result = tls_send(&engine->connection,
+                          engine->write_source + engine->write_offset,
+                          remaining, &sent_size);
+    if (result == 1) {
+      if (sent_size == 0u || sent_size > remaining) return SALTS_EPROTO;
+      engine->write_offset += sent_size;
+      continue;
+    }
+    if (cnet_tls_retryable(result)) return SALTS_OK;
+    engine->write_source = NULL;
+    engine->write_size = 0u;
+    engine->write_offset = 0u;
+    return SALTS_EPROTO;
+  }
+
+  engine->write_source = NULL;
+  engine->write_size = 0u;
+  engine->write_offset = 0u;
+  *out_complete = true;
+  return SALTS_OK;
 }
 
 static int cnet_tls_read_pending(cnet_tls_state *state, void *buffer,
