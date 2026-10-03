@@ -9,6 +9,10 @@ on:
       - "utils/tests/test_salts_cmeta_data.c"
       - "utils/tests/salts_cmeta_data_peer.c"
       - "utils/tests/CMakeLists.txt"
+      - "cstl/include/cstl/typed.h"
+      - "cstl/tests/cstl_typed_decl_c.c"
+      - "cstl/tests/cstl_typed_decl_cpp.cpp"
+      - "cstl/tests/CMakeLists.txt"
       - ".github/workflows/cmeta-data-lifetime.yml"
   push:
     branches: [master]
@@ -19,6 +23,10 @@ on:
       - "utils/tests/test_salts_cmeta_data.c"
       - "utils/tests/salts_cmeta_data_peer.c"
       - "utils/tests/CMakeLists.txt"
+      - "cstl/include/cstl/typed.h"
+      - "cstl/tests/cstl_typed_decl_c.c"
+      - "cstl/tests/cstl_typed_decl_cpp.cpp"
+      - "cstl/tests/CMakeLists.txt"
       - ".github/workflows/cmeta-data-lifetime.yml"
   workflow_dispatch:
 
@@ -63,7 +71,7 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="$sanitizer_flags" \
             -DCMAKE_SHARED_LINKER_FLAGS="$sanitizer_flags"
 
-      - name: Build and run owned-data lifetime contract
+      - name: Build and run owned-data and typed-wrapper contracts
         shell: bash
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
@@ -71,11 +79,12 @@ jobs:
         run: |
           set -euo pipefail
           cmake --build --preset linux-release-user --parallel 2 --target \
-            test_salts_cmeta_data
+            test_salts_cmeta_data \
+            cstl_typed_decl_cpp_test
           ctest --test-dir build/linux-gcc-release \
             --no-tests=error \
             --output-on-failure \
-            -R '^test_salts_cmeta_data$'
+            -R '^(test_salts_cmeta_data|cstl_typed_decl_cpp_test)$'
 
       - name: Source hygiene
         shell: bash

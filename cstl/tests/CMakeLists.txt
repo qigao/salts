@@ -42,6 +42,11 @@ cmake_add_test(cstl_header_typed_cpp_test
   LIBS Salts::CSTL Salts::TinyTest
   FOLDER "cstl/tests")
 
+cmake_add_test(cstl_typed_decl_cpp_test
+  SOURCES cstl_typed_decl_c.c cstl_typed_decl_cpp.cpp
+  LIBS Salts::CSTL
+  FOLDER "cstl/tests")
+
 cmake_add_test(cstl_stack_type_collision_test
   SOURCES cstl_stack_type_collision_test.c
   LIBS Salts::CSTL Salts::TinyTest
@@ -218,6 +223,16 @@ set_target_properties(
 set_target_properties(
   cstl_header_typed_cpp_test
   PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF)
+
+set_target_properties(
+  cstl_typed_decl_cpp_test
+  PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
     CXX_EXTENSIONS OFF)

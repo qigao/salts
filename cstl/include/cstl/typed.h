@@ -2,6 +2,7 @@
 #define SALTS_TYPED_H
 
 #include <cmeta/meta.h>
+#include <cmeta/container.h>
 
 #include <cstl/vec.h>
 #include <cstl/deque.h>
@@ -90,6 +91,47 @@
 #define CMETA_DECLARED_CONSTRUCTION_BPlusTree (&stl_bplus_tree_construct_ops)
 
 #include <cstl/detail/typed_initializers.h>
+
+/*
+ * Declaration-only typed container wrappers.
+ *
+ * cstl_typed_decl(...) emits only the physical wrapper type shared by the
+ * full C typed façade. It generates no methods, descriptors, collectors or
+ * semantic provider objects, so a C++ translation unit can embed a typed C ABI
+ * defined by a C translation unit without duplicating provider definitions.
+ *
+ * Extra explicit-metadata arguments are accepted and intentionally ignored:
+ * storage layout depends only on the container kind and C key/value types.
+ */
+#define CSTL_TYPED_DECL_Vec(name, type, ...) \
+  CMETA_CONTAINER1_DECLARE(name, vec_t)
+#define CSTL_TYPED_DECL_Deque(name, type, ...) \
+  CMETA_CONTAINER1_DECLARE(name, deque_t)
+#define CSTL_TYPED_DECL_List(name, type, ...) \
+  CMETA_CONTAINER1_DECLARE(name, list_t)
+#define CSTL_TYPED_DECL_Stack(name, type, ...) \
+  CMETA_CONTAINER1_DECLARE(name, cstl_stack_t)
+#define CSTL_TYPED_DECL_Queue(name, type, ...) \
+  CMETA_CONTAINER1_DECLARE(name, queue_t)
+#define CSTL_TYPED_DECL_Heap(name, type, ...) \
+  CMETA_CONTAINER1_DECLARE(name, heap_t)
+#define CSTL_TYPED_DECL_Set(name, type, ...) \
+  CMETA_CONTAINER1_DECLARE(name, set_t)
+#define CSTL_TYPED_DECL_HashSet(name, type, ...) \
+  CMETA_CONTAINER1_DECLARE(name, hash_set_t)
+#define CSTL_TYPED_DECL_HashMap(name, key_type, value_type, ...) \
+  CMETA_CONTAINER2_DECLARE(name, key_type, value_type, hash_map_t)
+#define CSTL_TYPED_DECL_Map(name, key_type, value_type, ...) \
+  CMETA_CONTAINER2_DECLARE(name, key_type, value_type, map_t)
+#define CSTL_TYPED_DECL_MultiMap(name, key_type, value_type, ...) \
+  CMETA_CONTAINER2_DECLARE(name, key_type, value_type, multimap_t)
+#define CSTL_TYPED_DECL_BTree(name, key_type, value_type, ...) \
+  CMETA_CONTAINER2_DECLARE(name, key_type, value_type, btree_t)
+#define CSTL_TYPED_DECL_BPlusTree(name, key_type, value_type, ...) \
+  CMETA_CONTAINER2_DECLARE(name, key_type, value_type, bplus_tree_t)
+
+#define cstl_typed_decl(kind, name, ...) \
+  CMETA_PP_CAT(CSTL_TYPED_DECL_, kind)(name, __VA_ARGS__)
 
 #ifndef __cplusplus
 
