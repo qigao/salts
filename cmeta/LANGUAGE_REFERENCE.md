@@ -387,7 +387,8 @@ R0..R4   non-void ABI-only rows
 V0..V4   void ABI-only rows
 D0       owning destructor ABI-only row
 
-F0..F4   fully reflected non-void rows
+F0..F4   fully reflected non-void rows; result semantics remain UNKNOWN
+FR0..FR4 fully reflected non-void rows with explicit canonical result semantics
 FV0..FV4 fully reflected void rows
 FD0      fully reflected owning destructor
 ```
@@ -399,13 +400,16 @@ not synthesize semantic function metadata from C spelling. Their
 
 Fully reflected `F/FV/FD` rows additionally state the semantic contract,
 return descriptor, return ABI carrier, and each parameter as the exact
-five-field FunctionDecl row:
+five-field FunctionDecl row. `F` rows intentionally preserve
+`CMETA_RESULT_UNKNOWN`. Result-aware `FR0..FR4` rows add one explicit
+`result_flags` field after the return ABI carrier and otherwise preserve the
+same vtable/wrapper ABI:
 
 ```text
 (type, name, flags, descriptor, abi_carrier)
 ```
 
-For those rows, `cmeta_interface_method_function()` and
+For all reflected rows, `cmeta_interface_method_function()` and
 `cmeta_interface_method_abi()` expose the same canonical
 `cmeta_function_desc` / `cmeta_function_abi_desc` model used by ordinary
 `FunctionDecl`. CMeta never infers OUT/INOUT, ownership, effects, or custom
@@ -420,7 +424,10 @@ Example:
     X(I, F1, bool, advance, stateful,
       &cmeta_type_bool, CMETA_ABI_SCALAR,
       (cflow_duration, delta, CMETA_PARAM_IN,
-       &cflow_type_duration, CMETA_ABI_AGGREGATE))
+       &cflow_type_duration, CMETA_ABI_AGGREGATE)) \
+    X(I, FR0, cflow_buffer *, create_buffer, stateful,
+      &cflow_buffer_ptr_type, CMETA_ABI_OBJECT_POINTER,
+      CMETA_RESULT_OWNED | CMETA_RESULT_NULLABLE)
 ```
 
 An interface value is conceptually `{ self, vtable }` plus implementation and
