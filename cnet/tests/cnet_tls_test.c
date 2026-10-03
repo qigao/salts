@@ -139,6 +139,53 @@ static int cnet_tls_test_pair_init(cnet_tls_test_pair *pair) {
   return status;
 }
 
+static int cnet_tls_test_ip_pair_init(cnet_tls_test_pair *pair,
+                                      const char *server_name) {
+  cnet_tls_server_config server_config;
+  cnet_tls_client_config client_config;
+  cnet_tls_context *client_context = NULL;
+  cnet_tls_context *server_context;
+  int status;
+
+  if (pair == NULL || server_name == NULL) return SALTS_EINVAL;
+  memset(pair, 0, sizeof(*pair));
+
+  server_config = (cnet_tls_server_config){
+      .size = sizeof(server_config),
+      .cert_file = CNET_TLS_TEST_IP_CERT,
+      .key_file = CNET_TLS_TEST_IP_KEY,
+      .client_auth = CNET_TLS_CLIENT_AUTH_NONE};
+  status = cnet_tls_server_init(&pair->server_context, &server_config);
+  if (status != SALTS_OK) return status;
+
+  client_config = (cnet_tls_client_config){
+      .size = sizeof(client_config),
+      .ca_file = CNET_TLS_TEST_IP_CA};
+  status = cnet_tls_client_context_create(&client_config, &client_context);
+  if (status != SALTS_OK) {
+    (void)cnet_tls_server_destroy(&pair->server_context);
+    return status;
+  }
+  status = cnet_tls_state_init(&pair->client, client_context, false,
+                               server_name, CNET_TLS_MIN_IO_BUFFER_BYTES);
+  if (status != SALTS_OK) {
+    cnet_tls_context_release(client_context);
+    (void)cnet_tls_server_destroy(&pair->server_context);
+    return status;
+  }
+
+  server_context = cnet_tls_server_context(&pair->server_context);
+  cnet_tls_context_retain(server_context);
+  status = cnet_tls_state_init(&pair->server, server_context, true, NULL,
+                               CNET_TLS_MIN_IO_BUFFER_BYTES);
+  if (status != SALTS_OK) {
+    cnet_tls_context_release(server_context);
+    cnet_tls_state_destroy(&pair->client);
+    (void)cnet_tls_server_destroy(&pair->server_context);
+  }
+  return status;
+}
+
 static void cnet_tls_test_pair_destroy(cnet_tls_test_pair *pair) {
   cnet_tls_state_destroy(&pair->server);
   cnet_tls_state_destroy(&pair->client);
@@ -328,6 +375,20 @@ static int cnet_tls_network_drive(cnet_client *client, cnet_client *server, cnet
 }
 
 spec("CNet bounded TLS engine") {
+
+  it("verifies an IP literal against subjectAltName iPAddress without SNI") {
+    cnet_tls_test_pair pair;
+    check_equal(cnet_tls_test_ip_pair_init(&pair, "127.0.0.1"), SALTS_OK);
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+    cnet_tls_test_pair_destroy(&pair);
+  }
+
+  it("rejects a mismatched IP literal without falling back to DNS identity") {
+    cnet_tls_test_pair pair;
+    check_equal(cnet_tls_test_ip_pair_init(&pair, "127.0.0.2"), SALTS_OK);
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_ECONNABORTED);
+    cnet_tls_test_pair_destroy(&pair);
+  }
 
   it("reports negotiated TLS protocol and cipher only after handshake") {
     cnet_tls_test_pair pair;
