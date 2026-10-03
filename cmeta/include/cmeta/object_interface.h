@@ -85,12 +85,13 @@ cmeta_object_interface_project_borrowed(
     const cmeta_object_interface_provider *provider,
     const cmeta_interface_desc *expected,
     cmeta_interface_projection *out) {
+    cmeta_interface_projection empty = CMETA_INTERFACE_PROJECTION_INIT;
     cmeta_interface_projection candidate = CMETA_INTERFACE_PROJECTION_INIT;
     cmeta_status status;
 
     if (out == NULL)
         return CMETA_INVALID_ARGUMENT;
-    *out = (cmeta_interface_projection)CMETA_INTERFACE_PROJECTION_INIT;
+    *out = empty;
 
     if (!cmeta_object_ref_valid(object) ||
         !cmeta_object_interface_provider_valid(provider) ||
