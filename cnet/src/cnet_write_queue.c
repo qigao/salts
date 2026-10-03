@@ -327,6 +327,7 @@ int cnet_write_queue_enqueue_slicev(cnet_write_queue *queue,
   }
 
   entry->owner_count = 0u;
+  entry->range_count = 0u;
   for (size_t index = 0u; index < segment_count; ++index) {
     size_t owner_index = 0u;
     while (owner_index < entry->owner_count &&
@@ -340,12 +341,23 @@ int cnet_write_queue_enqueue_slicev(cnet_write_queue *queue,
         memset(entry->owners, 0, sizeof(entry->owners));
         memset(entry->ranges, 0, sizeof(entry->ranges));
         entry->owner_count = 0u;
+        entry->range_count = 0u;
         ++impl->free_count;
         return SALTS_EINVAL;
       }
       entry->owners[entry->owner_count++] = retained;
     }
-    entry->ranges[index] =
+
+    if (entry->range_count != 0u) {
+      cnet_write_range *previous = &entry->ranges[entry->range_count - 1u];
+      if (previous->buffer == segments[index].buffer &&
+          previous->base_offset + previous->length == base_offsets[index]) {
+        previous->length += segments[index].length;
+        continue;
+      }
+    }
+
+    entry->ranges[entry->range_count++] =
         (cnet_write_range){segments[index].buffer, base_offsets[index], segments[index].length};
   }
 
@@ -355,7 +367,6 @@ int cnet_write_queue_enqueue_slicev(cnet_write_queue *queue,
   entry->size = total;
   entry->base_offset = 0u;
   entry->offset = 0u;
-  entry->range_count = segment_count;
   entry->next = CNET_WRITE_SLOT_NONE;
   entry->payload_kind = CNET_WRITE_PAYLOAD_RETAINED_VECTOR;
   entry->close_after_send = close_after_send;
