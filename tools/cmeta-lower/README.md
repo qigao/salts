@@ -78,25 +78,54 @@ The lowerer records that accessor with the owned symbol. A source such as
 `owned(MissingResource) value` fails closed because the compiler cannot prove
 which lifecycle provider owns cleanup.
 
-## Important Phase C1 boundary
+## Straight-line deterministic cleanup
 
-Lifecycle **binding** is now proven, but automatic cleanup is not inserted yet.
+Version 4 adds the first cleanup-lowering slice.
 
-In particular:
+An admitted owned declaration is normalized into a cleanup-safe canonical zero
+slot:
 
-- `owned(Type)` accepts one simple named concrete type with canonical typed
-  lifecycle metadata;
-- `move(name)` still lowers to the ordinary C expression `name`;
-- no `destroy`, `release`, or Plugin lease release is inserted yet;
-- no ownership/lifecycle is inferred from pointers, names, ABI carriers, or
-  guessed `Type_destroy` symbols.
+```c
+owned(IntList) values;
+```
 
-The next cleanup phase can emit canonical CMeta lifecycle calls through the
-recorded DataDesc accessor rather than discovering a second cleanup model.
+becomes:
+
+```c
+IntList values = {0};
+```
+
+The source may also write explicit `= {0}`; other initializers fail closed in
+this first slice.
+
+At normal lexical scope exit, every still-LIVE owned value is destroyed in
+reverse declaration order through the lifecycle accessor already recorded from
+`typed(...)`:
+
+```c
+cmeta_data_value_destroy(IntList_cmeta_data(), &values);
+```
+
+A source consumed by `move(name)` is MOVED and receives no source-scope
+cleanup.
+
+This is deliberately a **straight-line ownership subset**. While a LIVE owned
+value exists, the lowerer rejects ownership-relevant control flow it cannot yet
+join soundly: early return, outer conditional/loop/switch flow, goto,
+break/continue, and short-circuit/ternary expressions. Owned values scoped
+entirely inside a branch or loop body remain admissible when their lifetime
+does not escape that lexical path.
+
+The compiler decides **when** cleanup occurs; canonical CMeta DataDesc lifecycle
+decides **how** cleanup occurs. No destructor name or allocator policy is
+inferred.
 
 ## Invariants
 
 - strings, comments, and preprocessor text are preserved;
 - invalid admitted ownership syntax fails closed;
 - generated output remains portable C;
+- normal owned cleanup is reverse lexical order;
+- moved sources are not cleaned by the source scope;
+- unsupported ownership-sensitive control flow fails closed;
 - runtime CMeta method resolution is never introduced by this tool.
