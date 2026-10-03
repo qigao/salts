@@ -29,7 +29,9 @@ No runtime method lookup is generated.
 
 ### Ownership-state proof
 
-Version 2 adds the first compiler-private ownership-state slice:
+Version 2 adds the first compiler-private ownership-state slice. Version 3
+binds every admitted owned typed value to the generated canonical DataDesc
+accessor from its `typed(...)` declaration:
 
 ```c
 owned(IntList) source = {0};
@@ -59,22 +61,38 @@ Lexical shadowing uses the same symbol stack as typed receiver lowering, so an
 inner owned variable has independent move state from an outer variable with the
 same name.
 
-## Important Phase B boundary
+## Canonical lifecycle binding
 
-The ownership syntax currently proves **who may still use the source value**.
-It does not yet insert automatic cleanup and does not claim generic CMeta
-`DataDesc` move construction.
+A source-owned type must now be a concrete type discovered from a supported
+`typed(...)` declaration. That declaration generates one uniform accessor:
+
+```c
+IntList_cmeta_data()
+IntMap_cmeta_data()
+```
+
+The accessor returns the already-existing canonical `cmeta_data_desc`;
+there is no compiler-private lifecycle registry and no runtime lookup.
+
+The lowerer records that accessor with the owned symbol. A source such as
+`owned(MissingResource) value` fails closed because the compiler cannot prove
+which lifecycle provider owns cleanup.
+
+## Important Phase C1 boundary
+
+Lifecycle **binding** is now proven, but automatic cleanup is not inserted yet.
 
 In particular:
 
-- `owned(Type)` currently accepts one simple named C type;
-- `move(name)` lowers to the ordinary C expression `name`;
+- `owned(Type)` accepts one simple named concrete type with canonical typed
+  lifecycle metadata;
+- `move(name)` still lowers to the ordinary C expression `name`;
 - no `destroy`, `release`, or Plugin lease release is inserted yet;
-- no ownership is inferred from pointers, names, or ABI carriers.
+- no ownership/lifecycle is inferred from pointers, names, ABI carriers, or
+  guessed `Type_destroy` symbols.
 
-This phase is appropriate for proving handle-like ownership transfer and the
-compiler state machine. The RAII cleanup phase must consume canonical CMeta
-lifecycle contracts rather than guessing cleanup from the source type spelling.
+The next cleanup phase can emit canonical CMeta lifecycle calls through the
+recorded DataDesc accessor rather than discovering a second cleanup model.
 
 ## Invariants
 

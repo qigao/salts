@@ -90,6 +90,22 @@ typed(BPlusTree, IntLongBPlusTree, int, long);
 } while (0)
 
 spec("CSTL typed schema") {
+    it("exposes one canonical DataDesc accessor for typed lifecycle") {
+        const cmeta_data_desc *list_data = IntList_cmeta_data();
+        const cmeta_data_desc *map_data = IntLongMap_cmeta_data();
+
+        check_true(list_data == &IntList_collection_data);
+        check_true(map_data == &IntLongMap_map_data);
+        check_true(cmeta_data_desc_valid(list_data));
+        check_true(cmeta_data_desc_valid(map_data));
+        check_not_null(list_data->construct_ops);
+        check_not_null(map_data->construct_ops);
+        check_true(cmeta_type_equal(
+            list_data->storage_type, &IntList_cmeta_type));
+        check_true(cmeta_type_equal(
+            map_data->storage_type, &IntLongMap_cmeta_type));
+    }
+
     it("projects typed mutation methods into canonical receiver metadata") {
         const cmeta_function_desc *vec_push = IntVec_push_function();
         const cmeta_function_desc *list_add = IntList_add_function();

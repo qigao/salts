@@ -31,7 +31,8 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_gen_status name##_borrow_next(const void *object,cmeta_range_cursor *cursor,const void **out_element){const name *self=(const name*)object;size_t count;if(self==NULL||cursor==NULL||out_element==NULL)return CMETA_GEN_ERROR;*out_element=NULL;count=name##_size(self);if(cursor->index>=count)return CMETA_GEN_DONE;*out_element=name##_at_const(self,cursor->index);if(*out_element==NULL)return CMETA_GEN_ERROR;++cursor->index;return cursor->index==count?CMETA_GEN_VALUE_AND_DONE:CMETA_GEN_VALUE;} \
  CMETA_LOCAL const cmeta_data_collection_borrow_ops name##_borrow_ops={sizeof(cmeta_data_collection_borrow_ops),CMETA_DATA_COLLECTION_BORROW_OPS_ABI_VERSION,name##_borrow_size,name##_borrow_next,name##_cmeta_generation}; \
  CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),CMETA_DATA_COLLECTION_CONTIGUOUS|CMETA_DATA_COLLECTION_ORDERED|CMETA_DATA_COLLECTION_RANDOM_ACCESS,name##_collection_element,name##_collection_read,NULL,name##_collector_erased,&name##_borrow_ops,(data_expr)}; \
- CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_SEQUENCE,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops};
+ CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_SEQUENCE,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops}; \
+ CMETA_INLINE const cmeta_data_desc *name##_cmeta_data(void){return &name##_collection_data;}
 #define SALTS_META_VEC_COLLECTION_DATA(name,type) \
  SALTS_META_VEC_COLLECTION_DATA_WITH_DATA(name,type,CMETA_DATAOF(type))
 #define SALTS_META_INDEX_SEQUENCE_DATA_WITH_DATA(name,type,data_expr,semantic_kind) \
@@ -41,7 +42,8 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_gen_status name##_borrow_next(const void *object,cmeta_range_cursor *cursor,const void **out_element){const name *self=(const name*)object;size_t count;if(self==NULL||cursor==NULL||out_element==NULL)return CMETA_GEN_ERROR;*out_element=NULL;count=name##_size(self);if(cursor->index>=count)return CMETA_GEN_DONE;*out_element=name##_at_const(self,cursor->index);if(*out_element==NULL)return CMETA_GEN_ERROR;++cursor->index;return cursor->index==count?CMETA_GEN_VALUE_AND_DONE:CMETA_GEN_VALUE;} \
  CMETA_LOCAL const cmeta_data_collection_borrow_ops name##_borrow_ops={sizeof(cmeta_data_collection_borrow_ops),CMETA_DATA_COLLECTION_BORROW_OPS_ABI_VERSION,name##_borrow_size,name##_borrow_next,name##_cmeta_generation}; \
  CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),CMETA_DATA_COLLECTION_ORDERED|CMETA_DATA_COLLECTION_RANDOM_ACCESS,name##_collection_element,NULL,name##_collection_foreach,name##_collector_erased,&name##_borrow_ops,(data_expr)}; \
- CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,semantic_kind,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops};
+ CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,semantic_kind,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops}; \
+ CMETA_INLINE const cmeta_data_desc *name##_cmeta_data(void){return &name##_collection_data;}
 
 
 
@@ -54,7 +56,8 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_gen_status name##_borrow_next(const void *object,cmeta_range_cursor *cursor,const void **out_element){const name *self=(const name*)object;if(self==NULL||cursor==NULL||out_element==NULL)return CMETA_GEN_ERROR;*out_element=NULL;if(!salts_stl_typed_list_range_next(&self->raw,cursor,out_element))return CMETA_GEN_DONE;return CMETA_GEN_VALUE;} \
  CMETA_LOCAL const cmeta_data_collection_borrow_ops name##_borrow_ops={sizeof(cmeta_data_collection_borrow_ops),CMETA_DATA_COLLECTION_BORROW_OPS_ABI_VERSION,name##_borrow_size,name##_borrow_next,name##_cmeta_generation}; \
  CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),CMETA_DATA_COLLECTION_ORDERED,name##_collection_element,NULL,name##_collection_foreach,name##_collector_erased,&name##_borrow_ops,(data_expr)}; \
- CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_SEQUENCE,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops};
+ CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_SEQUENCE,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops}; \
+ CMETA_INLINE const cmeta_data_desc *name##_cmeta_data(void){return &name##_collection_data;}
 
 #define SALTS_META_LIST_COLLECTION_DATA(name,type) \
  SALTS_META_LIST_COLLECTION_DATA_WITH_DATA(name,type,CMETA_DATAOF(type))
@@ -65,7 +68,8 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_gen_status name##_borrow_next(const void *object,cmeta_range_cursor *cursor,const void **out_element){const name *self=(const name*)object;if(self==NULL||cursor==NULL||out_element==NULL)return CMETA_GEN_ERROR;*out_element=NULL;if(!prefix##_range_next(&self->raw,cursor,out_element))return CMETA_GEN_DONE;return CMETA_GEN_VALUE;} \
  CMETA_LOCAL const cmeta_data_collection_borrow_ops name##_borrow_ops={sizeof(cmeta_data_collection_borrow_ops),CMETA_DATA_COLLECTION_BORROW_OPS_ABI_VERSION,name##_borrow_size,name##_borrow_next,name##_cmeta_generation}; \
  CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),CMETA_DATA_COLLECTION_ORDERED|CMETA_DATA_COLLECTION_SORTED|CMETA_DATA_COLLECTION_UNIQUE,name##_collection_element,NULL,name##_collection_foreach,name##_collector_erased,&name##_borrow_ops,(data_expr)}; \
- CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,semantic_kind,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops};
+ CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,semantic_kind,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops}; \
+ CMETA_INLINE const cmeta_data_desc *name##_cmeta_data(void){return &name##_collection_data;}
 
 #define SALTS_META_SET_COLLECTION_DATA(name,type,prefix,semantic_kind) \
  SALTS_META_SET_COLLECTION_DATA_WITH_DATA(name,type,CMETA_DATAOF(type),prefix,semantic_kind)
@@ -76,7 +80,8 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_gen_status name##_borrow_next(const void *object,cmeta_range_cursor *cursor,const void **out_element){const name *self=(const name*)object;size_t capacity;if(self==NULL||cursor==NULL||out_element==NULL)return CMETA_GEN_ERROR;*out_element=NULL;capacity=prefix##_capacity(&self->raw);while(cursor->index<capacity){const void *value=prefix##_key_at(&self->raw,cursor->index++);if(value!=NULL){*out_element=value;return CMETA_GEN_VALUE;}}return CMETA_GEN_DONE;} \
  CMETA_LOCAL const cmeta_data_collection_borrow_ops name##_borrow_ops={sizeof(cmeta_data_collection_borrow_ops),CMETA_DATA_COLLECTION_BORROW_OPS_ABI_VERSION,name##_borrow_size,name##_borrow_next,name##_cmeta_generation}; \
  CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),CMETA_DATA_COLLECTION_UNIQUE,name##_collection_element,NULL,name##_collection_foreach,name##_collector_erased,&name##_borrow_ops,(data_expr)}; \
- CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,semantic_kind,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops};
+ CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,semantic_kind,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops}; \
+ CMETA_INLINE const cmeta_data_desc *name##_cmeta_data(void){return &name##_collection_data;}
 
 #define SALTS_META_SLOT_SET_COLLECTION_DATA(name,type,prefix,semantic_kind) \
  SALTS_META_SLOT_SET_COLLECTION_DATA_WITH_DATA(name,type,CMETA_DATAOF(type),prefix,semantic_kind)
@@ -88,7 +93,8 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_gen_status name##_map_borrow_next(const void *object,cmeta_range_cursor *cursor,const void **out_key,const void **out_value){const name *self=(const name*)object;if(self==NULL||cursor==NULL||out_key==NULL||out_value==NULL)return CMETA_GEN_ERROR;*out_key=NULL;*out_value=NULL;return salts_stl_typed_map_range_next(&self->raw,cursor,out_key,out_value)?CMETA_GEN_VALUE:CMETA_GEN_DONE;} \
  CMETA_LOCAL const cmeta_data_map_borrow_ops name##_map_borrow_ops={sizeof(cmeta_data_map_borrow_ops),CMETA_DATA_MAP_BORROW_OPS_ABI_VERSION,name##_map_borrow_size,name##_map_borrow_next,name##_cmeta_generation}; \
  CMETA_LOCAL const cmeta_data_map_ops name##_map_ops={sizeof(cmeta_data_map_ops),CMETA_DATA_MAP_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),CMETA_DATA_MAP_UNIQUE_KEYS|CMETA_DATA_MAP_ORDERED|CMETA_DATA_MAP_SORTED,name##_map_key,name##_map_value,name##_map_foreach,name##_collector_erased,name##_map_accept,&name##_map_borrow_ops,(key_data_expr),(value_data_expr)}; \
- CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops,&name##_construct_ops};
+ CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops,&name##_construct_ops}; \
+ CMETA_INLINE const cmeta_data_desc *name##_cmeta_data(void){return &name##_map_data;}
 
 #define SALTS_META_MAP_DATA(name,key_type,value_type) \
  SALTS_META_MAP_DATA_WITH_DATA(name,key_type,value_type,CMETA_DATAOF(key_type),CMETA_DATAOF(value_type))
@@ -100,7 +106,8 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_gen_status name##_map_borrow_next(const void *object,cmeta_range_cursor *cursor,const void **out_key,const void **out_value){const name *self=(const name*)object;size_t capacity;if(self==NULL||cursor==NULL||out_key==NULL||out_value==NULL)return CMETA_GEN_ERROR;*out_key=NULL;*out_value=NULL;capacity=hash_map_capacity(&self->raw);while(cursor->index<capacity){const void *key=hash_map_key_at_const(&self->raw,cursor->index);const void *value=hash_map_value_at_const(&self->raw,cursor->index++);if(key!=NULL){if(value==NULL)return CMETA_GEN_ERROR;*out_key=key;*out_value=value;return CMETA_GEN_VALUE;}}return CMETA_GEN_DONE;} \
  CMETA_LOCAL const cmeta_data_map_borrow_ops name##_map_borrow_ops={sizeof(cmeta_data_map_borrow_ops),CMETA_DATA_MAP_BORROW_OPS_ABI_VERSION,name##_map_borrow_size,name##_map_borrow_next,name##_cmeta_generation}; \
  CMETA_LOCAL const cmeta_data_map_ops name##_map_ops={sizeof(cmeta_data_map_ops),CMETA_DATA_MAP_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),CMETA_DATA_MAP_UNIQUE_KEYS,name##_map_key,name##_map_value,name##_map_foreach,name##_collector_erased,name##_map_accept,&name##_map_borrow_ops,(key_data_expr),(value_data_expr)}; \
- CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops,&name##_construct_ops};
+ CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops,&name##_construct_ops}; \
+ CMETA_INLINE const cmeta_data_desc *name##_cmeta_data(void){return &name##_map_data;}
 
 #define SALTS_META_HASH_MAP_DATA(name,key_type,value_type) \
  SALTS_META_HASH_MAP_DATA_WITH_DATA(name,key_type,value_type,CMETA_DATAOF(key_type),CMETA_DATAOF(value_type))
@@ -112,7 +119,8 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_gen_status name##_map_borrow_next(const void *object,cmeta_range_cursor *cursor,const void **out_key,const void **out_value){const name *self=(const name*)object;if(self==NULL||cursor==NULL||out_key==NULL||out_value==NULL)return CMETA_GEN_ERROR;*out_key=NULL;*out_value=NULL;return prefix##_range_next(&self->raw,cursor,out_key,out_value)?CMETA_GEN_VALUE:CMETA_GEN_DONE;} \
  CMETA_LOCAL const cmeta_data_map_borrow_ops name##_map_borrow_ops={sizeof(cmeta_data_map_borrow_ops),CMETA_DATA_MAP_BORROW_OPS_ABI_VERSION,name##_map_borrow_size,name##_map_borrow_next,name##_cmeta_generation}; \
  CMETA_LOCAL const cmeta_data_map_ops name##_map_ops={sizeof(cmeta_data_map_ops),CMETA_DATA_MAP_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),CMETA_DATA_MAP_UNIQUE_KEYS|CMETA_DATA_MAP_ORDERED|CMETA_DATA_MAP_SORTED,name##_map_key,name##_map_value,name##_map_foreach,name##_collector_erased,name##_map_accept,&name##_map_borrow_ops,(key_data_expr),(value_data_expr)}; \
- CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops,&name##_construct_ops};
+ CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops,&name##_construct_ops}; \
+ CMETA_INLINE const cmeta_data_desc *name##_cmeta_data(void){return &name##_map_data;}
 
 #define SALTS_META_TREE_MAP_DATA(name,key_type,value_type,prefix) \
  SALTS_META_TREE_MAP_DATA_WITH_DATA(name,key_type,value_type,CMETA_DATAOF(key_type),CMETA_DATAOF(value_type),prefix)
@@ -124,7 +132,8 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_gen_status name##_map_borrow_next(const void *object,cmeta_range_cursor *cursor,const void **out_key,const void **out_value){const name *self=(const name*)object;if(self==NULL||cursor==NULL||out_key==NULL||out_value==NULL)return CMETA_GEN_ERROR;*out_key=NULL;*out_value=NULL;return multimap_range_next(&self->raw,cursor,out_key,out_value)?CMETA_GEN_VALUE:CMETA_GEN_DONE;} \
  CMETA_LOCAL const cmeta_data_map_borrow_ops name##_map_borrow_ops={sizeof(cmeta_data_map_borrow_ops),CMETA_DATA_MAP_BORROW_OPS_ABI_VERSION,name##_map_borrow_size,name##_map_borrow_next,name##_cmeta_generation}; \
  CMETA_LOCAL const cmeta_data_map_ops name##_map_ops={sizeof(cmeta_data_map_ops),CMETA_DATA_MAP_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),CMETA_DATA_MAP_REPEATED_KEYS|CMETA_DATA_MAP_ORDERED|CMETA_DATA_MAP_SORTED,name##_map_key,name##_map_value,name##_map_foreach,name##_collector_erased,name##_map_accept,&name##_map_borrow_ops,(key_data_expr),(value_data_expr)}; \
- CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops,&name##_construct_ops};
+ CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops,&name##_construct_ops}; \
+ CMETA_INLINE const cmeta_data_desc *name##_cmeta_data(void){return &name##_map_data;}
 
 #define SALTS_META_MULTIMAP_DATA(name,key_type,value_type) \
  SALTS_META_MULTIMAP_DATA_WITH_DATA(name,key_type,value_type,CMETA_DATAOF(key_type),CMETA_DATAOF(value_type))
@@ -152,7 +161,8 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_gen_status name##_borrow_next(const void *object,cmeta_range_cursor *cursor,const void **out_element){const name *self=(const name*)object;size_t count;if(self==NULL||cursor==NULL||out_element==NULL)return CMETA_GEN_ERROR;*out_element=NULL;count=prefix##_size(&self->raw);if(cursor->index>=count)return CMETA_GEN_DONE;*out_element=prefix##_at_const(&self->raw,cursor->index);if(*out_element==NULL)return CMETA_GEN_ERROR;++cursor->index;return cursor->index==count?CMETA_GEN_VALUE_AND_DONE:CMETA_GEN_VALUE;} \
  CMETA_LOCAL const cmeta_data_collection_borrow_ops name##_borrow_ops={sizeof(cmeta_data_collection_borrow_ops),CMETA_DATA_COLLECTION_BORROW_OPS_ABI_VERSION,name##_borrow_size,name##_borrow_next,name##_cmeta_generation}; \
  CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),CMETA_DATA_COLLECTION_ORDERED|CMETA_DATA_COLLECTION_RANDOM_ACCESS,name##_collection_element,NULL,name##_collection_foreach,name##_collector_erased,&name##_borrow_ops,(data_expr)}; \
- CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,semantic_kind,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops};
+ CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,semantic_kind,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops}; \
+ CMETA_INLINE const cmeta_data_desc *name##_cmeta_data(void){return &name##_collection_data;}
 
 #define SALTS_META_ADAPTER_SEQUENCE_DATA(name,type,prefix,semantic_kind) \
  SALTS_META_ADAPTER_SEQUENCE_DATA_WITH_DATA(name,type,CMETA_DATAOF(type),prefix,semantic_kind)

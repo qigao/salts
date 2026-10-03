@@ -145,6 +145,10 @@ if(NOT CMAKE_CROSSCOMPILING)
     cstl_cmeta_lower_double_move
     double_move.cmeta.c
     "owned value 'list' moved more than once")
+  cstl_add_cmeta_lower_rejection_test(
+    cstl_cmeta_lower_unknown_owned
+    unknown_owned.cmeta.c
+    "owned type 'MissingResource' has no canonical typed lifecycle binding")
 endif()
 
 
