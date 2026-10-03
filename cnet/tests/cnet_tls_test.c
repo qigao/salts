@@ -1039,11 +1039,18 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_tls_test_send_bytes(&client, client_connection, secure_request, sizeof(secure_request) - 1u),
                 SALTS_OK);
     deadline = salts_monotonic_ms() + 5000u;
-    while (server_probe.received_size == 0u && salts_monotonic_ms() < deadline) {
+    while ((server_probe.received_size == 0u || client_probe.sent < 2) &&
+           !client_probe.terminal && !server_probe.terminal &&
+           salts_monotonic_ms() < deadline) {
       size_t events = 0u;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
     }
+    check_equal(client_probe.sent, 2);
+    check_false(client_probe.terminal);
+    check_false(server_probe.terminal);
+    check_false(client_probe.failed);
+    check_false(server_probe.failed);
     check_equal(server_probe.received_size, sizeof(secure_request) - 1u);
     check_equal(memcmp(server_probe.received, secure_request, sizeof(secure_request) - 1u), 0);
 
