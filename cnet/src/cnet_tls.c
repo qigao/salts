@@ -361,6 +361,9 @@ static int cnet_tls_load_system_trust(TLS_CTX *tls) {
     status = SALTS_EIO;
   cnet_tls_der_bundle_dispose(&bundle);
   return status;
+#elif defined(__ANDROID__)
+  return cnet_tls_load_explicit_trust(
+      tls, NULL, "/system/etc/security/cacerts");
 #else
   static const char *const paths[] = {
       "/etc/ssl/certs/ca-certificates.crt",
