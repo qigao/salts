@@ -4,6 +4,8 @@
 
 #include <gmssl/tls.h>
 #include <gmssl/x509_cer.h>
+#include <gmssl/x509_ext.h>
+#include <gmssl/asn1.h>
 #include <gmssl/pem.h>
 
 #include <limits.h>
@@ -777,12 +779,80 @@ static tls_ret_t cnet_tls_io_recv(void *user, void *buffer, size_t length,
   return (tls_ret_t)read_size;
 }
 
+static int cnet_tls_ip_literal_bytes(const char *name,
+                                     unsigned char output[16],
+                                     size_t *out_size) {
+  if (name == NULL || output == NULL || out_size == NULL) return 0;
+  if (inet_pton(AF_INET, name, output) == 1) {
+    *out_size = 4u;
+    return 1;
+  }
+  if (inet_pton(AF_INET6, name, output) == 1) {
+    *out_size = 16u;
+    return 1;
+  }
+  *out_size = 0u;
+  return 0;
+}
+
 static bool cnet_tls_ip_literal(const char *name) {
-  unsigned char ipv4[4];
-  unsigned char ipv6[16];
-  if (name == NULL) return false;
-  return inet_pton(AF_INET, name, ipv4) == 1 ||
-         inet_pton(AF_INET6, name, ipv6) == 1;
+  unsigned char bytes[16];
+  size_t size = 0u;
+  return cnet_tls_ip_literal_bytes(name, bytes, &size) == 1;
+}
+
+static int cnet_tls_verify_ip_subject_alt_name(const TLS_CONNECT *connection,
+                                                const char *name) {
+  unsigned char expected[16];
+  size_t expected_size = 0u;
+  const unsigned char *cert = NULL;
+  size_t cert_size = 0u;
+  const unsigned char *exts = NULL;
+  size_t exts_size = 0u;
+  const unsigned char *encoded_names = NULL;
+  size_t encoded_names_size = 0u;
+  const unsigned char *names = NULL;
+  size_t names_size = 0u;
+  const unsigned char *cursor;
+  const unsigned char *value = NULL;
+  size_t value_size = 0u;
+  int critical = 0;
+  int result;
+
+  if (connection == NULL ||
+      cnet_tls_ip_literal_bytes(name, expected, &expected_size) != 1)
+    return SALTS_EINVAL;
+
+  result = tls_get_peer_certificate(connection, &cert, &cert_size);
+  if (result < 0) return SALTS_EIO;
+  if (result == 0 || cert == NULL || cert_size == 0u)
+    return SALTS_ECONNABORTED;
+
+  result = x509_cert_get_exts(cert, cert_size, &exts, &exts_size);
+  if (result < 0) return SALTS_EIO;
+  if (result == 0) return SALTS_ECONNABORTED;
+
+  result = x509_exts_get_ext_by_oid(
+      exts, exts_size, OID_ce_subject_alt_name, &critical,
+      &encoded_names, &encoded_names_size);
+  if (result < 0) return SALTS_EIO;
+  if (result == 0) return SALTS_ECONNABORTED;
+
+  if (asn1_sequence_from_der(&names, &names_size,
+                             &encoded_names, &encoded_names_size) != 1 ||
+      encoded_names_size != 0u)
+    return SALTS_EPROTO;
+
+  cursor = names;
+  for (;;) {
+    result = x509_general_names_get_next(
+        names, names_size, &cursor, X509_gn_ip_address, &value, &value_size);
+    if (result < 0) return SALTS_EPROTO;
+    if (result == 0) return SALTS_ECONNABORTED;
+    if (value_size == expected_size &&
+        memcmp(value, expected, expected_size) == 0)
+      return SALTS_OK;
+  }
 }
 
 static int cnet_tls_engine_init_connection(cnet_tls_state *state,
@@ -815,9 +885,9 @@ static int cnet_tls_engine_init_connection(cnet_tls_state *state,
 
   if (!state->server) {
     if (engine->server_name[0] == '\0') return SALTS_EINVAL;
-    if (cnet_tls_ip_literal(engine->server_name)) return SALTS_ENOTSUP;
-    if (tls_set_hostname(&engine->connection, engine->server_name) != 1 ||
-        tls_set_server_name(&engine->connection) != 1)
+    if (!cnet_tls_ip_literal(engine->server_name) &&
+        (tls_set_hostname(&engine->connection, engine->server_name) != 1 ||
+         tls_set_server_name(&engine->connection) != 1))
       return SALTS_EIO;
   }
   if (tls_set_io(&engine->connection, &engine->io) != 1)
@@ -923,6 +993,11 @@ static int cnet_tls_finish_handshake(cnet_tls_state *state,
     result = tls_get_verify_result(&engine->connection, &verify_result);
     if (result != 1 || verify_result != X509_verify_ok)
       return SALTS_ECONNABORTED;
+    if (!state->server && cnet_tls_ip_literal(engine->server_name)) {
+      result = cnet_tls_verify_ip_subject_alt_name(
+          &engine->connection, engine->server_name);
+      if (result != SALTS_OK) return result;
+    }
   }
 
   result = tls_get_selected_alpn(&engine->connection, &alpn, &alpn_size);
