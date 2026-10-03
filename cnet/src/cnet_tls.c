@@ -170,6 +170,19 @@ static bool cnet_tls_ca_hash_name(const char *name) {
   return name[index] == '\0';
 }
 
+static int cnet_tls_pem_seek_entry(FILE *file) {
+  int ch;
+  if (file == NULL) return SALTS_EINVAL;
+  for (;;) {
+    ch = fgetc(file);
+    if (ch == EOF) return feof(file) ? SALTS_EOF : SALTS_EIO;
+    if (ch == '\0' || ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n')
+      continue;
+    if (ungetc(ch, file) == EOF) return SALTS_EIO;
+    return SALTS_OK;
+  }
+}
+
 static int cnet_tls_append_pem_cert_file(cnet_tls_der_bundle *bundle,
                                          const char *path,
                                          size_t *out_count) {
@@ -183,10 +196,18 @@ static int cnet_tls_append_pem_cert_file(cnet_tls_der_bundle *bundle,
   if (file == NULL) return SALTS_EIO;
   for (;;) {
     size_t size = 0u;
-    int result = pem_read(file, "CERTIFICATE", certificate, &size,
-                          sizeof(certificate));
-    if (result == 0) break;
-    if (result < 0 || size == 0u) {
+    int result;
+
+    status = cnet_tls_pem_seek_entry(file);
+    if (status == SALTS_EOF) {
+      status = SALTS_OK;
+      break;
+    }
+    if (status != SALTS_OK) break;
+
+    result = pem_read(file, "CERTIFICATE", certificate, &size,
+                      sizeof(certificate));
+    if (result <= 0 || size == 0u) {
       status = SALTS_EIO;
       break;
     }

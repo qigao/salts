@@ -344,6 +344,26 @@ static int cnet_tls_network_drive(cnet_client *client, cnet_client *server, cnet
 
 spec("CNet bounded TLS engine") {
 
+  it("accepts explicit CA files with trailing NUL padding") {
+    char *directory = tt_make_temp_dir("cnet-ca-nul-");
+    char ca_path[512];
+    cnet_tls_client_config config = {.size = sizeof(config)};
+    cnet_tls_context *context = NULL;
+
+    check_not_null(directory);
+    check_greater(snprintf(ca_path, sizeof(ca_path), "%s/ca.pem", directory), 0);
+    check_equal(tt_write_file(ca_path, CNET_TLS_TEST_CERTIFICATE,
+                              sizeof(CNET_TLS_TEST_CERTIFICATE)), 0);
+
+    config.ca_file = ca_path;
+    check_equal(cnet_tls_client_context_create(&config, &context), SALTS_OK);
+    check_not_null(context);
+    cnet_tls_context_release(context);
+
+    check_equal(tt_remove_tree(directory), 0);
+    free(directory);
+  }
+
   it("loads only hash.N certificates from ca_path") {
     char *directory = tt_make_temp_dir("cnet-ca-path-");
     char hashed_path[512];
