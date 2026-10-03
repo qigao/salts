@@ -321,7 +321,12 @@ static int compare_server_finish(compare_server *server) {
 
 static compare_library compare_library_open(const char *path) {
 #if defined(_WIN32)
-  return LoadLibraryA(path);
+  /*
+   * Baseline and candidate CNet DSOs intentionally live in separate runtime
+   * directories. Resolve each DSO's private dependencies from the directory
+   * containing that DSO instead of the comparison executable's directory.
+   */
+  return LoadLibraryExA(path, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
 #else
   return dlopen(path, RTLD_NOW | RTLD_LOCAL);
 #endif
@@ -361,7 +366,12 @@ static int compare_api_load(compare_api *api, const char *path) {
   memset(api, 0, sizeof(*api));
   api->library = compare_library_open(path);
   if (api->library == NULL) {
+#if defined(_WIN32)
+    fprintf(stderr, "failed to load CNet DSO: %s (win32=%lu)\n",
+            path, (unsigned long)GetLastError());
+#else
     fprintf(stderr, "failed to load CNet DSO: %s\n", path);
+#endif
     return SALTS_EIO;
   }
 #define COMPARE_LOAD(field, symbol_name)                                                           \
