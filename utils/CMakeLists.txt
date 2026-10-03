@@ -5,6 +5,7 @@ cmake_add_source(SOURCE_FILES RECURSE)
 find_path(SIMDE_INCLUDE_DIRS "simde/x86/sse2.h" REQUIRED)
 find_package(zstd CONFIG REQUIRED)
 find_package(base64 CONFIG REQUIRED)
+find_package(GmSSL CONFIG REQUIRED)
 
 add_library(${TARGET_NAME} SHARED ${SOURCE_FILES})
 # Configure target
@@ -59,7 +60,7 @@ target_link_libraries(
   PRIVATE Salts::CSTL
           Salts::CFlow
           ${FMT_LEXER_LIBRARY} Salts::SDS # Simple Dynamic Strings
-          aklomp::base64 zstd::libzstd
+          aklomp::base64 zstd::libzstd GmSSL::GmSSL
           ${LOG_PATTERN_LEXER_LIBRARY} # Log pattern lexer
 )
 
