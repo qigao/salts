@@ -139,28 +139,33 @@ static int cnet_tls_test_pair_init(cnet_tls_test_pair *pair) {
   return status;
 }
 
-static int cnet_tls_test_ip_pair_init(cnet_tls_test_pair *pair,
-                                      const char *server_name) {
+static int cnet_tls_test_fixture_pair_init(cnet_tls_test_pair *pair,
+                                           const char *ca_file,
+                                           const char *cert_file,
+                                           const char *key_file,
+                                           const char *server_name) {
   cnet_tls_server_config server_config;
   cnet_tls_client_config client_config;
   cnet_tls_context *client_context = NULL;
   cnet_tls_context *server_context;
   int status;
 
-  if (pair == NULL || server_name == NULL) return SALTS_EINVAL;
+  if (pair == NULL || ca_file == NULL || cert_file == NULL ||
+      key_file == NULL || server_name == NULL)
+    return SALTS_EINVAL;
   memset(pair, 0, sizeof(*pair));
 
   server_config = (cnet_tls_server_config){
       .size = sizeof(server_config),
-      .cert_file = CNET_TLS_TEST_IP_CERT,
-      .key_file = CNET_TLS_TEST_IP_KEY,
+      .cert_file = cert_file,
+      .key_file = key_file,
       .client_auth = CNET_TLS_CLIENT_AUTH_NONE};
   status = cnet_tls_server_init(&pair->server_context, &server_config);
   if (status != SALTS_OK) return status;
 
   client_config = (cnet_tls_client_config){
       .size = sizeof(client_config),
-      .ca_file = CNET_TLS_TEST_IP_CA};
+      .ca_file = ca_file};
   status = cnet_tls_client_context_create(&client_config, &client_context);
   if (status != SALTS_OK) {
     (void)cnet_tls_server_destroy(&pair->server_context);
@@ -436,16 +441,32 @@ spec("CNet bounded TLS engine") {
     check_null(context);
   }
 
+  it("loads an unencrypted P-256 PKCS8 identity when key_password is null") {
+    cnet_tls_test_pair pair;
+    check_equal(cnet_tls_test_fixture_pair_init(
+                    &pair, CNET_TLS_TEST_P256_CA, CNET_TLS_TEST_P256_CERT,
+                    CNET_TLS_TEST_P256_KEY, "localhost"),
+                SALTS_OK);
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+    cnet_tls_test_pair_destroy(&pair);
+  }
+
   it("verifies an IP literal against subjectAltName iPAddress without SNI") {
     cnet_tls_test_pair pair;
-    check_equal(cnet_tls_test_ip_pair_init(&pair, "127.0.0.1"), SALTS_OK);
+    check_equal(cnet_tls_test_fixture_pair_init(
+                    &pair, CNET_TLS_TEST_IP_CA, CNET_TLS_TEST_IP_CERT,
+                    CNET_TLS_TEST_IP_KEY, "127.0.0.1"),
+                SALTS_OK);
     check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
     cnet_tls_test_pair_destroy(&pair);
   }
 
   it("rejects a mismatched IP literal without falling back to DNS identity") {
     cnet_tls_test_pair pair;
-    check_equal(cnet_tls_test_ip_pair_init(&pair, "127.0.0.2"), SALTS_OK);
+    check_equal(cnet_tls_test_fixture_pair_init(
+                    &pair, CNET_TLS_TEST_IP_CA, CNET_TLS_TEST_IP_CERT,
+                    CNET_TLS_TEST_IP_KEY, "127.0.0.2"),
+                SALTS_OK);
     check_equal(cnet_tls_test_handshake(&pair), SALTS_ECONNABORTED);
     cnet_tls_test_pair_destroy(&pair);
   }
