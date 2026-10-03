@@ -1186,12 +1186,28 @@ static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *sessio
   if (!session->close_requested &&
       !cnet_write_handle_valid(session->tls_send_write.handle)) {
     status = cnet_owner_tls_adopt_write_head(impl, session);
+#if defined(CNET_INTERNAL_TESTING)
+    if (status != SALTS_OK || cnet_write_handle_valid(session->tls_send_write.handle)) {
+      printf("CNET_TLS_PUMP adopt slot=%u status=%d handle=%u remaining=%zu vector=%d\n",
+             session->handle.slot, status,
+             cnet_write_handle_valid(session->tls_send_write.handle) ? 1u : 0u,
+             session->tls_send_write.remaining,
+             session->tls_send_write.vector_write ? 1 : 0);
+      fflush(stdout);
+    }
+#endif
     if (status != SALTS_OK) return status;
   }
 
   if (cnet_write_handle_valid(session->tls_send_write.handle) && !session->tls_send_accepted) {
     bool complete = false;
     status = cnet_owner_tls_accept_write(impl, session, &complete);
+#if defined(CNET_INTERNAL_TESTING)
+    printf("CNET_TLS_PUMP accept-result slot=%u status=%d remaining=%zu complete=%d\n",
+           session->handle.slot, status, session->tls_send_write.remaining,
+           complete ? 1 : 0);
+    fflush(stdout);
+#endif
     if (status != SALTS_OK) return status;
     session->tls_send_accepted = complete;
 #if defined(CNET_INTERNAL_TESTING)
