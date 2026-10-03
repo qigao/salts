@@ -375,16 +375,10 @@ static int cnet_tls_load_system_trust(TLS_CTX *tls) {
 
   if (environment != NULL && environment[0] != '\0' &&
       cnet_tls_file_readable(environment))
-    return tls_ctx_set_ca_certificates(tls, environment,
-                                       TLS_DEFAULT_VERIFY_DEPTH) == 1
-               ? SALTS_OK
-               : SALTS_EIO;
+    return cnet_tls_load_explicit_trust(tls, environment, NULL);
   for (index = 0u; index < sizeof(paths) / sizeof(paths[0]); ++index) {
     if (cnet_tls_file_readable(paths[index]))
-      return tls_ctx_set_ca_certificates(tls, paths[index],
-                                         TLS_DEFAULT_VERIFY_DEPTH) == 1
-                 ? SALTS_OK
-                 : SALTS_EIO;
+      return cnet_tls_load_explicit_trust(tls, paths[index], NULL);
   }
   return SALTS_EIO;
 #endif
