@@ -2,58 +2,89 @@
 
 #include <salts/error_codes.h>
 
-#include <openssl/bio.h>
-#include <openssl/err.h>
-#include <openssl/ssl.h>
-#include <openssl/x509_vfy.h>
+#include <gmssl/tls.h>
+#include <gmssl/x509_cer.h>
+#include <gmssl/x509_ext.h>
+#include <gmssl/asn1.h>
+#include <gmssl/pem.h>
 
 #include <limits.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #if defined(_WIN32)
   #include <winsock2.h>
-#endif
-
-#if defined(_WIN32)
   #include <windows.h>
-#endif
-
-#if defined(_WIN32)
   #include <wincrypt.h>
   #include <ws2tcpip.h>
+#elif defined(__APPLE__)
+  #include <arpa/inet.h>
+  #include <dirent.h>
+  #include <TargetConditionals.h>
+  #include <CoreFoundation/CoreFoundation.h>
+  #include <Security/Security.h>
 #else
   #include <arpa/inet.h>
+  #include <dirent.h>
 #endif
 
 enum {
   CNET_TLS_PATH_MAX_BYTES = 4095,
   CNET_TLS_PASSWORD_MAX_BYTES = 1023,
-  CNET_TLS_ALPN_WIRE_MAX_BYTES = 65535
+  CNET_TLS_TRUST_MAX_BYTES = 16 * 1024 * 1024,
+  CNET_TLS_CERT_MAX_BYTES = 64 * 1024,
+  CNET_TLS_PATH_BUFFER_BYTES = CNET_TLS_PATH_MAX_BYTES + 512
 };
 
+typedef enum cnet_tls_variant {
+  CNET_TLS_VARIANT_RANGE = 0,
+  CNET_TLS_VARIANT_1_2 = 1,
+  CNET_TLS_VARIANT_1_3 = 2,
+  CNET_TLS_VARIANT_COUNT = 3
+} cnet_tls_variant;
+
 struct cnet_tls_context {
-  SSL_CTX *ssl;
-  unsigned char *alpn_wire;
-  size_t alpn_wire_size;
+  TLS_CTX tls[CNET_TLS_VARIANT_COUNT];
+  bool tls_ready[CNET_TLS_VARIANT_COUNT];
+  char **alpn_protocols;
+  size_t alpn_protocol_count;
   char client_server_name[CNET_TLS_SERVER_NAME_CAPACITY];
   atomic_size_t references;
   bool server;
+  bool verify_peer;
 };
 
-typedef struct cnet_tls_boringssl_state {
-  SSL *ssl;
-  BIO *network_bio;
-} cnet_tls_boringssl_state;
+typedef struct cnet_tls_gmssl_state {
+  TLS_CONNECT connection;
+  TLS_IO io;
+  unsigned char *cipher_input;
+  unsigned char *cipher_output;
+  size_t capacity;
+  size_t input_head;
+  size_t input_size;
+  size_t output_head;
+  size_t output_size;
+  size_t plaintext_pending_offset;
+  size_t plaintext_pending_size;
+  const unsigned char *write_source;
+  size_t write_size;
+  size_t write_offset;
+  cnet_tls_variant variant;
+  bool connection_ready;
+  char server_name[CNET_TLS_SERVER_NAME_CAPACITY];
+} cnet_tls_gmssl_state;
 
-#define CNET_TLS_ENGINE(state) ((cnet_tls_boringssl_state *)((state)->engine))
-#define CNET_TLS_SSL(state) \
-  (CNET_TLS_ENGINE(state) != NULL ? CNET_TLS_ENGINE(state)->ssl : NULL)
-#define CNET_TLS_BIO(state) \
-  (CNET_TLS_ENGINE(state) != NULL ? CNET_TLS_ENGINE(state)->network_bio : NULL)
+typedef struct cnet_tls_der_bundle {
+  unsigned char *data;
+  size_t size;
+  size_t capacity;
+} cnet_tls_der_bundle;
 
+#define CNET_TLS_ENGINE(state) ((cnet_tls_gmssl_state *)((state)->engine))
+#define CNET_TLS_CONNECTION(state)   (CNET_TLS_ENGINE(state) != NULL ? &CNET_TLS_ENGINE(state)->connection : NULL)
 
 static bool cnet_tls_bounded_string(const char *value, size_t max_bytes, size_t *out_size) {
   size_t size;
@@ -76,230 +107,550 @@ static bool cnet_tls_optional_path_valid(const char *value) {
          (value == NULL || size != 0u);
 }
 
-static int cnet_tls_build_alpn(const char *const *protocols, size_t count, unsigned char **out_wire,
-                               size_t *out_size) {
-  unsigned char *wire;
-  size_t total = 0u;
-  size_t index;
-  size_t offset = 0u;
+#if !defined(_WIN32) && !defined(__APPLE__)
+static bool cnet_tls_file_readable(const char *path) {
+  FILE *file;
+  if (path == NULL || path[0] == '\0') return false;
+  file = fopen(path, "rb");
+  if (file == NULL) return false;
+  (void)fclose(file);
+  return true;
+}
+#endif
 
-  if (out_wire == NULL || out_size == NULL) return SALTS_EINVAL;
-  *out_wire = NULL;
-  *out_size = 0u;
+static int cnet_tls_der_bundle_append(cnet_tls_der_bundle *bundle,
+                                      const unsigned char *data, size_t size) {
+  unsigned char *next;
+  size_t capacity;
+  if (bundle == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
+  if (bundle->size > CNET_TLS_TRUST_MAX_BYTES - size) return SALTS_ERANGE;
+  if (bundle->size + size <= bundle->capacity) {
+    memcpy(bundle->data + bundle->size, data, size);
+    bundle->size += size;
+    return SALTS_OK;
+  }
+
+  capacity = bundle->capacity != 0u ? bundle->capacity : 4096u;
+  while (capacity < bundle->size + size) {
+    if (capacity > CNET_TLS_TRUST_MAX_BYTES / 2u) {
+      capacity = CNET_TLS_TRUST_MAX_BYTES;
+      break;
+    }
+    capacity *= 2u;
+  }
+  if (capacity < bundle->size + size) return SALTS_ERANGE;
+  next = (unsigned char *)realloc(bundle->data, capacity);
+  if (next == NULL) return SALTS_ENOMEM;
+  bundle->data = next;
+  bundle->capacity = capacity;
+  memcpy(bundle->data + bundle->size, data, size);
+  bundle->size += size;
+  return SALTS_OK;
+}
+
+static void cnet_tls_der_bundle_dispose(cnet_tls_der_bundle *bundle) {
+  if (bundle == NULL) return;
+  free(bundle->data);
+  memset(bundle, 0, sizeof(*bundle));
+}
+
+static bool cnet_tls_ca_hash_name(const char *name) {
+  size_t index;
+  if (name == NULL) return false;
+  for (index = 0u; index < 8u; ++index) {
+    const char ch = name[index];
+    if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') ||
+          (ch >= 'A' && ch <= 'F')))
+      return false;
+  }
+  if (name[8] != '.') return false;
+  index = 9u;
+  if (name[index] < '0' || name[index] > '9') return false;
+  while (name[index] >= '0' && name[index] <= '9') ++index;
+  return name[index] == '\0';
+}
+
+static int cnet_tls_append_pem_cert_file(cnet_tls_der_bundle *bundle,
+                                         const char *path,
+                                         size_t *out_count) {
+  unsigned char certificate[CNET_TLS_CERT_MAX_BYTES];
+  FILE *file;
+  size_t count = 0u;
+  int status = SALTS_OK;
+
+  if (bundle == NULL || path == NULL) return SALTS_EINVAL;
+  file = fopen(path, "rb");
+  if (file == NULL) return SALTS_EIO;
+  for (;;) {
+    size_t size = 0u;
+    int result = pem_read(file, "CERTIFICATE", certificate, &size,
+                          sizeof(certificate));
+    if (result == 0) break;
+    if (result < 0 || size == 0u) {
+      status = SALTS_EIO;
+      break;
+    }
+    status = cnet_tls_der_bundle_append(bundle, certificate, size);
+    if (status != SALTS_OK) break;
+    ++count;
+  }
+  (void)fclose(file);
+  memset(certificate, 0, sizeof(certificate));
+  if (status == SALTS_OK && count == 0u) status = SALTS_EIO;
+  if (out_count != NULL) *out_count = count;
+  return status;
+}
+
+static int cnet_tls_append_ca_path(cnet_tls_der_bundle *bundle,
+                                   const char *directory,
+                                   size_t *out_count) {
+  size_t count = 0u;
+  int status = SALTS_OK;
+  if (bundle == NULL || directory == NULL || directory[0] == '\0')
+    return SALTS_EINVAL;
+#if defined(_WIN32)
+  {
+    WIN32_FIND_DATAA data;
+    HANDLE search;
+    char pattern[CNET_TLS_PATH_BUFFER_BYTES];
+    int length = snprintf(pattern, sizeof(pattern), "%s\\*", directory);
+    if (length < 0 || (size_t)length >= sizeof(pattern)) return SALTS_ERANGE;
+    search = FindFirstFileA(pattern, &data);
+    if (search == INVALID_HANDLE_VALUE) return SALTS_EIO;
+    do {
+      char path[CNET_TLS_PATH_BUFFER_BYTES];
+      size_t file_count = 0u;
+      if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ||
+          !cnet_tls_ca_hash_name(data.cFileName))
+        continue;
+      length = snprintf(path, sizeof(path), "%s\\%s", directory, data.cFileName);
+      if (length < 0 || (size_t)length >= sizeof(path)) {
+        status = SALTS_ERANGE;
+        break;
+      }
+      status = cnet_tls_append_pem_cert_file(bundle, path, &file_count);
+      if (status != SALTS_OK) break;
+      count += file_count;
+    } while (FindNextFileA(search, &data) != 0);
+    (void)FindClose(search);
+  }
+#else
+  {
+    DIR *dir = opendir(directory);
+    struct dirent *entry;
+    if (dir == NULL) return SALTS_EIO;
+    while ((entry = readdir(dir)) != NULL) {
+      char path[CNET_TLS_PATH_BUFFER_BYTES];
+      size_t file_count = 0u;
+      int length;
+      if (!cnet_tls_ca_hash_name(entry->d_name)) continue;
+      length = snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
+      if (length < 0 || (size_t)length >= sizeof(path)) {
+        status = SALTS_ERANGE;
+        break;
+      }
+      status = cnet_tls_append_pem_cert_file(bundle, path, &file_count);
+      if (status != SALTS_OK) break;
+      count += file_count;
+    }
+    (void)closedir(dir);
+  }
+#endif
+  if (status == SALTS_OK && count == 0u) status = SALTS_EIO;
+  if (out_count != NULL) *out_count = count;
+  return status;
+}
+
+static int cnet_tls_load_explicit_trust(TLS_CTX *tls,
+                                        const char *ca_file,
+                                        const char *ca_path) {
+  cnet_tls_der_bundle bundle = {0};
+  size_t count = 0u;
+  int status = SALTS_OK;
+
+  if (tls == NULL || (ca_file == NULL && ca_path == NULL)) return SALTS_EINVAL;
+  if (ca_file != NULL) {
+    size_t file_count = 0u;
+    status = cnet_tls_append_pem_cert_file(&bundle, ca_file, &file_count);
+    if (status == SALTS_OK) count += file_count;
+  }
+  if (status == SALTS_OK && ca_path != NULL) {
+    size_t path_count = 0u;
+    status = cnet_tls_append_ca_path(&bundle, ca_path, &path_count);
+    if (status == SALTS_OK) count += path_count;
+  }
+  if (status == SALTS_OK && count == 0u) status = SALTS_EIO;
+  if (status == SALTS_OK &&
+      tls_ctx_set_ca_certificates_der(tls, bundle.data, bundle.size,
+                                      TLS_DEFAULT_VERIFY_DEPTH) != 1)
+    status = SALTS_EIO;
+  cnet_tls_der_bundle_dispose(&bundle);
+  return status;
+}
+
+#if defined(_WIN32)
+static int cnet_tls_append_windows_store(cnet_tls_der_bundle *bundle, const char *name) {
+  HCERTSTORE store;
+  PCCERT_CONTEXT certificate = NULL;
+  int status = SALTS_OK;
+
+  if (bundle == NULL || name == NULL) return SALTS_EINVAL;
+  store = CertOpenSystemStoreA(0u, name);
+  if (store == NULL) return SALTS_EIO;
+  while ((certificate = CertEnumCertificatesInStore(store, certificate)) != NULL) {
+    status = cnet_tls_der_bundle_append(bundle, certificate->pbCertEncoded,
+                                        (size_t)certificate->cbCertEncoded);
+    if (status != SALTS_OK) break;
+  }
+  (void)CertCloseStore(store, 0u);
+  return status;
+}
+#endif
+
+#if defined(__APPLE__) && TARGET_OS_OSX
+static int cnet_tls_load_apple_anchors(cnet_tls_der_bundle *bundle) {
+  CFArrayRef anchors = NULL;
+  CFIndex index;
+  CFIndex count;
+  OSStatus result;
+  int status = SALTS_OK;
+
+  if (bundle == NULL) return SALTS_EINVAL;
+  result = SecTrustCopyAnchorCertificates(&anchors);
+  if (result != errSecSuccess || anchors == NULL) return SALTS_EIO;
+  count = CFArrayGetCount(anchors);
+  for (index = 0; index < count; ++index) {
+    SecCertificateRef certificate =
+        (SecCertificateRef)CFArrayGetValueAtIndex(anchors, index);
+    CFDataRef der;
+    if (certificate == NULL) continue;
+    der = SecCertificateCopyData(certificate);
+    if (der == NULL) {
+      status = SALTS_EIO;
+      break;
+    }
+    status = cnet_tls_der_bundle_append(
+        bundle, (const unsigned char *)CFDataGetBytePtr(der),
+        (size_t)CFDataGetLength(der));
+    CFRelease(der);
+    if (status != SALTS_OK) break;
+  }
+  CFRelease(anchors);
+  return status;
+}
+#endif
+
+static int cnet_tls_load_system_trust(TLS_CTX *tls) {
+#if defined(_WIN32)
+  cnet_tls_der_bundle bundle = {0};
+  int status = cnet_tls_append_windows_store(&bundle, "ROOT");
+  if (status == SALTS_OK) status = cnet_tls_append_windows_store(&bundle, "CA");
+  if (status == SALTS_OK && bundle.size == 0u) status = SALTS_EIO;
+  if (status == SALTS_OK &&
+      tls_ctx_set_ca_certificates_der(tls, bundle.data, bundle.size,
+                                      TLS_DEFAULT_VERIFY_DEPTH) != 1)
+    status = SALTS_EIO;
+  cnet_tls_der_bundle_dispose(&bundle);
+  return status;
+#elif defined(__APPLE__)
+  #if TARGET_OS_OSX
+    cnet_tls_der_bundle bundle = {0};
+    int status = cnet_tls_load_apple_anchors(&bundle);
+    if (status == SALTS_OK && bundle.size == 0u) status = SALTS_EIO;
+    if (status == SALTS_OK &&
+        tls_ctx_set_ca_certificates_der(tls, bundle.data, bundle.size,
+                                        TLS_DEFAULT_VERIFY_DEPTH) != 1)
+      status = SALTS_EIO;
+    cnet_tls_der_bundle_dispose(&bundle);
+    return status;
+  #else
+    /*
+     * iOS does not expose a public system-root enumeration API equivalent to
+     * macOS SecTrustCopyAnchorCertificates(). Explicit ca_file/ca_path remains
+     * supported; default platform trust fails closed until the Security.framework
+     * peer-chain verification bridge tracked separately is implemented.
+     */
+    (void)tls;
+    return SALTS_ENOTSUP;
+  #endif
+#elif defined(__ANDROID__)
+  return cnet_tls_load_explicit_trust(
+      tls, NULL, "/system/etc/security/cacerts");
+#else
+  static const char *const paths[] = {
+      "/etc/ssl/certs/ca-certificates.crt",
+      "/etc/pki/tls/certs/ca-bundle.crt",
+      "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+      "/etc/ssl/ca-bundle.pem"};
+  const char *environment = getenv("SSL_CERT_FILE");
+  size_t index;
+
+  if (environment != NULL && environment[0] != '\0' &&
+      cnet_tls_file_readable(environment))
+    return cnet_tls_load_explicit_trust(tls, environment, NULL);
+  for (index = 0u; index < sizeof(paths) / sizeof(paths[0]); ++index) {
+    if (cnet_tls_file_readable(paths[index]))
+      return cnet_tls_load_explicit_trust(tls, paths[index], NULL);
+  }
+  return SALTS_EIO;
+#endif
+}
+
+static void cnet_tls_alpn_dispose(cnet_tls_context *context) {
+  size_t index;
+  if (context == NULL || context->alpn_protocols == NULL) return;
+  for (index = 0u; index < context->alpn_protocol_count; ++index)
+    free(context->alpn_protocols[index]);
+  free(context->alpn_protocols);
+  context->alpn_protocols = NULL;
+  context->alpn_protocol_count = 0u;
+}
+
+static int cnet_tls_alpn_copy(cnet_tls_context *context,
+                              const char *const *protocols, size_t count) {
+  size_t index;
+  size_t wire_size = 0u;
+
+  if (context == NULL) return SALTS_EINVAL;
   if (count == 0u) return protocols == NULL ? SALTS_OK : SALTS_EINVAL;
   if (protocols == NULL) return SALTS_EINVAL;
 
   for (index = 0u; index < count; ++index) {
     size_t length = 0u;
     if (protocols[index] == NULL ||
-        !cnet_tls_bounded_string(protocols[index], CNET_TLS_ALPN_NAME_MAX_BYTES, &length) ||
+        !cnet_tls_bounded_string(protocols[index],
+                                 CNET_TLS_ALPN_NAME_MAX_BYTES, &length) ||
         length == 0u)
       return SALTS_EINVAL;
-    if (total > CNET_TLS_ALPN_WIRE_MAX_BYTES - length - 1u) return SALTS_ERANGE;
-    total += length + 1u;
+    if (wire_size > UINT16_MAX - 1u - length) return SALTS_ERANGE;
+    wire_size += 1u + length;
   }
 
-  wire = (unsigned char *)malloc(total);
-  if (wire == NULL) return SALTS_ENOMEM;
+  if (count > SIZE_MAX / sizeof(char *)) return SALTS_ERANGE;
+  context->alpn_protocols = (char **)calloc(count, sizeof(char *));
+  if (context->alpn_protocols == NULL) return SALTS_ENOMEM;
+  context->alpn_protocol_count = count;
+
   for (index = 0u; index < count; ++index) {
-    size_t length = 0u;
-    (void)cnet_tls_bounded_string(protocols[index], CNET_TLS_ALPN_NAME_MAX_BYTES, &length);
-    wire[offset++] = (unsigned char)length;
-    memcpy(wire + offset, protocols[index], length);
-    offset += length;
+    size_t length = strlen(protocols[index]);
+    context->alpn_protocols[index] = (char *)malloc(length + 1u);
+    if (context->alpn_protocols[index] == NULL) {
+      cnet_tls_alpn_dispose(context);
+      return SALTS_ENOMEM;
+    }
+    memcpy(context->alpn_protocols[index], protocols[index], length + 1u);
   }
-  *out_wire = wire;
-  *out_size = total;
   return SALTS_OK;
 }
 
-static int cnet_tls_password(char *buffer, int capacity, int writing, void *user) {
-  const char *password = (const char *)user;
-  size_t size = 0u;
-  (void)writing;
-  if (buffer == NULL || capacity <= 0 || password == NULL ||
-      !cnet_tls_bounded_string(password, CNET_TLS_PASSWORD_MAX_BYTES, &size))
-    return 0;
-  if (size >= (size_t)capacity) size = (size_t)capacity - 1u;
-  memcpy(buffer, password, size);
-  buffer[size] = '\0';
-  return (int)size;
+static int cnet_tls_variant_protocol(cnet_tls_variant variant) {
+  return variant == CNET_TLS_VARIANT_1_2 ? TLS_protocol_tls12
+                                         : TLS_protocol_tls13;
 }
 
-#if defined(_WIN32)
-static bool cnet_tls_load_windows_store(SSL_CTX *ssl, const char *name) {
-  HCERTSTORE store;
-  PCCERT_CONTEXT certificate = NULL;
-  X509_STORE *target;
-  bool loaded = false;
+static int cnet_tls_configure_variant(cnet_tls_context *context,
+                                      cnet_tls_variant variant,
+                                      const char *ca_file,
+                                      const char *ca_path,
+                                      const char *cert_file,
+                                      const char *key_file,
+                                      const char *key_password,
+                                      cnet_tls_client_auth client_auth) {
+  static const int range_ciphers[] = {
+      TLS_cipher_aes_128_gcm_sha256,
+      TLS_cipher_ecdhe_rsa_with_aes_128_gcm_sha256,
+      TLS_cipher_ecdhe_ecdsa_with_aes_128_gcm_sha256};
+  static const int tls13_ciphers[] = {TLS_cipher_aes_128_gcm_sha256};
+  static const int tls12_ciphers[] = {
+      TLS_cipher_ecdhe_rsa_with_aes_128_gcm_sha256,
+      TLS_cipher_ecdhe_ecdsa_with_aes_128_gcm_sha256};
+  static const int range_signatures[] = {
+      TLS_sig_rsa_pss_rsae_sha256,
+      TLS_sig_rsa_pkcs1_sha256,
+      TLS_sig_ecdsa_secp256r1_sha256};
+  static const int tls13_signatures[] = {
+      TLS_sig_rsa_pss_rsae_sha256,
+      TLS_sig_rsa_pkcs1_sha256,
+      TLS_sig_ecdsa_secp256r1_sha256};
+  static const int tls12_signatures[] = {
+      TLS_sig_rsa_pkcs1_sha256,
+      TLS_sig_ecdsa_secp256r1_sha256};
+  static const int groups[] = {TLS_curve_secp256r1};
+  TLS_CTX *tls;
+  const int *ciphers;
+  const int *signatures;
+  size_t cipher_count;
+  size_t signature_count;
+  int mode;
+  int status = SALTS_OK;
 
-  store = CertOpenSystemStoreA(0u, name);
-  if (store == NULL) return false;
-  target = SSL_CTX_get_cert_store(ssl);
-  if (target == NULL) {
-    (void)CertCloseStore(store, 0u);
-    return false;
-  }
-  while ((certificate = CertEnumCertificatesInStore(store, certificate)) != NULL) {
-    const unsigned char *encoded = certificate->pbCertEncoded;
-    X509 *x509 = d2i_X509(NULL, &encoded, (long)certificate->cbCertEncoded);
-    if (x509 == NULL) {
-      ERR_clear_error();
-      continue;
-    }
-    if (X509_STORE_add_cert(target, x509) == 1) loaded = true;
-    else {
-      const unsigned long error = ERR_peek_last_error();
-      if (ERR_GET_LIB(error) == ERR_LIB_X509 &&
-          ERR_GET_REASON(error) == X509_R_CERT_ALREADY_IN_HASH_TABLE)
-        loaded = true;
-      ERR_clear_error();
-    }
-    X509_free(x509);
-  }
-  (void)CertCloseStore(store, 0u);
-  return loaded;
-}
-#endif
-
-static int cnet_tls_load_system_trust(SSL_CTX *ssl) {
-  bool loaded = SSL_CTX_set_default_verify_paths(ssl) == 1;
-  if (!loaded) ERR_clear_error();
-#if defined(_WIN32)
-  if (cnet_tls_load_windows_store(ssl, "ROOT")) loaded = true;
-  if (cnet_tls_load_windows_store(ssl, "CA")) loaded = true;
-#endif
-  return loaded ? SALTS_OK : SALTS_EIO;
-}
-
-static int cnet_tls_configure_common(SSL_CTX *ssl) {
-  long options;
-  if (SSL_CTX_set_min_proto_version(ssl, TLS1_2_VERSION) != 1) return SALTS_EIO;
-  options = SSL_OP_NO_COMPRESSION;
-#if defined(SSL_OP_NO_RENEGOTIATION)
-  options |= SSL_OP_NO_RENEGOTIATION;
-#endif
-  (void)SSL_CTX_set_options(ssl, options);
-  (void)SSL_CTX_set_mode(ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
-  return SALTS_OK;
-}
-
-static int cnet_tls_load_identity(SSL_CTX *ssl, const char *cert_file, const char *key_file,
-                                  const char *key_password) {
-  if ((cert_file == NULL) != (key_file == NULL)) return SALTS_EINVAL;
-  if (cert_file == NULL) return key_password == NULL ? SALTS_OK : SALTS_EINVAL;
-  if (key_password != NULL) {
-    SSL_CTX_set_default_passwd_cb(ssl, cnet_tls_password);
-    SSL_CTX_set_default_passwd_cb_userdata(ssl, (void *)key_password);
-  }
-  if (SSL_CTX_use_certificate_chain_file(ssl, cert_file) != 1 ||
-      SSL_CTX_use_PrivateKey_file(ssl, key_file, SSL_FILETYPE_PEM) != 1 ||
-      SSL_CTX_check_private_key(ssl) != 1) {
-    SSL_CTX_set_default_passwd_cb(ssl, NULL);
-    SSL_CTX_set_default_passwd_cb_userdata(ssl, NULL);
+  if (context == NULL || variant < 0 || variant >= CNET_TLS_VARIANT_COUNT)
+    return SALTS_EINVAL;
+  tls = &context->tls[variant];
+  mode = context->server ? TLS_server_mode : TLS_client_mode;
+  if (tls_ctx_init(tls, cnet_tls_variant_protocol(variant), mode) != 1)
     return SALTS_EIO;
-  }
-  SSL_CTX_set_default_passwd_cb(ssl, NULL);
-  SSL_CTX_set_default_passwd_cb_userdata(ssl, NULL);
-  return SALTS_OK;
-}
+  context->tls_ready[variant] = true;
 
-static int cnet_tls_server_select_alpn(SSL *ssl, const unsigned char **out,
-                                       unsigned char *out_length, const unsigned char *input,
-                                       unsigned int input_length, void *user) {
-  const cnet_tls_context *context = (const cnet_tls_context *)user;
-  (void)ssl;
-  if (context == NULL || context->alpn_wire == NULL || context->alpn_wire_size == 0u)
-    return SSL_TLSEXT_ERR_NOACK;
-  if (SSL_select_next_proto((unsigned char **)out, out_length, context->alpn_wire,
-                            (unsigned int)context->alpn_wire_size, input,
-                            input_length) == OPENSSL_NPN_NEGOTIATED)
-    return SSL_TLSEXT_ERR_OK;
-  return SSL_TLSEXT_ERR_NOACK;
+  if (variant == CNET_TLS_VARIANT_RANGE) {
+    if (tls_ctx_set_protocol_range(tls, TLS_protocol_tls12,
+                                   TLS_protocol_tls13) != 1)
+      return SALTS_EIO;
+    ciphers = range_ciphers;
+    cipher_count = sizeof(range_ciphers) / sizeof(range_ciphers[0]);
+    signatures = range_signatures;
+    signature_count = sizeof(range_signatures) / sizeof(range_signatures[0]);
+  } else if (variant == CNET_TLS_VARIANT_1_2) {
+    ciphers = tls12_ciphers;
+    cipher_count = sizeof(tls12_ciphers) / sizeof(tls12_ciphers[0]);
+    signatures = tls12_signatures;
+    signature_count = sizeof(tls12_signatures) / sizeof(tls12_signatures[0]);
+  } else {
+    ciphers = tls13_ciphers;
+    cipher_count = sizeof(tls13_ciphers) / sizeof(tls13_ciphers[0]);
+    signatures = tls13_signatures;
+    signature_count = sizeof(tls13_signatures) / sizeof(tls13_signatures[0]);
+  }
+
+  if (tls_ctx_set_cipher_suites(tls, ciphers, cipher_count) != 1 ||
+      tls_ctx_set_supported_groups(tls, groups,
+                                   sizeof(groups) / sizeof(groups[0])) != 1 ||
+      tls_ctx_set_signature_algorithms(tls, signatures, signature_count) != 1)
+    return SALTS_EIO;
+
+  if (variant == CNET_TLS_VARIANT_1_2) {
+    if (context->server) {
+      if (tls12_ctx_set_renegotiation_info(tls, 1) != 1)
+        return SALTS_EIO;
+    } else if (tls12_ctx_set_empty_renegotiation_info_scsv(tls, 1) != 1) {
+      return SALTS_EIO;
+    }
+  }
+
+  if (context->alpn_protocol_count != 0u &&
+      tls_ctx_set_application_layer_protocol_negotiation(
+          tls, context->alpn_protocols, context->alpn_protocol_count) != 1)
+    return SALTS_EIO;
+
+  if (context->verify_peer) {
+    status = (ca_file != NULL || ca_path != NULL)
+                 ? cnet_tls_load_explicit_trust(tls, ca_file, ca_path)
+                 : cnet_tls_load_system_trust(tls);
+    if (status != SALTS_OK) return status;
+  }
+
+  if (cert_file != NULL) {
+    if (tls_ctx_set_certificate_and_key(
+            tls, cert_file, key_file,
+            key_password != NULL ? key_password : "") != 1)
+      return SALTS_EIO;
+  }
+
+  if (context->server && client_auth == CNET_TLS_CLIENT_AUTH_REQUIRED &&
+      tls_ctx_enable_certificate_request(tls, 1) != 1)
+    return SALTS_EIO;
+
+  return SALTS_OK;
 }
 
 static void cnet_tls_context_dispose(cnet_tls_context *context) {
+  size_t index;
   if (context == NULL) return;
-  SSL_CTX_free(context->ssl);
-  free(context->alpn_wire);
+  for (index = 0u; index < CNET_TLS_VARIANT_COUNT; ++index) {
+    if (context->tls_ready[index]) tls_ctx_cleanup(&context->tls[index]);
+  }
+  cnet_tls_alpn_dispose(context);
   free(context);
 }
 
 void cnet_tls_context_retain(cnet_tls_context *context) {
   if (context != NULL)
-    (void)atomic_fetch_add_explicit(&context->references, 1u, memory_order_relaxed);
+    (void)atomic_fetch_add_explicit(&context->references, 1u,
+                                    memory_order_relaxed);
 }
 
 void cnet_tls_context_release(cnet_tls_context *context) {
   if (context != NULL &&
-      atomic_fetch_sub_explicit(&context->references, 1u, memory_order_acq_rel) == 1u)
+      atomic_fetch_sub_explicit(&context->references, 1u,
+                                memory_order_acq_rel) == 1u)
     cnet_tls_context_dispose(context);
 }
 
-static cnet_tls_context *cnet_tls_context_allocate(SSL_CTX *ssl, bool server) {
-  cnet_tls_context *context = (cnet_tls_context *)calloc(1u, sizeof(*context));
-  if (context == NULL) return NULL;
-  context->ssl = ssl;
+static int cnet_tls_context_create_common(
+    bool server, bool verify_peer, const char *ca_file, const char *ca_path,
+    const char *cert_file, const char *key_file, const char *key_password,
+    cnet_tls_client_auth client_auth, const char *const *alpn_protocols,
+    size_t alpn_protocol_count, cnet_tls_context **out_context) {
+  cnet_tls_context *context;
+  size_t index;
+  int status;
+
+  if (out_context == NULL) return SALTS_EINVAL;
+  *out_context = NULL;
+
+  context = (cnet_tls_context *)calloc(1u, sizeof(*context));
+  if (context == NULL) return SALTS_ENOMEM;
   context->server = server;
+  context->verify_peer = verify_peer;
   atomic_init(&context->references, 1u);
-  return context;
+
+  status = cnet_tls_alpn_copy(context, alpn_protocols, alpn_protocol_count);
+  if (status != SALTS_OK) {
+    cnet_tls_context_dispose(context);
+    return status;
+  }
+
+  for (index = 0u; index < CNET_TLS_VARIANT_COUNT; ++index) {
+    status = cnet_tls_configure_variant(
+        context, (cnet_tls_variant)index, ca_file, ca_path, cert_file, key_file,
+        key_password, client_auth);
+    if (status != SALTS_OK) {
+      cnet_tls_context_dispose(context);
+      return status;
+    }
+  }
+
+  *out_context = context;
+  return SALTS_OK;
 }
 
 int cnet_tls_client_context_create(const cnet_tls_client_config *config,
                                    cnet_tls_context **out_context) {
   cnet_tls_client_config defaults = {sizeof(defaults)};
-  cnet_tls_context *context;
-  SSL_CTX *ssl;
+  cnet_tls_context *context = NULL;
   int status;
 
   if (out_context == NULL) return SALTS_EINVAL;
   *out_context = NULL;
   if (config == NULL) config = &defaults;
-  if (config->size != sizeof(*config) || !cnet_tls_optional_path_valid(config->ca_file) ||
+  if (config->size != sizeof(*config) ||
+      !cnet_tls_optional_path_valid(config->ca_file) ||
       !cnet_tls_optional_path_valid(config->ca_path) ||
       !cnet_tls_optional_path_valid(config->cert_file) ||
       !cnet_tls_optional_path_valid(config->key_file) ||
-      !cnet_tls_bounded_string(config->key_password, CNET_TLS_PASSWORD_MAX_BYTES, NULL) ||
-      !cnet_tls_bounded_string(config->server_name, CNET_TLS_SERVER_NAME_CAPACITY - 1u, NULL) ||
-      (config->server_name != NULL && config->server_name[0] == '\0'))
+      !cnet_tls_bounded_string(config->key_password,
+                               CNET_TLS_PASSWORD_MAX_BYTES, NULL) ||
+      !cnet_tls_bounded_string(config->server_name,
+                               CNET_TLS_SERVER_NAME_CAPACITY - 1u, NULL) ||
+      (config->server_name != NULL && config->server_name[0] == '\0') ||
+      ((config->cert_file == NULL) != (config->key_file == NULL)) ||
+      (config->cert_file == NULL && config->key_password != NULL))
     return SALTS_EINVAL;
 
-  ssl = SSL_CTX_new(TLS_client_method());
-  if (ssl == NULL) return SALTS_ENOMEM;
-  status = cnet_tls_configure_common(ssl);
-  if (status == SALTS_OK) {
-    SSL_CTX_set_verify(ssl, SSL_VERIFY_PEER, NULL);
-    status = config->ca_file != NULL || config->ca_path != NULL
-                 ? (SSL_CTX_load_verify_locations(ssl, config->ca_file, config->ca_path) == 1
-                        ? SALTS_OK
-                        : SALTS_EIO)
-                 : cnet_tls_load_system_trust(ssl);
-  }
-  if (status == SALTS_OK)
-    status = cnet_tls_load_identity(ssl, config->cert_file, config->key_file, config->key_password);
-  if (status != SALTS_OK) {
-    SSL_CTX_free(ssl);
-    return status;
-  }
-
-  context = cnet_tls_context_allocate(ssl, false);
-  if (context == NULL) {
-    SSL_CTX_free(ssl);
-    return SALTS_ENOMEM;
-  }
-  status = cnet_tls_build_alpn(config->alpn_protocols, config->alpn_protocol_count,
-                               &context->alpn_wire, &context->alpn_wire_size);
-  if (status != SALTS_OK) {
-    cnet_tls_context_release(context);
-    return status;
-  }
+  status = cnet_tls_context_create_common(
+      false, true, config->ca_file, config->ca_path, config->cert_file,
+      config->key_file, config->key_password, CNET_TLS_CLIENT_AUTH_NONE,
+      config->alpn_protocols, config->alpn_protocol_count, &context);
+  if (status != SALTS_OK) return status;
   if (config->server_name != NULL)
-    memcpy(context->client_server_name, config->server_name, strlen(config->server_name) + 1u);
+    memcpy(context->client_server_name, config->server_name,
+           strlen(config->server_name) + 1u);
   *out_context = context;
   return SALTS_OK;
 }
 
-int cnet_tls_client_init(cnet_tls_client *client, const cnet_tls_client_config *config) {
+int cnet_tls_client_init(cnet_tls_client *client,
+                         const cnet_tls_client_config *config) {
   cnet_tls_context *context = NULL;
   int status;
   if (client == NULL || config == NULL) return SALTS_EINVAL;
@@ -321,66 +672,47 @@ int cnet_tls_client_destroy(cnet_tls_client *client) {
 }
 
 cnet_tls_context *cnet_tls_client_context(const cnet_tls_client *client) {
-  cnet_tls_context *context = client != NULL ? (cnet_tls_context *)client->impl : NULL;
+  cnet_tls_context *context =
+      client != NULL ? (cnet_tls_context *)client->impl : NULL;
   return context != NULL && !context->server ? context : NULL;
 }
 
 const char *cnet_tls_client_server_name(const cnet_tls_client *client) {
   const cnet_tls_context *context = cnet_tls_client_context(client);
-  return context != NULL && context->client_server_name[0] != '\0' ? context->client_server_name
-                                                                   : NULL;
+  return context != NULL && context->client_server_name[0] != '\0'
+             ? context->client_server_name
+             : NULL;
 }
 
-int cnet_tls_server_init(cnet_tls_server *server, const cnet_tls_server_config *config) {
-  cnet_tls_context *context;
-  SSL_CTX *ssl;
+int cnet_tls_server_init(cnet_tls_server *server,
+                         const cnet_tls_server_config *config) {
+  cnet_tls_context *context = NULL;
   int status;
 
   if (server == NULL || config == NULL) return SALTS_EINVAL;
   if (server->impl != NULL) return SALTS_EALREADY;
-  if (config->size != sizeof(*config) || !cnet_tls_optional_path_valid(config->cert_file) ||
-      !cnet_tls_optional_path_valid(config->key_file) || config->cert_file == NULL ||
-      config->key_file == NULL || !cnet_tls_optional_path_valid(config->ca_file) ||
+  if (config->size != sizeof(*config) ||
+      !cnet_tls_optional_path_valid(config->cert_file) ||
+      !cnet_tls_optional_path_valid(config->key_file) ||
+      config->cert_file == NULL || config->key_file == NULL ||
+      !cnet_tls_optional_path_valid(config->ca_file) ||
       !cnet_tls_optional_path_valid(config->ca_path) ||
-      !cnet_tls_bounded_string(config->key_password, CNET_TLS_PASSWORD_MAX_BYTES, NULL) ||
+      !cnet_tls_bounded_string(config->key_password,
+                               CNET_TLS_PASSWORD_MAX_BYTES, NULL) ||
       (config->client_auth != CNET_TLS_CLIENT_AUTH_NONE &&
        config->client_auth != CNET_TLS_CLIENT_AUTH_REQUIRED) ||
-      (config->client_auth == CNET_TLS_CLIENT_AUTH_REQUIRED && config->ca_file == NULL &&
-       config->ca_path == NULL) ||
+      (config->client_auth == CNET_TLS_CLIENT_AUTH_REQUIRED &&
+       config->ca_file == NULL && config->ca_path == NULL) ||
       (config->client_auth == CNET_TLS_CLIENT_AUTH_NONE &&
        (config->ca_file != NULL || config->ca_path != NULL)))
     return SALTS_EINVAL;
 
-  ssl = SSL_CTX_new(TLS_server_method());
-  if (ssl == NULL) return SALTS_ENOMEM;
-  status = cnet_tls_configure_common(ssl);
-  if (status == SALTS_OK)
-    status = cnet_tls_load_identity(ssl, config->cert_file, config->key_file, config->key_password);
-  if (status == SALTS_OK && config->client_auth == CNET_TLS_CLIENT_AUTH_REQUIRED) {
-    if (SSL_CTX_load_verify_locations(ssl, config->ca_file, config->ca_path) != 1)
-      status = SALTS_EIO;
-    else SSL_CTX_set_verify(ssl, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
-  } else if (status == SALTS_OK) {
-    SSL_CTX_set_verify(ssl, SSL_VERIFY_NONE, NULL);
-  }
-  if (status != SALTS_OK) {
-    SSL_CTX_free(ssl);
-    return status;
-  }
-
-  context = cnet_tls_context_allocate(ssl, true);
-  if (context == NULL) {
-    SSL_CTX_free(ssl);
-    return SALTS_ENOMEM;
-  }
-  status = cnet_tls_build_alpn(config->alpn_protocols, config->alpn_protocol_count,
-                               &context->alpn_wire, &context->alpn_wire_size);
-  if (status != SALTS_OK) {
-    cnet_tls_context_release(context);
-    return status;
-  }
-  if (context->alpn_wire != NULL)
-    SSL_CTX_set_alpn_select_cb(ssl, cnet_tls_server_select_alpn, context);
+  status = cnet_tls_context_create_common(
+      true, config->client_auth == CNET_TLS_CLIENT_AUTH_REQUIRED,
+      config->ca_file, config->ca_path, config->cert_file, config->key_file,
+      config->key_password, config->client_auth, config->alpn_protocols,
+      config->alpn_protocol_count, &context);
+  if (status != SALTS_OK) return status;
   server->impl = context;
   return SALTS_OK;
 }
@@ -396,184 +728,418 @@ int cnet_tls_server_destroy(cnet_tls_server *server) {
 }
 
 cnet_tls_context *cnet_tls_server_context(const cnet_tls_server *server) {
-  cnet_tls_context *context = server != NULL ? (cnet_tls_context *)server->impl : NULL;
+  cnet_tls_context *context =
+      server != NULL ? (cnet_tls_context *)server->impl : NULL;
   return context != NULL && context->server ? context : NULL;
 }
 
-static int cnet_tls_configure_server_name(SSL *ssl, const char *server_name) {
-  unsigned char ipv4[4];
-  unsigned char ipv6[16];
-  X509_VERIFY_PARAM *verify;
-  if (ssl == NULL || server_name == NULL || server_name[0] == '\0') return SALTS_EINVAL;
+static size_t cnet_tls_ring_write(unsigned char *buffer, size_t capacity,
+                                  size_t head, size_t size,
+                                  const unsigned char *data, size_t length) {
+  size_t tail;
+  size_t first;
+  if (buffer == NULL || data == NULL || capacity == 0u ||
+      size >= capacity || length == 0u)
+    return 0u;
+  if (length > capacity - size) length = capacity - size;
+  tail = (head + size) % capacity;
+  first = capacity - tail;
+  if (first > length) first = length;
+  memcpy(buffer + tail, data, first);
+  if (length > first) memcpy(buffer, data + first, length - first);
+  return length;
+}
 
-  verify = SSL_get0_param(ssl);
-  if (verify == NULL) return SALTS_EIO;
-  if (inet_pton(AF_INET, server_name, ipv4) == 1 || inet_pton(AF_INET6, server_name, ipv6) == 1)
-    return X509_VERIFY_PARAM_set1_ip_asc(verify, server_name) == 1 ? SALTS_OK : SALTS_EIO;
-  if (SSL_set_tlsext_host_name(ssl, server_name) != 1 || SSL_set1_host(ssl, server_name) != 1)
+static size_t cnet_tls_ring_read(unsigned char *buffer, size_t capacity,
+                                 size_t *head, size_t *size,
+                                 unsigned char *data, size_t length) {
+  size_t first;
+  if (buffer == NULL || head == NULL || size == NULL || data == NULL ||
+      capacity == 0u || *size == 0u || length == 0u)
+    return 0u;
+  if (length > *size) length = *size;
+  first = capacity - *head;
+  if (first > length) first = length;
+  memcpy(data, buffer + *head, first);
+  if (length > first) memcpy(data + first, buffer, length - first);
+  *head = (*head + length) % capacity;
+  *size -= length;
+  return length;
+}
+
+static size_t cnet_tls_ring_peek(const unsigned char *buffer, size_t capacity,
+                                 size_t head, size_t size,
+                                 unsigned char *data, size_t length) {
+  size_t first;
+  if (buffer == NULL || data == NULL || capacity == 0u ||
+      size == 0u || length == 0u)
+    return 0u;
+  if (length > size) length = size;
+  first = capacity - head;
+  if (first > length) first = length;
+  memcpy(data, buffer + head, first);
+  if (length > first) memcpy(data + first, buffer, length - first);
+  return length;
+}
+
+static int cnet_tls_cipher_record_ready(const cnet_tls_gmssl_state *engine,
+                                        bool *out_ready) {
+  unsigned char header[TLS_RECORD_HEADER_SIZE];
+  size_t record_size;
+  if (engine == NULL || out_ready == NULL) return SALTS_EINVAL;
+  *out_ready = false;
+  if (engine->input_size < TLS_RECORD_HEADER_SIZE) return SALTS_OK;
+  if (cnet_tls_ring_peek(engine->cipher_input, engine->capacity,
+                         engine->input_head, engine->input_size,
+                         header, sizeof(header)) != sizeof(header))
+    return SALTS_EIO;
+  record_size = TLS_RECORD_HEADER_SIZE +
+                (((size_t)header[3] << 8u) | (size_t)header[4]);
+  if (record_size < TLS_RECORD_HEADER_SIZE ||
+      record_size > TLS_MAX_RECORD_SIZE ||
+      record_size > engine->capacity)
+    return SALTS_EPROTO;
+  *out_ready = engine->input_size >= record_size;
+  return SALTS_OK;
+}
+
+static tls_ret_t cnet_tls_io_send(void *user, const void *buffer, size_t length,
+                                  int flags) {
+  cnet_tls_gmssl_state *engine = (cnet_tls_gmssl_state *)user;
+  size_t written;
+  (void)flags;
+  if (engine == NULL || buffer == NULL || length == 0u)
+    return TLS_ERROR_SYSCALL;
+  written = cnet_tls_ring_write(
+      engine->cipher_output, engine->capacity, engine->output_head,
+      engine->output_size, (const unsigned char *)buffer, length);
+  if (written == 0u) return TLS_ERROR_SEND_AGAIN;
+  engine->output_size += written;
+  return (tls_ret_t)written;
+}
+
+static tls_ret_t cnet_tls_io_recv(void *user, void *buffer, size_t length,
+                                  int flags) {
+  cnet_tls_gmssl_state *engine = (cnet_tls_gmssl_state *)user;
+  size_t read_size;
+  (void)flags;
+  if (engine == NULL || buffer == NULL || length == 0u)
+    return TLS_ERROR_SYSCALL;
+  read_size = cnet_tls_ring_read(
+      engine->cipher_input, engine->capacity, &engine->input_head,
+      &engine->input_size, (unsigned char *)buffer, length);
+  if (read_size == 0u) return TLS_ERROR_RECV_AGAIN;
+  return (tls_ret_t)read_size;
+}
+
+static int cnet_tls_ip_literal_bytes(const char *name,
+                                     unsigned char output[16],
+                                     size_t *out_size) {
+  if (name == NULL || output == NULL || out_size == NULL) return 0;
+  if (inet_pton(AF_INET, name, output) == 1) {
+    *out_size = 4u;
+    return 1;
+  }
+  if (inet_pton(AF_INET6, name, output) == 1) {
+    *out_size = 16u;
+    return 1;
+  }
+  *out_size = 0u;
+  return 0;
+}
+
+static bool cnet_tls_ip_literal(const char *name) {
+  unsigned char bytes[16];
+  size_t size = 0u;
+  return cnet_tls_ip_literal_bytes(name, bytes, &size) == 1;
+}
+
+static int cnet_tls_verify_ip_subject_alt_name(const TLS_CONNECT *connection,
+                                                const char *name) {
+  unsigned char expected[16];
+  size_t expected_size = 0u;
+  const unsigned char *cert = NULL;
+  size_t cert_size = 0u;
+  const unsigned char *exts = NULL;
+  size_t exts_size = 0u;
+  const unsigned char *encoded_names = NULL;
+  size_t encoded_names_size = 0u;
+  const unsigned char *names = NULL;
+  size_t names_size = 0u;
+  const unsigned char *cursor;
+  const unsigned char *value = NULL;
+  size_t value_size = 0u;
+  int critical = 0;
+  int result;
+
+  if (connection == NULL ||
+      cnet_tls_ip_literal_bytes(name, expected, &expected_size) != 1)
+    return SALTS_EINVAL;
+
+  result = tls_get_peer_certificate(connection, &cert, &cert_size);
+  if (result < 0) return SALTS_EIO;
+  if (result == 0 || cert == NULL || cert_size == 0u)
+    return SALTS_ECONNABORTED;
+
+  result = x509_cert_get_exts(cert, cert_size, &exts, &exts_size);
+  if (result < 0) return SALTS_EIO;
+  if (result == 0) return SALTS_ECONNABORTED;
+
+  result = x509_exts_get_ext_by_oid(
+      exts, exts_size, OID_ce_subject_alt_name, &critical,
+      &encoded_names, &encoded_names_size);
+  if (result < 0) return SALTS_EIO;
+  if (result == 0) return SALTS_ECONNABORTED;
+
+  if (asn1_sequence_from_der(&names, &names_size,
+                             &encoded_names, &encoded_names_size) != 1 ||
+      encoded_names_size != 0u)
+    return SALTS_EPROTO;
+
+  cursor = names;
+  for (;;) {
+    result = x509_general_names_get_next(
+        names, names_size, &cursor, X509_gn_ip_address, &value, &value_size);
+    if (result < 0) return SALTS_EPROTO;
+    if (result == 0) return SALTS_ECONNABORTED;
+    if (value_size == expected_size &&
+        memcmp(value, expected, expected_size) == 0)
+      return SALTS_OK;
+  }
+}
+
+static int cnet_tls_engine_init_connection(cnet_tls_state *state,
+                                           cnet_tls_variant variant) {
+  cnet_tls_gmssl_state *engine;
+  TLS_CTX *tls;
+  if (state == NULL || state->context == NULL ||
+      (engine = CNET_TLS_ENGINE(state)) == NULL)
+    return SALTS_EINVAL;
+  if (variant < 0 || variant >= CNET_TLS_VARIANT_COUNT ||
+      !state->context->tls_ready[variant])
+    return SALTS_EINVAL;
+  if (engine->input_size != 0u || engine->output_size != 0u ||
+      engine->plaintext_pending_size != 0u)
+    return SALTS_EBUSY;
+
+  if (engine->connection_ready) {
+    tls_cleanup(&engine->connection);
+    memset(&engine->connection, 0, sizeof(engine->connection));
+    engine->connection_ready = false;
+  }
+
+  tls = &state->context->tls[variant];
+  if (tls_init(&engine->connection, tls) != 1) return SALTS_EIO;
+  engine->connection_ready = true;
+  engine->variant = variant;
+  engine->io.user = engine;
+  engine->io.send = cnet_tls_io_send;
+  engine->io.recv = cnet_tls_io_recv;
+
+  if (!state->server) {
+    if (engine->server_name[0] == '\0') return SALTS_EINVAL;
+    if (!cnet_tls_ip_literal(engine->server_name) &&
+        (tls_set_hostname(&engine->connection, engine->server_name) != 1 ||
+         tls_set_server_name(&engine->connection) != 1))
+      return SALTS_EIO;
+  }
+  if (tls_set_io(&engine->connection, &engine->io) != 1)
     return SALTS_EIO;
   return SALTS_OK;
 }
 
-int cnet_tls_state_init(cnet_tls_state *state, cnet_tls_context *context, bool server,
-                        const char *server_name, size_t io_buffer_bytes) {
-  BIO *ssl_bio = NULL;
-  BIO *network_bio = NULL;
-  SSL *ssl = NULL;
-  cnet_tls_boringssl_state *engine = NULL;
+int cnet_tls_state_init(cnet_tls_state *state, cnet_tls_context *context,
+                        bool server, const char *server_name,
+                        size_t io_buffer_bytes) {
+  cnet_tls_gmssl_state *engine = NULL;
   unsigned char *read_buffer = NULL;
   unsigned char *write_buffer = NULL;
-  int status = SALTS_OK;
+  size_t ring_capacity;
+  size_t allocation_size;
+  int status;
 
-  if (state == NULL || context == NULL || context->ssl == NULL || context->server != server ||
-      io_buffer_bytes < CNET_TLS_MIN_IO_BUFFER_BYTES || io_buffer_bytes > INT_MAX ||
-      (!server && (server_name == NULL || server_name[0] == '\0')))
+  if (state == NULL || context == NULL || context->server != server ||
+      io_buffer_bytes < CNET_TLS_MIN_IO_BUFFER_BYTES ||
+      (!server &&
+       (server_name == NULL || server_name[0] == '\0' ||
+        !cnet_tls_bounded_string(server_name,
+                                 CNET_TLS_SERVER_NAME_CAPACITY - 1u, NULL))))
     return SALTS_EINVAL;
-  if (CNET_TLS_SSL(state) != NULL || CNET_TLS_BIO(state) != NULL || state->context != NULL)
-    return SALTS_EALREADY;
+  if (state->engine != NULL || state->context != NULL) return SALTS_EALREADY;
 
+  ring_capacity = io_buffer_bytes < (size_t)TLS_MAX_RECORD_SIZE
+                      ? (size_t)TLS_MAX_RECORD_SIZE
+                      : io_buffer_bytes;
+  if (ring_capacity >
+      (SIZE_MAX - sizeof(cnet_tls_gmssl_state)) / 2u)
+    return SALTS_ERANGE;
+
+  allocation_size = sizeof(cnet_tls_gmssl_state) + ring_capacity * 2u;
+  engine = (cnet_tls_gmssl_state *)calloc(1u, allocation_size);
   read_buffer = (unsigned char *)malloc(io_buffer_bytes);
   write_buffer = (unsigned char *)malloc(io_buffer_bytes);
-  engine = (cnet_tls_boringssl_state *)calloc(1u, sizeof(*engine));
-  ssl = SSL_new(context->ssl);
-  if (read_buffer == NULL || write_buffer == NULL || engine == NULL || ssl == NULL) {
-    status = SALTS_ENOMEM;
-    goto fail;
-  }
-  if (BIO_new_bio_pair(&ssl_bio, io_buffer_bytes, &network_bio, io_buffer_bytes) != 1) {
-    status = SALTS_ENOMEM;
-    goto fail;
-  }
-  if (BIO_up_ref(ssl_bio) != 1) {
-    status = SALTS_EIO;
-    goto fail;
-  }
-  SSL_set0_rbio(ssl, ssl_bio);
-  SSL_set0_wbio(ssl, ssl_bio);
-  ssl_bio = NULL;
-
-  if (server) {
-    SSL_set_accept_state(ssl);
-  } else {
-    status = cnet_tls_configure_server_name(ssl, server_name);
-    if (status != SALTS_OK) goto fail;
-    if (context->alpn_wire_size != 0u &&
-        SSL_set_alpn_protos(ssl, context->alpn_wire, (unsigned int)context->alpn_wire_size) != 0) {
-      status = SALTS_EIO;
-      goto fail;
-    }
-    SSL_set_connect_state(ssl);
+  if (engine == NULL || read_buffer == NULL || write_buffer == NULL) {
+    free(write_buffer);
+    free(read_buffer);
+    free(engine);
+    return SALTS_ENOMEM;
   }
 
-  engine->ssl = ssl;
-  engine->network_bio = network_bio;
+  engine->capacity = ring_capacity;
+  engine->cipher_input = (unsigned char *)(engine + 1);
+  engine->cipher_output = engine->cipher_input + ring_capacity;
+  if (!server)
+    memcpy(engine->server_name, server_name, strlen(server_name) + 1u);
+
   state->context = context;
   state->engine = engine;
   state->read_buffer = read_buffer;
   state->write_buffer = write_buffer;
   state->io_buffer_bytes = io_buffer_bytes;
   state->server = server;
-  return SALTS_OK;
 
-fail:
-  BIO_free(ssl_bio);
-  BIO_free(network_bio);
-  SSL_free(ssl);
-  free(engine);
-  free(write_buffer);
-  free(read_buffer);
-  return status;
+  status = cnet_tls_engine_init_connection(state, CNET_TLS_VARIANT_RANGE);
+  if (status != SALTS_OK) {
+    state->context = NULL;
+    state->engine = NULL;
+    state->read_buffer = NULL;
+    state->write_buffer = NULL;
+    state->io_buffer_bytes = 0u;
+    state->server = false;
+    if (engine->connection_ready) tls_cleanup(&engine->connection);
+    free(write_buffer);
+    free(read_buffer);
+    free(engine);
+    return status;
+  }
+  return SALTS_OK;
 }
 
 void cnet_tls_state_destroy(cnet_tls_state *state) {
   cnet_tls_context *context;
-  cnet_tls_boringssl_state *engine;
+  cnet_tls_gmssl_state *engine;
   if (state == NULL) return;
   context = state->context;
   engine = CNET_TLS_ENGINE(state);
-  if (engine != NULL) {
-    SSL_free(engine->ssl);
-    BIO_free(engine->network_bio);
-    free(engine);
-  }
+  if (engine != NULL && engine->connection_ready)
+    tls_cleanup(&engine->connection);
+  free(engine);
   free(state->write_buffer);
   free(state->read_buffer);
   memset(state, 0, sizeof(*state));
   cnet_tls_context_release(context);
 }
 
-static int cnet_tls_retry_or_error(SSL *ssl, int result, int fatal_status) {
-  const int error = SSL_get_error(ssl, result);
-  if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) return SALTS_OK;
-  return fatal_status;
+static bool cnet_tls_retryable(int result) {
+  return result == TLS_ERROR_RECV_AGAIN || result == TLS_ERROR_SEND_AGAIN;
 }
 
-int cnet_tls_handshake(cnet_tls_state *state, bool *out_complete) {
-  const unsigned char *alpn = NULL;
-  unsigned int alpn_size = 0u;
+static int cnet_tls_finish_handshake(cnet_tls_state *state,
+                                     bool *out_complete) {
+  cnet_tls_gmssl_state *engine = CNET_TLS_ENGINE(state);
+  int complete = 0;
+  int verify_result = X509_verify_ok;
+  const char *alpn = NULL;
+  size_t alpn_size = 0u;
   int result;
-  if (state == NULL || CNET_TLS_SSL(state) == NULL || out_complete == NULL) return SALTS_EINVAL;
-  *out_complete = state->handshake_complete;
-  if (state->handshake_complete) return SALTS_OK;
 
-  ERR_clear_error();
-  result = SSL_do_handshake(CNET_TLS_SSL(state));
-  if (result != 1) return cnet_tls_retry_or_error(CNET_TLS_SSL(state), result, SALTS_ECONNABORTED);
-  if (!state->server && SSL_get_verify_result(CNET_TLS_SSL(state)) != X509_V_OK) return SALTS_ECONNABORTED;
-  SSL_get0_alpn_selected(CNET_TLS_SSL(state), &alpn, &alpn_size);
-  if (alpn_size > CNET_TLS_ALPN_NAME_MAX_BYTES) return SALTS_EPROTO;
-  if (alpn_size != 0u) memcpy(state->negotiated_alpn, alpn, alpn_size);
-  state->negotiated_alpn_size = alpn_size;
+  if (tls_get_handshake_complete(&engine->connection, &complete) != 1)
+    return SALTS_EIO;
+  if (!complete) return SALTS_OK;
+
+  if (state->context->verify_peer) {
+    result = tls_get_verify_result(&engine->connection, &verify_result);
+    if (result != 1 || verify_result != X509_verify_ok)
+      return SALTS_ECONNABORTED;
+    if (!state->server && cnet_tls_ip_literal(engine->server_name)) {
+      result = cnet_tls_verify_ip_subject_alt_name(
+          &engine->connection, engine->server_name);
+      if (result != SALTS_OK) return result;
+    }
+  }
+
+  result = tls_get_selected_alpn(&engine->connection, &alpn, &alpn_size);
+  if (result < 0) return SALTS_EPROTO;
+  if (result == 1) {
+    if (alpn_size == 0u || alpn_size > CNET_TLS_ALPN_NAME_MAX_BYTES)
+      return SALTS_EPROTO;
+    memcpy(state->negotiated_alpn, alpn, alpn_size);
+    state->negotiated_alpn_size = alpn_size;
+  }
+
   state->handshake_complete = true;
   *out_complete = true;
   return SALTS_OK;
+}
+
+int cnet_tls_handshake(cnet_tls_state *state, bool *out_complete) {
+  cnet_tls_gmssl_state *engine;
+  int result;
+  int status;
+  if (state == NULL || out_complete == NULL ||
+      (engine = CNET_TLS_ENGINE(state)) == NULL ||
+      !engine->connection_ready)
+    return SALTS_EINVAL;
+  *out_complete = state->handshake_complete;
+  if (state->handshake_complete) return SALTS_OK;
+
+  result = tls_do_handshake(&engine->connection);
+  if (result != 1 && !cnet_tls_retryable(result))
+    return SALTS_ECONNABORTED;
+  status = cnet_tls_finish_handshake(state, out_complete);
+  return status;
 }
 
 bool cnet_tls_state_handshake_complete(const cnet_tls_state *state) {
   return state != NULL && state->handshake_complete;
 }
 
-static int cnet_tls_protocol_native(cnet_tls_protocol_version version, int *out_version) {
-  if (out_version == NULL) return SALTS_EINVAL;
-  switch (version) {
-  case CNET_TLS_PROTOCOL_VERSION_DEFAULT:
-    *out_version = 0;
-    return SALTS_OK;
-  case CNET_TLS_PROTOCOL_VERSION_1_2:
-    *out_version = TLS1_2_VERSION;
-    return SALTS_OK;
-  case CNET_TLS_PROTOCOL_VERSION_1_3:
-#if defined(TLS1_3_VERSION)
-    *out_version = TLS1_3_VERSION;
-    return SALTS_OK;
-#else
-    return SALTS_ENOTSUP;
-#endif
-  default:
+static int cnet_tls_select_variant(cnet_tls_protocol_version minimum,
+                                   cnet_tls_protocol_version maximum,
+                                   cnet_tls_variant *out_variant) {
+  cnet_tls_protocol_version effective_min = minimum;
+  cnet_tls_protocol_version effective_max = maximum;
+  if (out_variant == NULL) return SALTS_EINVAL;
+  if (minimum != CNET_TLS_PROTOCOL_VERSION_DEFAULT &&
+      minimum != CNET_TLS_PROTOCOL_VERSION_1_2 &&
+      minimum != CNET_TLS_PROTOCOL_VERSION_1_3)
     return SALTS_EINVAL;
-  }
+  if (maximum != CNET_TLS_PROTOCOL_VERSION_DEFAULT &&
+      maximum != CNET_TLS_PROTOCOL_VERSION_1_2 &&
+      maximum != CNET_TLS_PROTOCOL_VERSION_1_3)
+    return SALTS_EINVAL;
+
+  if (effective_min == CNET_TLS_PROTOCOL_VERSION_DEFAULT)
+    effective_min = CNET_TLS_PROTOCOL_VERSION_1_2;
+  if (effective_max == CNET_TLS_PROTOCOL_VERSION_DEFAULT)
+    effective_max = CNET_TLS_PROTOCOL_VERSION_1_3;
+  if (effective_min > effective_max) return SALTS_EINVAL;
+
+  if (effective_min == CNET_TLS_PROTOCOL_VERSION_1_2 &&
+      effective_max == CNET_TLS_PROTOCOL_VERSION_1_2)
+    *out_variant = CNET_TLS_VARIANT_1_2;
+  else if (effective_min == CNET_TLS_PROTOCOL_VERSION_1_3 &&
+           effective_max == CNET_TLS_PROTOCOL_VERSION_1_3)
+    *out_variant = CNET_TLS_VARIANT_1_3;
+  else
+    *out_variant = CNET_TLS_VARIANT_RANGE;
+  return SALTS_OK;
 }
 
 int cnet_tls_state_set_protocol_range(cnet_tls_state *state,
                                       cnet_tls_protocol_version minimum,
                                       cnet_tls_protocol_version maximum) {
-  SSL *ssl;
-  int min_native = 0;
-  int max_native = 0;
+  cnet_tls_variant variant;
   int status;
-  if (state == NULL || (ssl = CNET_TLS_SSL(state)) == NULL || state->handshake_complete)
+  if (state == NULL || CNET_TLS_ENGINE(state) == NULL ||
+      state->handshake_complete)
     return SALTS_EINVAL;
-  status = cnet_tls_protocol_native(minimum, &min_native);
+  status = cnet_tls_select_variant(minimum, maximum, &variant);
   if (status != SALTS_OK) return status;
-  status = cnet_tls_protocol_native(maximum, &max_native);
-  if (status != SALTS_OK) return status;
-  if (minimum != CNET_TLS_PROTOCOL_VERSION_DEFAULT &&
-      maximum != CNET_TLS_PROTOCOL_VERSION_DEFAULT && minimum > maximum)
-    return SALTS_EINVAL;
-  if (SSL_set_min_proto_version(ssl, min_native) != 1 ||
-      SSL_set_max_proto_version(ssl, max_native) != 1)
-    return SALTS_EIO;
-  return SALTS_OK;
+  if (CNET_TLS_ENGINE(state)->variant == variant) return SALTS_OK;
+  state->negotiated_alpn_size = 0u;
+  memset(state->negotiated_alpn, 0, sizeof(state->negotiated_alpn));
+  return cnet_tls_engine_init_connection(state, variant);
 }
 
 void *cnet_tls_state_read_buffer(cnet_tls_state *state) {
@@ -589,138 +1155,244 @@ size_t cnet_tls_state_io_buffer_bytes(const cnet_tls_state *state) {
 }
 
 size_t cnet_tls_cipher_input_capacity(const cnet_tls_state *state) {
-  if (state == NULL || CNET_TLS_BIO(state) == NULL) return 0u;
-  return BIO_ctrl_get_write_guarantee(CNET_TLS_BIO(state));
+  const cnet_tls_gmssl_state *engine =
+      state != NULL ? CNET_TLS_ENGINE(state) : NULL;
+  return engine != NULL && engine->input_size <= engine->capacity
+             ? engine->capacity - engine->input_size
+             : 0u;
 }
 
 int cnet_tls_feed_cipher(cnet_tls_state *state, const void *data, size_t size) {
-  int written;
-  if (state == NULL || CNET_TLS_BIO(state) == NULL || data == NULL || size == 0u)
+  cnet_tls_gmssl_state *engine;
+  size_t written;
+  if (state == NULL || data == NULL || size == 0u ||
+      (engine = CNET_TLS_ENGINE(state)) == NULL)
     return SALTS_EINVAL;
-  if (size > INT_MAX) return SALTS_ERANGE;
-  if (size > cnet_tls_cipher_input_capacity(state)) return SALTS_ENOBUFS;
-  written = BIO_write(CNET_TLS_BIO(state), data, (int)size);
-  if (written <= 0) return BIO_should_retry(CNET_TLS_BIO(state)) ? SALTS_ENOBUFS : SALTS_EIO;
-  return (size_t)written == size ? SALTS_OK : SALTS_EIO;
-}
-
-int cnet_tls_take_cipher(cnet_tls_state *state, void *buffer, size_t capacity, size_t *out_size) {
-  int read_size;
-  if (out_size == NULL) return SALTS_EINVAL;
-  *out_size = 0u;
-  if (state == NULL || CNET_TLS_BIO(state) == NULL || buffer == NULL || capacity == 0u)
-    return SALTS_EINVAL;
-  if (capacity > INT_MAX) return SALTS_ERANGE;
-  if (BIO_ctrl_pending(CNET_TLS_BIO(state)) == 0u) return SALTS_ENOENT;
-  read_size = BIO_read(CNET_TLS_BIO(state), buffer, (int)capacity);
-  if (read_size <= 0) return BIO_should_retry(CNET_TLS_BIO(state)) ? SALTS_ENOENT : SALTS_EIO;
-  *out_size = (size_t)read_size;
+  if (size > engine->capacity - engine->input_size) return SALTS_ENOBUFS;
+  written = cnet_tls_ring_write(
+      engine->cipher_input, engine->capacity, engine->input_head,
+      engine->input_size, (const unsigned char *)data, size);
+  if (written != size) return SALTS_EIO;
+  engine->input_size += written;
   return SALTS_OK;
 }
 
-int cnet_tls_write(cnet_tls_state *state, const void *data, size_t size, bool *out_complete) {
-  int result;
-  if (state == NULL || CNET_TLS_SSL(state) == NULL || data == NULL || size == 0u || out_complete == NULL)
+int cnet_tls_take_cipher(cnet_tls_state *state, void *buffer,
+                         size_t capacity, size_t *out_size) {
+  cnet_tls_gmssl_state *engine;
+  size_t read_size;
+  if (out_size == NULL) return SALTS_EINVAL;
+  *out_size = 0u;
+  if (state == NULL || buffer == NULL || capacity == 0u ||
+      (engine = CNET_TLS_ENGINE(state)) == NULL)
     return SALTS_EINVAL;
-  *out_complete = false;
-  if (!state->handshake_complete || state->close_notify_started) return SALTS_ENOTCONN;
-  if (size > INT_MAX) return SALTS_ERANGE;
-  ERR_clear_error();
-  result = SSL_write(CNET_TLS_SSL(state), data, (int)size);
-  if (result > 0) {
-    if ((size_t)result != size) return SALTS_EIO;
-    *out_complete = true;
-    return SALTS_OK;
-  }
-  return cnet_tls_retry_or_error(CNET_TLS_SSL(state), result, SALTS_EPROTO);
+  if (engine->output_size == 0u) return SALTS_ENOENT;
+  read_size = cnet_tls_ring_read(
+      engine->cipher_output, engine->capacity, &engine->output_head,
+      &engine->output_size, (unsigned char *)buffer, capacity);
+  if (read_size == 0u) return SALTS_EIO;
+  *out_size = read_size;
+  return SALTS_OK;
 }
 
-int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity, size_t *out_size,
-                  bool *out_peer_closed) {
+int cnet_tls_write(cnet_tls_state *state, const void *data, size_t size,
+                   bool *out_complete) {
+  cnet_tls_gmssl_state *engine;
+  const unsigned char *bytes = (const unsigned char *)data;
+  if (state == NULL || data == NULL || size == 0u ||
+      out_complete == NULL ||
+      (engine = CNET_TLS_ENGINE(state)) == NULL)
+    return SALTS_EINVAL;
+  *out_complete = false;
+  if (!state->handshake_complete || state->close_notify_started)
+    return SALTS_ENOTCONN;
+
+  if (engine->write_size == 0u) {
+    engine->write_source = bytes;
+    engine->write_size = size;
+    engine->write_offset = 0u;
+  } else if (engine->write_source != bytes || engine->write_size != size ||
+             engine->write_offset >= engine->write_size) {
+    return SALTS_EBUSY;
+  }
+
+  while (engine->write_offset < engine->write_size) {
+    size_t sent_size = 0u;
+    size_t remaining = engine->write_size - engine->write_offset;
+    int result = tls_send(&engine->connection,
+                          engine->write_source + engine->write_offset,
+                          remaining, &sent_size);
+    if (result == 1) {
+      if (sent_size == 0u || sent_size > remaining) return SALTS_EPROTO;
+      engine->write_offset += sent_size;
+      continue;
+    }
+    if (cnet_tls_retryable(result)) return SALTS_OK;
+    engine->write_source = NULL;
+    engine->write_size = 0u;
+    engine->write_offset = 0u;
+    return SALTS_EPROTO;
+  }
+
+  engine->write_source = NULL;
+  engine->write_size = 0u;
+  engine->write_offset = 0u;
+  *out_complete = true;
+  return SALTS_OK;
+}
+
+static int cnet_tls_read_pending(cnet_tls_state *state, void *buffer,
+                                 size_t capacity, size_t *out_size) {
+  cnet_tls_gmssl_state *engine = CNET_TLS_ENGINE(state);
+  size_t available;
+  size_t size;
+  if (engine == NULL || engine->plaintext_pending_size == 0u)
+    return SALTS_ENOENT;
+  available =
+      engine->plaintext_pending_size - engine->plaintext_pending_offset;
+  size = capacity < available ? capacity : available;
+  memcpy(buffer, state->read_buffer + engine->plaintext_pending_offset, size);
+  engine->plaintext_pending_offset += size;
+  if (engine->plaintext_pending_offset == engine->plaintext_pending_size) {
+    engine->plaintext_pending_offset = 0u;
+    engine->plaintext_pending_size = 0u;
+  }
+  *out_size = size;
+  return SALTS_OK;
+}
+
+int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity,
+                  size_t *out_size, bool *out_peer_closed) {
+  cnet_tls_gmssl_state *engine;
+  size_t received_size = 0u;
+  size_t copy_size;
+  bool record_ready = false;
   int result;
-  int error;
+  int status;
   if (out_size == NULL || out_peer_closed == NULL) return SALTS_EINVAL;
   *out_size = 0u;
   *out_peer_closed = false;
-  if (state == NULL || CNET_TLS_SSL(state) == NULL || buffer == NULL || capacity == 0u) return SALTS_EINVAL;
+  if (state == NULL || buffer == NULL || capacity == 0u ||
+      (engine = CNET_TLS_ENGINE(state)) == NULL)
+    return SALTS_EINVAL;
   if (!state->handshake_complete) return SALTS_ENOTCONN;
-  if (capacity > INT_MAX) return SALTS_ERANGE;
   if (state->peer_close_notify) {
     *out_peer_closed = true;
     return SALTS_OK;
   }
 
-  ERR_clear_error();
-  result = SSL_read(CNET_TLS_SSL(state), buffer, (int)capacity);
-  if (result > 0) {
-    *out_size = (size_t)result;
+  status = cnet_tls_read_pending(state, buffer, capacity, out_size);
+  if (status == SALTS_OK) return SALTS_OK;
+  if (status != SALTS_ENOENT) return status;
+
+  status = cnet_tls_cipher_record_ready(engine, &record_ready);
+  if (status != SALTS_OK) return status;
+  if (!record_ready) return SALTS_OK;
+
+  result = tls_recv(&engine->connection, state->read_buffer,
+                    state->io_buffer_bytes, &received_size);
+  if (result == 1) {
+    if (received_size > state->io_buffer_bytes) return SALTS_EPROTO;
+    copy_size = capacity < received_size ? capacity : received_size;
+    if (copy_size != 0u) memcpy(buffer, state->read_buffer, copy_size);
+    *out_size = copy_size;
+    if (copy_size < received_size) {
+      engine->plaintext_pending_offset = copy_size;
+      engine->plaintext_pending_size = received_size;
+    }
     return SALTS_OK;
   }
-  error = SSL_get_error(CNET_TLS_SSL(state), result);
-  if (error == SSL_ERROR_ZERO_RETURN) {
+  if (result == 0 || result == TLS_ERROR_TCP_CLOSED) {
     state->peer_close_notify = true;
     *out_peer_closed = true;
     return SALTS_OK;
   }
-  if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) return SALTS_OK;
+  if (cnet_tls_retryable(result)) return SALTS_OK;
   return SALTS_EPROTO;
 }
 
 int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed,
                               bool *out_plaintext_pending) {
-  unsigned char byte = 0u;
+  cnet_tls_gmssl_state *engine;
+  size_t received_size = 0u;
   int result;
-  int error;
+  int received = 0;
 
-  if (out_peer_closed == NULL || out_plaintext_pending == NULL) return SALTS_EINVAL;
+  if (out_peer_closed == NULL || out_plaintext_pending == NULL)
+    return SALTS_EINVAL;
   *out_peer_closed = false;
   *out_plaintext_pending = false;
-  if (state == NULL || CNET_TLS_SSL(state) == NULL) return SALTS_EINVAL;
+  if (state == NULL || (engine = CNET_TLS_ENGINE(state)) == NULL)
+    return SALTS_EINVAL;
   if (!state->handshake_complete) return SALTS_ENOTCONN;
   if (state->peer_close_notify) {
     *out_peer_closed = true;
     return SALTS_OK;
   }
-
-  ERR_clear_error();
-  result = SSL_peek(CNET_TLS_SSL(state), &byte, 1);
-  if (result > 0) {
+  if (engine->plaintext_pending_size != 0u) {
     *out_plaintext_pending = true;
     return SALTS_OK;
   }
-  error = SSL_get_error(CNET_TLS_SSL(state), result);
-  if (error == SSL_ERROR_ZERO_RETURN) {
+
+  {
+    bool record_ready = false;
+    int status = cnet_tls_cipher_record_ready(engine, &record_ready);
+    if (status != SALTS_OK) return status;
+    if (!record_ready) return SALTS_OK;
+  }
+
+  result = tls_recv(&engine->connection, state->read_buffer,
+                    state->io_buffer_bytes, &received_size);
+  if (result == 1 && received_size != 0u) {
+    engine->plaintext_pending_offset = 0u;
+    engine->plaintext_pending_size = received_size;
+    *out_plaintext_pending = true;
+    return SALTS_OK;
+  }
+  if (result == 0 || result == TLS_ERROR_TCP_CLOSED) {
     state->peer_close_notify = true;
     *out_peer_closed = true;
     return SALTS_OK;
   }
-  if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) return SALTS_OK;
-  return SALTS_EPROTO;
+  if (!cnet_tls_retryable(result) && result != 1) return SALTS_EPROTO;
+
+  if (tls_get_peer_close_notify(&engine->connection, &received) != 1)
+    return SALTS_EIO;
+  if (received) {
+    state->peer_close_notify = true;
+    *out_peer_closed = true;
+  }
+  return SALTS_OK;
 }
 
 int cnet_tls_shutdown(cnet_tls_state *state, bool *out_notify_generated) {
+  cnet_tls_gmssl_state *engine;
+  size_t output_before;
   int result;
-  int error;
-  if (state == NULL || CNET_TLS_SSL(state) == NULL || out_notify_generated == NULL) return SALTS_EINVAL;
-  *out_notify_generated = false;
+  if (state == NULL || out_notify_generated == NULL ||
+      (engine = CNET_TLS_ENGINE(state)) == NULL)
+    return SALTS_EINVAL;
+  *out_notify_generated = state->close_notify_started;
   if (!state->handshake_complete) return SALTS_ENOTCONN;
 
-  ERR_clear_error();
-  result = SSL_shutdown(CNET_TLS_SSL(state));
-  state->close_notify_started = (SSL_get_shutdown(CNET_TLS_SSL(state)) & SSL_SENT_SHUTDOWN) != 0;
+  output_before = engine->output_size;
+  result = tls_shutdown(&engine->connection);
+  if (engine->output_size > output_before) state->close_notify_started = true;
   *out_notify_generated = state->close_notify_started;
-  if (result >= 0) return SALTS_OK;
-  error = SSL_get_error(CNET_TLS_SSL(state), result);
-  if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) return SALTS_OK;
+
+  if (result == 1 || result == TLS_ERROR_TCP_CLOSED ||
+      cnet_tls_retryable(result))
+    return SALTS_OK;
   return SALTS_EPROTO;
 }
 
-int cnet_tls_get_negotiated_alpn(const cnet_tls_state *state, const unsigned char **out_data,
+int cnet_tls_get_negotiated_alpn(const cnet_tls_state *state,
+                                 const unsigned char **out_data,
                                  size_t *out_size) {
   if (out_data == NULL || out_size == NULL) return SALTS_EINVAL;
   *out_data = NULL;
   *out_size = 0u;
-  if (state == NULL || CNET_TLS_SSL(state) == NULL) return SALTS_EINVAL;
+  if (state == NULL || CNET_TLS_ENGINE(state) == NULL) return SALTS_EINVAL;
   if (!state->handshake_complete) return SALTS_ENOTCONN;
   if (state->negotiated_alpn_size == 0u) return SALTS_ENOENT;
   *out_data = state->negotiated_alpn;
@@ -728,14 +1400,18 @@ int cnet_tls_get_negotiated_alpn(const cnet_tls_state *state, const unsigned cha
   return SALTS_OK;
 }
 
-static int cnet_tls_state_copy_session_string(const cnet_tls_state *state, const char *value,
-                                              char *buffer, size_t capacity, size_t *out_size) {
+static int cnet_tls_state_copy_session_string(const cnet_tls_state *state,
+                                              const char *value,
+                                              char *buffer, size_t capacity,
+                                              size_t *out_size) {
   size_t size;
   if (out_size == NULL) return SALTS_EINVAL;
   *out_size = 0u;
-  if (state == NULL || buffer == NULL || capacity == 0u) return SALTS_EINVAL;
+  if (state == NULL || buffer == NULL || capacity == 0u)
+    return SALTS_EINVAL;
   buffer[0] = '\0';
-  if (CNET_TLS_SSL(state) == NULL || !state->handshake_complete) return SALTS_ENOTCONN;
+  if (CNET_TLS_ENGINE(state) == NULL || !state->handshake_complete)
+    return SALTS_ENOTCONN;
   if (value == NULL || value[0] == '\0') return SALTS_ENOENT;
   size = strlen(value);
   if (capacity <= size) return SALTS_EMSGSIZE;
@@ -744,57 +1420,87 @@ static int cnet_tls_state_copy_session_string(const cnet_tls_state *state, const
   return SALTS_OK;
 }
 
-int cnet_tls_state_negotiated_version(const cnet_tls_state *state, char *buffer, size_t capacity,
+int cnet_tls_state_negotiated_version(const cnet_tls_state *state,
+                                      char *buffer, size_t capacity,
                                       size_t *out_size) {
-  const char *version =
-      state != NULL && CNET_TLS_SSL(state) != NULL ? SSL_get_version((const SSL *)CNET_TLS_SSL(state)) : NULL;
-  return cnet_tls_state_copy_session_string(state, version, buffer, capacity, out_size);
+  int protocol = 0;
+  int result;
+  const char *name = NULL;
+  if (state == NULL || CNET_TLS_ENGINE(state) == NULL)
+    return cnet_tls_state_copy_session_string(state, NULL, buffer, capacity,
+                                              out_size);
+  if (!state->handshake_complete)
+    return cnet_tls_state_copy_session_string(state, NULL, buffer, capacity,
+                                              out_size);
+  result = tls_get_negotiated_protocol(
+      &CNET_TLS_ENGINE(state)->connection, &protocol);
+  if (result < 0) return SALTS_EIO;
+  if (result == 0) return SALTS_ENOENT;
+  if (protocol == TLS_protocol_tls12)
+    name = "TLSv1.2";
+  else if (protocol == TLS_protocol_tls13)
+    name = "TLSv1.3";
+  else
+    return SALTS_EPROTO;
+  return cnet_tls_state_copy_session_string(state, name, buffer, capacity,
+                                            out_size);
 }
 
-int cnet_tls_state_negotiated_cipher(const cnet_tls_state *state, char *buffer, size_t capacity,
+int cnet_tls_state_negotiated_cipher(const cnet_tls_state *state,
+                                     char *buffer, size_t capacity,
                                      size_t *out_size) {
-  const SSL_CIPHER *cipher =
-      state != NULL && CNET_TLS_SSL(state) != NULL ? SSL_get_current_cipher((const SSL *)CNET_TLS_SSL(state)) : NULL;
-  const char *name = cipher != NULL ? SSL_CIPHER_get_name(cipher) : NULL;
-  return cnet_tls_state_copy_session_string(state, name, buffer, capacity, out_size);
+  const char *name = NULL;
+  int result;
+  if (state == NULL || CNET_TLS_ENGINE(state) == NULL)
+    return cnet_tls_state_copy_session_string(state, NULL, buffer, capacity,
+                                              out_size);
+  if (!state->handshake_complete)
+    return cnet_tls_state_copy_session_string(state, NULL, buffer, capacity,
+                                              out_size);
+  result = tls_get_negotiated_cipher_name(
+      &CNET_TLS_ENGINE(state)->connection, &name);
+  if (result < 0) return SALTS_EIO;
+  if (result == 0) return SALTS_ENOENT;
+  return cnet_tls_state_copy_session_string(state, name, buffer, capacity,
+                                            out_size);
 }
 
 int cnet_tls_state_peer_certificate_sha256(
     const cnet_tls_state *state,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]) {
   static const char hex[] = "0123456789abcdef";
-  unsigned char digest[EVP_MAX_MD_SIZE];
-  unsigned int digest_size = 0u;
-  X509 *certificate;
+  uint8_t digest[32];
   size_t index;
+  int result;
 
   if (state == NULL || buffer == NULL) return SALTS_EINVAL;
   buffer[0] = '\0';
-  if (CNET_TLS_SSL(state) == NULL || !state->handshake_complete) return SALTS_ENOTCONN;
-  certificate = SSL_get_peer_certificate((const SSL *)CNET_TLS_SSL(state));
-  if (certificate == NULL) return SALTS_ENOENT;
-  if (X509_digest(certificate, EVP_sha256(), digest, &digest_size) != 1) {
-    X509_free(certificate);
-    return SALTS_EIO;
-  }
-  X509_free(certificate);
-  if (digest_size != 32u) return SALTS_EIO;
-  for (index = 0u; index < digest_size; ++index) {
+  if (CNET_TLS_ENGINE(state) == NULL || !state->handshake_complete)
+    return SALTS_ENOTCONN;
+  result = tls_get_peer_certificate_sha256(
+      &CNET_TLS_ENGINE(state)->connection, digest);
+  if (result < 0) return SALTS_EIO;
+  if (result == 0) return SALTS_ENOENT;
+  for (index = 0u; index < sizeof(digest); ++index) {
     buffer[index * 2u] = hex[digest[index] >> 4u];
     buffer[index * 2u + 1u] = hex[digest[index] & 0x0fu];
   }
-  buffer[digest_size * 2u] = '\0';
+  buffer[sizeof(digest) * 2u] = '\0';
   return SALTS_OK;
 }
 
 int cnet_tls_state_export_channel_binding(
-    const cnet_tls_state *state, uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]) {
+    const cnet_tls_state *state,
+    uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]) {
   static const char exporter_label[] = "EXPORTER-Channel-Binding";
   if (output == NULL) return SALTS_EINVAL;
   memset(output, 0, CNET_TLS_CHANNEL_BINDING_BYTES);
-  if (state == NULL || CNET_TLS_SSL(state) == NULL || !state->handshake_complete) return SALTS_ENOTCONN;
-  return SSL_export_keying_material((SSL *)CNET_TLS_SSL(state), output, CNET_TLS_CHANNEL_BINDING_BYTES,
-                                    exporter_label, sizeof(exporter_label) - 1u, NULL, 0u, 1) == 1
+  if (state == NULL || CNET_TLS_ENGINE(state) == NULL ||
+      !state->handshake_complete)
+    return SALTS_ENOTCONN;
+  return tls_export_keying_material(
+             &CNET_TLS_ENGINE(state)->connection, output,
+             CNET_TLS_CHANNEL_BINDING_BYTES, exporter_label, NULL, 0u, 1) == 1
              ? SALTS_OK
              : SALTS_EIO;
 }

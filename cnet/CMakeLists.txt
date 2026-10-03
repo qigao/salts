@@ -2,7 +2,11 @@ set(TARGET_NAME cnet)
 
 find_package(c-ares CONFIG REQUIRED)
 find_package(kcp CONFIG REQUIRED)
-find_package(OpenSSL REQUIRED)
+find_package(GmSSL CONFIG REQUIRED)
+if(APPLE)
+  find_library(CNET_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+  find_library(CNET_SECURITY_FRAMEWORK Security REQUIRED)
+endif()
 
 get_target_property(cnet_cares_configurations c-ares::cares
                     IMPORTED_CONFIGURATIONS)
@@ -35,8 +39,6 @@ set(CNET_SOURCE_FILES
 
 function(cnet_configure_target target_name)
   target_compile_features(${target_name} PUBLIC c_std_11)
-  # BoringSSL archives contain C++ objects even though CNet exposes a C API.
-  set_target_properties(${target_name} PROPERTIES LINKER_LANGUAGE CXX)
   target_include_directories(
     ${target_name}
     PUBLIC
@@ -51,8 +53,9 @@ function(cnet_configure_target target_name)
     PUBLIC Salts::NativeIO Salts::Concurrency Salts::Core
     PRIVATE Salts::UriParser Salts::Platform Salts::CSTL monocypher salts_reed
             ${cnet_cares_link_items} kcp::kcp c-ares::cares
-            OpenSSL::SSL OpenSSL::Crypto
-            $<$<PLATFORM_ID:Windows>:crypt32>)
+            GmSSL::GmSSL
+            $<$<PLATFORM_ID:Windows>:crypt32>
+            "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>")
 endfunction()
 
 add_library(${TARGET_NAME} SHARED ${CNET_SOURCE_FILES})

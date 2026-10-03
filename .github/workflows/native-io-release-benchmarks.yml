@@ -670,6 +670,14 @@ jobs:
           cmake --build --preset win-release-user --target cnet
           if errorlevel 1 exit /b 1
           if not exist "build\Msvc-Release\bin\cnet.dll" exit /b 1
+          powershell -NoProfile -ExecutionPolicy Bypass -File "%BASELINE_SOURCE%\cmake\ci\stage-windows-cnet-runtime.ps1" -Prefix "%BASELINE_SOURCE%\build\Msvc-Release" -VcpkgInstalledDir "%BASELINE_SOURCE%\vcpkg_installed"
+          if errorlevel 1 exit /b 1
+          for /f "tokens=2 delims==" %%T in ('findstr /b /c:"VCPKG_TARGET_TRIPLET:STRING=" "build\Msvc-Release\CMakeCache.txt"') do set "BASELINE_TRIPLET=%%T"
+          if not defined BASELINE_TRIPLET exit /b 1
+          if exist "vcpkg_installed\%BASELINE_TRIPLET%\bin\*.dll" copy /y "vcpkg_installed\%BASELINE_TRIPLET%\bin\*.dll" "build\Msvc-Release\bin\" >nul
+          dumpbin /dependents "build\Msvc-Release\bin\cnet.dll"
+          if errorlevel 1 exit /b 1
+          dir /b "build\Msvc-Release\bin\*.dll"
           echo CNET_COMPARE_BASELINE_DSO=%BASELINE_SOURCE%\build\Msvc-Release\bin\cnet.dll>>"%GITHUB_ENV%"
           echo CNET_COMPARE_CANDIDATE_DSO=%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\bin\cnet.dll>>"%GITHUB_ENV%"
           echo CNET_COMPARE_EXECUTABLE=%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\bin\cnet_owner_lifecycle_compare.exe>>"%GITHUB_ENV%"

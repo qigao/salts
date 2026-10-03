@@ -1033,7 +1033,7 @@ int cnet_client_destroy(cnet_client *client);
  * @param client Zero-initialized reusable output profile.
  * @param config Explicit trust, client identity, SNI, and ALPN policy.
  * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_EALREADY`, `SALTS_ERANGE`,
- * `SALTS_ENOMEM`, or `SALTS_EIO` for trust/certificate/BoringSSL setup failure.
+ * `SALTS_ENOMEM`, or `SALTS_EIO` for trust/certificate/GmSSL setup failure.
  */
 int cnet_tls_client_init(cnet_tls_client *client, const cnet_tls_client_config *config);
 
@@ -1048,13 +1048,13 @@ int cnet_tls_client_destroy(cnet_tls_client *client);
 
 /**
  * Builds one fail-closed TLS 1.2+ server context. Certificate/key and ALPN
- * input are copied by BoringSSL or CNet before return. No partial context is
+ * input are copied or retained by CNet for the provider context lifetime before return. No partial context is
  * published on failure.
  *
  * @param server Zero-initialized reusable output context.
  * @param config Synchronously consumed certificate, trust, client-auth, and ALPN policy.
  * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_EALREADY`, `SALTS_ERANGE`,
- * `SALTS_ENOMEM`, or `SALTS_EIO` for certificate/BoringSSL setup failure.
+ * `SALTS_ENOMEM`, or `SALTS_EIO` for certificate/GmSSL setup failure.
  */
 int cnet_tls_server_init(cnet_tls_server *server, const cnet_tls_server_config *config);
 

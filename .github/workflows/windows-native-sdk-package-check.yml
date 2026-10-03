@@ -6,7 +6,6 @@ on:
       - "cnet/src/**"
       - "cnet/include/**"
       - "cnet/CMakeLists.txt"
-      - "cmake/ci/stage-windows-cnet-runtime.ps1"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/workflows/windows-native-sdk-package-check.yml"
       - ".github/actions/setup-re2c-tools/**"
@@ -80,13 +79,9 @@ jobs:
           $ErrorActionPreference = "Stop"
           $prefix = Join-Path $env:GITHUB_WORKSPACE "stage\sdk\windows-x64"
           cmake --install build/Msvc-Release --prefix $prefix --config Release
-          ./cmake/ci/stage-windows-cnet-runtime.ps1 -Prefix $prefix
-
           foreach ($relative in @(
             "bin\cnet.dll",
             "bin\salts.dll",
-            "bin\ssl.dll",
-            "bin\crypto.dll",
             "lib\cmake\Salts\SaltsConfig.cmake",
             "lib\cmake\Salts\SaltsTargets.cmake"
           )) {
@@ -97,11 +92,16 @@ jobs:
           }
 
           $targets = Get-Content -LiteralPath (Join-Path $prefix "lib\cmake\Salts\SaltsTargets.cmake") -Raw
-          if ($targets -match "OpenSSL::SSL|OpenSSL::Crypto") {
+          if ($targets -match "OpenSSL::SSL|OpenSSL::Crypto|GmSSL::GmSSL") {
             throw "private TLS implementation dependency leaked into Salts public CMake targets"
           }
+          foreach ($unexpected in @("ssl.dll", "crypto.dll", "gmssl.dll")) {
+            if (Test-Path -LiteralPath (Join-Path $prefix "bin\\$unexpected") -PathType Leaf) {
+              throw "unexpected private TLS runtime in SDK: $unexpected"
+            }
+          }
 
-          Write-Host "Windows SDK runtime payload is self-contained."
+          Write-Host "Windows SDK runtime payload is self-contained and statically linked to GmSSL."
 
       - name: Verify CNet PE runtime contract
         shell: cmd
@@ -114,6 +114,9 @@ jobs:
           findstr /i /c:"salts.dll" build\cnet-runtime-deps.txt >nul
           if errorlevel 1 exit /b 1
           findstr /i /c:"ssl.dll" build\cnet-runtime-deps.txt >nul
-          if errorlevel 1 exit /b 1
+          if not errorlevel 1 exit /b 1
           findstr /i /c:"crypto.dll" build\cnet-runtime-deps.txt >nul
-          if errorlevel 1 exit /b 1
+          if not errorlevel 1 exit /b 1
+          findstr /i /c:"gmssl.dll" build\cnet-runtime-deps.txt >nul
+          if not errorlevel 1 exit /b 1
+          exit /b 0

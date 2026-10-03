@@ -107,8 +107,7 @@ set_target_properties(
   cnet_command_profile_test
   PROPERTIES C_STANDARD 11
              C_STANDARD_REQUIRED ON
-             C_EXTENSIONS OFF
-             LINKER_LANGUAGE CXX)
+             C_EXTENSIONS OFF)
 # The release benchmark workflow explicitly builds cnet_command_test; keep its
 # diagnostic attribution and write-ownership contracts in the same build closure.
 add_dependencies(cnet_command_test cnet_command_profile_test cnet_write_queue_test)
@@ -136,10 +135,9 @@ cmake_add_test(
   SOURCES
   cnet_tls_test.c
   LIBS
-  cnet
+  cnet_profile
   Salts::Core
   Salts::TinyTest
-  OpenSSL::SSL
   INCLUDES
   ${CNET_TEST_PRIVATE_INCLUDE}
   FOLDER
@@ -148,8 +146,23 @@ set_target_properties(
   cnet_tls_test
   PROPERTIES C_STANDARD 11
              C_STANDARD_REQUIRED ON
-             C_EXTENSIONS OFF
-             LINKER_LANGUAGE CXX)
+             C_EXTENSIONS OFF)
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/ip-test-root-cert.pem" CNET_TLS_TEST_IP_CA)
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/ip-test-server-cert.pem" CNET_TLS_TEST_IP_CERT)
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/ip-test-server-key.pem" CNET_TLS_TEST_IP_KEY)
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/p256-test-server-cert.pem" CNET_TLS_TEST_P256_CERT)
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/p256-test-server-key.pem" CNET_TLS_TEST_P256_KEY)
+target_compile_definitions(cnet_tls_test PRIVATE
+  "CNET_TLS_TEST_IP_CA=\"${CNET_TLS_TEST_IP_CA}\""
+  "CNET_TLS_TEST_IP_CERT=\"${CNET_TLS_TEST_IP_CERT}\""
+  "CNET_TLS_TEST_IP_KEY=\"${CNET_TLS_TEST_IP_KEY}\""
+  "CNET_TLS_TEST_P256_CERT=\"${CNET_TLS_TEST_P256_CERT}\""
+  "CNET_TLS_TEST_P256_KEY=\"${CNET_TLS_TEST_P256_KEY}\"")
+unset(CNET_TLS_TEST_IP_CA)
+unset(CNET_TLS_TEST_IP_CERT)
+unset(CNET_TLS_TEST_IP_KEY)
+unset(CNET_TLS_TEST_P256_CERT)
+unset(CNET_TLS_TEST_P256_KEY)
 
 find_package(GmSSL CONFIG REQUIRED)
 
@@ -219,8 +232,7 @@ set_target_properties(
   cnet_owner_profile_test
   PROPERTIES C_STANDARD 11
              C_STANDARD_REQUIRED ON
-             C_EXTENSIONS OFF
-             LINKER_LANGUAGE CXX)
+             C_EXTENSIONS OFF)
 
 cmake_add_test(
   cnet_event_test
@@ -292,8 +304,7 @@ set_target_properties(
   cnet_shards_multi_owner_test
   PROPERTIES C_STANDARD 11
              C_STANDARD_REQUIRED ON
-             C_EXTENSIONS OFF
-             LINKER_LANGUAGE CXX)
+             C_EXTENSIONS OFF)
 add_dependencies(cnet_shards_test cnet_shards_multi_owner_test)
 
 cmake_add_test(
@@ -420,8 +431,7 @@ set_target_properties(
   cnet_api_profile_test
   PROPERTIES C_STANDARD 11
              C_STANDARD_REQUIRED ON
-             C_EXTENSIONS OFF
-             LINKER_LANGUAGE CXX)
+             C_EXTENSIONS OFF)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   cmake_add_test(
@@ -528,8 +538,7 @@ set_target_properties(
   cnet_stop_contract_test
   PROPERTIES C_STANDARD 11
              C_STANDARD_REQUIRED ON
-             C_EXTENSIONS OFF
-             LINKER_LANGUAGE CXX)
+             C_EXTENSIONS OFF)
 
 cmake_add_test(
   cnet_benchmark_stats_test
