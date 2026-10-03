@@ -119,3 +119,4 @@ jobs:
           if not errorlevel 1 exit /b 1
           findstr /i /c:"gmssl.dll" build\cnet-runtime-deps.txt >nul
           if not errorlevel 1 exit /b 1
+          exit /b 0
