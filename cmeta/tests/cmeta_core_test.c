@@ -499,6 +499,8 @@ suite("CMeta core") {
         check_equal(meta->name, "cmeta_test_counter");
         check_equal(meta->method_count, (size_t)3);
         check_true(cmeta_interface_desc_valid(meta));
+        check_false(cmeta_interface_desc_has_owning_method(meta));
+        check_false(cmeta_interface_method_owns_self(&meta->methods[0]));
         check_equal(meta->methods[0].name, "add");
         check_equal(cmeta_interface_method_arity(&meta->methods[0]), (size_t)1u);
         check_equal(meta->methods[1].name, "value");
@@ -525,12 +527,16 @@ suite("CMeta core") {
         check_false(cmeta_test_counter_valid(&counter));
     }
 
-    it("clears an owning interface after destructive dispatch") {
+    it("marks an owning interface as requiring ownership authority") {
         int destroy_count = 0;
         cmeta_test_owner owner =
             cmeta_test_basic_owner_as_cmeta_test_owner(&destroy_count);
+        const cmeta_interface_desc *meta = cmeta_test_owner_interface();
 
         check_true(cmeta_test_owner_valid(&owner));
+        check_true(cmeta_interface_desc_valid(meta));
+        check_true(cmeta_interface_desc_has_owning_method(meta));
+        check_true(cmeta_interface_method_owns_self(&meta->methods[0]));
         cmeta_test_owner_destroy(&owner);
         check_equal(destroy_count, 1);
         check_false(cmeta_test_owner_valid(&owner));
