@@ -15,10 +15,17 @@ typedef struct cmeta_lower_type {
     char concrete[128];
 } cmeta_lower_type;
 
+typedef enum cmeta_lower_ownership_state {
+    CMETA_LOWER_OWNERSHIP_NONE = 0,
+    CMETA_LOWER_OWNERSHIP_LIVE_OWNED,
+    CMETA_LOWER_OWNERSHIP_MOVED
+} cmeta_lower_ownership_state;
+
 typedef struct cmeta_lower_symbol {
     char name[128];
     char concrete[128];
     unsigned depth;
+    cmeta_lower_ownership_state ownership;
 } cmeta_lower_symbol;
 
 typedef struct cmeta_lower_context {
@@ -371,9 +378,19 @@ cmeta_lower_find_symbol(const cmeta_lower_context *context, const char *name) {
     return NULL;
 }
 
+static cmeta_lower_symbol *
+cmeta_lower_find_symbol_mutable(cmeta_lower_context *context, const char *name) {
+    size_t i;
+    for (i = context->symbol_count; i != 0u; --i)
+        if (strcmp(context->symbols[i - 1u].name, name) == 0)
+            return &context->symbols[i - 1u];
+    return NULL;
+}
+
 static int cmeta_lower_add_symbol(
     cmeta_lower_context *context, size_t offset,
-    const char *name, const char *concrete, unsigned depth) {
+    const char *name, const char *concrete, unsigned depth,
+    cmeta_lower_ownership_state ownership) {
     cmeta_lower_symbol *next;
     size_t capacity;
 
@@ -397,6 +414,7 @@ static int cmeta_lower_add_symbol(
         sizeof(context->symbols[context->symbol_count].concrete),
         "%s", concrete);
     context->symbols[context->symbol_count].depth = depth;
+    context->symbols[context->symbol_count].ownership = ownership;
     ++context->symbol_count;
     return 1;
 }
@@ -419,7 +437,8 @@ static int cmeta_lower_register_declaration(
 
     if (!cmeta_lower_identifier(source, size, i, name, sizeof(name), &end))
         return 1;
-    return cmeta_lower_add_symbol(context, i, name, concrete, depth);
+    return cmeta_lower_add_symbol(
+        context, i, name, concrete, depth, CMETA_LOWER_OWNERSHIP_NONE);
 }
 
 static int cmeta_lower_qualifier(const char *ident) {
@@ -428,6 +447,129 @@ static int cmeta_lower_qualifier(const char *ident) {
            strcmp(ident, "static") == 0 ||
            strcmp(ident, "register") == 0 ||
            strcmp(ident, "auto") == 0;
+}
+
+static int cmeta_lower_try_owned_declaration(
+    cmeta_lower_context *context, cmeta_lower_buffer *output,
+    size_t ident_start, size_t ident_end, unsigned depth,
+    size_t *next_offset) {
+    const char *source = context->source;
+    size_t size = context->source_size;
+    size_t i = cmeta_lower_skip_space_comments(source, size, ident_end);
+    size_t type_end;
+    size_t name_start;
+    size_t name_end;
+    char type_name[128];
+    char name[128];
+
+    if (ident_end - ident_start != strlen("owned") ||
+        strncmp(source + ident_start, "owned", strlen("owned")) != 0)
+        return 0;
+    if (i >= size || source[i] != '(')
+        return 0;
+
+    i = cmeta_lower_skip_space_comments(source, size, i + 1u);
+    if (!cmeta_lower_identifier(
+            source, size, i, type_name, sizeof(type_name), &type_end)) {
+        cmeta_lower_set_error(
+            context, ident_start, "owned(...) requires a simple named type");
+        return -1;
+    }
+
+    i = cmeta_lower_skip_space_comments(source, size, type_end);
+    if (i >= size || source[i] != ')') {
+        cmeta_lower_set_error(
+            context, ident_start, "owned(...) requires exactly one named type");
+        return -1;
+    }
+
+    name_start = cmeta_lower_skip_space_comments(source, size, i + 1u);
+    if (!cmeta_lower_identifier(
+            source, size, name_start, name, sizeof(name), &name_end)) {
+        cmeta_lower_set_error(
+            context, ident_start, "owned(...) declaration requires a variable name");
+        return -1;
+    }
+
+    if (!cmeta_lower_add_symbol(
+            context, name_start, name, type_name, depth,
+            CMETA_LOWER_OWNERSHIP_LIVE_OWNED))
+        return -1;
+
+    if (!cmeta_lower_buffer_puts(output, type_name)) {
+        cmeta_lower_set_error(context, ident_start, "out of memory");
+        return -1;
+    }
+
+    *next_offset = i + 1u;
+    return 1;
+}
+
+static int cmeta_lower_try_move(
+    cmeta_lower_context *context, cmeta_lower_buffer *output,
+    size_t ident_start, size_t ident_end, const char *ident,
+    size_t *next_offset) {
+    const char *source = context->source;
+    size_t size = context->source_size;
+    size_t i;
+    size_t value_end;
+    char value_name[128];
+    cmeta_lower_symbol *symbol;
+
+    if (strcmp(ident, "move") != 0)
+        return 0;
+
+    i = cmeta_lower_skip_space_comments(source, size, ident_end);
+    if (i >= size || source[i] != '(')
+        return 0;
+    i = cmeta_lower_skip_space_comments(source, size, i + 1u);
+    if (!cmeta_lower_identifier(
+            source, size, i, value_name, sizeof(value_name), &value_end)) {
+        cmeta_lower_set_error(
+            context, ident_start, "move(...) requires one owned variable");
+        return -1;
+    }
+    i = cmeta_lower_skip_space_comments(source, size, value_end);
+    if (i >= size || source[i] != ')') {
+        cmeta_lower_set_error(
+            context, ident_start, "move(...) requires exactly one owned variable");
+        return -1;
+    }
+
+    symbol = cmeta_lower_find_symbol_mutable(context, value_name);
+    if (symbol == NULL ||
+        symbol->ownership == CMETA_LOWER_OWNERSHIP_NONE) {
+        cmeta_lower_set_errorf(
+            context, ident_start, "move requires owned value '",
+            value_name, "'");
+        return -1;
+    }
+    if (symbol->ownership == CMETA_LOWER_OWNERSHIP_MOVED) {
+        cmeta_lower_set_errorf(
+            context, ident_start, "owned value '",
+            value_name, "' moved more than once");
+        return -1;
+    }
+
+    symbol->ownership = CMETA_LOWER_OWNERSHIP_MOVED;
+    if (!cmeta_lower_buffer_puts(output, value_name)) {
+        cmeta_lower_set_error(context, ident_start, "out of memory");
+        return -1;
+    }
+    *next_offset = i + 1u;
+    return 1;
+}
+
+static int cmeta_lower_validate_symbol_use(
+    cmeta_lower_context *context, size_t offset, const char *ident) {
+    const cmeta_lower_symbol *symbol =
+        cmeta_lower_find_symbol(context, ident);
+    if (symbol == NULL ||
+        symbol->ownership != CMETA_LOWER_OWNERSHIP_MOVED)
+        return 1;
+    cmeta_lower_set_errorf(
+        context, offset, "use of moved owned value '", ident, "'");
+    return 0;
 }
 
 static int cmeta_lower_split_operation(
@@ -612,6 +754,18 @@ static int cmeta_lower_transform(
             size_t next = end;
             int rewrite;
 
+            if (statement_start && strcmp(ident, "owned") == 0) {
+                rewrite = cmeta_lower_try_owned_declaration(
+                    context, output, i, end, depth, &next);
+                if (rewrite < 0)
+                    return 0;
+                if (rewrite > 0) {
+                    statement_start = 0;
+                    i = next;
+                    continue;
+                }
+            }
+
             if (statement_start) {
                 known_type = cmeta_lower_find_type(context, ident);
                 if (known_type != NULL) {
@@ -623,6 +777,18 @@ static int cmeta_lower_transform(
                     statement_start = 0;
                 }
             }
+
+            rewrite = cmeta_lower_try_move(
+                context, output, i, end, ident, &next);
+            if (rewrite < 0)
+                return 0;
+            if (rewrite > 0) {
+                i = next;
+                continue;
+            }
+
+            if (!cmeta_lower_validate_symbol_use(context, i, ident))
+                return 0;
 
             rewrite = cmeta_lower_try_receiver_call(
                 context, output, i, end, ident, &next);
@@ -795,7 +961,7 @@ done:
 
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
-        puts("cmeta-lower 1");
+        puts("cmeta-lower 2");
         return 0;
     }
     if (argc != 3) {

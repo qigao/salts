@@ -16,8 +16,15 @@ foreach(expected
     "IntVec_push(&list,30)"
     "IntVec_push(&list, 40)"
     "IntList_add(&list,50)"
+    "IntList transfer = {0}"
+    "IntList_add(&transfer,60)"
+    "inner_received = transfer"
+    "IntList_add(&transfer,61)"
+    "received = transfer"
     "\"list.add(99); List_add(&list, 99);\""
-    "/* list.add(77); List_add(&list, 77); */")
+    "\"owned(IntList) fake = {0}; move(fake);\""
+    "/* list.add(77); List_add(&list, 77); */"
+    "/* owned(IntList) fake = {0}; move(fake); */")
   string(FIND "${source}" "${expected}" found)
   if(found EQUAL -1)
     message(FATAL_ERROR "expected lowered/preserved source fragment missing: ${expected}")
