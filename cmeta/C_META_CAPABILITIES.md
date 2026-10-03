@@ -217,6 +217,8 @@ not act on committed collectors.
 without defining an erased invocation ABI. A reflected declaration records
 parameter order/names, CMeta type descriptors, explicit
 UNKNOWN/IN/OUT/INOUT direction, optional pointer ownership/nullability flags,
+and explicit result semantics (UNKNOWN/VALUE/BORROWED/SHARED/OWNED plus
+orthogonal NULLABLE) without inferring ownership from C pointer spelling,
 return type, and the shared effect/property contract. UNKNOWN is a valid zero
 state and must not be strengthened by consumers from pointer spelling or names.
 
