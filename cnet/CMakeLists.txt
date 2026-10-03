@@ -3,6 +3,10 @@ set(TARGET_NAME cnet)
 find_package(c-ares CONFIG REQUIRED)
 find_package(kcp CONFIG REQUIRED)
 find_package(GmSSL CONFIG REQUIRED)
+if(APPLE)
+  find_library(CNET_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+  find_library(CNET_SECURITY_FRAMEWORK Security REQUIRED)
+endif()
 
 get_target_property(cnet_cares_configurations c-ares::cares
                     IMPORTED_CONFIGURATIONS)
