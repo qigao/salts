@@ -181,6 +181,11 @@ describe("manifest admission") {
                     SALTS_PLUGIN_UNSUPPORTED_ABI);
 
         manifest = make_manifest(exports, &codec);
+        manifest.abi_version = SALTS_PLUGIN_ABI_VERSION - 1u;
+        check_equal(salts_plugin_manifest_validate(&manifest),
+                    SALTS_PLUGIN_UNSUPPORTED_ABI);
+
+        manifest = make_manifest(exports, &codec);
         manifest.struct_size = SALTS_PLUGIN_MANIFEST_SIZE - 1u;
         check_equal(salts_plugin_manifest_validate(&manifest),
                     SALTS_PLUGIN_INVALID_MANIFEST);
