@@ -97,6 +97,7 @@ static bool cnet_tls_optional_path_valid(const char *value) {
          (value == NULL || size != 0u);
 }
 
+#if !defined(_WIN32) && !defined(__APPLE__)
 static bool cnet_tls_file_readable(const char *path) {
   FILE *file;
   if (path == NULL || path[0] == '\0') return false;
@@ -105,7 +106,9 @@ static bool cnet_tls_file_readable(const char *path) {
   (void)fclose(file);
   return true;
 }
+#endif
 
+#if defined(_WIN32) || defined(__APPLE__)
 static int cnet_tls_der_bundle_append(cnet_tls_der_bundle *bundle,
                                       const unsigned char *data, size_t size) {
   unsigned char *next;
@@ -141,6 +144,7 @@ static void cnet_tls_der_bundle_dispose(cnet_tls_der_bundle *bundle) {
   free(bundle->data);
   memset(bundle, 0, sizeof(*bundle));
 }
+#endif
 
 #if defined(_WIN32)
 static int cnet_tls_append_windows_store(cnet_tls_der_bundle *bundle, const char *name) {
@@ -695,7 +699,10 @@ int cnet_tls_state_init(cnet_tls_state *state, cnet_tls_context *context,
 
   if (state == NULL || context == NULL || context->server != server ||
       io_buffer_bytes < CNET_TLS_MIN_IO_BUFFER_BYTES ||
-      (!server && (server_name == NULL || server_name[0] == '\0')))
+      (!server &&
+       (server_name == NULL || server_name[0] == '\0' ||
+        !cnet_tls_bounded_string(server_name,
+                                 CNET_TLS_SERVER_NAME_CAPACITY - 1u, NULL))))
     return SALTS_EINVAL;
   if (state->engine != NULL || state->context != NULL) return SALTS_EALREADY;
   if (io_buffer_bytes >
