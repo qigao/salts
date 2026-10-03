@@ -150,8 +150,11 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
 #define CMETA_C1_INLINE_DISPATCH_I(kind, pub, op, extra, ...) \
     CMETA_PP_CAT(CMETA_C1_INLINE_, kind)(pub, op, extra, __VA_ARGS__)
 
+#define CMETA_CONTAINER1_DECLARE(name, raw_type) \
+    typedef struct name { cmeta_container_header cmeta; raw_type raw; } name
+
 #define CMETA_CONTAINER1_DEFINE_WITH_TYPE(name, type, type_desc, raw_type, prefix, ok_code, aux, methods) \
-    typedef struct name { cmeta_container_header cmeta; raw_type raw; } name; \
+    CMETA_CONTAINER1_DECLARE(name, raw_type); \
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc; \
     methods(CMETA_C1_INLINE_DISPATCH, (name, type, type_desc, raw_type, prefix, ok_code, aux))
 #define CMETA_CONTAINER1_DEFINE(name, type, raw_type, prefix, ok_code, aux, methods) \
@@ -274,9 +277,12 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
 #define CMETA_C2_INLINE_DISPATCH_I(kind, pub, op, extra, ...) \
     CMETA_PP_CAT(CMETA_C2_INLINE_, kind)(pub, op, extra, __VA_ARGS__)
 
-#define CMETA_CONTAINER2_DEFINE_WITH_TYPES(name, key_type, value_type, key_desc, value_desc, raw_type, prefix, ok_code, aux, methods) \
+#define CMETA_CONTAINER2_DECLARE(name, key_type, value_type, raw_type) \
     typedef struct name##_entry { key_type key; value_type value; } name##_entry; \
-    typedef struct name { cmeta_container_header cmeta; raw_type raw; } name; \
+    typedef struct name { cmeta_container_header cmeta; raw_type raw; } name
+
+#define CMETA_CONTAINER2_DEFINE_WITH_TYPES(name, key_type, value_type, key_desc, value_desc, raw_type, prefix, ok_code, aux, methods) \
+    CMETA_CONTAINER2_DECLARE(name, key_type, value_type, raw_type); \
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc; \
     methods(CMETA_C2_INLINE_DISPATCH, (name, key_type, value_type, key_desc, value_desc, raw_type, prefix, ok_code, aux))
 #define CMETA_CONTAINER2_DEFINE(name, key_type, value_type, raw_type, prefix, ok_code, aux, methods) \
