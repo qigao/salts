@@ -45,7 +45,10 @@ theorem reflected_result_admission_updates_source {ty : Ty}
       HasOwnership post value ownership := by
   refine ⟨context.set value ownership, ?_, ?_⟩
   · simp [admitResult, mapped]
-  · simp [OwnershipContext.set]
+  · change
+      (context.set value ownership) value.token =
+        some { ty := ty, ownership := ownership }
+    simp [OwnershipContext.set]
 
 theorem shared_readable : Readable .shared := .shared
 
