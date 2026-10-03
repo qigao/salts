@@ -107,8 +107,7 @@ set_target_properties(
   cnet_command_profile_test
   PROPERTIES C_STANDARD 11
              C_STANDARD_REQUIRED ON
-             C_EXTENSIONS OFF
-             LINKER_LANGUAGE CXX)
+             C_EXTENSIONS OFF)
 # The release benchmark workflow explicitly builds cnet_command_test; keep its
 # diagnostic attribution and write-ownership contracts in the same build closure.
 add_dependencies(cnet_command_test cnet_command_profile_test cnet_write_queue_test)
@@ -139,7 +138,6 @@ cmake_add_test(
   cnet
   Salts::Core
   Salts::TinyTest
-  OpenSSL::SSL
   INCLUDES
   ${CNET_TEST_PRIVATE_INCLUDE}
   FOLDER
@@ -148,8 +146,7 @@ set_target_properties(
   cnet_tls_test
   PROPERTIES C_STANDARD 11
              C_STANDARD_REQUIRED ON
-             C_EXTENSIONS OFF
-             LINKER_LANGUAGE CXX)
+             C_EXTENSIONS OFF)
 
 find_package(GmSSL CONFIG REQUIRED)
 
@@ -219,8 +216,7 @@ set_target_properties(
   cnet_owner_profile_test
   PROPERTIES C_STANDARD 11
              C_STANDARD_REQUIRED ON
-             C_EXTENSIONS OFF
-             LINKER_LANGUAGE CXX)
+             C_EXTENSIONS OFF)
 
 cmake_add_test(
   cnet_event_test
@@ -292,8 +288,7 @@ set_target_properties(
   cnet_shards_multi_owner_test
   PROPERTIES C_STANDARD 11
              C_STANDARD_REQUIRED ON
-             C_EXTENSIONS OFF
-             LINKER_LANGUAGE CXX)
+             C_EXTENSIONS OFF)
 add_dependencies(cnet_shards_test cnet_shards_multi_owner_test)
 
 cmake_add_test(
@@ -420,8 +415,7 @@ set_target_properties(
   cnet_api_profile_test
   PROPERTIES C_STANDARD 11
              C_STANDARD_REQUIRED ON
-             C_EXTENSIONS OFF
-             LINKER_LANGUAGE CXX)
+             C_EXTENSIONS OFF)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   cmake_add_test(
@@ -528,8 +522,7 @@ set_target_properties(
   cnet_stop_contract_test
   PROPERTIES C_STANDARD 11
              C_STANDARD_REQUIRED ON
-             C_EXTENSIONS OFF
-             LINKER_LANGUAGE CXX)
+             C_EXTENSIONS OFF)
 
 cmake_add_test(
   cnet_benchmark_stats_test
