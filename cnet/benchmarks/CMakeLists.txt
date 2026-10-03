@@ -27,11 +27,11 @@ cmake_add_benchmark(cnet_tls_sg_benchmark
   SOURCES cnet_tls_sg_benchmark.c
   LIBS cnet_profile Salts::TinyTest
   FOLDER "cnet/benchmarks")
-file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/../tests/fixtures/p256-test-root-cert.pem"
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/../tests/fixtures/ip-test-root-cert.pem"
      CNET_TLS_BENCH_CA)
-file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/../tests/fixtures/p256-test-server-cert.pem"
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/../tests/fixtures/ip-test-server-cert.pem"
      CNET_TLS_BENCH_CERT)
-file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/../tests/fixtures/p256-test-server-key.pem"
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/../tests/fixtures/ip-test-server-key.pem"
      CNET_TLS_BENCH_KEY)
 target_compile_definitions(cnet_tls_sg_benchmark PRIVATE
   "CNET_TLS_BENCH_CA=\"${CNET_TLS_BENCH_CA}\""
