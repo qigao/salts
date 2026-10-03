@@ -1142,13 +1142,23 @@ static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *sessio
   int status;
 
 #if defined(CNET_INTERNAL_TESTING)
-  if (cnet_write_handle_valid(session->tls_send_write.handle)) {
-    fprintf(stderr,
-            "CNET_TLS_PUMP enter slot=%u gen=%u remaining=%zu accepted=%d write_active=%d\n",
-            session->handle.slot, session->handle.generation,
-            session->tls_send_write.remaining,
-            session->tls_send_accepted ? 1 : 0,
-            session->write_active ? 1 : 0);
+  {
+    size_t debug_queued_writes = 0u;
+    const int debug_status =
+        cnet_write_queue_count(&impl->writes, session->handle, &debug_queued_writes);
+    if (debug_status == SALTS_OK &&
+        (debug_queued_writes != 0u ||
+         cnet_write_handle_valid(session->tls_send_write.handle))) {
+      printf("CNET_TLS_PUMP enter slot=%u gen=%u queued=%zu handle=%u remaining=%zu accepted=%d read_active=%d write_active=%d\n",
+             session->handle.slot, session->handle.generation,
+             debug_queued_writes,
+             cnet_write_handle_valid(session->tls_send_write.handle) ? 1u : 0u,
+             session->tls_send_write.remaining,
+             session->tls_send_accepted ? 1 : 0,
+             session->read_active ? 1 : 0,
+             session->write_active ? 1 : 0);
+      fflush(stdout);
+    }
   }
 #endif
 
@@ -1181,29 +1191,30 @@ static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *sessio
     if (status != SALTS_OK) return status;
     session->tls_send_accepted = complete;
 #if defined(CNET_INTERNAL_TESTING)
-    fprintf(stderr,
-            "CNET_TLS_PUMP accept slot=%u remaining=%zu complete=%d write_active=%d\n",
-            session->handle.slot, session->tls_send_write.remaining,
-            complete ? 1 : 0, session->write_active ? 1 : 0);
+    printf("CNET_TLS_PUMP accept slot=%u remaining=%zu complete=%d write_active=%d\n",
+           session->handle.slot, session->tls_send_write.remaining,
+           complete ? 1 : 0, session->write_active ? 1 : 0);
+    fflush(stdout);
 #endif
   }
   status = cnet_owner_tls_start_write(impl, session, &started);
   if (status != SALTS_OK) return status;
 #if defined(CNET_INTERNAL_TESTING)
   if (cnet_write_handle_valid(session->tls_send_write.handle)) {
-    fprintf(stderr,
-            "CNET_TLS_PUMP post-start slot=%u remaining=%zu accepted=%d write_active=%d started=%d\n",
-            session->handle.slot, session->tls_send_write.remaining,
-            session->tls_send_accepted ? 1 : 0,
-            session->write_active ? 1 : 0, started ? 1 : 0);
+    printf("CNET_TLS_PUMP post-start slot=%u remaining=%zu accepted=%d write_active=%d started=%d\n",
+           session->handle.slot, session->tls_send_write.remaining,
+           session->tls_send_accepted ? 1 : 0,
+           session->write_active ? 1 : 0, started ? 1 : 0);
+    fflush(stdout);
   }
 #endif
   if (cnet_write_handle_valid(session->tls_send_write.handle) && session->tls_send_accepted &&
       !session->write_active && !started) {
     const bool close_after_send = session->tls_send_write.close_after_send;
 #if defined(CNET_INTERNAL_TESTING)
-    fprintf(stderr, "CNET_TLS_PUMP publish-send slot=%u size=%zu\n",
-            session->handle.slot, session->tls_send_write.size);
+    printf("CNET_TLS_PUMP publish-send slot=%u size=%zu\n",
+           session->handle.slot, session->tls_send_write.size);
+    fflush(stdout);
 #endif
     status = cnet_owner_tls_publish_send(impl, session);
     if (status != SALTS_OK) return status;
