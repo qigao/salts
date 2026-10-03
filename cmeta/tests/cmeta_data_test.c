@@ -1482,6 +1482,19 @@ spec("CMeta semantic data descriptors") {
     check_equal(source.score, 0);
   }
 
+  it("destroys through restore-zero without requiring copy support") {
+    int value = 41;
+
+    cmeta_data_test_failing_restore_calls = 0u;
+    check_false(cmeta_data_value_copy_supported(&cmeta_data_test_failing_data));
+    check_false(cmeta_data_value_traits_supported(&cmeta_data_test_failing_data));
+
+    cmeta_data_value_destroy(&cmeta_data_test_failing_data, &value);
+
+    check_equal(value, 0);
+    check_equal(cmeta_data_test_failing_restore_calls, (size_t)1u);
+  }
+
   it("derives transactional lifecycle for structs with owned fields") {
     cmeta_data_test_owned_record source = {0, 0};
     cmeta_data_test_owned_record destination = {0, 0};

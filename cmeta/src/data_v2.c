@@ -1021,6 +1021,13 @@ cmeta_status cmeta_data_value_restore_zero(
     return cmeta_data_construct_restore_zero(desc, object);
 }
 
+void cmeta_data_value_destroy(
+    const cmeta_data_desc *desc, void *object) {
+    if (!cmeta_data_desc_valid(desc) || object == NULL ||
+        cmeta_data_value_restore_zero(desc, object) != CMETA_OK)
+        abort();
+}
+
 static bool cmeta_data_struct_field_bounds_valid(
     const cmeta_data_desc *owner, const cmeta_data_field_desc *field) {
     const cmeta_data_desc *value;

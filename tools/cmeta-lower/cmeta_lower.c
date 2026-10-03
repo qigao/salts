@@ -433,6 +433,108 @@ static void cmeta_lower_leave_scope(
         --context->symbol_count;
 }
 
+static const cmeta_lower_symbol *
+cmeta_lower_find_live_owned_from_depth(
+    const cmeta_lower_context *context, unsigned minimum_depth) {
+    size_t i;
+    for (i = context->symbol_count; i != 0u; --i) {
+        const cmeta_lower_symbol *symbol = &context->symbols[i - 1u];
+        if (symbol->depth < minimum_depth)
+            break;
+        if (symbol->ownership == CMETA_LOWER_OWNERSHIP_LIVE_OWNED)
+            return symbol;
+    }
+    return NULL;
+}
+
+static int cmeta_lower_emit_symbol_cleanup(
+    cmeta_lower_context *context, cmeta_lower_buffer *output,
+    const cmeta_lower_symbol *symbol, size_t offset) {
+    char cleanup[512];
+
+    if (symbol == NULL ||
+        symbol->ownership != CMETA_LOWER_OWNERSHIP_LIVE_OWNED)
+        return 1;
+    if (symbol->lifecycle_accessor[0] == '\0') {
+        cmeta_lower_set_errorf(
+            context, offset, "owned value '", symbol->name,
+            "' has no canonical lifecycle binding");
+        return 0;
+    }
+
+    (void)snprintf(
+        cleanup, sizeof(cleanup),
+        "cmeta_data_value_destroy(%s(),&%s);",
+        symbol->lifecycle_accessor, symbol->name);
+    if (!cmeta_lower_buffer_puts(output, cleanup)) {
+        cmeta_lower_set_error(context, offset, "out of memory");
+        return 0;
+    }
+    return 1;
+}
+
+static int cmeta_lower_emit_cleanup_from_depth(
+    cmeta_lower_context *context, cmeta_lower_buffer *output,
+    unsigned minimum_depth, size_t offset) {
+    size_t i = context->symbol_count;
+
+    while (i != 0u) {
+        const cmeta_lower_symbol *symbol = &context->symbols[i - 1u];
+        if (symbol->depth < minimum_depth)
+            break;
+        if (!cmeta_lower_emit_symbol_cleanup(
+                context, output, symbol, offset))
+            return 0;
+        --i;
+    }
+    return 1;
+}
+
+static int cmeta_lower_control_keyword(const char *ident) {
+    return strcmp(ident, "if") == 0 ||
+           strcmp(ident, "else") == 0 ||
+           strcmp(ident, "for") == 0 ||
+           strcmp(ident, "while") == 0 ||
+           strcmp(ident, "do") == 0 ||
+           strcmp(ident, "switch") == 0 ||
+           strcmp(ident, "case") == 0 ||
+           strcmp(ident, "default") == 0 ||
+           strcmp(ident, "goto") == 0 ||
+           strcmp(ident, "break") == 0 ||
+           strcmp(ident, "continue") == 0 ||
+           strcmp(ident, "return") == 0;
+}
+
+static int cmeta_lower_reject_live_owned_control(
+    cmeta_lower_context *context, size_t offset, const char *ident) {
+    const cmeta_lower_symbol *owned =
+        cmeta_lower_find_live_owned_from_depth(context, 1u);
+    char message[256];
+
+    if (owned == NULL || !cmeta_lower_control_keyword(ident))
+        return 1;
+
+    if (strcmp(ident, "return") == 0) {
+        (void)snprintf(
+            message, sizeof(message),
+            "early return exits live owned value '%s'", owned->name);
+    } else if (strcmp(ident, "break") == 0 ||
+               strcmp(ident, "continue") == 0 ||
+               strcmp(ident, "goto") == 0) {
+        (void)snprintf(
+            message, sizeof(message),
+            "%s exits or crosses live owned value '%s'",
+            ident, owned->name);
+    } else {
+        (void)snprintf(
+            message, sizeof(message),
+            "owned value '%s' crosses unsupported control flow '%s'",
+            owned->name, ident);
+    }
+    cmeta_lower_set_error(context, offset, message);
+    return 0;
+}
+
 static int cmeta_lower_register_declaration(
     cmeta_lower_context *context, size_t type_end,
     const char *concrete, unsigned depth) {
@@ -466,16 +568,22 @@ static int cmeta_lower_try_owned_declaration(
     size_t type_end;
     size_t name_start;
     size_t name_end;
+    size_t suffix;
+    size_t semicolon;
     char type_name[128];
     char name[128];
+    char declaration[320];
     const cmeta_lower_type *owned_type;
     cmeta_lower_symbol *owned_symbol;
 
     if (ident_end - ident_start != strlen("owned") ||
         strncmp(source + ident_start, "owned", strlen("owned")) != 0)
         return 0;
-    if (i >= size || source[i] != '(')
-        return 0;
+    if (i >= size || source[i] != '(') {
+        cmeta_lower_set_error(
+            context, ident_start, "owned declaration requires owned(Type)");
+        return -1;
+    }
 
     i = cmeta_lower_skip_space_comments(source, size, i + 1u);
     if (!cmeta_lower_identifier(
@@ -500,6 +608,51 @@ static int cmeta_lower_try_owned_declaration(
         return -1;
     }
 
+    suffix = cmeta_lower_skip_space_comments(source, size, name_end);
+    if (suffix >= size) {
+        cmeta_lower_set_error(
+            context, ident_start, "unterminated owned declaration");
+        return -1;
+    }
+
+    if (source[suffix] == ';') {
+        semicolon = suffix;
+    } else if (source[suffix] == '=') {
+        size_t zero = cmeta_lower_skip_space_comments(source, size, suffix + 1u);
+        if (zero >= size || source[zero] != '{') {
+            cmeta_lower_set_error(
+                context, ident_start,
+                "owned initializer must be canonical zero {0}");
+            return -1;
+        }
+        zero = cmeta_lower_skip_space_comments(source, size, zero + 1u);
+        if (zero >= size || source[zero] != '0') {
+            cmeta_lower_set_error(
+                context, ident_start,
+                "owned initializer must be canonical zero {0}");
+            return -1;
+        }
+        zero = cmeta_lower_skip_space_comments(source, size, zero + 1u);
+        if (zero >= size || source[zero] != '}') {
+            cmeta_lower_set_error(
+                context, ident_start,
+                "owned initializer must be canonical zero {0}");
+            return -1;
+        }
+        semicolon = cmeta_lower_skip_space_comments(source, size, zero + 1u);
+        if (semicolon >= size || source[semicolon] != ';') {
+            cmeta_lower_set_error(
+                context, ident_start,
+                "owned initializer must end after canonical zero {0}");
+            return -1;
+        }
+    } else {
+        cmeta_lower_set_error(
+            context, ident_start,
+            "owned declaration requires canonical zero initialization");
+        return -1;
+    }
+
     owned_type = cmeta_lower_find_type(context, type_name);
     if (owned_type == NULL || owned_type->lifecycle_accessor[0] == '\0') {
         cmeta_lower_set_errorf(
@@ -515,7 +668,8 @@ static int cmeta_lower_try_owned_declaration(
 
     owned_symbol = cmeta_lower_find_symbol_mutable(context, name);
     if (owned_symbol == NULL) {
-        cmeta_lower_set_error(context, ident_start, "internal ownership binding error");
+        cmeta_lower_set_error(
+            context, ident_start, "internal ownership binding error");
         return -1;
     }
     (void)snprintf(
@@ -523,12 +677,15 @@ static int cmeta_lower_try_owned_declaration(
         sizeof(owned_symbol->lifecycle_accessor), "%s",
         owned_type->lifecycle_accessor);
 
-    if (!cmeta_lower_buffer_puts(output, type_name)) {
+    (void)snprintf(
+        declaration, sizeof(declaration),
+        "%s %s = {0}", type_name, name);
+    if (!cmeta_lower_buffer_puts(output, declaration)) {
         cmeta_lower_set_error(context, ident_start, "out of memory");
         return -1;
     }
 
-    *next_offset = i + 1u;
+    *next_offset = semicolon;
     return 1;
 }
 
@@ -793,6 +950,9 @@ static int cmeta_lower_transform(
                 }
             }
 
+            if (!cmeta_lower_reject_live_owned_control(context, i, ident))
+                return 0;
+
             if (statement_start) {
                 known_type = cmeta_lower_find_type(context, ident);
                 if (known_type != NULL) {
@@ -839,6 +999,23 @@ static int cmeta_lower_transform(
                 goto oom;
             i = end;
             continue;
+        }
+
+        if (cmeta_lower_find_live_owned_from_depth(context, 1u) != NULL) {
+            if (source[i] == '?' ||
+                (source[i] == '&' && i + 1u < size && source[i + 1u] == '&') ||
+                (source[i] == '|' && i + 1u < size && source[i + 1u] == '|')) {
+                cmeta_lower_set_error(
+                    context, i,
+                    "live owned value crosses unsupported conditional expression");
+                return 0;
+            }
+        }
+
+        if (source[i] == '}' && depth != 0u) {
+            if (!cmeta_lower_emit_cleanup_from_depth(
+                    context, output, depth, i))
+                return 0;
         }
 
         if (!cmeta_lower_buffer_append(output, source + i, 1u))
@@ -988,7 +1165,7 @@ done:
 
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
-        puts("cmeta-lower 3");
+        puts("cmeta-lower 4");
         return 0;
     }
     if (argc != 3) {
