@@ -81,6 +81,12 @@ typedef struct tls_bench_pair {
   char *key_path;
 } tls_bench_pair;
 
+typedef enum tls_bench_layout {
+  TLS_BENCH_LAYOUT_CONTIGUOUS = 0,
+  TLS_BENCH_LAYOUT_ADJACENT,
+  TLS_BENCH_LAYOUT_DISCONTIGUOUS
+} tls_bench_layout;
+
 typedef struct tls_bench_sample {
   double ns_per_op;
   double bytes_per_second;
@@ -99,6 +105,8 @@ typedef struct tls_bench_summary {
   double median_bytes_per_second;
   double median_tls_write_calls_per_op;
   double median_cipher_bytes_per_op;
+  double plaintext_copied_bytes_per_op;
+  size_t retained_owner_count;
 } tls_bench_summary;
 
 static size_t tls_bench_env_count(const char *name, size_t fallback) {
@@ -266,20 +274,17 @@ static int tls_bench_iteration(tls_bench_pair *pair, cnet_write_queue *queue,
     if (status != SALTS_OK) return status;
   } else {
     while (view.remaining != 0u) {
-      native_io_buffer_span spans[NATIVE_IO_VECTOR_MAX];
-      size_t span_count = 0u;
-      size_t span_bytes = 0u;
-      status = cnet_write_queue_build_vector(queue, &view, (size_t)INT_MAX,
-                                             spans, &span_count, &span_bytes);
+      const void *data = NULL;
+      size_t bytes = 0u;
+      status = cnet_write_queue_build_contiguous(queue, &view, (size_t)INT_MAX,
+                                                 &data, &bytes);
       if (status != SALTS_OK) return status;
-      if (span_count == 0u || span_bytes == 0u) return SALTS_EPROTO;
-      for (size_t index = 0u; index < span_count; ++index) {
-        status = tls_bench_write_complete(&pair->client, spans[index].data,
-                                          spans[index].length, io_calls, cipher_bytes);
-        if (status != SALTS_OK) return status;
-        status = cnet_write_queue_advance(queue, &view, spans[index].length);
-        if (status != SALTS_OK) return status;
-      }
+      if (data == NULL || bytes == 0u || bytes > (size_t)INT_MAX) return SALTS_EPROTO;
+      status = tls_bench_write_complete(&pair->client, data, bytes,
+                                        io_calls, cipher_bytes);
+      if (status != SALTS_OK) return status;
+      status = cnet_write_queue_advance(queue, &view, bytes);
+      if (status != SALTS_OK) return status;
     }
   }
 
@@ -299,8 +304,21 @@ static double tls_bench_percentile(double *values, size_t count, unsigned percen
   return values[index];
 }
 
+static const char *tls_bench_style(tls_bench_layout layout) {
+  switch (layout) {
+    case TLS_BENCH_LAYOUT_CONTIGUOUS:
+      return "retained_contiguous";
+    case TLS_BENCH_LAYOUT_ADJACENT:
+      return "retained_slicev_adjacent";
+    case TLS_BENCH_LAYOUT_DISCONTIGUOUS:
+      return "retained_slicev_discontiguous";
+  }
+  return "unknown";
+}
+
 static int tls_bench_run(size_t payload_bytes, size_t segment_count,
-                         size_t warmup, size_t iterations, tls_bench_summary *out) {
+                         tls_bench_layout layout, size_t warmup, size_t iterations,
+                         tls_bench_summary *out) {
   tls_bench_pair pair;
   cnet_write_queue queue = {0};
   cnet_session_handle connection = {1u, 1u};
@@ -312,11 +330,14 @@ static int tls_bench_run(size_t payload_bytes, size_t segment_count,
   double throughput[TLS_BENCH_REPLICATES];
   double calls[TLS_BENCH_REPLICATES];
   double cipher[TLS_BENCH_REPLICATES];
+  size_t retained_owner_count = 0u;
   int status = SALTS_OK;
 
   memset(&pair, 0, sizeof(pair));
   if (segment_count == 0u || segment_count > TLS_BENCH_MAX_SEGMENTS ||
-      payload_bytes == 0u || payload_bytes % segment_count != 0u)
+      payload_bytes == 0u || payload_bytes % segment_count != 0u || out == NULL)
+    return SALTS_EINVAL;
+  if ((layout == TLS_BENCH_LAYOUT_CONTIGUOUS) != (segment_count == 1u))
     return SALTS_EINVAL;
 
   status = tls_bench_pair_init(&pair);
@@ -326,12 +347,26 @@ static int tls_bench_run(size_t payload_bytes, size_t segment_count,
   status = tls_bench_queue_init(&queue);
   if (status != SALTS_OK) goto cleanup;
 
-  if (segment_count == 1u) {
+  if (layout == TLS_BENCH_LAYOUT_CONTIGUOUS) {
     contiguous = mem_get_buffer(mem_global(), payload_bytes);
     if (contiguous == NULL) { status = SALTS_ENOMEM; goto cleanup; }
     memset(mem_buffer_data(contiguous), 0x5a, payload_bytes);
     mem_set_used(contiguous, payload_bytes);
-  } else {
+    retained_owner_count = 1u;
+  } else if (layout == TLS_BENCH_LAYOUT_ADJACENT) {
+    const size_t segment_bytes = payload_bytes / segment_count;
+    contiguous = mem_get_buffer(mem_global(), payload_bytes);
+    if (contiguous == NULL) { status = SALTS_ENOMEM; goto cleanup; }
+    for (size_t index = 0u; index < payload_bytes; ++index)
+      ((unsigned char *)mem_buffer_data(contiguous))[index] =
+          (unsigned char)(0x41u + ((index / segment_bytes) % 23u));
+    mem_set_used(contiguous, payload_bytes);
+    for (size_t index = 0u; index < segment_count; ++index) {
+      slices[index] = mem_slice(contiguous, index * segment_bytes, segment_bytes);
+      if (slices[index].buffer == NULL) { status = SALTS_ENOMEM; goto cleanup; }
+    }
+    retained_owner_count = 1u;
+  } else if (layout == TLS_BENCH_LAYOUT_DISCONTIGUOUS) {
     const size_t segment_bytes = payload_bytes / segment_count;
     for (size_t index = 0u; index < segment_count; ++index) {
       segment_buffers[index] = mem_get_buffer(mem_global(), segment_bytes);
@@ -342,6 +377,10 @@ static int tls_bench_run(size_t payload_bytes, size_t segment_count,
       slices[index] = mem_slice(segment_buffers[index], 0u, segment_bytes);
       if (slices[index].buffer == NULL) { status = SALTS_ENOMEM; goto cleanup; }
     }
+    retained_owner_count = segment_count;
+  } else {
+    status = SALTS_EINVAL;
+    goto cleanup;
   }
 
   for (size_t index = 0u; index < warmup; ++index) {
@@ -385,7 +424,7 @@ static int tls_bench_run(size_t payload_bytes, size_t segment_count,
   }
 
   *out = (tls_bench_summary){
-      segment_count == 1u ? "retained_contiguous" : "retained_slicev",
+      tls_bench_style(layout),
       payload_bytes,
       segment_count,
       iterations,
@@ -394,7 +433,9 @@ static int tls_bench_run(size_t payload_bytes, size_t segment_count,
       tls_bench_percentile(latency, TLS_BENCH_REPLICATES, 95u),
       tls_bench_percentile(throughput, TLS_BENCH_REPLICATES, 50u),
       tls_bench_percentile(calls, TLS_BENCH_REPLICATES, 50u),
-      tls_bench_percentile(cipher, TLS_BENCH_REPLICATES, 50u)};
+      tls_bench_percentile(cipher, TLS_BENCH_REPLICATES, 50u),
+      0.0,
+      retained_owner_count};
 
 cleanup:
   for (size_t index = 0u; index < TLS_BENCH_MAX_SEGMENTS; ++index) {
@@ -422,16 +463,17 @@ static FILE *tls_bench_open_csv(void) {
 
 static void tls_bench_print(FILE *stream, const char *backend,
                             const tls_bench_summary *row) {
-  fprintf(stream, "%s,%s,%zu,%zu,%zu,%zu,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+  fprintf(stream, "%s,%s,%zu,%zu,%zu,%zu,%.6f,%.6f,%.6f,%.6f,%.6f,%.3f,%zu\n",
           backend, row->style, row->payload_bytes, row->segment_count,
           row->iterations, row->replicates, row->p50_ns_per_op, row->p95_ns_per_op,
           row->median_bytes_per_second, row->median_tls_write_calls_per_op,
-          row->median_cipher_bytes_per_op);
+          row->median_cipher_bytes_per_op, row->plaintext_copied_bytes_per_op,
+          row->retained_owner_count);
 }
 
 int main(void) {
   static const size_t payloads[] = {1024u, 8192u, 32768u, 65536u};
-  static const size_t segment_counts[] = {1u, 2u, 4u, 8u, 16u};
+  static const size_t segment_counts[] = {2u, 4u, 8u, 16u};
   const char *backend = getenv("CNET_TLS_SG_BENCH_BACKEND");
   const size_t warmup = tls_bench_env_count("CNET_TLS_SG_BENCH_WARMUP",
                                              TLS_BENCH_DEFAULT_WARMUP);
@@ -444,29 +486,53 @@ int main(void) {
     fprintf(csv,
             "backend,style,payload_bytes,segment_count,iterations_per_replicate,replicates,"
             "p50_ns_per_op,p95_ns_per_op,median_bytes_per_second,"
-            "median_tls_write_calls_per_op,median_cipher_bytes_per_op\n");
+            "median_tls_write_calls_per_op,median_cipher_bytes_per_op,"
+            "plaintext_copied_bytes_per_op,retained_owner_count\n");
   }
 
-  printf("| backend | style | payload | segments | p50 ns/op | p95 ns/op | median MiB/s | TLS writes/op | cipher bytes/op |\n");
-  printf("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+  printf("| backend | style | payload | segments | p50 ns/op | p95 ns/op | median MiB/s | TLS writes/op | cipher bytes/op | plaintext copied/op | retained owners |\n");
+  printf("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
 
   for (size_t p = 0u; p < sizeof(payloads) / sizeof(payloads[0]); ++p) {
+    tls_bench_summary contiguous = {0};
+    int status = tls_bench_run(payloads[p], 1u, TLS_BENCH_LAYOUT_CONTIGUOUS,
+                               warmup, iterations, &contiguous);
+    if (status != SALTS_OK) {
+      if (csv != NULL) fclose(csv);
+      fprintf(stderr, "TLS SG benchmark failed payload=%zu segments=1 style=contiguous status=%d\n",
+              payloads[p], status);
+      return 1;
+    }
+    printf("| %s | %s | %zu | %zu | %.3f | %.3f | %.2f | %.3f | %.1f | %.1f | %zu |\n",
+           backend, contiguous.style, contiguous.payload_bytes, contiguous.segment_count,
+           contiguous.p50_ns_per_op, contiguous.p95_ns_per_op,
+           contiguous.median_bytes_per_second / (1024.0 * 1024.0),
+           contiguous.median_tls_write_calls_per_op, contiguous.median_cipher_bytes_per_op,
+           contiguous.plaintext_copied_bytes_per_op, contiguous.retained_owner_count);
+    if (csv != NULL) tls_bench_print(csv, backend, &contiguous);
+
     for (size_t sidx = 0u; sidx < sizeof(segment_counts) / sizeof(segment_counts[0]); ++sidx) {
-      tls_bench_summary row = {0};
-      const int status = tls_bench_run(payloads[p], segment_counts[sidx],
-                                       warmup, iterations, &row);
-      if (status != SALTS_OK) {
-        if (csv != NULL) fclose(csv);
-        fprintf(stderr, "TLS SG benchmark failed payload=%zu segments=%zu status=%d\n",
-                payloads[p], segment_counts[sidx], status);
-        return 1;
+      const size_t segments = segment_counts[sidx];
+      const tls_bench_layout layouts[] = {
+          TLS_BENCH_LAYOUT_ADJACENT, TLS_BENCH_LAYOUT_DISCONTIGUOUS};
+      for (size_t l = 0u; l < sizeof(layouts) / sizeof(layouts[0]); ++l) {
+        tls_bench_summary row = {0};
+        status = tls_bench_run(payloads[p], segments, layouts[l],
+                               warmup, iterations, &row);
+        if (status != SALTS_OK) {
+          if (csv != NULL) fclose(csv);
+          fprintf(stderr, "TLS SG benchmark failed payload=%zu segments=%zu style=%s status=%d\n",
+                  payloads[p], segments, tls_bench_style(layouts[l]), status);
+          return 1;
+        }
+        printf("| %s | %s | %zu | %zu | %.3f | %.3f | %.2f | %.3f | %.1f | %.1f | %zu |\n",
+               backend, row.style, row.payload_bytes, row.segment_count,
+               row.p50_ns_per_op, row.p95_ns_per_op,
+               row.median_bytes_per_second / (1024.0 * 1024.0),
+               row.median_tls_write_calls_per_op, row.median_cipher_bytes_per_op,
+               row.plaintext_copied_bytes_per_op, row.retained_owner_count);
+        if (csv != NULL) tls_bench_print(csv, backend, &row);
       }
-      printf("| %s | %s | %zu | %zu | %.3f | %.3f | %.2f | %.3f | %.1f |\n",
-             backend, row.style, row.payload_bytes, row.segment_count,
-             row.p50_ns_per_op, row.p95_ns_per_op,
-             row.median_bytes_per_second / (1024.0 * 1024.0),
-             row.median_tls_write_calls_per_op, row.median_cipher_bytes_per_op);
-      if (csv != NULL) tls_bench_print(csv, backend, &row);
     }
   }
 
