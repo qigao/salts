@@ -1,21 +1,27 @@
 name: Salts native NuGet release
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/native-nuget-release.yml"
+      - "CMakeLists.txt"
+      - "vcpkg.json"
+      - "vcpkg-configuration.json"
+      - "cmake/**"
+      - "platform/**"
+      - "native-io/**"
+      - "cnet/**"
+      - "cflow/**"
+      - "cmeta/**"
+      - "cstl/**"
+      - "concurrency/**"
+      - "utils/**"
+      - "tinytest/**"
+      - "tinymeta/**"
+      - "tinymock/**"
+      - "packaging/nuget/**"
   push:
-    branches: [master]
-    tags:
-      - "v*"
-  workflow_dispatch:
-    inputs:
-      release_sha:
-        description: "Exact commit SHA to package and publish"
-        required: true
-        type: string
-      tag:
-        description: "Immutable release tag (for example v1.8.5)"
-        required: true
-        type: string
-
+    tags: ["v*"]
 permissions:
   contents: read
   packages: read
@@ -33,25 +39,19 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       release_sha: ${{ steps.version.outputs.release_sha }}
       release: ${{ steps.version.outputs.release }}
+      publish: ${{ steps.version.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Read project version
         id: version
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
           release=true
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            release_sha='${{ inputs.release_sha }}'
-            requested_tag='${{ inputs.tag }}'
-          else
-            release_sha="$GITHUB_SHA"
-            requested_tag="$GITHUB_REF_NAME"
-          fi
+          publish=false
+          release_sha="$GITHUB_SHA"
 
           test -n "$release_sha"
           git cat-file -e "$release_sha^{commit}"
@@ -71,17 +71,15 @@ jobs:
           fi
 
           expected_tag="v$version"
-          if [ "$GITHUB_EVENT_NAME" = "push" ] &&
-             [ "$GITHUB_REF" = "refs/heads/master" ]; then
-            requested_tag="$expected_tag"
-            if gh release view "$expected_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              release=false
-              echo "release $expected_tag already exists; skipping duplicate SDK publication"
-            else
-              echo "release $expected_tag is absent; master push will publish it"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            test "$GITHUB_REF_TYPE" = "tag"
+            if [ "$GITHUB_REF_NAME" != "$expected_tag" ]; then
+              echo "release tag mismatch: requested=$GITHUB_REF_NAME expected=$expected_tag" >&2
+              exit 1
             fi
-          elif [ "$requested_tag" != "$expected_tag" ]; then
-            echo "release tag mismatch: requested=$requested_tag expected=$expected_tag" >&2
+            publish=true
+          elif [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            echo "unsupported native package event: $GITHUB_EVENT_NAME" >&2
             exit 1
           fi
 
@@ -89,30 +87,7 @@ jobs:
           echo "tag=$expected_tag" >> "$GITHUB_OUTPUT"
           echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
           echo "release=$release" >> "$GITHUB_OUTPUT"
-
-      - name: Reject duplicate manual publication before building SDKs
-        if: github.event_name == 'workflow_dispatch'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.version.outputs.tag }}
-          RELEASE_SHA: ${{ steps.version.outputs.release_sha }}
-        run: |
-          set -euo pipefail
-
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "release $TAG is already published; refusing duplicate workflow_dispatch" >&2
-            exit 1
-          fi
-
-          if tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha 2>/dev/null)"; then
-            if [ "$tag_sha" != "$RELEASE_SHA" ]; then
-              echo "tag $TAG resolves to $tag_sha, not requested release SHA $RELEASE_SHA" >&2
-              exit 1
-            fi
-            echo "tag $TAG already exists at requested SHA; retry is allowed because no GitHub Release exists yet"
-          fi
-
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
   linux:
     name: Linux x64 SDK
     needs: metadata
@@ -466,9 +441,107 @@ jobs:
           if-no-files-found: error
           compression-level: 9
 
+  ios:
+    name: iOS SDK / ${{ matrix.name }}
+    needs: metadata
+    if: needs.metadata.outputs.release == 'true'
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: device arm64, triplet: arm64-ios, rid: ios-arm64, sysroot: iphoneos}
+          - {name: simulator arm64, triplet: arm64-ios-simulator, rid: ios-simulator-arm64, sysroot: iphonesimulator}
+    env:
+      X_VCPKG_NUGET_ID_PREFIX: vcpkg-cache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.release_sha }}
+
+      - name: Set up shared build dependencies
+        id: shared_deps
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Restore iOS dependencies cache-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_root="$RUNNER_TEMP/salts-ios-${{ matrix.triplet }}"
+          rm -rf "$install_root"
+          "$VCPKG_ROOT/vcpkg" install \
+            --x-manifest-root=. \
+            --x-install-root="$install_root" \
+            --triplet "${{ matrix.triplet }}" \
+            --only-binarycaching
+          echo "SALTS_IOS_VCPKG_INSTALLED=$install_root" >> "$GITHUB_ENV"
+
+      - name: Configure iOS Release SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="$GITHUB_WORKSPACE/build/${{ matrix.rid }}"
+          prefix="$GITHUB_WORKSPACE/stage/sdk/${{ matrix.rid }}"
+          cmake -S . -B "$build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT="${{ matrix.sysroot }}" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DVCPKG_TARGET_TRIPLET="${{ matrix.triplet }}" \
+            -DVCPKG_MANIFEST_MODE=OFF \
+            -DVCPKG_INSTALLED_DIR="$SALTS_IOS_VCPKG_INSTALLED" \
+            -DENABLE_TESTS=OFF \
+            -DBUILD_TESTS=OFF \
+            -DBUILD_BENCHMARKS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DCMAKE_INSTALL_PREFIX="$prefix"
+
+      - name: Build iOS SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build "build/${{ matrix.rid }}" --parallel 2
+
+      - name: Install and qualify iOS SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="$GITHUB_WORKSPACE/build/${{ matrix.rid }}"
+          prefix="$GITHUB_WORKSPACE/stage/sdk/${{ matrix.rid }}"
+          cmake --install "$build" --strip
+          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/cmeta/function.h"
+          test -f "$prefix/include/cflow/function_projection.h"
+          test -f "$prefix/include/cmeta/interface.h"
+          test -f "$prefix/include/tinymeta/equality.h"
+          test -f "$prefix/include/tinymock_cmeta.h"
+          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
+          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
+          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
+          version=${{ needs.metadata.outputs.version }}
+          commit=${{ needs.metadata.outputs.release_sha }}
+          os=ios
+          rid=${{ matrix.rid }}
+          triplet=${{ matrix.triplet }}
+          profile=release
+          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
+          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salts-sdk-${{ matrix.rid }}
+          path: stage/sdk
+          if-no-files-found: error
+          compression-level: 9
+
   pack:
     name: Pack Salts.Native
-    needs: [metadata, linux, macos, windows, android]
+    needs: [metadata, linux, macos, windows, android, ios]
     if: needs.metadata.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -503,6 +576,12 @@ jobs:
           test -f package/sdk/android-arm64-v8a/include/cmeta/function.h
           test -f package/sdk/android-arm64-v8a/include/cflow/function_projection.h
           test -f package/sdk/android-arm64-v8a/include/cmeta/interface.h
+          test -f package/sdk/ios-arm64/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/ios-arm64/include/cmeta/function.h
+          test -f package/sdk/ios-arm64/include/cflow/function_projection.h
+          test -f package/sdk/ios-simulator-arm64/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/ios-simulator-arm64/include/cmeta/function.h
+          test -f package/sdk/ios-simulator-arm64/include/cflow/function_projection.h
           grep -F "cmeta_function_abi_desc" package/sdk/linux-x64/include/cmeta/function.h
           grep -F "cmeta_function_abi_desc" package/sdk/windows-x64/include/cmeta/function.h
           grep -F "cmeta_function_abi_desc" package/sdk/android-arm64-v8a/include/cmeta/function.h
@@ -525,7 +604,7 @@ jobs:
           grep -F "cmeta_interface_desc_equal" "$mac_interface"
           grep -F "cmeta_function_abi_desc" "$mac_header"
           grep -F "cflow_function_typed_filter_projection_admit" "$mac_projection"
-          test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 4
+          test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 6
 
           mapfile -t cache_contracts < <(
             grep -h '^vcpkg_cache_contract=' package/sdk/*/salts-sdk-manifest.txt |
@@ -571,7 +650,7 @@ jobs:
   publish:
     name: Publish package and GitHub Release
     needs: [metadata, pack]
-    if: needs.metadata.outputs.release == 'true'
+    if: needs.metadata.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -599,9 +678,6 @@ jobs:
               exit 1
             fi
             echo "tag $TAG already resolves to this commit"
-          elif [ "$GITHUB_EVENT_NAME" = "push" ] &&
-               [ "$GITHUB_REF" = "refs/heads/master" ]; then
-            echo "tag $TAG is absent; automatic master publication will create it at $RELEASE_SHA"
           else
             echo "required release tag $TAG does not exist" >&2
             exit 1
@@ -634,10 +710,5 @@ jobs:
             echo "release $TAG already exists; package publish was idempotent"
             exit 0
           fi
-          if gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha >/dev/null 2>&1; then
-            gh release create "$TAG" dist/*.nupkg --repo "$GITHUB_REPOSITORY" \
-              --verify-tag --title "Salts $VERSION" --generate-notes
-          else
-            gh release create "$TAG" dist/*.nupkg --repo "$GITHUB_REPOSITORY" \
-              --target "$RELEASE_SHA" --title "Salts $VERSION" --generate-notes
-          fi
+          gh release create "$TAG" dist/*.nupkg --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --title "Salts $VERSION" --generate-notes
