@@ -326,10 +326,6 @@ jobs:
           $prefix = Join-Path $env:GITHUB_WORKSPACE "stage\sdk\windows-x64"
           cmake --install build/Msvc-Release --prefix $prefix --config Release
 
-          # Keep CNet's private TLS runtime artifacts self-contained in the
-          # Windows SDK without exporting OpenSSL/BoringSSL CMake dependencies.
-          ./cmake/ci/stage-windows-cnet-runtime.ps1 -Prefix $prefix
-
           $config = Join-Path $prefix "lib\cmake\Salts\SaltsConfig.cmake"
           $targets = Join-Path $prefix "lib\cmake\Salts\SaltsTargets.cmake"
           $functionHeader = Join-Path $prefix "include\cmeta\function.h"
@@ -500,8 +496,9 @@ jobs:
           test -f package/sdk/windows-x64/include/cmeta/interface.h
           test -f package/sdk/windows-x64/bin/cnet.dll
           test -f package/sdk/windows-x64/bin/salts.dll
-          test -f package/sdk/windows-x64/bin/ssl.dll
-          test -f package/sdk/windows-x64/bin/crypto.dll
+          test ! -f package/sdk/windows-x64/bin/ssl.dll
+          test ! -f package/sdk/windows-x64/bin/crypto.dll
+          test ! -f package/sdk/windows-x64/bin/gmssl.dll
           test -f package/sdk/android-arm64-v8a/lib/cmake/Salts/SaltsConfig.cmake
           test -f package/sdk/android-arm64-v8a/include/cmeta/function.h
           test -f package/sdk/android-arm64-v8a/include/cflow/function_projection.h
