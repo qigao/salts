@@ -21,8 +21,7 @@ target_include_directories(cnet_io_benchmark PRIVATE ../src)
 set_target_properties(cnet_io_benchmark PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
-  C_EXTENSIONS OFF
-  LINKER_LANGUAGE CXX)
+  C_EXTENSIONS OFF)
 
 cmake_add_benchmark(cnet_tls_sg_benchmark
   SOURCES cnet_tls_sg_benchmark.c
@@ -32,8 +31,7 @@ target_include_directories(cnet_tls_sg_benchmark PRIVATE ../src)
 set_target_properties(cnet_tls_sg_benchmark PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
-  C_EXTENSIONS OFF
-  LINKER_LANGUAGE CXX)
+  C_EXTENSIONS OFF)
 
 cmake_add_benchmark(cnet_owner_lifecycle_compare
   SOURCES cnet_owner_lifecycle_compare.c cnet_benchmark_stats.c
@@ -61,8 +59,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set_target_properties(cnet_owner_parallel_benchmark PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
-    C_EXTENSIONS OFF
-    LINKER_LANGUAGE CXX)
+    C_EXTENSIONS OFF)
 
   cmake_add_benchmark(cnet_shards_parallel_benchmark
     SOURCES cnet_shards_parallel_benchmark.c cnet_io_benchmark_config.c
@@ -72,8 +69,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set_target_properties(cnet_shards_parallel_benchmark PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
-    C_EXTENSIONS OFF
-    LINKER_LANGUAGE CXX)
+    C_EXTENSIONS OFF)
 
   cmake_add_benchmark(cnet_central_callback_benchmark
     SOURCES cnet_central_callback_benchmark.c cnet_io_benchmark_config.c
@@ -87,20 +83,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set_target_properties(cnet_external_owner_parallel_benchmark PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
-    C_EXTENSIONS OFF
-    LINKER_LANGUAGE CXX)
+    C_EXTENSIONS OFF)
 
   target_include_directories(cnet_central_callback_benchmark PRIVATE ../src)
   set_target_properties(cnet_central_callback_benchmark PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
-    C_EXTENSIONS OFF
-    LINKER_LANGUAGE CXX)
+    C_EXTENSIONS OFF)
 
   target_include_directories(cnet_scaling_benchmark PRIVATE ../src)
   set_target_properties(cnet_scaling_benchmark PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
-    C_EXTENSIONS OFF
-    LINKER_LANGUAGE CXX)
+    C_EXTENSIONS OFF)
 endif()
