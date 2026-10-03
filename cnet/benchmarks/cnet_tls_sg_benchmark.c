@@ -23,62 +23,20 @@ enum {
   TLS_BENCH_CIPHER_BUFFER = 65536
 };
 
-static const char CNET_TLS_TEST_CERTIFICATE[] =
-    "-----BEGIN CERTIFICATE-----\n"
-    "MIIC7TCCAdWgAwIBAgIUT4pOT+qAkLpsC1bUF3bYRrTHssQwDQYJKoZIhvcNAQEL\n"
-    "BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDMyMzA4MDcwMloXDTM2MDMy\n"
-    "MDA4MDcwMlowFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEF\n"
-    "AAOCAQ8AMIIBCgKCAQEAtNuutQlZVrXBW97HX5HfMXbMkES9n2eglXQRzU7Qg4Mm\n"
-    "KtAprpkBVSFHeAti0NyPgasoaoJTBi1xBhDsGTWTto0TJVHhW5QcYSPRc8x/acWQ\n"
-    "NxBSMdWf8Rp9QxbaECyQbWr+QDb/c1a9QU0fGFntQBnLfk9lLJG7MRTwg38ufnSk\n"
-    "OqqyAtbT4V5ZwImkOo9MdECcZMvRDYnvH1atIUvGRI7O3M466jGe+5WN4E42h8VN\n"
-    "PSJw2IBvbFxePZ3yMWpiVRkbsWlq1hJIHGvnGD+4IPGr2nB/FmR+P969KFm/gSvG\n"
-    "L9tYFRw36Cfa+cnwWAYNpLspwOaaAQcpeMN8tAGIPwIDAQABozcwNTAUBgNVHREE\n"
-    "DTALgglsb2NhbGhvc3QwHQYDVR0OBBYEFHSKGrYW6d59EU5htbnpgVhPLaQiMA0G\n"
-    "CSqGSIb3DQEBCwUAA4IBAQBhIzu8IJ7Pm30nKOfvwgQRKbJDWIBKZz/NYoIP5Ljm\n"
-    "fZG+ZZT0BnuCObKTvPwAWERwbIn5cIDNCkVKhQoJc4+KqR9fXptxML+Q3e4lCVo3\n"
-    "5jjQpG/r18aZxhfroinp6iCfGcECw/JAXPxC8jOhEgVOPQd/LybM9vO8vraH/dIR\n"
-    "YRmIoBvGw+wQMt/PcV0GxYLo6LsYJFs0FuJyiufJ2auNtmW5h8qOdtnagmeo0ehp\n"
-    "g5VqPlB3EMa/01r9WmfNQJcBbEF8ONhhPXZCV4uplsXGtN8+Xxrzb3SAYQR9xFry\n"
-    "x9YTzT8UMLc26vY1RiF6uwODUJzmSaqmefmapVsWrgi3\n"
-    "-----END CERTIFICATE-----\n";
-
-static const char CNET_TLS_TEST_KEY[] =
-    "-----BEGIN PRIVATE KEY-----\n"
-    "MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQC02661CVlWtcFb\n"
-    "3sdfkd8xdsyQRL2fZ6CVdBHNTtCDgyYq0CmumQFVIUd4C2LQ3I+BqyhqglMGLXEG\n"
-    "EOwZNZO2jRMlUeFblBxhI9FzzH9pxZA3EFIx1Z/xGn1DFtoQLJBtav5ANv9zVr1B\n"
-    "TR8YWe1AGct+T2UskbsxFPCDfy5+dKQ6qrIC1tPhXlnAiaQ6j0x0QJxky9ENie8f\n"
-    "Vq0hS8ZEjs7czjrqMZ77lY3gTjaHxU09InDYgG9sXF49nfIxamJVGRuxaWrWEkgc\n"
-    "a+cYP7gg8avacH8WZH4/3r0oWb+BK8Yv21gVHDfoJ9r5yfBYBg2kuynA5poBByl4\n"
-    "w3y0AYg/AgMBAAECggEAEJkoy4yexQp2mHaLAwZhiX9G/uaQJepeHoPsg6nRZoB0\n"
-    "JvG7zD5WlPgyQEjV5NKZM7lVmDt7Cydt0V9e4QwTERSZcToL3gUV0FnNMJIlZLuw\n"
-    "+fIRg76rUyFZ5aevPlTDXIdj64N1+6E2SqFH/UrOL1fZXoTthXhKdGgLkBtCqnA6\n"
-    "DlHQX3lehrnV+MG5fTxPc8lro/s4UVAoBMhc4dP5U1W5Xt5c6RsdcWYytidRYj8t\n"
-    "XMkyjST/F2NV80+8WGp/YFE0dHyxGWvLGNmkOUuI4EMwzzSadsIM+PQO/YP1KwHA\n"
-    "0DYHuEFvPCLjPsD+7IUnZgifQe45/FJoJMp5hSmzgQKBgQD7XEl2mLR3iqup2dF+\n"
-    "PD3zA2J48jdiJdbK7vRLXpdV5WP2/s90GZFKLadg7UWmx9zWkC4B92atNJV0/+8o\n"
-    "wE4Zd8PG62QZ3o1T4QpYMem9PAq5OxqwYBxMZ2Y5Mf+54Gp0SXB+AbXPlYI/LIwP\n"
-    "i/2Iq+bAjGmuGuloJNWD3Wl3DwKBgQC4MkMYvf5aSqbL8GE5ndKY06HzbxwcMoh3\n"
-    "Hia5LRMw5dG3J2JwdruiE4V3gQyqz0NzYrrqqkyYxh3aJW934qj6JVMVw/xWx2n5\n"
-    "xB4X4hcCKrO2piROmOuXBEt1T36C+fShNb8g+RNY0edoiw+OKTa3rzlQhggTkoGs\n"
-    "Iy7oyxtb0QKBgGKkgfP304LCOcHrSCppC8qtflyGebObs+Jpyhc15OABqKxKrTEb\n"
-    "w4e/yNrh4p6j+od9h4CgDXxVkX2b3sg4R6348SzEPcFlNENBomSgGeF4iaDNkBi9\n"
-    "bv2Q6m3xsDDK4BwIogvhMe9n9fhCzChhwLp8846GzAZWa1jCc8RPBM+DAoGAQxRy\n"
-    "4QDYL5O+OMka7zutpWB1O008hHxWvGKroYZr1cPsYvIh5GkpHfZUBdhmf5Ips0zC\n"
-    "W5GXgY+s8XPuq09NUIPlRSjxrbzDuGUWvIXm8TAR8LOCx2jja0TyIg/IN/TFhSwo\n"
-    "pd5vkEopJyZ1jMUvmydiDRQyvsX9GW5auAa3uPECgYBxuBJ6Vji7pxlqjG3aB0je\n"
-    "+JexLyzdckU7EKTxpTSU1o/p17QpT26KF+DPMc2kg+PBK+Sjm0m4Uxdzq/OXNMMA\n"
-    "zhR6Vjo1nPWsKgzK03hGzaJVMkHekgCidY9R+MZEeDAhHDIia9XyAS1qCoGAJ6WC\n"
-    "oYB4EuDLFhurWiLO+diuMg==\n"
-    "-----END PRIVATE KEY-----\n";
+#ifndef CNET_TLS_BENCH_CA
+#error CNET_TLS_BENCH_CA is required
+#endif
+#ifndef CNET_TLS_BENCH_CERT
+#error CNET_TLS_BENCH_CERT is required
+#endif
+#ifndef CNET_TLS_BENCH_KEY
+#error CNET_TLS_BENCH_KEY is required
+#endif
 
 typedef struct tls_bench_pair {
   cnet_tls_server server_context;
   cnet_tls_state client;
   cnet_tls_state server;
-  char *cert_path;
-  char *key_path;
 } tls_bench_pair;
 
 typedef enum tls_bench_layout {
@@ -157,24 +115,16 @@ static int tls_bench_pair_init(tls_bench_pair *pair) {
   int status;
 
   memset(pair, 0, sizeof(*pair));
-  pair->cert_path = tt_make_temp_file("cnet-tls-bench-cert", ".pem");
-  pair->key_path = tt_make_temp_file("cnet-tls-bench-key", ".pem");
-  if (pair->cert_path == NULL || pair->key_path == NULL) return SALTS_ENOMEM;
-  if (tt_write_file(pair->cert_path, CNET_TLS_TEST_CERTIFICATE,
-                    sizeof(CNET_TLS_TEST_CERTIFICATE) - 1u) != 0 ||
-      tt_write_file(pair->key_path, CNET_TLS_TEST_KEY,
-                    sizeof(CNET_TLS_TEST_KEY) - 1u) != 0)
-    return SALTS_EIO;
 
   server_config = (cnet_tls_server_config){.size = sizeof(server_config),
-                                           .cert_file = pair->cert_path,
-                                           .key_file = pair->key_path,
+                                           .cert_file = CNET_TLS_BENCH_CERT,
+                                           .key_file = CNET_TLS_BENCH_KEY,
                                            .client_auth = CNET_TLS_CLIENT_AUTH_NONE};
   status = cnet_tls_server_init(&pair->server_context, &server_config);
   if (status != SALTS_OK) return status;
 
   client_config = (cnet_tls_client_config){.size = sizeof(client_config),
-                                           .ca_file = pair->cert_path};
+                                           .ca_file = CNET_TLS_BENCH_CA};
   status = cnet_tls_client_context_create(&client_config, &client_context);
   if (status != SALTS_OK) return status;
   status = cnet_tls_state_init(&pair->client, client_context, false, "localhost",
@@ -213,14 +163,6 @@ static void tls_bench_pair_destroy(tls_bench_pair *pair) {
   cnet_tls_state_destroy(&pair->server);
   cnet_tls_state_destroy(&pair->client);
   (void)cnet_tls_server_destroy(&pair->server_context);
-  if (pair->cert_path != NULL) {
-    (void)tt_remove_file(pair->cert_path);
-    free(pair->cert_path);
-  }
-  if (pair->key_path != NULL) {
-    (void)tt_remove_file(pair->key_path);
-    free(pair->key_path);
-  }
   memset(pair, 0, sizeof(*pair));
 }
 
