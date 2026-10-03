@@ -137,6 +137,14 @@ if(NOT CMAKE_CROSSCOMPILING)
     cstl_cmeta_lower_unknown_receiver
     unknown_receiver.cmeta.c
     "unknown typed receiver 'missing'")
+  cstl_add_cmeta_lower_rejection_test(
+    cstl_cmeta_lower_use_after_move
+    use_after_move.cmeta.c
+    "use of moved owned value 'list'")
+  cstl_add_cmeta_lower_rejection_test(
+    cstl_cmeta_lower_double_move
+    double_move.cmeta.c
+    "owned value 'list' moved more than once")
 endif()
 
 
