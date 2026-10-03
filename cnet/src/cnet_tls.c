@@ -534,8 +534,7 @@ static int cnet_tls_configure_variant(cnet_tls_context *context,
 
   if (cert_file != NULL) {
     if (tls_ctx_set_certificate_and_key(
-            tls, cert_file, key_file,
-            key_password != NULL ? key_password : "") != 1)
+            tls, cert_file, key_file, key_password) != 1)
       return SALTS_EIO;
   }
 
