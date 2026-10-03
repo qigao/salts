@@ -20,6 +20,7 @@
   #include <ws2tcpip.h>
 #elif defined(__APPLE__)
   #include <arpa/inet.h>
+  #include <dirent.h>
   #include <CoreFoundation/CoreFoundation.h>
   #include <Security/Security.h>
 #else
