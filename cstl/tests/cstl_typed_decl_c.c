@@ -23,3 +23,11 @@ DECL_UNARY_ABI(DeclIntList)
 DECL_UNARY_ABI(DeclIntSet)
 DECL_BINARY_ABI(DeclIntLongMap)
 DECL_BINARY_ABI(DeclIntLongHashMap)
+
+const cmeta_data_desc *DeclIntVec_c_data(void) {
+  return DeclIntVec_cmeta_data();
+}
+
+const cmeta_data_desc *DeclIntLongMap_c_data(void) {
+  return DeclIntLongMap_cmeta_data();
+}
