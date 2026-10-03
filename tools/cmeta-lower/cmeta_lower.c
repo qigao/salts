@@ -466,10 +466,12 @@ static int cmeta_lower_try_owned_declaration(
     size_t type_end;
     size_t name_start;
     size_t name_end;
+    size_t after_name;
     char type_name[128];
     char name[128];
     const cmeta_lower_type *owned_type;
     cmeta_lower_symbol *owned_symbol;
+    int implicit_zero = 0;
 
     if (ident_end - ident_start != strlen("owned") ||
         strncmp(source + ident_start, "owned", strlen("owned")) != 0)
@@ -508,6 +510,59 @@ static int cmeta_lower_try_owned_declaration(
         return -1;
     }
 
+    after_name = cmeta_lower_skip_space_comments(source, size, name_end);
+    if (after_name >= size) {
+        cmeta_lower_set_error(
+            context, ident_start, "owned declaration is incomplete");
+        return -1;
+    }
+    if (source[after_name] == ';') {
+        implicit_zero = 1;
+    } else if (source[after_name] == '=') {
+        size_t init = cmeta_lower_skip_space_comments(
+            source, size, after_name + 1u);
+        if (init >= size) {
+            cmeta_lower_set_error(
+                context, ident_start, "owned initializer is incomplete");
+            return -1;
+        }
+        if (source[init] == '{') {
+            size_t value = cmeta_lower_skip_space_comments(
+                source, size, init + 1u);
+            size_t close;
+            if (value >= size || source[value] != '0') {
+                cmeta_lower_set_error(
+                    context, ident_start,
+                    "owned initializer must be canonical zero or move(...)");
+                return -1;
+            }
+            close = cmeta_lower_skip_space_comments(source, size, value + 1u);
+            if (close >= size || source[close] != '}') {
+                cmeta_lower_set_error(
+                    context, ident_start,
+                    "owned initializer must be canonical zero or move(...)");
+                return -1;
+            }
+        } else {
+            char init_ident[128];
+            size_t init_end;
+            if (!cmeta_lower_identifier(
+                    source, size, init, init_ident, sizeof(init_ident),
+                    &init_end) ||
+                strcmp(init_ident, "move") != 0) {
+                cmeta_lower_set_error(
+                    context, ident_start,
+                    "owned initializer must be canonical zero or move(...)");
+                return -1;
+            }
+        }
+    } else {
+        cmeta_lower_set_error(
+            context, ident_start,
+            "owned declaration supports one variable with zero or move initializer");
+        return -1;
+    }
+
     if (!cmeta_lower_add_symbol(
             context, name_start, name, type_name, depth,
             CMETA_LOWER_OWNERSHIP_LIVE_OWNED))
@@ -515,7 +570,8 @@ static int cmeta_lower_try_owned_declaration(
 
     owned_symbol = cmeta_lower_find_symbol_mutable(context, name);
     if (owned_symbol == NULL) {
-        cmeta_lower_set_error(context, ident_start, "internal ownership binding error");
+        cmeta_lower_set_error(
+            context, ident_start, "internal ownership binding error");
         return -1;
     }
     (void)snprintf(
@@ -528,14 +584,24 @@ static int cmeta_lower_try_owned_declaration(
         return -1;
     }
 
-    *next_offset = i + 1u;
+    if (implicit_zero) {
+        if (!cmeta_lower_buffer_append(
+                output, source + i + 1u, name_end - (i + 1u)) ||
+            !cmeta_lower_buffer_puts(output, " = {0}")) {
+            cmeta_lower_set_error(context, ident_start, "out of memory");
+            return -1;
+        }
+        *next_offset = after_name;
+    } else {
+        *next_offset = i + 1u;
+    }
     return 1;
 }
 
 static int cmeta_lower_try_move(
     cmeta_lower_context *context, cmeta_lower_buffer *output,
     size_t ident_start, size_t ident_end, const char *ident,
-    size_t *next_offset) {
+    int unsupported_control_flow, size_t *next_offset) {
     const char *source = context->source;
     size_t size = context->source_size;
     size_t i;
@@ -577,6 +643,12 @@ static int cmeta_lower_try_move(
             value_name, "' moved more than once");
         return -1;
     }
+    if (unsupported_control_flow) {
+        cmeta_lower_set_errorf(
+            context, ident_start, "owned value '", value_name,
+            "' crosses unsupported conditional ownership flow");
+        return -1;
+    }
 
     symbol->ownership = CMETA_LOWER_OWNERSHIP_MOVED;
     if (!cmeta_lower_buffer_puts(output, value_name)) {
@@ -597,6 +669,64 @@ static int cmeta_lower_validate_symbol_use(
     cmeta_lower_set_errorf(
         context, offset, "use of moved owned value '", ident, "'");
     return 0;
+}
+
+static const cmeta_lower_symbol *
+cmeta_lower_find_live_owned(const cmeta_lower_context *context) {
+    size_t i;
+    for (i = context->symbol_count; i != 0u; --i) {
+        const cmeta_lower_symbol *symbol = &context->symbols[i - 1u];
+        if (symbol->ownership == CMETA_LOWER_OWNERSHIP_LIVE_OWNED)
+            return symbol;
+    }
+    return NULL;
+}
+
+static int cmeta_lower_emit_scope_cleanup(
+    cmeta_lower_context *context, cmeta_lower_buffer *output,
+    unsigned depth, size_t offset) {
+    size_t i = context->symbol_count;
+
+    while (i != 0u) {
+        const cmeta_lower_symbol *symbol = &context->symbols[i - 1u];
+        if (symbol->depth < depth)
+            break;
+        if (symbol->depth == depth &&
+            symbol->ownership == CMETA_LOWER_OWNERSHIP_LIVE_OWNED) {
+            if (symbol->lifecycle_accessor[0] == '\0') {
+                cmeta_lower_set_errorf(
+                    context, offset, "owned value '", symbol->name,
+                    "' has no canonical lifecycle binding");
+                return 0;
+            }
+            if (!cmeta_lower_buffer_puts(
+                    output, "\n(void)cmeta_data_value_restore_zero(") ||
+                !cmeta_lower_buffer_puts(output, symbol->lifecycle_accessor) ||
+                !cmeta_lower_buffer_puts(output, "(), &") ||
+                !cmeta_lower_buffer_puts(output, symbol->name) ||
+                !cmeta_lower_buffer_puts(output, ");\n")) {
+                cmeta_lower_set_error(context, offset, "out of memory");
+                return 0;
+            }
+        }
+        --i;
+    }
+    return 1;
+}
+
+static int cmeta_lower_control_keyword(const char *ident) {
+    return strcmp(ident, "if") == 0 ||
+           strcmp(ident, "else") == 0 ||
+           strcmp(ident, "for") == 0 ||
+           strcmp(ident, "while") == 0 ||
+           strcmp(ident, "switch") == 0 ||
+           strcmp(ident, "do") == 0;
+}
+
+static int cmeta_lower_escape_keyword(const char *ident) {
+    return strcmp(ident, "break") == 0 ||
+           strcmp(ident, "continue") == 0 ||
+           strcmp(ident, "goto") == 0;
 }
 
 static int cmeta_lower_split_operation(
