@@ -96,4 +96,95 @@ foreach ($key in $index.Keys) {
         throw "Uninstrumented run contains diagnostic counters: $key"
     }
 }
-Write-Output "Verified $($runs.Count) runs and $sampleCount samples: workload, phases, counters, p50/p95."
+$attributionPath = "$Prefix.cnet-retained-attribution.csv"
+if (-not (Test-Path -LiteralPath $attributionPath -PathType Leaf)) {
+    throw "Missing CNet retained attribution artifact: $attributionPath"
+}
+$attributionRows = @(Import-Csv -LiteralPath $attributionPath)
+$expectedAttributionRows = $payloads.TCP.Count * $repeats
+if ($attributionRows.Count -ne $expectedAttributionRows) {
+    throw "Expected $expectedAttributionRows CNet retained attribution rows, got $($attributionRows.Count)"
+}
+
+$attributionIndex = @{}
+$finiteFields = @(
+    'client_cpu_ns_per_rt',
+    'client_cpu_cycles_per_rt',
+    'send_admission_ns_per_rt',
+    'total_budget_ns',
+    'send_public_control_ns',
+    'queue_control_ns',
+    'payload_copy_ns',
+    'client_poll_wrapper_ns',
+    'owner_control_ns',
+    'request_control_ns',
+    'native_request_start_ns',
+    'native_request_resubmit_ns',
+    'native_observe_ns',
+    'completion_control_ns',
+    'event_publish_residual_ns',
+    'dispatcher_prepare_ns',
+    'dispatcher_invoke_framework_ns',
+    'client_observer_control_ns',
+    'dispatcher_release_ns',
+    'benchmark_payload_check_ns',
+    'benchmark_callback_residual_ns',
+    'fixed_control_total_ns',
+    'shared_native_total_ns',
+    'benchmark_work_total_ns',
+    'closure_residual_ns'
+)
+
+foreach ($row in $attributionRows) {
+    if ($row.backend -ne $backends[0]) {
+        throw "Attribution backend mismatch: expected=$($backends[0]) actual=$($row.backend)"
+    }
+    $payload = [int]$row.payload_bytes
+    $repeat = [int]$row.repeat
+    if ($payload -notin $payloads.TCP -or $repeat -lt 1 -or $repeat -gt $repeats -or
+        [int]$row.round_trips -ne $roundTrips) {
+        throw "Invalid retained attribution identity: payload=$payload repeat=$repeat"
+    }
+    $key = "$($row.backend),$payload,$repeat"
+    if ($attributionIndex.ContainsKey($key)) {
+        throw "Duplicate retained attribution row: $key"
+    }
+    $attributionIndex[$key] = $true
+
+    $p50 = [UInt64]$row.p50_ns
+    $p95 = [UInt64]$row.p95_ns
+    if ($p50 -eq 0 -or $p95 -lt $p50) {
+        throw "Invalid retained attribution latency: $key p50=$p50 p95=$p95"
+    }
+
+    foreach ($field in $finiteFields) {
+        $value = [double]::Parse(
+            [string]$row.$field,
+            [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture)
+        if ([double]::IsNaN($value) -or [double]::IsInfinity($value)) {
+            throw "Non-finite retained attribution value: $key field=$field value=$value"
+        }
+        if ($field -ne 'closure_residual_ns' -and $value -lt 0.0) {
+            throw "Negative retained attribution value: $key field=$field value=$value"
+        }
+    }
+
+    if ([math]::Abs([double]$row.payload_copy_ns) -gt 0.001) {
+        throw "Retained path unexpectedly copied payload bytes/time: $key payload_copy_ns=$($row.payload_copy_ns)"
+    }
+    if ([math]::Abs([double]$row.closure_residual_ns) -gt 1.0) {
+        throw "Retained attribution does not close: $key residual_ns=$($row.closure_residual_ns)"
+    }
+}
+
+foreach ($payload in $payloads.TCP) {
+    foreach ($repeat in 1..$repeats) {
+        $key = "$($backends[0]),$payload,$repeat"
+        if (-not $attributionIndex.ContainsKey($key)) {
+            throw "Missing retained attribution row: $key"
+        }
+    }
+}
+
+Write-Output "Verified $($runs.Count) runs, $sampleCount samples, and $($attributionRows.Count) CNet retained attribution rows: workload, phases, counters, p50/p95, zero-copy, closure."
