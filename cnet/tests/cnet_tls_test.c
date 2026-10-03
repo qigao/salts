@@ -735,19 +735,14 @@ spec("CNet bounded TLS engine") {
     uint8_t client_channel_binding[CNET_TLS_CHANNEL_BINDING_BYTES] = {0};
     uint8_t server_channel_binding[CNET_TLS_CHANNEL_BINDING_BYTES] = {0};
     char server_name[] = "localhost";
-    char *cert_path = tt_make_temp_file("cnet-cert", ".pem");
-    char *key_path = tt_make_temp_file("cnet-key", ".pem");
+    const char *ca_path = CNET_TLS_TEST_IP_CA;
+    const char *cert_path = CNET_TLS_TEST_IP_CERT;
+    const char *key_path = CNET_TLS_TEST_IP_KEY;
     char uri[64];
     uint16_t port = 0u;
     uint64_t deadline;
     bool accepted = false;
 
-    check_not_null(cert_path);
-    check_not_null(key_path);
-    check_equal(
-        tt_write_file(cert_path, CNET_TLS_TEST_CERTIFICATE, sizeof(CNET_TLS_TEST_CERTIFICATE) - 1u),
-        0);
-    check_equal(tt_write_file(key_path, CNET_TLS_TEST_KEY, sizeof(CNET_TLS_TEST_KEY) - 1u), 0);
     tls_server_config = (cnet_tls_server_config){.size = sizeof(tls_server_config),
                                                  .cert_file = cert_path,
                                                  .key_file = key_path,
@@ -755,7 +750,7 @@ spec("CNet bounded TLS engine") {
                                                  .alpn_protocols = server_alpn,
                                                  .alpn_protocol_count = 2u};
     tls_client_config = (cnet_tls_client_config){.size = sizeof(tls_client_config),
-                                                 .ca_file = cert_path,
+                                                 .ca_file = ca_path,
                                                  .server_name = server_name,
                                                  .alpn_protocols = client_alpn,
                                                  .alpn_protocol_count = 2u};
@@ -814,7 +809,7 @@ spec("CNet bounded TLS engine") {
                                                  peer_certificate_sha256),
                 SALTS_OK);
     check_equal(strcmp(peer_certificate_sha256,
-                       "ebd76f304bc43bc2be697fca2f054206978c0558931529a7c1b2bb7d82a7a3c4"),
+                       "e5bbec0e499dc100dbc2414e7a09c687e0efbe473816262c16ac85d1d7b671da"),
                 0);
     check_equal(cnet_tls_peer_certificate_sha256(&server, server_probe.connection,
                                                  peer_certificate_sha256),
@@ -942,10 +937,6 @@ spec("CNet bounded TLS engine") {
     check_null(client_probe.owned_slice.buffer);
 
     check_equal(cnet_tls_server_destroy(&tls_server), SALTS_OK);
-    check_equal(tt_remove_file(cert_path), 0);
-    check_equal(tt_remove_file(key_path), 0);
-    free(cert_path);
-    free(key_path);
   }
 
   it("upgrades one negotiated plaintext connection in place and carries TLS bytes") {
@@ -976,25 +967,20 @@ spec("CNet bounded TLS engine") {
     cnet_connect_options connect_options;
     cnet_connection client_connection = {0};
     cnet_connection server_connection = {0};
-    char *cert_path = tt_make_temp_file("cnet-cert", ".pem");
-    char *key_path = tt_make_temp_file("cnet-key", ".pem");
+    const char *ca_path = CNET_TLS_TEST_IP_CA;
+    const char *cert_path = CNET_TLS_TEST_IP_CERT;
+    const char *key_path = CNET_TLS_TEST_IP_KEY;
     char uri[64];
     uint16_t port = 0u;
     uint64_t deadline;
     bool accepted = false;
 
-    check_not_null(cert_path);
-    check_not_null(key_path);
-    check_equal(
-        tt_write_file(cert_path, CNET_TLS_TEST_CERTIFICATE, sizeof(CNET_TLS_TEST_CERTIFICATE) - 1u),
-        0);
-    check_equal(tt_write_file(key_path, CNET_TLS_TEST_KEY, sizeof(CNET_TLS_TEST_KEY) - 1u), 0);
     tls_server_config = (cnet_tls_server_config){.size = sizeof(tls_server_config),
                                                  .cert_file = cert_path,
                                                  .key_file = key_path,
                                                  .client_auth = CNET_TLS_CLIENT_AUTH_NONE};
     tls_client_config = (cnet_tls_client_config){
-        .size = sizeof(tls_client_config), .ca_file = cert_path, .server_name = "localhost"};
+        .size = sizeof(tls_client_config), .ca_file = ca_path, .server_name = "localhost"};
     tls_options.tls = &tls_client_config;
 
     check_equal(cnet_tls_server_init(&tls_server, &tls_server_config), SALTS_OK);
@@ -1108,10 +1094,6 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_client_stop(&server, 5000u), SALTS_OK);
     check_equal(cnet_client_destroy(&client), SALTS_OK);
     check_equal(cnet_client_destroy(&server), SALTS_OK);
-    check_equal(tt_remove_file(cert_path), 0);
-    check_equal(tt_remove_file(key_path), 0);
-    free(cert_path);
-    free(key_path);
   }
 
   it("times out a silent peer in the handshake stage without downgrading") {
@@ -1132,21 +1114,17 @@ spec("CNet bounded TLS engine") {
     cnet_connect_options options;
     cnet_connection client_connection = {0};
     cnet_connection server_connection = {0};
-    char *cert_path = tt_make_temp_file("cnet-cert", ".pem");
+    const char *ca_path = CNET_TLS_TEST_IP_CA;
     char uri[64];
     uint16_t port = 0u;
     uint64_t deadline;
     bool accepted = false;
 
-    check_not_null(cert_path);
-    check_equal(
-        tt_write_file(cert_path, CNET_TLS_TEST_CERTIFICATE, sizeof(CNET_TLS_TEST_CERTIFICATE) - 1u),
-        0);
     client_config.tls_handshake_timeout_ms = 20u;
     server_config.tls_io_buffer_bytes = 0u;
     server_config.tls_handshake_timeout_ms = 0u;
     tls_config = (cnet_tls_client_config){
-        .size = sizeof(tls_config), .ca_file = cert_path, .server_name = "localhost"};
+        .size = sizeof(tls_config), .ca_file = ca_path, .server_name = "localhost"};
     check_equal(cnet_client_init(&client, &client_config), SALTS_OK);
     check_equal(cnet_client_init(&raw_server, &server_config), SALTS_OK);
     check_equal(cnet_listener_init(&listener, &listener_config), SALTS_OK);
@@ -1190,8 +1168,6 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_client_stop(&raw_server, 5000u), SALTS_OK);
     check_equal(cnet_client_destroy(&client), SALTS_OK);
     check_equal(cnet_client_destroy(&raw_server), SALTS_OK);
-    check_equal(tt_remove_file(cert_path), 0);
-    free(cert_path);
   }
 
   it("cancels a handshake without publishing a connection or failure") {
