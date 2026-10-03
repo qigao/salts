@@ -755,6 +755,42 @@ static size_t cnet_tls_ring_read(unsigned char *buffer, size_t capacity,
   return length;
 }
 
+static size_t cnet_tls_ring_peek(const unsigned char *buffer, size_t capacity,
+                                 size_t head, size_t size,
+                                 unsigned char *data, size_t length) {
+  size_t first;
+  if (buffer == NULL || data == NULL || capacity == 0u ||
+      size == 0u || length == 0u)
+    return 0u;
+  if (length > size) length = size;
+  first = capacity - head;
+  if (first > length) first = length;
+  memcpy(data, buffer + head, first);
+  if (length > first) memcpy(data + first, buffer, length - first);
+  return length;
+}
+
+static int cnet_tls_cipher_record_ready(const cnet_tls_gmssl_state *engine,
+                                        bool *out_ready) {
+  unsigned char header[TLS_RECORD_HEADER_SIZE];
+  size_t record_size;
+  if (engine == NULL || out_ready == NULL) return SALTS_EINVAL;
+  *out_ready = false;
+  if (engine->input_size < TLS_RECORD_HEADER_SIZE) return SALTS_OK;
+  if (cnet_tls_ring_peek(engine->cipher_input, engine->capacity,
+                         engine->input_head, engine->input_size,
+                         header, sizeof(header)) != sizeof(header))
+    return SALTS_EIO;
+  record_size = TLS_RECORD_HEADER_SIZE +
+                (((size_t)header[3] << 8u) | (size_t)header[4]);
+  if (record_size < TLS_RECORD_HEADER_SIZE ||
+      record_size > TLS_MAX_RECORD_SIZE ||
+      record_size > engine->capacity)
+    return SALTS_EPROTO;
+  *out_ready = engine->input_size >= record_size;
+  return SALTS_OK;
+}
+
 static tls_ret_t cnet_tls_io_send(void *user, const void *buffer, size_t length,
                                   int flags) {
   cnet_tls_gmssl_state *engine = (cnet_tls_gmssl_state *)user;
@@ -1212,6 +1248,8 @@ int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity,
                   size_t *out_size, bool *out_peer_closed) {
   cnet_tls_gmssl_state *engine;
   size_t received_size = 0u;
+  size_t copy_size;
+  bool record_ready = false;
   int result;
   int status;
   if (out_size == NULL || out_peer_closed == NULL) return SALTS_EINVAL;
@@ -1230,10 +1268,21 @@ int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity,
   if (status == SALTS_OK) return SALTS_OK;
   if (status != SALTS_ENOENT) return status;
 
-  result = tls_recv(&engine->connection, (uint8_t *)buffer, capacity,
-                    &received_size);
+  status = cnet_tls_cipher_record_ready(engine, &record_ready);
+  if (status != SALTS_OK) return status;
+  if (!record_ready) return SALTS_OK;
+
+  result = tls_recv(&engine->connection, state->read_buffer,
+                    state->io_buffer_bytes, &received_size);
   if (result == 1) {
-    *out_size = received_size;
+    if (received_size > state->io_buffer_bytes) return SALTS_EPROTO;
+    copy_size = capacity < received_size ? capacity : received_size;
+    if (copy_size != 0u) memcpy(buffer, state->read_buffer, copy_size);
+    *out_size = copy_size;
+    if (copy_size < received_size) {
+      engine->plaintext_pending_offset = copy_size;
+      engine->plaintext_pending_size = received_size;
+    }
     return SALTS_OK;
   }
   if (result == 0 || result == TLS_ERROR_TCP_CLOSED) {
@@ -1266,6 +1315,13 @@ int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed,
   if (engine->plaintext_pending_size != 0u) {
     *out_plaintext_pending = true;
     return SALTS_OK;
+  }
+
+  {
+    bool record_ready = false;
+    int status = cnet_tls_cipher_record_ready(engine, &record_ready);
+    if (status != SALTS_OK) return status;
+    if (!record_ready) return SALTS_OK;
   }
 
   result = tls_recv(&engine->connection, state->read_buffer,
