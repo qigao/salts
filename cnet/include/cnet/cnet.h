@@ -130,6 +130,23 @@ typedef struct cnet_stream_peer {
   uint8_t address[16];
 } cnet_stream_peer;
 
+/**
+ * Move-owned accepted TCP stream used only between listener admission and one
+ * final CNet owner. Zero initialization is the empty state.
+ *
+ * internal_socket and internal_active are implementation state and must not
+ * be modified directly. peer is a copied portable endpoint and remains valid
+ * after the stream is adopted or closed.
+ */
+typedef struct cnet_accepted_stream {
+  uintptr_t internal_socket;
+  cnet_stream_peer peer;
+  uint32_t internal_active;
+} cnet_accepted_stream;
+
+#define CNET_ACCEPTED_STREAM_INIT \
+  {0u, {(cnet_datagram_address_family)0, 0u, 0u, {0}}, 0u}
+
 enum { CNET_STREAM_ENDPOINT_API_VERSION = 1 };
 
 /**
@@ -1304,6 +1321,47 @@ int cnet_listener_accept(cnet_listener *listener, cnet_client *client,
 int cnet_listener_accept_peer(cnet_listener *listener, cnet_client *client,
                               const cnet_observer *observer, cnet_connection *out_connection,
                               cnet_stream_peer *out_peer);
+
+/**
+ * Accepts one pending TCP peer without attaching it to a CNet client.
+ *
+ * Success transfers exactly one accepted native stream into out_accepted
+ * after applying listener TCP policy and nonblocking mode. The descriptor is a
+ * bounded move-only value intended for one connection-admission handoff to the
+ * final CNet owner. No pending peer returns SALTS_ETIMEDOUT.
+ *
+ * The caller must pass an empty/zero-initialized descriptor. A live descriptor
+ * returns SALTS_EALREADY and is left unchanged.
+ */
+int cnet_listener_accept_detached(cnet_listener *listener,
+                                  cnet_accepted_stream *out_accepted);
+
+/**
+ * Consumes one detached accepted stream into this client's owner-local TCP
+ * state. The descriptor becomes empty on every consuming attempt, including
+ * bounded admission failure; ownership is never returned to the caller.
+ */
+int cnet_client_adopt_accepted(cnet_client *client,
+                               cnet_accepted_stream *accepted,
+                               const cnet_observer *observer,
+                               cnet_connection *out_connection);
+
+/**
+ * TLS counterpart of cnet_client_adopt_accepted(). TLS handshake state is
+ * created only on the final CNet owner; the detached descriptor carries no TLS
+ * provider/runtime state.
+ */
+int cnet_client_adopt_accepted_tls(cnet_client *client,
+                                   cnet_accepted_stream *accepted,
+                                   const cnet_tls_server *server,
+                                   const cnet_observer *observer,
+                                   cnet_connection *out_connection);
+
+/**
+ * Closes one still-detached stream and empties the descriptor.
+ * Empty/double-close returns SALTS_EALREADY.
+ */
+int cnet_accepted_stream_close(cnet_accepted_stream *accepted);
 
 /**
  * Accepts one pending VSOCK stream and transfers it into `client`.

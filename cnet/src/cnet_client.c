@@ -947,6 +947,49 @@ int cnet_client_adopt_tcp(cnet_client *client, uintptr_t native_socket,
   return status;
 }
 
+int cnet_client_adopt_accepted(cnet_client *client,
+                               cnet_accepted_stream *accepted,
+                               const cnet_observer *observer,
+                               cnet_connection *out_connection) {
+  uintptr_t native_socket;
+  if (accepted == NULL) {
+    if (out_connection != NULL) *out_connection = (cnet_connection){0};
+    return SALTS_EINVAL;
+  }
+  if (accepted->internal_active == 0u) {
+    if (out_connection != NULL) *out_connection = (cnet_connection){0};
+    return SALTS_EALREADY;
+  }
+  native_socket = accepted->internal_socket;
+  accepted->internal_socket = 0u;
+  accepted->internal_active = 0u;
+  return cnet_client_adopt_tcp(client, native_socket, observer,
+                               out_connection);
+}
+
+int cnet_client_adopt_accepted_tls(cnet_client *client,
+                                   cnet_accepted_stream *accepted,
+                                   const cnet_tls_server *server,
+                                   const cnet_observer *observer,
+                                   cnet_connection *out_connection) {
+  uintptr_t native_socket;
+  cnet_tls_context *context;
+  if (accepted == NULL) {
+    if (out_connection != NULL) *out_connection = (cnet_connection){0};
+    return SALTS_EINVAL;
+  }
+  if (accepted->internal_active == 0u) {
+    if (out_connection != NULL) *out_connection = (cnet_connection){0};
+    return SALTS_EALREADY;
+  }
+  native_socket = accepted->internal_socket;
+  accepted->internal_socket = 0u;
+  accepted->internal_active = 0u;
+  context = cnet_tls_server_context(server);
+  return cnet_client_adopt_tls_server(client, native_socket, context, observer,
+                                      out_connection);
+}
+
 int cnet_client_adopt_bound_tcp_connect(
     cnet_client *client, uintptr_t native_socket,
     const cnet_stream_peer *remote_peer,

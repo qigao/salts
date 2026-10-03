@@ -9,6 +9,8 @@ static_assert(std::is_standard_layout<cnet_client>::value, "client must be a C v
 static_assert(std::is_standard_layout<cnet_connection>::value,
               "connection must be a C value handle");
 static_assert(std::is_standard_layout<cnet_listener>::value, "listener must be a C value wrapper");
+static_assert(std::is_standard_layout<cnet_accepted_stream>::value,
+              "accepted stream handoff must remain C ABI data");
 static_assert(std::is_standard_layout<cnet_datagram>::value,
               "datagram must be a C value wrapper");
 #if !defined(CNET_STOP_DRAIN_CONTRACT_VERSION) || CNET_STOP_DRAIN_CONTRACT_VERSION < 1u
@@ -59,6 +61,21 @@ static_assert(std::is_same<decltype(&cnet_client_adopt_vsock),
                            int (*)(cnet_client *, uintptr_t, const cnet_observer *,
                                    cnet_connection *)>::value,
               "VSOCK adoption must expose the C client ownership contract");
+static_assert(
+    std::is_same<decltype(&cnet_listener_accept_detached),
+                 int (*)(cnet_listener *, cnet_accepted_stream *)>::value,
+    "detached listener admission must keep C linkage");
+static_assert(
+    std::is_same<decltype(&cnet_client_adopt_accepted),
+                 int (*)(cnet_client *, cnet_accepted_stream *,
+                         const cnet_observer *, cnet_connection *)>::value,
+    "accepted TCP adoption must keep C linkage");
+static_assert(
+    std::is_same<decltype(&cnet_client_adopt_accepted_tls),
+                 int (*)(cnet_client *, cnet_accepted_stream *,
+                         const cnet_tls_server *, const cnet_observer *,
+                         cnet_connection *)>::value,
+    "accepted TLS adoption must keep C linkage");
 static_assert(std::is_same<decltype(&cnet_listener_init_vsock),
                            int (*)(cnet_listener *, const cnet_vsock_listener_config *)>::value,
               "VSOCK listener initialization must keep C linkage");
@@ -124,6 +141,7 @@ static_assert(std::is_same<decltype(&cnet_packet_poll), cnet_packet_poll_functio
 int main() {
   cnet_client client{};
   cnet_listener listener{};
+  cnet_accepted_stream accepted_stream = CNET_ACCEPTED_STREAM_INIT;
   cnet_datagram datagram{};
   cnet_kcp kcp{};
   cnet_secure_kcp secure_kcp{};
@@ -154,6 +172,7 @@ int main() {
   cnet_websocket_config websocket_config{};
   (void)client;
   (void)listener;
+  (void)accepted_stream;
   (void)datagram;
   (void)kcp;
   (void)secure_kcp;
