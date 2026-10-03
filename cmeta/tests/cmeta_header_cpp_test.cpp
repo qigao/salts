@@ -58,9 +58,17 @@ Enum(cmeta_cpp_state,
       &cmeta_type_int,CMETA_ABI_SCALAR, \
       (int,delta,CMETA_PARAM_IN,&cmeta_type_int,CMETA_ABI_SCALAR)) \
     X(I,F0,int,value,value, \
-      &cmeta_type_int,CMETA_ABI_SCALAR)
+      &cmeta_type_int,CMETA_ABI_SCALAR) \
+    X(I,FR0,size_t *,owned_value,stateful, \
+      &cmeta_type_size_ptr,CMETA_ABI_OBJECT_POINTER, \
+      CMETA_RESULT_OWNED | CMETA_RESULT_NULLABLE)
 
 CMETA_INTERFACE(cmeta_cpp_reflected_interface, CMETA_CPP_INTERFACE_METHODS);
+
+static_assert(
+    cmeta_cpp_reflected_interface_owned_value_function()->result_flags ==
+        (CMETA_RESULT_OWNED | CMETA_RESULT_NULLABLE),
+    "result-aware reflected interface rows preserve canonical result semantics");
 
 TypeFunction(CMetaCppStorage,
     (small, int),
