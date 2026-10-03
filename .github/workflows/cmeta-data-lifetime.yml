@@ -103,6 +103,7 @@ jobs:
             cstl_typed_decl_cpp_test \
             cstl_typed_test \
             cstl_cmeta_lower_runtime \
+            cmeta_core_test \
             cmeta_function_reflection_test \
             cmeta_function_header_test \
             cmeta_header_cpp_test \
@@ -116,7 +117,7 @@ jobs:
           ctest --test-dir build/linux-gcc-release \
             --no-tests=error \
             --output-on-failure \
-            -R "^(test_salts_cmeta_data|cstl_typed_decl_cpp_test|cstl_typed_test|cstl_cmeta_lower_.*|cmeta_lower_version|cmeta_function_reflection_test|cmeta_function_header_test|cmeta_header_cpp_test|cmeta_interface_function_test|cmeta_method_test|cmeta_invokable_test|cmeta_object_test|cmeta_reflection_plugin_test|salts_plugin_contract_test|salts_plugin_loader_test)$"
+            -R "^(test_salts_cmeta_data|cstl_typed_decl_cpp_test|cstl_typed_test|cstl_cmeta_lower_.*|cmeta_lower_version|cmeta_core_test|cmeta_function_reflection_test|cmeta_function_header_test|cmeta_header_cpp_test|cmeta_interface_function_test|cmeta_method_test|cmeta_invokable_test|cmeta_object_test|cmeta_reflection_plugin_test|salts_plugin_contract_test|salts_plugin_loader_test)$"
 
       - name: Source hygiene
         shell: bash

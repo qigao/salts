@@ -837,6 +837,34 @@ boundary used by larger object transactions.
 `interface(...)` generates an ordinary C `{ self, vtable }` protocol value,
 inline forwarding functions, capability metadata, and reflection metadata.
 
+This value is an exact typed protocol capability. It is not the canonical
+runtime-selected identity/lifetime representation for an arbitrary native
+object; that role belongs to `cmeta_object_ref`. The two compose through an
+explicit provider relation:
+
+```text
+one native provider
+    +-- cmeta_object_ref     identity / field+receiver reflection / lifetime
+    +-- Interface A         typed protocol capability
+    +-- Interface B         typed protocol capability
+```
+
+An ObjectRef-to-Interface view is normally borrowed. Its validity is bounded by
+the object/provider lifetime and, for Plugin-backed code, by the outer Plugin
+lease. CMeta never derives this relation from pointer equality, struct offsets,
+vtable layout, descriptor names, or semantic descriptor equality.
+
+A method marked `CMETA_INTERFACE_METHOD_OWNS_SELF` is different: dispatch
+consumes the Interface self owner and invalidates that handle. Such an Interface
+cannot be exposed as a borrowed view of a still-live ObjectRef without creating
+two competing ownership authorities. Runtime projection must therefore reject
+that shape until an explicit ownership transfer is performed. The canonical
+query is `cmeta_interface_desc_has_owning_method()`.
+
+This does not affect static dispatch. Compile-time-known Interface calls remain
+ordinary typed calls through their generated wrappers/vtable; ObjectRef is not a
+mandatory hop on the hot path.
+
 ---
 
 ## 4. Reserved future syntax
