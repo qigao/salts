@@ -1,6 +1,8 @@
 #ifndef CNET_OWNER_H
 #define CNET_OWNER_H
 
+#include <cnet/cnet.h>
+
 #include "cnet_command.h"
 #include "cnet_event.h"
 #include "cnet_resolver.h"
@@ -157,6 +159,16 @@ int cnet_owner_external_requests(cnet_owner *owner,
                                  native_io_request *out_requests,
                                  size_t capacity,
                                  size_t *out_count);
+
+typedef cnet_external_request_snapshot
+    cnet_owner_external_request_snapshot;
+
+int cnet_owner_external_request_snapshots(
+    cnet_owner *owner,
+    cnet_session_handle session,
+    cnet_owner_external_request_snapshot *out_requests,
+    size_t capacity,
+    size_t *out_count);
 
 /**
  * Owner-thread direct receive admission.

@@ -73,6 +73,12 @@ int cnet_shards_external_requests(cnet_shards *shards,
                                   native_io_request *out_requests,
                                   size_t capacity,
                                   size_t *out_count);
+int cnet_shards_external_request_snapshots(
+    cnet_shards *shards,
+    cnet_shard_connection connection,
+    cnet_owner_external_request_snapshot *out_requests,
+    size_t capacity,
+    size_t *out_count);
 
 #if defined(CNET_INTERNAL_MULTI_OWNER_POC)
 /** Internal Phase-B1 owner-specific progress; exactly one caller owns each shard. */
