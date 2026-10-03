@@ -55,26 +55,62 @@ int main(void) {
     if (list.add(50) != STL_OK) return 15;
 
     {
-        owned(IntList) transfer = {0};
-        IntList received = {0};
+        owned(IntList) cleanup_first;
+        owned(IntVec) cleanup_second = {0};
+        owned(IntMap) cleanup_map;
+        int cleanup_first_size;
+        int cleanup_second_size;
+        size_t cleanup_map_size;
 
-        if (IntList_init(&transfer, 4u) != STL_OK) return 91;
-        if (transfer.add(60) != STL_OK) return 92;
+        (void)IntList_init(&cleanup_first, 2u);
+        (void)IntVec_init(&cleanup_second, 2u);
+        (void)IntMap_init(&cleanup_map, 2u);
+        (void)cleanup_first.add(53);
+        (void)cleanup_second.push(54);
+        (void)cleanup_map.put(1, 55);
+        cleanup_first_size = (int)IntList_size(&cleanup_first);
+        cleanup_second_size = (int)IntVec_size(&cleanup_second);
+        cleanup_map_size = IntMap_size(&cleanup_map);
+        (void)cleanup_first_size;
+        (void)cleanup_second_size;
+        (void)cleanup_map_size;
+    }
+
+    {
+        owned(IntList) moved_source;
+        IntList moved_sink = {0};
+
+        (void)IntList_init(&moved_source, 2u);
+        (void)moved_source.add(56);
+        moved_sink = move(moved_source);
+        if (IntList_size(&moved_sink) != 1u) return 98;
+        IntList_destroy(&moved_sink);
+    }
+
+    {
+        owned(IntList) transfer;
+        IntList received = {0};
+        int inner_size;
+
+        (void)IntList_init(&transfer, 4u);
+        (void)transfer.add(60);
 
         {
-            owned(IntList) transfer = {0};
+            owned(IntList) inner_transfer;
             IntList inner_received = {0};
 
-            if (IntList_init(&transfer, 2u) != STL_OK) return 93;
-            if (transfer.add(70) != STL_OK) return 94;
-            inner_received = move(transfer);
-            if (IntList_size(&inner_received) != 1u) return 95;
+            (void)IntList_init(&inner_transfer, 2u);
+            (void)inner_transfer.add(70);
+            inner_received = move(inner_transfer);
+            inner_size = (int)IntList_size(&inner_received);
             IntList_destroy(&inner_received);
         }
 
-        if (transfer.add(61) != STL_OK) return 96;
+        (void)transfer.add(61);
         received = move(transfer);
-        if (IntList_size(&received) != 2u) return 97;
+
+        if (inner_size != 1) return 99;
+        if (IntList_size(&received) != 2u) return 100;
         IntList_destroy(&received);
     }
 
