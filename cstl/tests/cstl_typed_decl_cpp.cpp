@@ -34,6 +34,8 @@ DECL_UNARY_ABI(DeclIntList)
 DECL_UNARY_ABI(DeclIntSet)
 DECL_BINARY_ABI(DeclIntLongMap)
 DECL_BINARY_ABI(DeclIntLongHashMap)
+const cmeta_data_desc *DeclIntVec_c_data(void);
+const cmeta_data_desc *DeclIntLongMap_c_data(void);
 }
 
 #define CHECK_UNARY(NAME, CODE) \
@@ -52,6 +54,17 @@ DECL_BINARY_ABI(DeclIntLongHashMap)
   } while (false)
 
 int main() {
+  const cmeta_data_desc *vec_data = DeclIntVec_c_data();
+  const cmeta_data_desc *map_data = DeclIntLongMap_c_data();
+
+  if (vec_data == nullptr || map_data == nullptr) return 1;
+  if (!cmeta_data_desc_valid(vec_data) ||
+      !cmeta_data_desc_valid(map_data)) return 2;
+  if (vec_data->construct_ops == nullptr ||
+      map_data->construct_ops == nullptr) return 3;
+  if (std::strcmp(vec_data->stable_id, "DeclIntVec.data") != 0) return 4;
+  if (std::strcmp(map_data->stable_id, "DeclIntLongMap.data") != 0) return 5;
+
   CHECK_UNARY(DeclIntVec, 10);
   CHECK_UNARY(DeclIntList, 20);
   CHECK_UNARY(DeclIntSet, 30);
