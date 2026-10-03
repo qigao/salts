@@ -57,6 +57,12 @@ bool cmeta_object_lifecycle_valid(
  * data describes the canonical native semantic/storage type. methods is
  * optional and, when present, must describe the same receiver type.
  *
+ * This is the runtime-selected identity/lifetime contract, not a replacement
+ * for CMeta Interface typed protocol values. An Interface {self,vtable} view
+ * over this object is a separate capability whose provider/lifetime relation
+ * must be explicit. In particular, borrowed object identity does not grant an
+ * Interface method the authority to consume/destroy that object.
+ *
  * The size prefix reserves ABI growth for explicit lifetime/provider/module
  * lease state without placing any language-runtime handle in CMeta.
  */
