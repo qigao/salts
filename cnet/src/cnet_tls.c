@@ -4,6 +4,7 @@
 
 #include <gmssl/tls.h>
 #include <gmssl/x509_cer.h>
+#include <gmssl/pem.h>
 
 #include <limits.h>
 #include <stdatomic.h>
@@ -23,13 +24,16 @@
   #include <Security/Security.h>
 #else
   #include <arpa/inet.h>
+  #include <dirent.h>
 #endif
 
 enum {
   CNET_TLS_PATH_MAX_BYTES = 4095,
   CNET_TLS_PASSWORD_MAX_BYTES = 1023,
   CNET_TLS_GMSSL_ALPN_MAX_COUNT = 4,
-  CNET_TLS_TRUST_MAX_BYTES = 16 * 1024 * 1024
+  CNET_TLS_TRUST_MAX_BYTES = 16 * 1024 * 1024,
+  CNET_TLS_CERT_MAX_BYTES = 64 * 1024,
+  CNET_TLS_PATH_BUFFER_BYTES = CNET_TLS_PATH_MAX_BYTES + 512
 };
 
 typedef enum cnet_tls_variant {
@@ -111,7 +115,6 @@ static bool cnet_tls_file_readable(const char *path) {
 }
 #endif
 
-#if defined(_WIN32) || defined(__APPLE__)
 static int cnet_tls_der_bundle_append(cnet_tls_der_bundle *bundle,
                                       const unsigned char *data, size_t size) {
   unsigned char *next;
@@ -147,7 +150,140 @@ static void cnet_tls_der_bundle_dispose(cnet_tls_der_bundle *bundle) {
   free(bundle->data);
   memset(bundle, 0, sizeof(*bundle));
 }
+
+static bool cnet_tls_ca_hash_name(const char *name) {
+  size_t index;
+  if (name == NULL) return false;
+  for (index = 0u; index < 8u; ++index) {
+    const char ch = name[index];
+    if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') ||
+          (ch >= 'A' && ch <= 'F')))
+      return false;
+  }
+  if (name[8] != '.') return false;
+  index = 9u;
+  if (name[index] < '0' || name[index] > '9') return false;
+  while (name[index] >= '0' && name[index] <= '9') ++index;
+  return name[index] == '\0';
+}
+
+static int cnet_tls_append_pem_cert_file(cnet_tls_der_bundle *bundle,
+                                         const char *path,
+                                         size_t *out_count) {
+  unsigned char certificate[CNET_TLS_CERT_MAX_BYTES];
+  FILE *file;
+  size_t count = 0u;
+  int status = SALTS_OK;
+
+  if (bundle == NULL || path == NULL) return SALTS_EINVAL;
+  file = fopen(path, "rb");
+  if (file == NULL) return SALTS_EIO;
+  for (;;) {
+    size_t size = 0u;
+    int result = pem_read(file, "CERTIFICATE", certificate, &size,
+                          sizeof(certificate));
+    if (result == 0) break;
+    if (result < 0 || size == 0u) {
+      status = SALTS_EIO;
+      break;
+    }
+    status = cnet_tls_der_bundle_append(bundle, certificate, size);
+    if (status != SALTS_OK) break;
+    ++count;
+  }
+  (void)fclose(file);
+  memset(certificate, 0, sizeof(certificate));
+  if (status == SALTS_OK && count == 0u) status = SALTS_EIO;
+  if (out_count != NULL) *out_count = count;
+  return status;
+}
+
+static int cnet_tls_append_ca_path(cnet_tls_der_bundle *bundle,
+                                   const char *directory,
+                                   size_t *out_count) {
+  size_t count = 0u;
+  int status = SALTS_OK;
+  if (bundle == NULL || directory == NULL || directory[0] == '\0')
+    return SALTS_EINVAL;
+#if defined(_WIN32)
+  {
+    WIN32_FIND_DATAA data;
+    HANDLE search;
+    char pattern[CNET_TLS_PATH_BUFFER_BYTES];
+    int length = snprintf(pattern, sizeof(pattern), "%s\\*", directory);
+    if (length < 0 || (size_t)length >= sizeof(pattern)) return SALTS_ERANGE;
+    search = FindFirstFileA(pattern, &data);
+    if (search == INVALID_HANDLE_VALUE) return SALTS_EIO;
+    do {
+      char path[CNET_TLS_PATH_BUFFER_BYTES];
+      size_t file_count = 0u;
+      if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ||
+          !cnet_tls_ca_hash_name(data.cFileName))
+        continue;
+      length = snprintf(path, sizeof(path), "%s\\%s", directory, data.cFileName);
+      if (length < 0 || (size_t)length >= sizeof(path)) {
+        status = SALTS_ERANGE;
+        break;
+      }
+      status = cnet_tls_append_pem_cert_file(bundle, path, &file_count);
+      if (status != SALTS_OK) break;
+      count += file_count;
+    } while (FindNextFileA(search, &data) != 0);
+    (void)FindClose(search);
+  }
+#else
+  {
+    DIR *dir = opendir(directory);
+    struct dirent *entry;
+    if (dir == NULL) return SALTS_EIO;
+    while ((entry = readdir(dir)) != NULL) {
+      char path[CNET_TLS_PATH_BUFFER_BYTES];
+      size_t file_count = 0u;
+      int length;
+      if (!cnet_tls_ca_hash_name(entry->d_name)) continue;
+      length = snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
+      if (length < 0 || (size_t)length >= sizeof(path)) {
+        status = SALTS_ERANGE;
+        break;
+      }
+      status = cnet_tls_append_pem_cert_file(bundle, path, &file_count);
+      if (status != SALTS_OK) break;
+      count += file_count;
+    }
+    (void)closedir(dir);
+  }
 #endif
+  if (status == SALTS_OK && count == 0u) status = SALTS_EIO;
+  if (out_count != NULL) *out_count = count;
+  return status;
+}
+
+static int cnet_tls_load_explicit_trust(TLS_CTX *tls,
+                                        const char *ca_file,
+                                        const char *ca_path) {
+  cnet_tls_der_bundle bundle = {0};
+  size_t count = 0u;
+  int status = SALTS_OK;
+
+  if (tls == NULL || (ca_file == NULL && ca_path == NULL)) return SALTS_EINVAL;
+  if (ca_file != NULL) {
+    size_t file_count = 0u;
+    status = cnet_tls_append_pem_cert_file(&bundle, ca_file, &file_count);
+    if (status == SALTS_OK) count += file_count;
+  }
+  if (status == SALTS_OK && ca_path != NULL) {
+    size_t path_count = 0u;
+    status = cnet_tls_append_ca_path(&bundle, ca_path, &path_count);
+    if (status == SALTS_OK) count += path_count;
+  }
+  if (status == SALTS_OK && count == 0u) status = SALTS_EIO;
+  if (status == SALTS_OK &&
+      tls_ctx_set_ca_certificates_der(tls, bundle.data, bundle.size,
+                                      TLS_DEFAULT_VERIFY_DEPTH) != 1)
+    status = SALTS_EIO;
+  cnet_tls_der_bundle_dispose(&bundle);
+  return status;
+}
 
 #if defined(_WIN32)
 static int cnet_tls_append_windows_store(cnet_tls_der_bundle *bundle, const char *name) {
@@ -297,6 +433,7 @@ static int cnet_tls_variant_protocol(cnet_tls_variant variant) {
 static int cnet_tls_configure_variant(cnet_tls_context *context,
                                       cnet_tls_variant variant,
                                       const char *ca_file,
+                                      const char *ca_path,
                                       const char *cert_file,
                                       const char *key_file,
                                       const char *key_password,
@@ -376,11 +513,8 @@ static int cnet_tls_configure_variant(cnet_tls_context *context,
     return SALTS_EIO;
 
   if (context->verify_peer) {
-    status = ca_file != NULL
-                 ? (tls_ctx_set_ca_certificates(tls, ca_file,
-                                                TLS_DEFAULT_VERIFY_DEPTH) == 1
-                        ? SALTS_OK
-                        : SALTS_EIO)
+    status = (ca_file != NULL || ca_path != NULL)
+                 ? cnet_tls_load_explicit_trust(tls, ca_file, ca_path)
                  : cnet_tls_load_system_trust(tls);
     if (status != SALTS_OK) return status;
   }
@@ -433,7 +567,6 @@ static int cnet_tls_context_create_common(
 
   if (out_context == NULL) return SALTS_EINVAL;
   *out_context = NULL;
-  if (ca_path != NULL) return SALTS_ENOTSUP;
 
   context = (cnet_tls_context *)calloc(1u, sizeof(*context));
   if (context == NULL) return SALTS_ENOMEM;
@@ -449,7 +582,7 @@ static int cnet_tls_context_create_common(
 
   for (index = 0u; index < CNET_TLS_VARIANT_COUNT; ++index) {
     status = cnet_tls_configure_variant(
-        context, (cnet_tls_variant)index, ca_file, cert_file, key_file,
+        context, (cnet_tls_variant)index, ca_file, ca_path, cert_file, key_file,
         key_password, client_auth);
     if (status != SALTS_OK) {
       cnet_tls_context_dispose(context);
