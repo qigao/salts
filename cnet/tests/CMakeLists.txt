@@ -135,7 +135,7 @@ cmake_add_test(
   SOURCES
   cnet_tls_test.c
   LIBS
-  cnet
+  cnet_profile
   Salts::Core
   Salts::TinyTest
   INCLUDES
