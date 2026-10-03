@@ -359,7 +359,7 @@ spec("CNet bounded write ownership queue") {
     check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
   }
 
-  it("coalesces byte-adjacent retained slices from one backing without copying") {
+  it("exposes an adjacent retained-vector prefix without changing SG boundaries") {
     cnet_write_queue queue = {0};
     const cnet_write_queue_config config = {1u, 1u, 16u};
     const cnet_session_handle connection = {1u, 17u};
@@ -369,8 +369,10 @@ spec("CNet bounded write ownership queue") {
     cnet_write_handle handle = {0};
     cnet_write_view view = {0};
     native_io_buffer_span spans[NATIVE_IO_VECTOR_MAX] = {{0}};
+    const void *contiguous = NULL;
     size_t span_count = 0u;
     size_t span_bytes = 0u;
+    size_t contiguous_bytes = 0u;
 
     atomic_init(&free_probe.freed, 0);
     check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
@@ -397,16 +399,35 @@ spec("CNet bounded write ownership queue") {
     check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
     check_true(view.vector_write);
     check_equal(view.size, (size_t)8u);
+
     check_equal(cnet_write_queue_build_vector(&queue, &view, view.remaining,
                                               spans, &span_count, &span_bytes),
                 SALTS_OK);
-    check_equal(span_count, (size_t)1u);
+    check_equal(span_count, (size_t)3u);
     check_equal(span_bytes, (size_t)8u);
-    check_equal(spans[0].length, (size_t)8u);
-    check_equal(((const unsigned char *)spans[0].data)[0], 0x40u);
-    check_equal(((const unsigned char *)spans[0].data)[7], 0x47u);
+    check_equal(spans[0].length, (size_t)2u);
+    check_equal(spans[1].length, (size_t)3u);
+    check_equal(spans[2].length, (size_t)3u);
 
-    check_equal(cnet_write_queue_advance(&queue, &view, span_bytes), SALTS_OK);
+    check_equal(cnet_write_queue_build_contiguous(&queue, &view, view.remaining,
+                                                  &contiguous, &contiguous_bytes),
+                SALTS_OK);
+    check_true(contiguous != NULL);
+    check_equal(contiguous_bytes, (size_t)8u);
+    check_equal(((const unsigned char *)contiguous)[0], 0x40u);
+    check_equal(((const unsigned char *)contiguous)[7], 0x47u);
+
+    check_equal(cnet_write_queue_advance(&queue, &view, 4u), SALTS_OK);
+    contiguous = NULL;
+    contiguous_bytes = 0u;
+    check_equal(cnet_write_queue_build_contiguous(&queue, &view, view.remaining,
+                                                  &contiguous, &contiguous_bytes),
+                SALTS_OK);
+    check_equal(contiguous_bytes, (size_t)4u);
+    check_equal(((const unsigned char *)contiguous)[0], 0x44u);
+    check_equal(((const unsigned char *)contiguous)[3], 0x47u);
+
+    check_equal(cnet_write_queue_advance(&queue, &view, contiguous_bytes), SALTS_OK);
     check_equal(view.remaining, (size_t)0u);
     check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
     check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 1);
@@ -429,11 +450,11 @@ spec("CNet bounded write ownership queue") {
 
     atomic_init(&free_probe.freed, 0);
     check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
-    buffer = cnet_write_queue_external(64u, 0u, &free_probe);
+    buffer = cnet_write_queue_external(32u, 0u, &free_probe);
     check_true(buffer != NULL);
     for (size_t index = 0u; index < 32u; ++index) {
-      mem_buffer_data(buffer)[index * 2u] = (char)(index + 1u);
-      slices[index] = mem_slice(buffer, index * 2u, 1u);
+      mem_buffer_data(buffer)[index] = (char)(index + 1u);
+      slices[index] = mem_slice(buffer, index, 1u);
       check_equal(slices[index].length, (size_t)1u);
     }
     check_equal(mem_buffer_ref_count(buffer), UINT32_C(33));
@@ -582,11 +603,10 @@ spec("CNet bounded write ownership queue") {
     check_true(view.vector_write);
     check_equal(cnet_write_queue_build_vector(&queue, &view, view.remaining, spans,
                                               &span_count, &span_bytes), SALTS_OK);
-    check_equal(span_count, (size_t)1u);
+    check_equal(span_count, (size_t)2u);
     check_equal(span_bytes, (size_t)4u);
-    check_equal(spans[0].length, (size_t)4u);
     check_equal(((const unsigned char *)spans[0].data)[0], 0x31u);
-    check_equal(((const unsigned char *)spans[0].data)[3], 0x34u);
+    check_equal(((const unsigned char *)spans[1].data)[0], 0x33u);
     check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
     check_equal(atomic_load_explicit(&vector_free.freed, memory_order_acquire), 1);
 
