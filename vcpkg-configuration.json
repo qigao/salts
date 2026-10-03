@@ -3,7 +3,7 @@
     {
       "kind": "git",
       "repository": "https://github.com/qigao/vcpkg-cache",
-      "baseline": "0197902cadf79718e8574651d641c769098a9729",
+      "baseline": "6fc04393b8e3571b50c80f99ed11230d4df41f3d",
       "packages": [
         "aklomp-base64",
         "c-ares",
