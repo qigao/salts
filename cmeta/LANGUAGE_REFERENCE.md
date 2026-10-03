@@ -281,6 +281,36 @@ nullable/borrowed/owned may be known while direction remains UNKNOWN.
 OUT/nullability/ownership metadata still requires a pointer descriptor where
 the respective semantic demands it.
 
+Function results have an independent semantic flag set:
+
+```text
+CMETA_RESULT_UNKNOWN
+CMETA_RESULT_VALUE
+CMETA_RESULT_BORROWED
+CMETA_RESULT_SHARED
+CMETA_RESULT_OWNED
+CMETA_RESULT_NULLABLE
+```
+
+VALUE/BORROWED/SHARED/OWNED are mutually exclusive. NULLABLE is orthogonal and
+is valid only for pointer-shaped return types. A void return admits only
+UNKNOWN. Existing `FunctionDecl*` forms deliberately publish UNKNOWN rather
+than inferring ownership from return spelling, type kind, names, or ABI carrier.
+
+Use the explicit result-aware forms when the result contract is authoritative:
+
+```c
+Function0DeclResult(value, int, CMETA_RESULT_VALUE, current_count);
+
+Function0DeclAsAbiResult(
+    value, Buffer *, &buffer_ptr_type, CMETA_ABI_OBJECT_POINTER,
+    CMETA_RESULT_OWNED | CMETA_RESULT_NULLABLE, make_buffer);
+```
+
+Result semantics remain descriptive. They tell compilers/planners whether a
+returned resource is a value, borrow, shared reference, or ownership transfer;
+they do not themselves execute retain/release/destroy or insert lexical cleanup.
+
 The generated `FunctionMeta(name)` view is TU-local immutable metadata.
 Consumers compare the referenced CMeta types semantically rather than relying
 on descriptor address identity across translation units.
@@ -303,7 +333,7 @@ Unload order is: stop new admissions, drain calls/runs, destroy dependent values
 and consumers while their callbacks are live, then release the final module
 reference. Validators require live storage and cannot detect an unloaded pointer.
 
-`CMETA_REFLECTION_ABI_VERSION` is the reflection layout epoch. A provider bootstrap
+`CMETA_REFLECTION_ABI_VERSION` is the reflection layout epoch. The result-semantic FunctionDesc layout is reflection epoch 2. A provider bootstrap
 must accept a fixed-width requested epoch and reject a mismatch **before publishing
 descriptor pointers**. The provider compares against its own header constant;
 `cmeta_reflection_abi_version()` returns the linked CMeta library's epoch and checks
@@ -318,7 +348,12 @@ The `size` fields are validation guards, not permission to append fields to arra
 elements or to reinterpret another epoch. Host and provider must also agree on
 native architecture, calling convention, packing and enum representation.
 
-This epoch covers reflection only. Application interface/vtable versions and the
+This epoch covers reflection only. Salts Plugin exports embed borrowed pointers
+to these descriptors, so the Plugin ABI is also advanced when an incompatible
+Reflection layout becomes part of the exported manifest contract; hosts must
+reject the older Plugin ABI before consuming reflected exports.
+
+Application interface/vtable versions and the
 finite callable type/signature configuration require separate agreement before
 dispatch; equal reflection epochs do not authorize exchanging arbitrary
 `cmeta_callable` builds. CMeta owns neither the platform loader nor its references.
