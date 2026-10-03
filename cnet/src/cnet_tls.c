@@ -954,6 +954,7 @@ int cnet_tls_state_init(cnet_tls_state *state, cnet_tls_context *context,
   cnet_tls_gmssl_state *engine = NULL;
   unsigned char *read_buffer = NULL;
   unsigned char *write_buffer = NULL;
+  size_t ring_capacity;
   size_t allocation_size;
   int status;
 
@@ -965,11 +966,15 @@ int cnet_tls_state_init(cnet_tls_state *state, cnet_tls_context *context,
                                  CNET_TLS_SERVER_NAME_CAPACITY - 1u, NULL))))
     return SALTS_EINVAL;
   if (state->engine != NULL || state->context != NULL) return SALTS_EALREADY;
-  if (io_buffer_bytes >
+
+  ring_capacity = io_buffer_bytes < (size_t)TLS_MAX_RECORD_SIZE
+                      ? (size_t)TLS_MAX_RECORD_SIZE
+                      : io_buffer_bytes;
+  if (ring_capacity >
       (SIZE_MAX - sizeof(cnet_tls_gmssl_state)) / 2u)
     return SALTS_ERANGE;
 
-  allocation_size = sizeof(cnet_tls_gmssl_state) + io_buffer_bytes * 2u;
+  allocation_size = sizeof(cnet_tls_gmssl_state) + ring_capacity * 2u;
   engine = (cnet_tls_gmssl_state *)calloc(1u, allocation_size);
   read_buffer = (unsigned char *)malloc(io_buffer_bytes);
   write_buffer = (unsigned char *)malloc(io_buffer_bytes);
@@ -980,9 +985,9 @@ int cnet_tls_state_init(cnet_tls_state *state, cnet_tls_context *context,
     return SALTS_ENOMEM;
   }
 
-  engine->capacity = io_buffer_bytes;
+  engine->capacity = ring_capacity;
   engine->cipher_input = (unsigned char *)(engine + 1);
-  engine->cipher_output = engine->cipher_input + io_buffer_bytes;
+  engine->cipher_output = engine->cipher_input + ring_capacity;
   if (!server)
     memcpy(engine->server_name, server_name, strlen(server_name) + 1u);
 
