@@ -327,7 +327,6 @@ int cnet_write_queue_enqueue_slicev(cnet_write_queue *queue,
   }
 
   entry->owner_count = 0u;
-  entry->range_count = 0u;
   for (size_t index = 0u; index < segment_count; ++index) {
     size_t owner_index = 0u;
     while (owner_index < entry->owner_count &&
@@ -341,23 +340,12 @@ int cnet_write_queue_enqueue_slicev(cnet_write_queue *queue,
         memset(entry->owners, 0, sizeof(entry->owners));
         memset(entry->ranges, 0, sizeof(entry->ranges));
         entry->owner_count = 0u;
-        entry->range_count = 0u;
         ++impl->free_count;
         return SALTS_EINVAL;
       }
       entry->owners[entry->owner_count++] = retained;
     }
-
-    if (entry->range_count != 0u) {
-      cnet_write_range *previous = &entry->ranges[entry->range_count - 1u];
-      if (previous->buffer == segments[index].buffer &&
-          previous->base_offset + previous->length == base_offsets[index]) {
-        previous->length += segments[index].length;
-        continue;
-      }
-    }
-
-    entry->ranges[entry->range_count++] =
+    entry->ranges[index] =
         (cnet_write_range){segments[index].buffer, base_offsets[index], segments[index].length};
   }
 
@@ -367,6 +355,7 @@ int cnet_write_queue_enqueue_slicev(cnet_write_queue *queue,
   entry->size = total;
   entry->base_offset = 0u;
   entry->offset = 0u;
+  entry->range_count = segment_count;
   entry->next = CNET_WRITE_SLOT_NONE;
   entry->payload_kind = CNET_WRITE_PAYLOAD_RETAINED_VECTOR;
   entry->close_after_send = close_after_send;
@@ -438,6 +427,76 @@ int cnet_write_queue_peek(cnet_write_queue *queue, cnet_session_handle connectio
                      entry->base_offset + entry->offset;
   }
   return SALTS_OK;
+}
+
+int cnet_write_queue_build_contiguous(cnet_write_queue *queue,
+                                      const cnet_write_view *view, size_t max_bytes,
+                                      const void **out_data, size_t *out_bytes) {
+  cnet_write_queue_impl *impl = cnet_write_impl(queue);
+  cnet_write_entry *entry;
+  size_t connection_index;
+  uint32_t slot;
+  size_t consumed;
+
+  if (out_data == NULL || out_bytes == NULL) return SALTS_EINVAL;
+  *out_data = NULL;
+  *out_bytes = 0u;
+  if (impl == NULL || view == NULL || max_bytes == 0u || !view->vector_write ||
+      !cnet_write_handle_valid(view->handle))
+    return SALTS_EINVAL;
+
+  slot = view->handle.slot - 1u;
+  if ((size_t)slot >= impl->capacity) return SALTS_ENOENT;
+  entry = &impl->entries[slot];
+  connection_index = cnet_write_connection_index(impl, view->connection);
+  if (connection_index == SIZE_MAX || impl->heads[connection_index] != slot ||
+      entry->generation != view->handle.generation ||
+      view->_token != cnet_write_token(slot, entry->generation) ||
+      !cnet_write_entry_matches(entry, view->connection) ||
+      entry->payload_kind != CNET_WRITE_PAYLOAD_RETAINED_VECTOR ||
+      entry->offset != view->offset || entry->offset > entry->size)
+    return SALTS_ENOENT;
+
+  consumed = entry->offset;
+  if (max_bytes > entry->size - consumed) max_bytes = entry->size - consumed;
+  for (size_t index = 0u; index < entry->range_count; ++index) {
+    const cnet_write_range *range = &entry->ranges[index];
+    const char *data;
+    size_t local;
+    size_t bytes;
+    size_t next_offset;
+
+    if (consumed >= range->length) {
+      consumed -= range->length;
+      continue;
+    }
+
+    local = consumed;
+    data = mem_buffer_const_data(range->buffer);
+    if (data == NULL || local >= range->length) return SALTS_EPROTO;
+    bytes = range->length - local;
+    if (bytes > max_bytes) bytes = max_bytes;
+    next_offset = range->base_offset + range->length;
+
+    for (size_t next = index + 1u; bytes < max_bytes && next < entry->range_count; ++next) {
+      const cnet_write_range *candidate = &entry->ranges[next];
+      size_t take;
+
+      if (candidate->buffer != range->buffer || candidate->base_offset != next_offset) break;
+      take = candidate->length;
+      if (take > max_bytes - bytes) take = max_bytes - bytes;
+      bytes += take;
+      if (take != candidate->length) break;
+      next_offset += candidate->length;
+    }
+
+    if (bytes == 0u) return SALTS_EPROTO;
+    *out_data = data + range->base_offset + local;
+    *out_bytes = bytes;
+    return SALTS_OK;
+  }
+
+  return SALTS_EPROTO;
 }
 
 int cnet_write_queue_build_vector(cnet_write_queue *queue,
