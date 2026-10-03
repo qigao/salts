@@ -3,8 +3,6 @@
 
 #include <salts/clock.h>
 
-#include <openssl/ssl.h>
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -406,7 +404,6 @@ spec("CNet bounded TLS engine") {
     cnet_tls_test_pair_destroy(&pair);
   }
 
-#if defined(TLS1_3_VERSION)
   it("negotiates TLS 1.3 when both peers require TLS 1.3") {
     cnet_tls_test_pair pair;
     char version[16] = {0};
@@ -429,7 +426,6 @@ spec("CNet bounded TLS engine") {
     check_equal(version_size, strlen(version));
     cnet_tls_test_pair_destroy(&pair);
   }
-#endif
 
   it("probes peer close without consuming pending application plaintext") {
     cnet_tls_test_pair pair;
