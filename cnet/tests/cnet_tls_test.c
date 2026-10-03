@@ -533,6 +533,35 @@ spec("CNet bounded TLS engine") {
     cnet_tls_test_pair_destroy(&pair);
   }
 
+  it("keeps GmSSL recv state clean when probing empty ciphertext before a write") {
+    cnet_tls_test_pair pair;
+    static const unsigned char payload = 0x6bu;
+    unsigned char received = 0u;
+    size_t received_size = 0u;
+    bool complete = false;
+    bool peer_closed = false;
+    bool plaintext_pending = false;
+
+    check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+
+    check_equal(cnet_tls_probe_peer_close(&pair.client, &peer_closed, &plaintext_pending), SALTS_OK);
+    check_false(peer_closed);
+    check_false(plaintext_pending);
+
+    check_equal(cnet_tls_write(&pair.client, &payload, sizeof(payload), &complete), SALTS_OK);
+    check_true(complete);
+    check_equal(cnet_tls_test_transfer(&pair.client, &pair.server), SALTS_OK);
+    check_equal(cnet_tls_read(&pair.server, &received, sizeof(received), &received_size,
+                              &peer_closed),
+                SALTS_OK);
+    check_equal(received_size, sizeof(received));
+    check_equal(received, payload);
+    check_false(peer_closed);
+
+    cnet_tls_test_pair_destroy(&pair);
+  }
+
   it("probes peer close without consuming pending application plaintext") {
     cnet_tls_test_pair pair;
     static const unsigned char payload = 0x5au;
