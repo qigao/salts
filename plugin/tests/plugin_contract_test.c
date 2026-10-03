@@ -318,7 +318,7 @@ describe("ABI layout contract") {
                     (uint32_t)sizeof(salts_plugin_export));
         check_equal(SALTS_PLUGIN_MANIFEST_SIZE,
                     (uint32_t)sizeof(salts_plugin_manifest));
-        check_equal((unsigned)SALTS_PLUGIN_ABI_VERSION, 2u);
+        check_equal((unsigned)SALTS_PLUGIN_ABI_VERSION, 3u);
     }
 }
 
