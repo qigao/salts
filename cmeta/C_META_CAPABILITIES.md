@@ -267,6 +267,22 @@ the operation.
 `interface(...)` produces a conventional `{ self, vtable }` protocol value plus
 capability and reflection metadata. It is not a class hierarchy.
 
+Interface and ObjectRef are deliberately different runtime roles:
+
+```text
+cmeta_object_ref       native identity + BORROWED/SHARED/OWNED lifetime authority
+Interface              exact typed protocol/capability dispatch
+ObjectRef -> Interface explicit capability projection over the same provider
+```
+
+Static Interface calls remain direct typed vtable dispatch. A runtime-selected
+ObjectRef projection must not reconstruct vtables, copy object identity, infer
+ownership, or route the static hot path through dynamic lookup. If an Interface
+contains a method marked `CMETA_INTERFACE_METHOD_OWNS_SELF`, a borrowed
+projection is not ownership-safe: it requires an explicit ownership transfer or
+must fail closed. Use `cmeta_interface_desc_has_owning_method()` to test that
+semantic property rather than inspecting generated vtable shape.
+
 ## Removed syntax
 
 ```text
