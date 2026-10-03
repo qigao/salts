@@ -13,6 +13,7 @@ typedef struct cmeta_lower_buffer {
 typedef struct cmeta_lower_type {
     char owner[64];
     char concrete[128];
+    char lifecycle_accessor[160];
 } cmeta_lower_type;
 
 typedef enum cmeta_lower_ownership_state {
@@ -24,6 +25,7 @@ typedef enum cmeta_lower_ownership_state {
 typedef struct cmeta_lower_symbol {
     char name[128];
     char concrete[128];
+    char lifecycle_accessor[160];
     unsigned depth;
     cmeta_lower_ownership_state ownership;
 } cmeta_lower_symbol;
@@ -300,6 +302,10 @@ static int cmeta_lower_add_type(
     (void)snprintf(
         context->types[context->type_count].concrete,
         sizeof(context->types[context->type_count].concrete), "%s", concrete);
+    (void)snprintf(
+        context->types[context->type_count].lifecycle_accessor,
+        sizeof(context->types[context->type_count].lifecycle_accessor),
+        "%s_cmeta_data", concrete);
     ++context->type_count;
     return 1;
 }
@@ -413,6 +419,7 @@ static int cmeta_lower_add_symbol(
         context->symbols[context->symbol_count].concrete,
         sizeof(context->symbols[context->symbol_count].concrete),
         "%s", concrete);
+    context->symbols[context->symbol_count].lifecycle_accessor[0] = '\0';
     context->symbols[context->symbol_count].depth = depth;
     context->symbols[context->symbol_count].ownership = ownership;
     ++context->symbol_count;
@@ -461,6 +468,8 @@ static int cmeta_lower_try_owned_declaration(
     size_t name_end;
     char type_name[128];
     char name[128];
+    const cmeta_lower_type *owned_type;
+    cmeta_lower_symbol *owned_symbol;
 
     if (ident_end - ident_start != strlen("owned") ||
         strncmp(source + ident_start, "owned", strlen("owned")) != 0)
@@ -491,10 +500,28 @@ static int cmeta_lower_try_owned_declaration(
         return -1;
     }
 
+    owned_type = cmeta_lower_find_type(context, type_name);
+    if (owned_type == NULL || owned_type->lifecycle_accessor[0] == '\0') {
+        cmeta_lower_set_errorf(
+            context, ident_start, "owned type '", type_name,
+            "' has no canonical typed lifecycle binding");
+        return -1;
+    }
+
     if (!cmeta_lower_add_symbol(
             context, name_start, name, type_name, depth,
             CMETA_LOWER_OWNERSHIP_LIVE_OWNED))
         return -1;
+
+    owned_symbol = cmeta_lower_find_symbol_mutable(context, name);
+    if (owned_symbol == NULL) {
+        cmeta_lower_set_error(context, ident_start, "internal ownership binding error");
+        return -1;
+    }
+    (void)snprintf(
+        owned_symbol->lifecycle_accessor,
+        sizeof(owned_symbol->lifecycle_accessor), "%s",
+        owned_type->lifecycle_accessor);
 
     if (!cmeta_lower_buffer_puts(output, type_name)) {
         cmeta_lower_set_error(context, ident_start, "out of memory");
@@ -961,7 +988,7 @@ done:
 
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
-        puts("cmeta-lower 2");
+        puts("cmeta-lower 3");
         return 0;
     }
     if (argc != 3) {
