@@ -376,6 +376,35 @@ static int cnet_tls_network_drive(cnet_client *client, cnet_client *server, cnet
 
 spec("CNet bounded TLS engine") {
 
+  it("preserves the full TLS ALPN wire bound instead of a provider count cap") {
+    static const char *five_protocols[] = {"p1", "p2", "p3", "p4", "p5"};
+    char max_name[256];
+    const char *overflow_protocols[256];
+    cnet_tls_client_config config = {
+        .size = sizeof(config),
+        .ca_file = CNET_TLS_TEST_IP_CA,
+        .alpn_protocols = five_protocols,
+        .alpn_protocol_count = sizeof(five_protocols) / sizeof(five_protocols[0])};
+    cnet_tls_context *context = NULL;
+    size_t index;
+
+    check_equal(cnet_tls_client_context_create(&config, &context), SALTS_OK);
+    check_not_null(context);
+    cnet_tls_context_release(context);
+
+    memset(max_name, 'a', sizeof(max_name) - 1u);
+    max_name[sizeof(max_name) - 1u] = '\0';
+    for (index = 0u; index < sizeof(overflow_protocols) / sizeof(overflow_protocols[0]);
+         ++index)
+      overflow_protocols[index] = max_name;
+    config.alpn_protocols = overflow_protocols;
+    config.alpn_protocol_count =
+        sizeof(overflow_protocols) / sizeof(overflow_protocols[0]);
+    context = NULL;
+    check_equal(cnet_tls_client_context_create(&config, &context), SALTS_ERANGE);
+    check_null(context);
+  }
+
   it("verifies an IP literal against subjectAltName iPAddress without SNI") {
     cnet_tls_test_pair pair;
     check_equal(cnet_tls_test_ip_pair_init(&pair, "127.0.0.1"), SALTS_OK);
