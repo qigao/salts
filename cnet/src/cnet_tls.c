@@ -507,11 +507,12 @@ static int cnet_tls_configure_variant(cnet_tls_context *context,
     return SALTS_EIO;
 
   if (variant == CNET_TLS_VARIANT_1_2) {
-    if (tls12_ctx_set_renegotiation_info(tls, 1) != 1)
+    if (context->server) {
+      if (tls12_ctx_set_renegotiation_info(tls, 1) != 1)
+        return SALTS_EIO;
+    } else if (tls12_ctx_set_empty_renegotiation_info_scsv(tls, 1) != 1) {
       return SALTS_EIO;
-    if (!context->server &&
-        tls12_ctx_set_empty_renegotiation_info_scsv(tls, 1) != 1)
-      return SALTS_EIO;
+    }
   }
 
   if (context->alpn_protocol_count != 0u &&
