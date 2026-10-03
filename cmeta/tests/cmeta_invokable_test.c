@@ -27,7 +27,8 @@ static const cmeta_function_desc increment_function = {
     .params = increment_params,
     .param_count = 1u,
     .effects = CMETA_CONTRACT_EFFECTS(value),
-    .properties = CMETA_CONTRACT_PROPERTIES(value)
+    .properties = CMETA_CONTRACT_PROPERTIES(value),
+    .result_flags = CMETA_RESULT_UNKNOWN
 };
 
 static const cmeta_param_desc add_params[] = {
@@ -127,7 +128,8 @@ static const cmeta_function_desc receiver_increment_function = {
     .params = receiver_increment_params,
     .param_count = 2u,
     .effects = CMETA_CONTRACT_EFFECTS(value),
-    .properties = CMETA_CONTRACT_PROPERTIES(value)
+    .properties = CMETA_CONTRACT_PROPERTIES(value),
+    .result_flags = CMETA_RESULT_UNKNOWN
 };
 
 static const cmeta_abi_carrier receiver_increment_param_abi[] = {
@@ -173,7 +175,8 @@ static const cmeta_function_desc add_function = {
     .params = add_params,
     .param_count = 2u,
     .effects = CMETA_CONTRACT_EFFECTS(value),
-    .properties = CMETA_CONTRACT_PROPERTIES(value)
+    .properties = CMETA_CONTRACT_PROPERTIES(value),
+    .result_flags = CMETA_RESULT_UNKNOWN
 };
 
 spec("CMeta invokable bridge") {

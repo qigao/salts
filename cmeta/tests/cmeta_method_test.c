@@ -28,7 +28,8 @@ static const cmeta_param_desc method_add_params[] = {
 static const cmeta_function_desc method_add_function = {
     sizeof(cmeta_function_desc), "method_box_add", &cmeta_type_int,
     method_add_params, 2u,
-    CMETA_EFFECT_STATEFUL | CMETA_EFFECT_MAY_FAIL, CMETA_PROP_NONE
+    CMETA_EFFECT_STATEFUL | CMETA_EFFECT_MAY_FAIL, CMETA_PROP_NONE,
+    CMETA_RESULT_UNKNOWN
 };
 
 static const cmeta_abi_carrier method_add_param_abi[] = {

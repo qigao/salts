@@ -10,9 +10,14 @@ on:
       - "utils/tests/salts_cmeta_data_peer.c"
       - "utils/tests/CMakeLists.txt"
       - "cstl/include/cstl/typed.h"
+      - "cstl/include/cstl/detail/typed_facade.h"
       - "cstl/tests/cstl_typed_decl_c.c"
       - "cstl/tests/cstl_typed_decl_cpp.cpp"
       - "cstl/tests/CMakeLists.txt"
+      - "plugin/include/salts/plugin.h"
+      - "plugin/src/plugin.c"
+      - "plugin/src/plugin_registry.c"
+      - "plugin/tests/**"
       - ".github/workflows/cmeta-data-lifetime.yml"
   push:
     branches: [master]
@@ -24,9 +29,14 @@ on:
       - "utils/tests/salts_cmeta_data_peer.c"
       - "utils/tests/CMakeLists.txt"
       - "cstl/include/cstl/typed.h"
+      - "cstl/include/cstl/detail/typed_facade.h"
       - "cstl/tests/cstl_typed_decl_c.c"
       - "cstl/tests/cstl_typed_decl_cpp.cpp"
       - "cstl/tests/CMakeLists.txt"
+      - "plugin/include/salts/plugin.h"
+      - "plugin/src/plugin.c"
+      - "plugin/src/plugin_registry.c"
+      - "plugin/tests/**"
       - ".github/workflows/cmeta-data-lifetime.yml"
   workflow_dispatch:
 
@@ -71,7 +81,7 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="$sanitizer_flags" \
             -DCMAKE_SHARED_LINKER_FLAGS="$sanitizer_flags"
 
-      - name: Build and run owned-data and typed-wrapper contracts
+      - name: Build and run CMeta lifecycle, reflection, and Plugin contracts
         shell: bash
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
@@ -80,11 +90,27 @@ jobs:
           set -euo pipefail
           cmake --build --preset linux-release-user --parallel 2 --target \
             test_salts_cmeta_data \
-            cstl_typed_decl_cpp_test
+            cstl_typed_decl_cpp_test \
+            cstl_typed_test \
+            cmeta_function_reflection_test \
+            cmeta_function_header_test \
+            cmeta_header_cpp_test \
+            cmeta_interface_function_test \
+            cmeta_method_test \
+            cmeta_invokable_test \
+            cmeta_object_test \
+            cmeta_reflection_plugin_test \
+            salts_plugin_contract_test \
+            salts_plugin_loader_test
           ctest --test-dir build/linux-gcc-release \
             --no-tests=error \
             --output-on-failure \
-            -R '^(test_salts_cmeta_data|cstl_typed_decl_cpp_test)$'
+            -R "^(test_salts_cmeta_data|cstl_typed_decl_cpp_test|cstl_typed_test|cmeta_function_reflection_test|cmeta_function_header_test|cmeta_header_cpp_test|cmeta_interface_function_test|cmeta_method_test|cmeta_invokable_test|cmeta_object_test|cmeta_reflection_plugin_test|salts_plugin_contract_test|salts_plugin_loader_test)$"
+
+      - name: Source hygiene
+        shell: bash
+        run: git diff --check
+
 
       - name: Source hygiene
         shell: bash

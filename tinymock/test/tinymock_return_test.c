@@ -49,7 +49,8 @@ static const cmeta_function_desc return_managed_function = {
   NULL,
   0u,
   CMETA_EFFECT_PURE,
-  CMETA_PROP_NONE
+  CMETA_PROP_NONE,
+  CMETA_RESULT_UNKNOWN
 };
 
 suite("TinyMock CMeta typed return") {

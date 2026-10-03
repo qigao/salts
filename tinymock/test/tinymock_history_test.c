@@ -64,7 +64,8 @@ static const cmeta_function_desc managed_function = {
   managed_params,
   1u,
   CMETA_EFFECT_PURE,
-  CMETA_PROP_NONE
+  CMETA_PROP_NONE,
+  CMETA_RESULT_UNKNOWN
 };
 
 suite("TinyMock CMeta typed history") {

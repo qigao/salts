@@ -17,10 +17,12 @@ extern "C" {
  * Salts::Plugin supports exactly one current ABI.
  *
  * The version is an exact admission epoch, not a compatibility range. Hosts do
- * not negotiate or retry older layouts. A plugin built for another epoch must
- * be rebuilt.
+ * not negotiate or retry older layouts. It covers this publication layout and
+ * the incompatible CMeta Reflection layouts transitively exposed by exports.
+ * A plugin built for another epoch must be rebuilt before descriptor pointers
+ * are consumed.
  */
-#define SALTS_PLUGIN_ABI_VERSION 2u
+#define SALTS_PLUGIN_ABI_VERSION 3u
 #define SALTS_PLUGIN_QUERY_SYMBOL "salts_plugin_query"
 
 #define SALTS_PLUGIN_MAX_EXPORTS 256u

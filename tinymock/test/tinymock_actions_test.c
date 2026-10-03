@@ -67,7 +67,8 @@ static const cmeta_function_desc action_out_function = {
   action_out_params,
   1u,
   CMETA_EFFECT_PURE,
-  CMETA_PROP_NONE
+  CMETA_PROP_NONE,
+  CMETA_RESULT_UNKNOWN
 };
 
 static const cmeta_param_desc action_inout_params[] = {
@@ -86,7 +87,8 @@ static const cmeta_function_desc action_inout_function = {
   action_inout_params,
   1u,
   CMETA_EFFECT_PURE,
-  CMETA_PROP_NONE
+  CMETA_PROP_NONE,
+  CMETA_RESULT_UNKNOWN
 };
 
 suite("TinyMock reflected output actions") {

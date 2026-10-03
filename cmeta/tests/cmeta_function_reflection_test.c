@@ -82,6 +82,21 @@ FunctionDeclAsAbi(fallible, int, &cmeta_type_int, CMETA_ABI_SCALAR,
      &cmeta_function_test_box_ptr_type, CMETA_ABI_OBJECT_POINTER),
     (int, value, CMETA_PARAM_IN));
 
+Function0DeclResult(value, int, CMETA_RESULT_VALUE,
+                    cmeta_function_test_value_result);
+
+Function0DeclAsAbiResult(
+    value, cmeta_function_test_box *, &cmeta_function_test_box_ptr_type,
+    CMETA_ABI_OBJECT_POINTER,
+    CMETA_RESULT_BORROWED | CMETA_RESULT_NULLABLE,
+    cmeta_function_test_borrowed_result);
+
+Function0DeclAsAbiResult(
+    value, cmeta_function_test_box *, &cmeta_function_test_box_ptr_type,
+    CMETA_ABI_OBJECT_POINTER,
+    CMETA_RESULT_OWNED | CMETA_RESULT_NULLABLE,
+    cmeta_function_test_owned_result);
+
 int cmeta_function_test_sum(int left, int right) {
     return left + right;
 }
@@ -130,6 +145,18 @@ int cmeta_function_test_box_add(cmeta_function_test_box *self, int value) {
     return 0;
 }
 
+int cmeta_function_test_value_result(void) {
+    return 7;
+}
+
+cmeta_function_test_box *cmeta_function_test_borrowed_result(void) {
+    return NULL;
+}
+
+cmeta_function_test_box *cmeta_function_test_owned_result(void) {
+    return NULL;
+}
+
 suite("CMeta function reflection") {
     it("publishes ordinary function metadata without consumer signature duplication") {
         const cmeta_function_desc *fn = FunctionMeta(cmeta_function_test_sum);
@@ -143,6 +170,8 @@ suite("CMeta function reflection") {
         check_equal(fn->param_count, (size_t)2u);
         check_equal(fn->effects, CMETA_CONTRACT_EFFECTS(value));
         check_equal(fn->properties, CMETA_CONTRACT_PROPERTIES(value));
+        check_equal(fn->result_flags,
+                    (cmeta_result_flags)CMETA_RESULT_UNKNOWN);
 
         check_not_null(left);
         check_equal(left->name, "left");
@@ -175,6 +204,72 @@ suite("CMeta function reflection") {
                     (cmeta_abi_carrier)CMETA_ABI_UNSPECIFIED);
         check_equal(cmeta_function_param_abi(legacy_abi, 0u),
                     (cmeta_abi_carrier)CMETA_ABI_UNSPECIFIED);
+    }
+
+    it("publishes explicit function result ownership without inferring legacy results") {
+        const cmeta_function_desc *legacy =
+            FunctionMeta(cmeta_function_test_sum);
+        const cmeta_function_desc *value =
+            FunctionMeta(cmeta_function_test_value_result);
+        const cmeta_function_desc *borrowed =
+            FunctionMeta(cmeta_function_test_borrowed_result);
+        const cmeta_function_desc *owned =
+            FunctionMeta(cmeta_function_test_owned_result);
+
+        check_true(cmeta_function_desc_valid(legacy));
+        check_true(cmeta_function_desc_valid(value));
+        check_true(cmeta_function_desc_valid(borrowed));
+        check_true(cmeta_function_desc_valid(owned));
+
+        check_equal(legacy->result_flags,
+                    (cmeta_result_flags)CMETA_RESULT_UNKNOWN);
+        check_equal(value->result_flags,
+                    (cmeta_result_flags)CMETA_RESULT_VALUE);
+        check_equal(
+            borrowed->result_flags,
+            (cmeta_result_flags)(CMETA_RESULT_BORROWED |
+                                 CMETA_RESULT_NULLABLE));
+        check_equal(
+            owned->result_flags,
+            (cmeta_result_flags)(CMETA_RESULT_OWNED |
+                                 CMETA_RESULT_NULLABLE));
+
+        check_equal(FunctionAbi(cmeta_function_test_borrowed_result)
+                        ->return_carrier,
+                    (cmeta_abi_carrier)CMETA_ABI_OBJECT_POINTER);
+    }
+
+    it("rejects malformed or contradictory function result semantics") {
+        cmeta_function_desc fn =
+            *FunctionMeta(cmeta_function_test_borrowed_result);
+        cmeta_function_desc peer = fn;
+
+        check_true(cmeta_function_desc_valid(&fn));
+        check_true(cmeta_function_desc_equal(&fn, &peer));
+
+        fn.result_flags =
+            CMETA_RESULT_BORROWED | CMETA_RESULT_OWNED;
+        check_false(cmeta_function_desc_valid(&fn));
+
+        fn = *FunctionMeta(cmeta_function_test_value_result);
+        fn.result_flags = CMETA_RESULT_NULLABLE;
+        check_false(cmeta_function_desc_valid(&fn));
+
+        fn = *FunctionMeta(cmeta_function_test_value_result);
+        fn.return_type = &cmeta_type_void;
+        fn.result_flags = CMETA_RESULT_VALUE;
+        check_false(cmeta_function_desc_valid(&fn));
+
+        fn = *FunctionMeta(cmeta_function_test_value_result);
+        fn.result_flags = (cmeta_result_flags)1u << 31;
+        check_false(cmeta_function_desc_valid(&fn));
+
+        fn = *FunctionMeta(cmeta_function_test_borrowed_result);
+        peer = fn;
+        peer.result_flags =
+            CMETA_RESULT_SHARED | CMETA_RESULT_NULLABLE;
+        check_true(cmeta_function_desc_valid(&peer));
+        check_false(cmeta_function_desc_equal(&fn, &peer));
     }
 
     it("marks an ordinary first pointer parameter as a compile-time receiver") {

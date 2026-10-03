@@ -12,6 +12,23 @@ static bool cmeta_param_flags_valid(cmeta_param_flags flags) {
     return true;
 }
 
+static bool cmeta_result_flags_valid(
+    const cmeta_type_desc *return_type, cmeta_result_flags flags) {
+    const cmeta_result_flags result_class = flags & CMETA_RESULT_CLASS_MASK;
+
+    if (return_type == NULL || (flags & CMETA_RESULT_FLAG_MASK) != flags)
+        return false;
+    if (result_class != 0u &&
+        (result_class & (result_class - 1u)) != 0u)
+        return false;
+    if (return_type->kind == CMETA_T_VOID)
+        return flags == CMETA_RESULT_UNKNOWN;
+    if ((flags & CMETA_RESULT_NULLABLE) != 0u &&
+        return_type->kind != CMETA_T_POINTER)
+        return false;
+    return true;
+}
+
 bool cmeta_param_desc_valid(const cmeta_param_desc *desc) {
     if (desc == NULL || desc->size < sizeof(*desc) ||
         desc->name == NULL || desc->name[0] == '\0' ||
@@ -35,6 +52,7 @@ bool cmeta_function_desc_valid(const cmeta_function_desc *desc) {
     if (desc == NULL || desc->size < sizeof(*desc) ||
         desc->name == NULL || desc->name[0] == '\0' ||
         !cmeta_type_desc_valid(desc->return_type) ||
+        !cmeta_result_flags_valid(desc->return_type, desc->result_flags) ||
         !cmeta_effect_property_contract_valid(desc->effects, desc->properties))
         return false;
 
@@ -91,7 +109,8 @@ bool cmeta_function_desc_equal(const cmeta_function_desc *left,
         !cmeta_type_equal(left->return_type, right->return_type) ||
         left->param_count != right->param_count ||
         left->effects != right->effects ||
-        left->properties != right->properties)
+        left->properties != right->properties ||
+        left->result_flags != right->result_flags)
         return false;
 
     for (i = 0u; i < left->param_count; ++i) {

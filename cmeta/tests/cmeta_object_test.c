@@ -103,7 +103,8 @@ static const cmeta_function_desc object_add_function = {
     .params = object_add_params,
     .param_count = 2u,
     .effects = CMETA_EFFECT_STATEFUL,
-    .properties = CMETA_PROP_NONE
+    .properties = CMETA_PROP_NONE,
+    .result_flags = CMETA_RESULT_UNKNOWN
 };
 
 static const cmeta_abi_carrier object_add_param_abi[] = {
@@ -150,7 +151,8 @@ static const cmeta_function_desc object_add_projected_function = {
     .params = object_add_projected_params,
     .param_count = 1u,
     .effects = CMETA_EFFECT_STATEFUL,
-    .properties = CMETA_PROP_NONE
+    .properties = CMETA_PROP_NONE,
+    .result_flags = CMETA_RESULT_UNKNOWN
 };
 
 static const cmeta_data_desc *const object_add_projected_data_params[] = {

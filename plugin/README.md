@@ -31,8 +31,10 @@ Plugin supports exactly one current ABI. There is no ABI negotiation, fallback,
 readable-prefix compatibility, or retry of older layouts.
 
 Moving package/repository ownership does not change the binary ABI by itself.
-A Plugin ABI bump is required only when the manifest/export/query binary
-contract changes.
+A Plugin ABI bump is required when the manifest/export/query binary contract
+changes **or when a transitive CMeta Reflection layout published by an export
+changes incompatibly**. A host must reject the older Plugin epoch before it
+dereferences reflected Function/Interface descriptors.
 
 ## Semantic boundary
 
