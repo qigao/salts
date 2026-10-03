@@ -376,6 +376,37 @@ static int cnet_tls_network_drive(cnet_client *client, cnet_client *server, cnet
 
 spec("CNet bounded TLS engine") {
 
+  it("loads only hash.N certificates from ca_path") {
+    char *directory = tt_make_temp_dir("cnet-ca-path-");
+    char hashed_path[512];
+    char ignored_path[512];
+    cnet_tls_client_config config = {.size = sizeof(config)};
+    cnet_tls_context *context = NULL;
+
+    check_not_null(directory);
+    check_greater(snprintf(hashed_path, sizeof(hashed_path), "%s/0123abcd.0",
+                           directory), 0);
+    check_greater(snprintf(ignored_path, sizeof(ignored_path), "%s/not-a-hash.pem",
+                           directory), 0);
+    check_equal(tt_write_file(hashed_path, CNET_TLS_TEST_CERTIFICATE,
+                              sizeof(CNET_TLS_TEST_CERTIFICATE) - 1u), 0);
+    check_equal(tt_write_file(ignored_path, CNET_TLS_TEST_CERTIFICATE,
+                              sizeof(CNET_TLS_TEST_CERTIFICATE) - 1u), 0);
+
+    config.ca_path = directory;
+    check_equal(cnet_tls_client_context_create(&config, &context), SALTS_OK);
+    check_not_null(context);
+    cnet_tls_context_release(context);
+
+    check_equal(tt_remove_file(hashed_path), 0);
+    context = NULL;
+    check_equal(cnet_tls_client_context_create(&config, &context), SALTS_EIO);
+    check_null(context);
+
+    check_equal(tt_remove_tree(directory), 0);
+    free(directory);
+  }
+
   it("preserves the full TLS ALPN wire bound instead of a provider count cap") {
     static const char *five_protocols[] = {"p1", "p2", "p3", "p4", "p5"};
     char max_name[256];
