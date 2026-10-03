@@ -82,8 +82,6 @@ jobs:
           foreach ($relative in @(
             "bin\cnet.dll",
             "bin\salts.dll",
-            "bin\ssl.dll",
-            "bin\crypto.dll",
             "lib\cmake\Salts\SaltsConfig.cmake",
             "lib\cmake\Salts\SaltsTargets.cmake"
           )) {
