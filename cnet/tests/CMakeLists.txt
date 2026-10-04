@@ -381,7 +381,8 @@ add_dependencies(cnet_api_test
   cnet_native_io_sharded_ownership_test
   cnet_tcp_endpoint_test
   cnet_external_progress_test
-  cnet_external_listener_test)
+  cnet_external_listener_test
+  cnet_external_tls_listener_test)
 
 cmake_add_test(
   cnet_external_listener_test
@@ -398,6 +399,35 @@ set_target_properties(
   PROPERTIES C_STANDARD 11
              C_STANDARD_REQUIRED ON
              C_EXTENSIONS OFF)
+
+cmake_add_test(
+  cnet_external_tls_listener_test
+  SOURCES
+  cnet_external_tls_listener_test.c
+  LIBS
+  cnet
+  Salts::Core
+  Salts::NativeIO
+  FOLDER
+  "cnet/tests")
+set_target_properties(
+  cnet_external_tls_listener_test
+  PROPERTIES C_STANDARD 11
+             C_STANDARD_REQUIRED ON
+             C_EXTENSIONS OFF)
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/ip-test-root-cert.pem"
+     CNET_EXTERNAL_TLS_CA)
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/ip-test-server-cert.pem"
+     CNET_EXTERNAL_TLS_CERT)
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/ip-test-server-key.pem"
+     CNET_EXTERNAL_TLS_KEY)
+target_compile_definitions(cnet_external_tls_listener_test PRIVATE
+  "CNET_EXTERNAL_TLS_CA=\"${CNET_EXTERNAL_TLS_CA}\""
+  "CNET_EXTERNAL_TLS_CERT=\"${CNET_EXTERNAL_TLS_CERT}\""
+  "CNET_EXTERNAL_TLS_KEY=\"${CNET_EXTERNAL_TLS_KEY}\"")
+unset(CNET_EXTERNAL_TLS_CA)
+unset(CNET_EXTERNAL_TLS_CERT)
+unset(CNET_EXTERNAL_TLS_KEY)
 
 cmake_add_test(
   cnet_external_progress_test
