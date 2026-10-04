@@ -666,6 +666,28 @@ jobs:
             echo '~~~'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Run CFlow ordered parallel reduce benchmark / Windows
+        if: needs.scope.outputs.cflow == 'true' && matrix.family == 'windows' && matrix.backend == 'iocp'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target cflow_parallel_reduce_benchmark
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE "${{ matrix.build_dir }}/bin/cflow_parallel_reduce_benchmark.exe"
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "CFlow parallel reduce benchmark executable not found: $benchmark"
+          }
+          $result = Join-Path $resultDir "cflow-parallel-reduce-windows.txt"
+          $output = & $benchmark 2>&1 | Tee-Object -FilePath $result
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CFlow ordered parallel reduce measurement: Windows / IOCP"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '~~~text'
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '~~~'
+
       - name: Run CNet contract tests
         if: needs.scope.outputs.cnet_contracts == 'true'
         shell: pwsh
