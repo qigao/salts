@@ -344,6 +344,21 @@ int cnet_shards_external_requests(cnet_shards *shards,
       out_requests, capacity, out_count);
 }
 
+int cnet_shards_external_request_snapshots(
+    cnet_shards *shards,
+    cnet_shard_connection connection,
+    cnet_owner_external_request_snapshot *out_requests,
+    size_t capacity,
+    size_t *out_count) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  if (impl == NULL || impl->shard_count != 1u ||
+      connection.shard != 0u)
+    return SALTS_EINVAL;
+  return cnet_owner_external_request_snapshots(
+      &impl->records[0].owner, connection.session,
+      out_requests, capacity, out_count);
+}
+
 #if defined(CNET_INTERNAL_PROFILING)
 int cnet_shards_profile_begin(cnet_shards *shards) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
