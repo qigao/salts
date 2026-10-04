@@ -1802,8 +1802,11 @@ Sequential materialized Plans admit trivial values or managed values with
 `COPY`, `MOVE`, and `DESTROY`. Their live-prefix executor copy/move-constructs
 each element, cleans partial outputs transactionally, and transfers ownership to
 `cflow_result` only on success. `cflow_result_destroy()` applies the returned
-descriptor's destructor to every managed element. Fused Plan evaluation,
-ordered parallel reduce, direct byte adapters, channels, and readiness Publishers
+descriptor's destructor to every managed element. Eligible unseeded associative
+ordered parallel reduce also supports managed Plan values: chunk partials, merge
+scratch, and the published result use the same explicit copy/move/destroy
+lifecycle, while caller inputs remain borrowed. Seeded reduce remains sequential.
+Fused Plan evaluation, direct byte adapters, channels, and readiness Publishers
 remain trivial-only and fail admission for managed values. Interpreted managed
 Streams normally terminate through `cflow_eval_collect_result()` or
 `cflow_eval_collect()`; the transactional Collector copies
