@@ -666,6 +666,45 @@ jobs:
             echo '~~~'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Run pre-slot-isolation CFlow benchmark / Windows
+        if: needs.scope.outputs.cflow == 'true' && matrix.family == 'windows' && matrix.backend == 'iocp' && github.event_name == 'pull_request'
+        shell: pwsh
+        env:
+          CFLOW_SLOT_ISOLATION_BASE_SHA: 847857cdbd637030c3f3e893f68a6e1796831977
+        run: |
+          $ErrorActionPreference = "Stop"
+          $baselineSource = Join-Path $env:RUNNER_TEMP "salts-cflow-before-slot-isolation"
+          Remove-Item -LiteralPath $baselineSource -Recurse -Force -ErrorAction SilentlyContinue
+          git worktree add --detach $baselineSource $env:CFLOW_SLOT_ISOLATION_BASE_SHA
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          try {
+            Push-Location $baselineSource
+            $env:VCPKG_ROOT = $env:QIGAO_VCPKG_ROOT
+            cmake --preset win-release-user -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=ON
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            cmake --build --preset win-release-user --parallel 2 --target cflow_parallel_reduce_benchmark
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $benchmark = Join-Path $baselineSource "build/Msvc-Release/bin/cflow_parallel_reduce_benchmark.exe"
+            if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+              throw "Baseline CFlow parallel reduce benchmark not found: $benchmark"
+            }
+            $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+            New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+            $result = Join-Path $resultDir "cflow-parallel-reduce-windows-before-slot-isolation.txt"
+            $output = & $benchmark 2>&1 | Tee-Object -FilePath $result
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CFlow managed reduce baseline: Windows / IOCP / pre-#817"
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "baseline_sha=$env:CFLOW_SLOT_ISOLATION_BASE_SHA"
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '~~~text'
+            $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '~~~'
+          } finally {
+            Pop-Location
+            git worktree remove --force $baselineSource 2>$null
+          }
+
       - name: Run CFlow ordered parallel reduce benchmark / Windows
         if: needs.scope.outputs.cflow == 'true' && matrix.family == 'windows' && matrix.backend == 'iocp'
         shell: pwsh
@@ -679,11 +718,11 @@ jobs:
           if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
             throw "CFlow parallel reduce benchmark executable not found: $benchmark"
           }
-          $result = Join-Path $resultDir "cflow-parallel-reduce-windows.txt"
+          $result = Join-Path $resultDir "cflow-parallel-reduce-windows-after-slot-isolation.txt"
           $output = & $benchmark 2>&1 | Tee-Object -FilePath $result
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CFlow ordered parallel reduce measurement: Windows / IOCP"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CFlow ordered parallel reduce measurement: Windows / IOCP / candidate"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '~~~text'
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '~~~'
