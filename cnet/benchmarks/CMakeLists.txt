@@ -37,14 +37,31 @@ target_compile_definitions(cnet_tls_sg_benchmark PRIVATE
   "CNET_TLS_BENCH_CA=\"${CNET_TLS_BENCH_CA}\""
   "CNET_TLS_BENCH_CERT=\"${CNET_TLS_BENCH_CERT}\""
   "CNET_TLS_BENCH_KEY=\"${CNET_TLS_BENCH_KEY}\"")
-unset(CNET_TLS_BENCH_CA)
-unset(CNET_TLS_BENCH_CERT)
-unset(CNET_TLS_BENCH_KEY)
 target_include_directories(cnet_tls_sg_benchmark PRIVATE ../src)
 set_target_properties(cnet_tls_sg_benchmark PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  cmake_add_benchmark(cnet_tls_provider_parallel_benchmark
+    SOURCES cnet_tls_provider_parallel_benchmark.c
+    LIBS cnet_profile Salts::Platform
+    FOLDER "cnet/benchmarks")
+  target_compile_definitions(cnet_tls_provider_parallel_benchmark PRIVATE
+    "CNET_TLS_BENCH_CA=\"${CNET_TLS_BENCH_CA}\""
+    "CNET_TLS_BENCH_CERT=\"${CNET_TLS_BENCH_CERT}\""
+    "CNET_TLS_BENCH_KEY=\"${CNET_TLS_BENCH_KEY}\"")
+  target_include_directories(cnet_tls_provider_parallel_benchmark PRIVATE ../src)
+  set_target_properties(cnet_tls_provider_parallel_benchmark PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF)
+endif()
+
+unset(CNET_TLS_BENCH_CA)
+unset(CNET_TLS_BENCH_CERT)
+unset(CNET_TLS_BENCH_KEY)
 
 cmake_add_benchmark(cnet_owner_lifecycle_compare
   SOURCES cnet_owner_lifecycle_compare.c cnet_benchmark_stats.c
