@@ -57,6 +57,7 @@ struct cnet_tls_context {
   atomic_size_t references;
   bool server;
   bool verify_peer;
+  bool native_system_trust;
 };
 
 typedef struct cnet_tls_gmssl_state {
@@ -389,12 +390,13 @@ static int cnet_tls_load_system_trust(TLS_CTX *tls) {
   #else
     /*
      * iOS does not expose a public system-root enumeration API equivalent to
-     * macOS SecTrustCopyAnchorCertificates(). Explicit ca_file/ca_path remains
-     * supported; default platform trust fails closed until the Security.framework
-     * peer-chain verification bridge tracked separately is implemented.
+     * macOS SecTrustCopyAnchorCertificates(). Keep GmSSL's certificate/identity
+     * checks active, but delegate only trust-anchor/path validation to the
+     * Security.framework bridge after the provider handshake.
      */
-    (void)tls;
-    return SALTS_ENOTSUP;
+    return tls_ctx_enable_external_trust(tls, 1) == 1
+               ? SALTS_OK
+               : SALTS_EIO;
   #endif
 #elif defined(__ANDROID__)
   return cnet_tls_load_explicit_trust(
@@ -615,6 +617,12 @@ static int cnet_tls_context_create_common(
   if (context == NULL) return SALTS_ENOMEM;
   context->server = server;
   context->verify_peer = verify_peer;
+#if defined(__APPLE__) && !TARGET_OS_OSX
+  context->native_system_trust =
+      !server && verify_peer && ca_file == NULL && ca_path == NULL;
+#else
+  context->native_system_trust = false;
+#endif
   atomic_init(&context->references, 1u);
 
   status = cnet_tls_alpn_copy(context, alpn_protocols, alpn_protocol_count);
@@ -1057,6 +1065,82 @@ static bool cnet_tls_retryable(int result) {
   return result == TLS_ERROR_RECV_AGAIN || result == TLS_ERROR_SEND_AGAIN;
 }
 
+#if defined(__APPLE__) && !TARGET_OS_OSX
+static int cnet_tls_verify_apple_system_trust(
+    const cnet_tls_gmssl_state *engine) {
+  cnet_tls_peer_certificate_chain chain = {0};
+  CFMutableArrayRef certificates = NULL;
+  SecPolicyRef policy = NULL;
+  SecTrustRef trust = NULL;
+  CFErrorRef error = NULL;
+  size_t index;
+  int status;
+
+  if (engine == NULL) return SALTS_EINVAL;
+  status = cnet_tls_peer_certificate_chain_parse(
+      engine->connection.peer_cert_chain,
+      engine->connection.peer_cert_chain_len,
+      &chain);
+  if (status != SALTS_OK) return status;
+
+  certificates = CFArrayCreateMutable(
+      kCFAllocatorDefault, (CFIndex)chain.count,
+      &kCFTypeArrayCallBacks);
+  if (certificates == NULL) return SALTS_ENOMEM;
+
+  for (index = 0u; index < chain.count; ++index) {
+    CFDataRef data = CFDataCreate(
+        kCFAllocatorDefault,
+        chain.certificates[index].data,
+        (CFIndex)chain.certificates[index].size);
+    SecCertificateRef certificate;
+    if (data == NULL) {
+      status = SALTS_ENOMEM;
+      goto cleanup;
+    }
+    certificate = SecCertificateCreateWithData(
+        kCFAllocatorDefault, data);
+    CFRelease(data);
+    if (certificate == NULL) {
+      status = SALTS_EPROTO;
+      goto cleanup;
+    }
+    CFArrayAppendValue(certificates, certificate);
+    CFRelease(certificate);
+  }
+
+  /*
+   * CNet/GmSSL already owns peer identity validation, including the explicit
+   * IP-SAN path. Security.framework is used here only for native system
+   * trust-anchor/path validation so platform policy cannot change CNet's
+   * hostname/IP semantics.
+   */
+  policy = SecPolicyCreateBasicX509();
+  if (policy == NULL) {
+    status = SALTS_EIO;
+    goto cleanup;
+  }
+  if (SecTrustCreateWithCertificates(
+          certificates, policy, &trust) != errSecSuccess ||
+      trust == NULL) {
+    status = SALTS_EIO;
+    goto cleanup;
+  }
+  if (!SecTrustEvaluateWithError(trust, &error)) {
+    status = SALTS_ECONNABORTED;
+    goto cleanup;
+  }
+  status = SALTS_OK;
+
+cleanup:
+  if (error != NULL) CFRelease(error);
+  if (trust != NULL) CFRelease(trust);
+  if (policy != NULL) CFRelease(policy);
+  if (certificates != NULL) CFRelease(certificates);
+  return status;
+}
+#endif
+
 static int cnet_tls_finish_handshake(cnet_tls_state *state,
                                      bool *out_complete) {
   cnet_tls_gmssl_state *engine = CNET_TLS_ENGINE(state);
@@ -1079,6 +1163,12 @@ static int cnet_tls_finish_handshake(cnet_tls_state *state,
           &engine->connection, engine->server_name);
       if (result != SALTS_OK) return result;
     }
+#if defined(__APPLE__) && !TARGET_OS_OSX
+    if (state->context->native_system_trust) {
+      result = cnet_tls_verify_apple_system_trust(engine);
+      if (result != SALTS_OK) return result;
+    }
+#endif
   }
 
   result = tls_get_selected_alpn(&engine->connection, &alpn, &alpn_size);
