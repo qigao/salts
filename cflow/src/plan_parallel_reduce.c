@@ -42,6 +42,12 @@ static bool checked_bytes(size_t count, size_t size, size_t *bytes) {
     return true;
 }
 
+static cflow_value_slot *managed_slot_at(
+    cflow_value_slot *slots, size_t stride, size_t index) {
+    if (!slots || stride < sizeof(cflow_value_slot)) return NULL;
+    return (cflow_value_slot *)((unsigned char *)slots + index * stride);
+}
+
 static void parallel_reduce_task_settle(cflow_parallel_reduce_task *task,
                                         bool succeeded) {
     cflow_parallel_reduce_frame *frame = task ? task->frame : NULL;
@@ -60,8 +66,10 @@ static void parallel_reduce_task_run(void *user) {
 
     if (ok && frame->managed_values) {
         const size_t value_size = frame->prefix.type->size;
-        cflow_value_slot *acc = &frame->partial_slots[task->index];
-        cflow_value_slot *tmp = &frame->scratch_slots[task->index];
+        cflow_value_slot *acc = managed_slot_at(
+            frame->partial_slots, frame->slot_stride, task->index);
+        cflow_value_slot *tmp = managed_slot_at(
+            frame->scratch_slots, frame->slot_stride, task->index);
 
         ok = cflow_value_slot_copy(
             acc, frame->prefix.data + task->begin * value_size);
@@ -116,11 +124,13 @@ static void parallel_reduce_frame_destroy(cflow_parallel_reduce_frame *frame) {
     salts_mutex_destroy(&frame->mutex);
     if (frame->partial_slots) {
         for (size_t index = 0u; index < frame->slot_count; ++index)
-            cflow_value_slot_destroy(&frame->partial_slots[index]);
+            cflow_value_slot_destroy(managed_slot_at(
+                frame->partial_slots, frame->slot_stride, index));
     }
     if (frame->scratch_slots) {
         for (size_t index = 0u; index < frame->slot_count; ++index)
-            cflow_value_slot_destroy(&frame->scratch_slots[index]);
+            cflow_value_slot_destroy(managed_slot_at(
+                frame->scratch_slots, frame->slot_stride, index));
     }
     free(frame->scratch_slots);
     free(frame->partial_slots);
@@ -176,20 +186,29 @@ static bool parallel_reduce_frame_allocate_tasks(
     if (!frame->tasks) return false;
 
     if (frame->managed_values) {
-        if (task_count > SIZE_MAX / sizeof(*frame->partial_slots))
+        if (sizeof(cflow_value_slot) >
+            SIZE_MAX - (CFLOW_PARALLEL_REDUCE_WRITE_ISOLATION - 1u))
             return false;
-        frame->partial_slots = (cflow_value_slot *)calloc(
-            task_count, sizeof(*frame->partial_slots));
-        frame->scratch_slots = (cflow_value_slot *)calloc(
-            task_count, sizeof(*frame->scratch_slots));
+        stride = sizeof(cflow_value_slot) +
+            (CFLOW_PARALLEL_REDUCE_WRITE_ISOLATION - 1u);
+        stride -= stride % CFLOW_PARALLEL_REDUCE_WRITE_ISOLATION;
+        if (!checked_bytes(task_count, stride, &slot_bytes))
+            return false;
+        frame->partial_slots = (cflow_value_slot *)calloc(1u, slot_bytes);
+        frame->scratch_slots = (cflow_value_slot *)calloc(1u, slot_bytes);
+        frame->slot_stride = stride;
         frame->slot_count = task_count;
         if (!frame->partial_slots || !frame->scratch_slots)
             return false;
         for (size_t index = 0u; index < task_count; ++index) {
             if (!cflow_value_slot_init(
-                    &frame->partial_slots[index], frame->prefix.type) ||
+                    managed_slot_at(
+                        frame->partial_slots, frame->slot_stride, index),
+                    frame->prefix.type) ||
                 !cflow_value_slot_init(
-                    &frame->scratch_slots[index], frame->prefix.type))
+                    managed_slot_at(
+                        frame->scratch_slots, frame->slot_stride, index),
+                    frame->prefix.type))
                 return false;
         }
         return true;
@@ -236,17 +255,23 @@ static bool merge_managed_partials(cflow_parallel_reduce_frame *frame,
     cflow_value_slot tmp = {0};
     void *result_allocation = NULL;
     unsigned char *result_data = NULL;
-    bool ok = frame && task_count && out && frame->managed_values &&
+    cflow_value_slot *first =
+        frame && frame->managed_values
+            ? managed_slot_at(frame->partial_slots, frame->slot_stride, 0u)
+            : NULL;
+    bool ok = frame && task_count && out && frame->managed_values && first &&
         cflow_value_slot_init(&acc, frame->prefix.type) &&
         cflow_value_slot_init(&tmp, frame->prefix.type) &&
-        cflow_value_slot_move(&acc, &frame->partial_slots[0]);
+        cflow_value_slot_move(&acc, first);
 
     for (size_t index = 1u; ok && index < task_count; ++index) {
+        cflow_value_slot *partial = managed_slot_at(
+            frame->partial_slots, frame->slot_stride, index);
         const void *args[2] = {
             acc.storage,
-            frame->partial_slots[index].storage
+            partial ? partial->storage : NULL
         };
-        if (!frame->partial_slots[index].live ||
+        if (!partial || !partial->live ||
             !frame->reducer->call.invoke ||
             !frame->reducer->call.invoke(
                 &frame->reducer->call.fn, tmp.storage, args)) {
