@@ -55,7 +55,10 @@ function(cnet_configure_target target_name)
             ${cnet_cares_link_items} kcp::kcp c-ares::cares
             GmSSL::GmSSL
             $<$<PLATFORM_ID:Windows>:crypt32>
-            "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>")
+            "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
+            "$<$<PLATFORM_ID:Darwin>:-framework Security>"
+            "$<$<PLATFORM_ID:iOS>:-framework CoreFoundation>"
+            "$<$<PLATFORM_ID:iOS>:-framework Security>")
 endfunction()
 
 add_library(${TARGET_NAME} SHARED ${CNET_SOURCE_FILES})
