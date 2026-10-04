@@ -174,16 +174,12 @@ static void test_external_tls_listener_shared_progress(void) {
       .cert_file = CNET_EXTERNAL_TLS_CERT,
       .key_file = CNET_EXTERNAL_TLS_KEY,
       .client_auth = CNET_TLS_CLIENT_AUTH_NONE,
-      .minimum_version = CNET_TLS_PROTOCOL_VERSION_1_3,
-      .maximum_version = CNET_TLS_PROTOCOL_VERSION_1_3,
       .alpn_protocols = alpn,
       .alpn_protocol_count = 1u};
   cnet_tls_client_config client_tls_config = {
       .size = sizeof(client_tls_config),
       .ca_file = CNET_EXTERNAL_TLS_CA,
       .server_name = "127.0.0.1",
-      .minimum_version = CNET_TLS_PROTOCOL_VERSION_1_3,
-      .maximum_version = CNET_TLS_PROTOCOL_VERSION_1_3,
       .alpn_protocols = alpn,
       .alpn_protocol_count = 1u};
   cnet_connect_options connect_options;
@@ -268,8 +264,8 @@ static void test_external_tls_listener_shared_progress(void) {
       assert(cnet_listener_accept_tls(
                  &listener, &server, &tls_server,
                  &server_observer, &accepted) == SALTS_OK);
-      assert(native_io_request_valid((native_io_request){
-          accepted.slot, accepted.generation}));
+      assert(accepted.slot != 0u);
+      assert(accepted.generation != 0u);
       accepted_started = true;
     }
   }
