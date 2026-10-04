@@ -113,6 +113,23 @@ static int cnet_dispatcher_test_drive_until(cnet_shards *shards, cnet_dispatcher
   return SALTS_OK;
 }
 
+static int cnet_dispatcher_test_wait_state(cnet_shards *shards,
+                                           cnet_shard_connection connection,
+                                           cnet_session_state expected) {
+  const uint64_t deadline = salts_monotonic_ms() + CNET_DISPATCHER_TEST_TIMEOUT_MS;
+  for (;;) {
+    cnet_session_state state = CNET_SESSION_FREE;
+    int status = cnet_shards_state(shards, connection, &state);
+    if (status != SALTS_OK) return status;
+    if (state == expected) return SALTS_OK;
+    if (state == CNET_SESSION_TERMINAL && expected != CNET_SESSION_TERMINAL)
+      return SALTS_EIO;
+    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+    status = cnet_shards_poll(shards, 1u);
+    if (status != SALTS_OK) return status;
+  }
+}
+
 spec("CNet event dispatcher") {
   it("invokes callbacks inline and recycles after terminal completion") {
     cnet_shards shards = {0};
@@ -161,10 +178,21 @@ spec("CNet event dispatcher") {
     check_equal(
         cnet_dispatcher_register(&dispatcher, connection, cnet_dispatcher_test_observe, &probe),
         SALTS_EALREADY);
-    check_equal(cnet_dispatcher_test_drive_until(&shards, &dispatcher, &probe.connected, 1),
+
+    /*
+     * Separate transport completion from dispatcher publication. The sharded
+     * owner is authoritative for the connection state; once OPEN, complete the
+     * loopback peer accept before waiting for the dispatcher callback. This
+     * avoids coupling IOCP's connect/accept scheduling to callback delivery.
+     */
+    check_equal(cnet_dispatcher_test_wait_state(
+                    &shards, connection, CNET_SESSION_OPEN),
                 SALTS_OK);
     accepted = accept(listener, NULL, NULL);
     check_true(accepted != CNET_DISPATCHER_TEST_INVALID_SOCKET);
+    check_equal(cnet_dispatcher_test_drive_until(
+                    &shards, &dispatcher, &probe.connected, 1),
+                SALTS_OK);
 
     check_equal(cnet_shards_receive(&shards, connection, 1u), SALTS_OK);
     check_equal(send(accepted, (const char *)&inbound, (int)sizeof(inbound), 0),
