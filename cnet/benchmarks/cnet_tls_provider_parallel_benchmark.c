@@ -18,7 +18,7 @@
 
 enum {
   TLS_PARALLEL_PAIRS = 8,
-  TLS_PARALLEL_MAX_OWNERS = 4,
+  TLS_PARALLEL_MAX_OWNERS = 8,
   TLS_PARALLEL_RECORD_HEADER_BYTES = 5,
   TLS_PARALLEL_TRANSFER_BYTES = 4096,
   TLS_PARALLEL_DEFAULT_OPS = 64,
@@ -503,7 +503,7 @@ int main(int argc, char **argv) {
           argv[3], 1u, TLS_PARALLEL_MAX_OWNERS,
           &owner_count) != SALTS_OK ||
       (owner_count != 1u && owner_count != 2u &&
-       owner_count != 4u) ||
+       owner_count != 4u && owner_count != 8u) ||
       TLS_PARALLEL_PAIRS % owner_count != 0u)
     return 2;
 
