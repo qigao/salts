@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 #include <stdatomic.h>
+#include <stdlib.h>
 #include <string.h>
 
 static _Atomic size_t cflow_parallel_prefix_calls;
