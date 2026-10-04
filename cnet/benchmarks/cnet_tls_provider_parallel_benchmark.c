@@ -367,14 +367,18 @@ static int tls_parallel_operation(
     const unsigned char *payload, size_t payload_size,
     uint64_t *out_records, uint64_t *out_cipher_bytes) {
   int status;
+  if (mode == TLS_PARALLEL_PUSH)
+    return tls_parallel_message(
+        &pair->server, &pair->client,
+        pair->received, pair->received_capacity,
+        payload, payload_size, out_records, out_cipher_bytes);
   status = tls_parallel_message(
-      &pair->server, &pair->client,
+      &pair->client, &pair->server,
       pair->received, pair->received_capacity,
       payload, payload_size, out_records, out_cipher_bytes);
-  if (status != SALTS_OK || mode == TLS_PARALLEL_PUSH)
-    return status;
+  if (status != SALTS_OK) return status;
   return tls_parallel_message(
-      &pair->client, &pair->server,
+      &pair->server, &pair->client,
       pair->received, pair->received_capacity,
       payload, payload_size, out_records, out_cipher_bytes);
 }
