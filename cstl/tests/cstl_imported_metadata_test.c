@@ -137,7 +137,7 @@ spec("CSTL imported semantic metadata") {
     const cmeta_receiver_method *method;
 
     check_true(cmeta_receiver_method_set_valid(set));
-    check_equal(set->owner_name, "Map");
+    check_true(cmeta_generic_desc_equal(set->owner, &stl_map_generic_desc));
 
     method = cmeta_receiver_method_find(set, "put");
     check_not_null(method);
