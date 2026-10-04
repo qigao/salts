@@ -87,6 +87,40 @@ spec("salts_crypto") {
     check_equal(memcmp(digest, SHA256_ABC, sizeof(digest)), 0);
   }
 
+  it("computes SHA-256 incrementally with bounded chunks") {
+    salts_sha256_stream *stream = NULL;
+    uint8_t digest[SALTS_SHA256_DIGEST_BYTES];
+
+    check_equal(salts_sha256_stream_create(&stream), SALTS_OK);
+    check(stream != NULL);
+    check_equal(salts_sha256_stream_update(stream, "a", 1u), SALTS_OK);
+    check_equal(salts_sha256_stream_update(stream, NULL, 0u), SALTS_OK);
+    check_equal(salts_sha256_stream_update(stream, "bc", 2u), SALTS_OK);
+    check_equal(salts_sha256_stream_finish(stream, digest), SALTS_OK);
+    check_equal(memcmp(digest, SHA256_ABC, sizeof(digest)), 0);
+    check_equal(salts_sha256_stream_update(stream, "x", 1u), SALTS_EINVAL);
+    check_equal(salts_sha256_stream_finish(stream, digest), SALTS_EINVAL);
+
+    check_equal(salts_sha256_stream_reset(stream), SALTS_OK);
+    check_equal(salts_sha256_stream_update(stream, "abc", 3u), SALTS_OK);
+    check_equal(salts_sha256_stream_finish(stream, digest), SALTS_OK);
+    check_equal(memcmp(digest, SHA256_ABC, sizeof(digest)), 0);
+    salts_sha256_stream_destroy(stream);
+  }
+
+  it("validates streaming SHA-256 lifecycle") {
+    salts_sha256_stream *stream = NULL;
+    uint8_t digest[SALTS_SHA256_DIGEST_BYTES];
+
+    check_equal(salts_sha256_stream_create(NULL), SALTS_EINVAL);
+    check_equal(salts_sha256_stream_create(&stream), SALTS_OK);
+    check_equal(salts_sha256_stream_update(stream, NULL, 1u), SALTS_EINVAL);
+    check_equal(salts_sha256_stream_finish(stream, NULL), SALTS_EINVAL);
+    check_equal(salts_sha256_stream_reset(NULL), SALTS_EINVAL);
+    salts_sha256_stream_destroy(stream);
+    salts_sha256_stream_destroy(NULL);
+  }
+
   it("computes RFC 2202 HMAC-MD5") {
     uint8_t key[16];
     uint8_t mac[SALTS_MD5_DIGEST_BYTES];
