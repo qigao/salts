@@ -83,12 +83,36 @@ def ContextAuthority {ty : Ty} (context : OwnershipContext)
     not runtime pointer metadata. -/
 abbrev BorrowRelations := Nat → Option Nat
 
+namespace BorrowRelations
+
+/-- End one borrow edge without changing unrelated borrow relations. -/
+def clear (relations : BorrowRelations) (borrowedToken : Nat) : BorrowRelations :=
+  fun candidate =>
+    if candidate = borrowedToken then none else relations candidate
+
+end BorrowRelations
+
 def BorrowedFrom {borrowTy ownerTy : Ty}
     (context : OwnershipContext) (relations : BorrowRelations)
     (borrowed : Value borrowTy) (owner : Value ownerTy) : Prop :=
   HasOwnership context borrowed .borrowed ∧
     relations borrowed.token = some owner.token ∧
     ContextAuthority context owner
+
+/--
+End one valid borrow before its authoritative owner becomes terminal.
+
+The borrowed binding becomes released and its owner edge is cleared. The owner
+itself is untouched. This is compiler/control-plane lifetime state only; no
+runtime release/destroy operation is implied for a borrowed view.
+-/
+def endBorrow {borrowTy ownerTy : Ty}
+    (context : OwnershipContext) (relations : BorrowRelations)
+    (borrowed : Value borrowTy) (owner : Value ownerTy)
+    (_valid : BorrowedFrom context relations borrowed owner) :
+    OwnershipContext × BorrowRelations :=
+  (context.set borrowed .released,
+   BorrowRelations.clear relations borrowed.token)
 
 
 /-- Canonical semantic classes for a reflected function result.
