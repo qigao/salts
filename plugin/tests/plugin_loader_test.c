@@ -4,6 +4,7 @@
 
 #include <cmeta/object_interface.h>
 
+#include "plugin_generic_graph_fixture.h"
 #include "plugin_object_interface_fixture.h"
 #include "plugin_slow_query_fixture.h"
 
@@ -19,6 +20,9 @@
 #endif
 #ifndef PLUGIN_OBJECT_INTERFACE_PATH
 #error "PLUGIN_OBJECT_INTERFACE_PATH is required"
+#endif
+#ifndef PLUGIN_GENERIC_GRAPH_PATH
+#error "PLUGIN_GENERIC_GRAPH_PATH is required"
 #endif
 #ifndef PLUGIN_MISSING_QUERY_PATH
 #error "PLUGIN_MISSING_QUERY_PATH is required"
@@ -259,6 +263,128 @@ describe("bounded registry") {
                     SALTS_PLUGIN_OK);
         check_equal(salts_plugin_registry_request_stop(&registry, ref),
                     SALTS_PLUGIN_OK);
+        check_equal(salts_plugin_registry_poll_quiescent(
+                        &registry, ref, &quiescent),
+                    SALTS_PLUGIN_OK);
+        check_true(quiescent);
+        check_equal(salts_plugin_registry_unload(&registry, ref),
+                    SALTS_PLUGIN_OK);
+        destroy_registry(&registry);
+    }
+
+    it("keeps reflected generic descriptor graphs borrowed under one Plugin lease") {
+        salts_plugin_registry registry = make_registry(1u);
+        salts_plugin_ref ref = {0};
+        salts_plugin_lease lease = {0};
+        const salts_plugin_manifest *manifest = NULL;
+        const salts_plugin_export *entry = NULL;
+        const cmeta_function_desc *provider_function = NULL;
+        const cmeta_function_abi_desc *provider_abi = NULL;
+        const cmeta_param_desc *provider_param = NULL;
+        const cmeta_function_desc *host_function =
+            &plugin_generic_graph_probe__function_meta;
+        const cmeta_function_abi_desc *host_abi =
+            &plugin_generic_graph_probe__function_abi_meta;
+        const cmeta_param_desc *host_param =
+            &plugin_generic_graph_probe__function_params[0];
+        const cmeta_type_identity *provider_identity = NULL;
+        const cmeta_generic_desc *provider_constructor = NULL;
+        const cmeta_type_identity *provider_argument = NULL;
+        plugin_generic_graph_value value = {41};
+        void *params[1] = {&value};
+        int output = 0;
+        bool quiescent = true;
+
+        check_equal(salts_plugin_registry_load(
+                        &registry, PLUGIN_GENERIC_GRAPH_PATH, &ref),
+                    SALTS_PLUGIN_OK);
+        check_equal(salts_plugin_registry_start(&registry, ref),
+                    SALTS_PLUGIN_OK);
+        check_equal(salts_plugin_registry_acquire(
+                        &registry, ref, &lease, &manifest),
+                    SALTS_PLUGIN_OK);
+        check_true(salts_plugin_lease_valid(lease));
+        check_not_null(manifest);
+
+        check_equal(salts_plugin_manifest_find_export(
+                        manifest, "generic.probe", &entry),
+                    SALTS_PLUGIN_OK);
+        check_equal(salts_plugin_export_require_function(
+                        entry, "test.plugin.generic", 1u, 1u),
+                    SALTS_PLUGIN_OK);
+
+        provider_function = entry->value.function.desc;
+        provider_abi = entry->value.function.abi;
+        provider_param = cmeta_function_param(provider_function, 0u);
+        check_not_null(provider_function);
+        check_not_null(provider_abi);
+        check_not_null(provider_param);
+        check_true(cmeta_function_desc_valid(provider_function));
+        check_true(cmeta_function_abi_desc_valid(provider_abi));
+
+        /*
+         * The provider DSO and host compiled the fixture header independently.
+         * Address inequality proves that semantic equality, not descriptor
+         * pointer identity, crosses the module boundary.
+         */
+        check_true(provider_function != host_function);
+        check_true(provider_abi != host_abi);
+        check_true(provider_param != host_param);
+        check_true(provider_param->type != &plugin_generic_graph_value_type);
+        check_true(provider_param->type->identity !=
+                   &plugin_generic_graph_value_identity);
+
+        check_true(cmeta_function_desc_equal(
+            provider_function, host_function));
+        check_true(cmeta_function_abi_desc_equal(provider_abi, host_abi));
+        check_true(cmeta_type_equal(
+            provider_param->type, &plugin_generic_graph_value_type));
+
+        provider_identity = cmeta_type_identity_of(provider_param->type);
+        check_true(cmeta_type_identity_is_application(provider_identity));
+        check_equal(cmeta_type_identity_arity(provider_identity), (size_t)1u);
+        provider_constructor =
+            cmeta_type_identity_constructor(provider_identity);
+        provider_argument =
+            cmeta_type_identity_argument(provider_identity, 0u);
+        check_not_null(provider_constructor);
+        check_not_null(provider_argument);
+        check_true(provider_constructor != &plugin_generic_graph_constructor);
+        check_true(provider_argument != &plugin_generic_graph_arg_identity);
+        check_true(cmeta_generic_desc_equal(
+            provider_constructor, &plugin_generic_graph_constructor));
+        check_true(cmeta_type_identity_equal(
+            provider_argument, &plugin_generic_graph_arg_identity));
+
+        check_true(entry->value.function.invoke(
+            entry->value.function.context, &output, params, 1u));
+        check_equal(output, 42);
+
+        check_equal(salts_plugin_registry_request_stop(&registry, ref),
+                    SALTS_PLUGIN_OK);
+        check_equal(salts_plugin_registry_unload(&registry, ref),
+                    SALTS_PLUGIN_BUSY);
+        check_equal(salts_plugin_registry_poll_quiescent(
+                        &registry, ref, &quiescent),
+                    SALTS_PLUGIN_OK);
+        check_false(quiescent);
+
+        /*
+         * Every pointer above is borrowed from the provider graph. Drop those
+         * views before releasing the one module lifetime authority.
+         */
+        provider_argument = NULL;
+        provider_constructor = NULL;
+        provider_identity = NULL;
+        provider_param = NULL;
+        provider_abi = NULL;
+        provider_function = NULL;
+        entry = NULL;
+        manifest = NULL;
+
+        check_equal(salts_plugin_registry_release(&registry, &lease),
+                    SALTS_PLUGIN_OK);
+        check_false(salts_plugin_lease_valid(lease));
         check_equal(salts_plugin_registry_poll_quiescent(
                         &registry, ref, &quiescent),
                     SALTS_PLUGIN_OK);
