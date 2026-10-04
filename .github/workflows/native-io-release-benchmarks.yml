@@ -666,6 +666,26 @@ jobs:
             echo '~~~'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Build pre-slot-isolation CFlow benchmark / Windows
+        if: needs.scope.outputs.cflow == 'true' && matrix.family == 'windows' && matrix.backend == 'iocp' && github.event_name == 'pull_request'
+        shell: cmd
+        env:
+          CFLOW_SLOT_ISOLATION_BASE_SHA: 847857cdbd637030c3f3e893f68a6e1796831977
+        run: |
+          set "BASELINE_SOURCE=%RUNNER_TEMP%\salts-cflow-before-slot-isolation"
+          if exist "%BASELINE_SOURCE%" rmdir /s /q "%BASELINE_SOURCE%"
+          git worktree add --detach "%BASELINE_SOURCE%" "%CFLOW_SLOT_ISOLATION_BASE_SHA%"
+          if errorlevel 1 exit /b 1
+          cd /d "%BASELINE_SOURCE%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
+          cmake --preset win-release-user -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=ON
+          if errorlevel 1 exit /b 1
+          cmake --build --preset win-release-user --parallel 2 --target cflow_parallel_reduce_benchmark
+          if errorlevel 1 exit /b 1
+          if not exist "build\Msvc-Release\bin\cflow_parallel_reduce_benchmark.exe" exit /b 1
+
       - name: Run pre-slot-isolation CFlow benchmark / Windows
         if: needs.scope.outputs.cflow == 'true' && matrix.family == 'windows' && matrix.backend == 'iocp' && github.event_name == 'pull_request'
         shell: pwsh
@@ -674,17 +694,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $baselineSource = Join-Path $env:RUNNER_TEMP "salts-cflow-before-slot-isolation"
-          Remove-Item -LiteralPath $baselineSource -Recurse -Force -ErrorAction SilentlyContinue
-          git worktree add --detach $baselineSource $env:CFLOW_SLOT_ISOLATION_BASE_SHA
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $benchmark = Join-Path $baselineSource "build/Msvc-Release/bin/cflow_parallel_reduce_benchmark.exe"
           try {
-            Push-Location $baselineSource
-            $env:VCPKG_ROOT = $env:QIGAO_VCPKG_ROOT
-            cmake --preset win-release-user -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=ON
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            cmake --build --preset win-release-user --parallel 2 --target cflow_parallel_reduce_benchmark
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            $benchmark = Join-Path $baselineSource "build/Msvc-Release/bin/cflow_parallel_reduce_benchmark.exe"
             if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
               throw "Baseline CFlow parallel reduce benchmark not found: $benchmark"
             }
@@ -701,7 +712,6 @@ jobs:
             $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
             Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '~~~'
           } finally {
-            Pop-Location
             git worktree remove --force $baselineSource 2>$null
           }
 
