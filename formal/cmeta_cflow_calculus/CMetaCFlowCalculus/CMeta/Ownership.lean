@@ -91,6 +91,44 @@ def BorrowedFrom {borrowTy ownerTy : Ty}
     ContextAuthority context owner
 
 
+namespace BorrowRelations
+
+/-- Bind one borrowed token to its authoritative owner token. -/
+def set (relations : BorrowRelations) (borrowed owner : Nat) : BorrowRelations :=
+  fun candidate =>
+    if candidate = borrowed then some owner else relations candidate
+
+end BorrowRelations
+
+/-- A borrowed result may escape only when it is tied to one live authority. -/
+def BorrowEscapeSafe {borrowTy : Ty}
+    (context : OwnershipContext) (relations : BorrowRelations)
+    (borrowed : Value borrowTy) : Prop :=
+  ∃ ownerTy : Ty, ∃ owner : Value ownerTy,
+    BorrowedFrom context relations borrowed owner
+
+/-- Final release of an authority is safe only when no live borrowed token
+    still points at that authority. -/
+def OwnerReleaseSafe {ownerTy : Ty}
+    (context : OwnershipContext) (relations : BorrowRelations)
+    (owner : Value ownerTy) : Prop :=
+  ∀ {borrowTy : Ty} (borrowed : Value borrowTy),
+    relations borrowed.token = some owner.token →
+    ¬HasOwnership context borrowed .borrowed
+
+/-- Admit an authoritative borrowed result together with its owner relation.
+    The relation remains compiler/control-plane state and is not embedded in
+    runtime Reflection descriptors. -/
+def admitBorrowedResult {borrowTy ownerTy : Ty}
+    (context : OwnershipContext) (relations : BorrowRelations)
+    (borrowed : Value borrowTy) (owner : Value ownerTy)
+    (_different : borrowed.token ≠ owner.token)
+    (_authority : ContextAuthority context owner) :
+    OwnershipContext × BorrowRelations :=
+  (context.set borrowed .borrowed,
+   relations.set borrowed.token owner.token)
+
+
 /-- Canonical semantic classes for a reflected function result.
     Nullability is orthogonal and therefore intentionally absent here. -/
 inductive ResultOwnership where
@@ -100,6 +138,22 @@ inductive ResultOwnership where
   | shared
   | owned
   deriving Repr, DecidableEq
+
+/-- Canonical parameter ownership semantics used at an admitted call boundary.
+    UNKNOWN is non-authoritative; BORROWED preserves caller ownership; OWNED
+    consumes one caller-owned value after admission. -/
+inductive ParameterOwnership where
+  | unknown
+  | borrowed
+  | owned
+  deriving Repr, DecidableEq
+
+/-- Passing a borrowed parameter never changes caller ownership. -/
+def admitBorrowedParameter {ty : Ty}
+    (context : OwnershipContext) (value : Value ty)
+    (_readable : ContextReadable context value) : OwnershipContext :=
+  context
+
 
 /-- Translate authoritative reflected result semantics into the ownership
     calculus. UNKNOWN deliberately yields no automatic ownership proof.
@@ -139,6 +193,21 @@ def move {Γ : Env} {ty : Ty} (context : OwnershipContext) (value : Value ty)
     (_owned : HasOwnership context value .owned)
     (_movable : Γ.hasCapability ty .move) : OwnershipContext :=
   context.set value .moved
+
+
+/-- An OWNED parameter consumes the caller binding only after the call boundary
+    has been admitted; the post-context is the ordinary move transition. -/
+def admitOwnedParameter {Γ : Env} {ty : Ty}
+    (context : OwnershipContext) (value : Value ty)
+    (owned : HasOwnership context value .owned)
+    (movable : Γ.hasCapability ty .move) : OwnershipContext :=
+  move context value owned movable
+
+/-- Conservative branch join: only identical ownership states join.
+    In particular, an owned/moved mismatch is rejected rather than resurrecting
+    ownership on the moved path. -/
+def joinOwnership (left right : Ownership) : Option Ownership :=
+  if left = right then some left else none
 
 /-- Discharge one existing owned/shared cleanup obligation.
     The concrete destroy/release operation is outside the calculus; this
