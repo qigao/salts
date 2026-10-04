@@ -70,7 +70,12 @@ function Validate-Row($row, [int]$payload, [int]$segmentCount,
   }
 
   $segmentBytes = [int]($payload / $segmentCount)
-  $expectedRecords = $segmentCount * [math]::Ceiling($segmentBytes / 16384.0)
+  $expectedRecords =
+    if ($style -eq "retained_slicev_discontiguous") {
+      $segmentCount * [math]::Ceiling($segmentBytes / 16384.0)
+    } else {
+      [math]::Ceiling($payload / 16384.0)
+    }
   if ([math]::Abs($records - $expectedRecords) -gt 0.000001) {
     throw "TLS record count mismatch payload=$payload segments=$segmentCount style=$style expected=$expectedRecords actual=$records"
   }
