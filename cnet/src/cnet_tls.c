@@ -1306,6 +1306,16 @@ int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity,
   if (status == SALTS_OK) return SALTS_OK;
   if (status != SALTS_ENOENT) return status;
 
+  /*
+   * GmSSL uses one TLS_CONNECT record scratch for both tls_send() and
+   * tls_recv(). A retryable application write can leave a partially emitted
+   * provider record in that scratch after cnet_tls_write() returns
+   * incomplete. Do not enter provider receive until that logical write has
+   * been completely accepted; encrypted peer records remain bounded in the
+   * CNet input ring and are consumed after the write finishes.
+   */
+  if (engine->write_size != 0u) return SALTS_OK;
+
   status = cnet_tls_cipher_record_ready(engine, &record_ready);
   if (status != SALTS_OK) return status;
   if (!record_ready) return SALTS_OK;
@@ -1354,6 +1364,7 @@ int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed,
     *out_plaintext_pending = true;
     return SALTS_OK;
   }
+  if (engine->write_size != 0u) return SALTS_OK;
 
   {
     bool record_ready = false;
