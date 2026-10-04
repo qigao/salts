@@ -187,7 +187,8 @@ jobs:
                   (($_ -like "cmake/*.cmake" -or $_ -like "cmake/**/*.cmake") -and
                     $_ -notlike "cmake/ci/*") -or
                   $_ -eq "CMakeLists.txt" -or
-                  $_ -eq "CMakePresets.json"
+                  $_ -eq "CMakePresets.json" -or
+                  $_ -eq ".github/workflows/native-io-release-benchmarks.yml"
                 }).Count -gt 0
               $dependencyChanged = @($changed | Where-Object {
                   $_ -eq "vcpkg.json" -or $_ -eq "vcpkg-configuration.json"
@@ -428,9 +429,14 @@ jobs:
             configure_preset: win-release-user
             build_preset: win-release-user
             build_dir: build/Msvc-Release
-          # kqueue/macOS benchmark qualification is temporarily suspended.
-          # macOS/kqueue source support remains intact; restore this matrix row
-          # when the runner/toolchain lane is reliable again.
+          - host: kqueue / macOS 15 AppleClang
+            runner: macos-15
+            family: mac
+            backend: kqueue
+            artifact: macos-kqueue
+            configure_preset: release-mac-ninja
+            build_preset: build-default-mac
+            build_dir: build/mac-clang-release
 
     steps:
       - uses: actions/checkout@v6
@@ -551,6 +557,7 @@ jobs:
           test -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
           binary_cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
           mkdir -p "$binary_cache"
+          echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
           echo "VCPKG_BINARY_CACHE=$binary_cache" >> "$GITHUB_ENV"
           echo "image=${ImageOS:-macos}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
           echo "triplet=default-osx-${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
