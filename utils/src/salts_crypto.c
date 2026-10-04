@@ -277,3 +277,8 @@ int salts_crypto_equal(const void *lhs, const void *rhs, size_t size,
   *out_equal = gmssl_secure_memcmp(lhs, rhs, size) == 0 ? 1 : 0;
   return SALTS_OK;
 }
+
+void salts_crypto_clear(void *data, size_t size) {
+  if (data == NULL || size == 0u) return;
+  gmssl_secure_clear(data, size);
+}
