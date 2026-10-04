@@ -19,6 +19,17 @@ typedef struct cmeta_declared_type {
 } cmeta_declared_type;
 
 bool cmeta_declared_type_valid(const cmeta_declared_type *declared);
+/**
+ * Semantic equality of the declared generic application only.
+ *
+ * Compares constructor identity and every argument through canonical CMeta
+ * semantic equality. It intentionally does not compare storage_type or the
+ * optional construction provider: native storage identity and construction
+ * capability are separate inspection facts.
+ */
+bool cmeta_declared_type_application_equal(
+    const cmeta_declared_type *left,
+    const cmeta_declared_type *right);
 bool cmeta_declared_type_constructible(const cmeta_declared_type *declared);
 const cmeta_type_desc *cmeta_declared_type_argument(
     const cmeta_declared_type *declared, size_t index);
