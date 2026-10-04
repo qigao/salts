@@ -50,6 +50,74 @@ theorem reflected_result_admission_updates_source {ty : Ty}
         some { ty := ty, ownership := ownership }
     simp [OwnershipContext.set]
 
+theorem admitted_borrowed_result_is_bound
+    {borrowTy ownerTy : Ty}
+    (context : OwnershipContext) (relations : BorrowRelations)
+    (borrowed : Value borrowTy) (owner : Value ownerTy)
+    (different : borrowed.token ≠ owner.token)
+    (authority : ContextAuthority context owner) :
+    let post :=
+      admitBorrowedResult
+        context relations borrowed owner different authority
+    BorrowedFrom post.1 post.2 borrowed owner := by
+  dsimp [admitBorrowedResult]
+  constructor
+  · change
+      (context.set borrowed .borrowed) borrowed.token =
+        some { ty := borrowTy, ownership := .borrowed }
+    simp [OwnershipContext.set]
+  · constructor
+    · simp [BorrowRelations.set]
+    · rcases authority with ⟨ownership, atOwner, authorityState⟩
+      refine ⟨ownership, ?_, authorityState⟩
+      change
+        (context.set borrowed .borrowed) owner.token =
+          some { ty := ownerTy, ownership := ownership }
+      simp [OwnershipContext.set, Ne.symm different, atOwner]
+
+theorem admitted_borrowed_result_escape_safe
+    {borrowTy ownerTy : Ty}
+    (context : OwnershipContext) (relations : BorrowRelations)
+    (borrowed : Value borrowTy) (owner : Value ownerTy)
+    (different : borrowed.token ≠ owner.token)
+    (authority : ContextAuthority context owner) :
+    let post :=
+      admitBorrowedResult
+        context relations borrowed owner different authority
+    BorrowEscapeSafe post.1 post.2 borrowed := by
+  dsimp
+  refine ⟨ownerTy, owner, ?_⟩
+  exact
+    admitted_borrowed_result_is_bound
+      context relations borrowed owner different authority
+
+theorem borrowed_result_has_no_cleanup
+    {borrowTy ownerTy : Ty}
+    (context : OwnershipContext) (relations : BorrowRelations)
+    (borrowed : Value borrowTy) (owner : Value ownerTy)
+    (bound : BorrowedFrom context relations borrowed owner) :
+    ¬ContextNeedsCleanup context borrowed := by
+  intro cleanup
+  rcases cleanup with ⟨ownership, atBorrowed, required⟩
+  rw [bound.1] at atBorrowed
+  cases atBorrowed
+  exact borrowed_not_cleanup required
+
+theorem live_borrow_blocks_owner_release
+    {borrowTy ownerTy : Ty}
+    (context : OwnershipContext) (relations : BorrowRelations)
+    (borrowed : Value borrowTy) (owner : Value ownerTy)
+    (bound : BorrowedFrom context relations borrowed owner) :
+    ¬OwnerReleaseSafe context relations owner := by
+  intro safe
+  exact safe borrowed bound.2.1 bound.1
+
+theorem borrowed_parameter_preserves_caller
+    {ty : Ty} (context : OwnershipContext) (value : Value ty)
+    (readable : ContextReadable context value) :
+    admitBorrowedParameter context value readable = context := by
+  rfl
+
 theorem shared_readable : Readable .shared := .shared
 
 /-- The post-move ownership state has no readability constructor. -/
@@ -86,6 +154,31 @@ theorem move_updates_source {Γ : Env} {ty : Ty}
     move context value owned movable value.token =
       some { ty := ty, ownership := .moved } := by
   simp [move, OwnershipContext.set]
+
+theorem owned_parameter_consumes_after_admission {Γ : Env} {ty : Ty}
+    (context : OwnershipContext) (value : Value ty)
+    (owned : HasOwnership context value .owned)
+    (movable : Γ.hasCapability ty .move) :
+    admitOwnedParameter context value owned movable value.token =
+      some { ty := ty, ownership := .moved } := by
+  simpa [admitOwnedParameter] using
+    move_updates_source context value owned movable
+
+theorem join_owned_owned_preserves :
+    joinOwnership .owned .owned = some .owned := by
+  simp [joinOwnership]
+
+theorem join_moved_moved_preserves :
+    joinOwnership .moved .moved = some .moved := by
+  simp [joinOwnership]
+
+theorem join_owned_moved_rejected :
+    joinOwnership .owned .moved = none := by
+  simp [joinOwnership]
+
+theorem join_moved_owned_rejected :
+    joinOwnership .moved .owned = none := by
+  simp [joinOwnership]
 
 /-- The source token cannot be read in the post-move context. -/
 theorem move_source_not_readable {Γ : Env} {ty : Ty}
