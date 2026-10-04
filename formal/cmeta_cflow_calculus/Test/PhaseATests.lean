@@ -158,6 +158,23 @@ example : movedContext 3 = ownedContext 3 :=
   move_preserves_other (Γ := coreEnv) ownedContext ownedUser
     ownedContext_has_user userMovable (by decide)
 
+theorem borrowedUserReadable : ContextReadable borrowedContext borrowedUser :=
+  ⟨.borrowed, borrowedContext_has_user, Readable.borrowed⟩
+
+example :
+    admitBorrowedParameter borrowedContext borrowedUser borrowedUserReadable =
+      borrowedContext :=
+  borrowed_parameter_preserves_caller
+    borrowedContext borrowedUser borrowedUserReadable
+
+example :
+    admitOwnedParameter (Γ := coreEnv)
+      ownedContext ownedUser ownedContext_has_user userMovable ownedUser.token =
+      some { ty := userTy, ownership := .moved } :=
+  owned_parameter_consumes_after_admission
+    (Γ := coreEnv) ownedContext ownedUser
+    ownedContext_has_user userMovable
+
 def usersSource : SourceDecl coreEnv userTy where
   name := "users"
   declared := by simp [coreEnv, userTy]
