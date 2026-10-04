@@ -122,7 +122,7 @@ for mode in ("push", "echo"):
 
 print(
     "Provider-only gate: eight independent verified TLS sessions, fixed total work, "
-    "1/2/4 worker threads, exact record counts and byte-for-byte decrypt validation."
+    "1/2/4/8 worker threads, exact record counts and byte-for-byte decrypt validation."
 )
 print(
     "This isolates GmSSL/CNet TLS-state contention; it is not the final public "
