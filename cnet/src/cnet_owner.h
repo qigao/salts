@@ -278,6 +278,9 @@ int cnet_owner_tls_negotiated_cipher(cnet_owner *owner, cnet_session_handle sess
 int cnet_owner_tls_peer_certificate_sha256(
     cnet_owner *owner, cnet_session_handle session,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
+int cnet_owner_tls_server_end_point_binding(
+    cnet_owner *owner, cnet_session_handle session,
+    uint8_t *output, size_t capacity, size_t *out_size);
 int cnet_owner_tls_export_channel_binding(
     cnet_owner *owner, cnet_session_handle session,
     uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]);
