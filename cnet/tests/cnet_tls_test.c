@@ -186,6 +186,97 @@ static int cnet_tls_test_handshake(cnet_tls_test_pair *pair) {
   return SALTS_ETIMEDOUT;
 }
 
+static int cnet_tls_test_transfer_available(
+    cnet_tls_state *source, cnet_tls_state *target, size_t *out_transferred) {
+  unsigned char buffer[1024];
+  size_t transferred = 0u;
+  if (source == NULL || target == NULL || out_transferred == NULL)
+    return SALTS_EINVAL;
+  *out_transferred = 0u;
+  for (;;) {
+    size_t capacity = cnet_tls_cipher_input_capacity(target);
+    size_t size = 0u;
+    int status;
+    if (capacity == 0u) break;
+    if (capacity > sizeof(buffer)) capacity = sizeof(buffer);
+    status = cnet_tls_take_cipher(source, buffer, capacity, &size);
+    if (status == SALTS_ENOENT) break;
+    if (status != SALTS_OK) return status;
+    if (size == 0u || size > capacity) return SALTS_EPROTO;
+    status = cnet_tls_feed_cipher(target, buffer, size);
+    if (status != SALTS_OK) return status;
+    transferred += size;
+  }
+  *out_transferred = transferred;
+  return SALTS_OK;
+}
+
+static int cnet_tls_test_round_trip(
+    cnet_tls_state *source, cnet_tls_state *target,
+    const unsigned char *payload, size_t payload_size) {
+  unsigned char *received = NULL;
+  size_t received_size = 0u;
+  bool write_complete = false;
+  size_t iteration;
+  int status = SALTS_OK;
+
+  if (source == NULL || target == NULL || payload == NULL ||
+      payload_size == 0u)
+    return SALTS_EINVAL;
+  received = (unsigned char *)malloc(payload_size);
+  if (received == NULL) return SALTS_ENOMEM;
+
+  for (iteration = 0u; iteration < 65536u; ++iteration) {
+    bool progressed = false;
+
+    while (received_size < payload_size) {
+      size_t size = 0u;
+      bool peer_closed = false;
+      status = cnet_tls_read(
+          target, received + received_size,
+          payload_size - received_size, &size, &peer_closed);
+      if (status != SALTS_OK) goto cleanup;
+      if (peer_closed) {
+        status = SALTS_ECONNABORTED;
+        goto cleanup;
+      }
+      if (size == 0u) break;
+      received_size += size;
+      progressed = true;
+    }
+
+    if (!write_complete) {
+      status = cnet_tls_write(
+          source, payload, payload_size, &write_complete);
+      if (status != SALTS_OK) goto cleanup;
+    }
+
+    {
+      size_t transferred = 0u;
+      status = cnet_tls_test_transfer_available(
+          source, target, &transferred);
+      if (status != SALTS_OK) goto cleanup;
+      if (transferred != 0u) progressed = true;
+    }
+
+    if (write_complete && received_size == payload_size) {
+      status = memcmp(received, payload, payload_size) == 0
+                   ? SALTS_OK
+                   : SALTS_EPROTO;
+      goto cleanup;
+    }
+    if (!progressed && !write_complete) {
+      status = SALTS_EPROTO;
+      goto cleanup;
+    }
+  }
+  status = SALTS_ETIMEDOUT;
+
+cleanup:
+  free(received);
+  return status;
+}
+
 static int cnet_tls_test_reset_client(cnet_tls_test_pair *pair,
                                       const cnet_tls_client_config *config,
                                       const char *server_name) {
@@ -204,6 +295,8 @@ typedef struct cnet_tls_network_probe {
   cnet_client *client;
   cnet_connection connection;
   char received[16];
+  unsigned char *dynamic_received;
+  size_t dynamic_capacity;
   char alpn[16];
   char tls_version[16];
   char tls_cipher[128];
@@ -260,12 +353,25 @@ static void cnet_tls_network_receive(void *user, cnet_connection connection,
                                      const cnet_receive_view *view) {
   cnet_tls_network_probe *probe = (cnet_tls_network_probe *)user;
   (void)connection;
-  if (view == NULL || view->kind != CNET_MESSAGE_BYTES ||
-      view->size > sizeof(probe->received) - probe->received_size) {
+  if (view == NULL || view->kind != CNET_MESSAGE_BYTES) {
     probe->failed = 1;
     return;
   }
-  memcpy(probe->received + probe->received_size, view->data, view->size);
+  if (probe->dynamic_received != NULL) {
+    if (probe->received_size > probe->dynamic_capacity ||
+        view->size > probe->dynamic_capacity - probe->received_size) {
+      probe->failed = 1;
+      return;
+    }
+    memcpy(probe->dynamic_received + probe->received_size,
+           view->data, view->size);
+  } else {
+    if (view->size > sizeof(probe->received) - probe->received_size) {
+      probe->failed = 1;
+      return;
+    }
+    memcpy(probe->received + probe->received_size, view->data, view->size);
+  }
   probe->received_size += view->size;
 }
 
@@ -318,6 +424,19 @@ static cnet_client_config cnet_tls_network_config(void) {
   return config;
 }
 
+static cnet_client_config cnet_tls_large_network_config(void) {
+  cnet_client_config config = cnet_tls_network_config();
+  config.command_capacity = 32u;
+  config.request_capacity = 32u;
+  config.completion_batch_capacity = 32u;
+  config.event_capacity = 64u;
+  config.max_send_bytes = 256u * 1024u;
+  config.receive_buffer_bytes = 32u * 1024u;
+  config.read_timeout_ms = 5000u;
+  config.write_timeout_ms = 5000u;
+  return config;
+}
+
 static int cnet_tls_network_drive(cnet_client *client, cnet_client *server, cnet_listener *listener,
                                   cnet_tls_server *tls_server, cnet_tls_network_probe *server_probe,
                                   bool *accepted) {
@@ -343,6 +462,528 @@ static int cnet_tls_network_drive(cnet_client *client, cnet_client *server, cnet
 }
 
 spec("CNet bounded TLS engine") {
+
+  it("round-trips repeated TLS records across plaintext boundaries") {
+    static const size_t sizes[] = {
+        1024u, 16383u, 16384u, 16385u, 65535u, 65536u, 131072u};
+    cnet_tls_test_pair pair;
+    unsigned char *payload = NULL;
+    size_t index;
+    size_t byte_index;
+
+    payload = (unsigned char *)malloc(sizes[sizeof(sizes) / sizeof(sizes[0]) - 1u]);
+    check_not_null(payload);
+    check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+
+    for (index = 0u; index < sizeof(sizes) / sizeof(sizes[0]); ++index) {
+      const size_t size = sizes[index];
+      for (byte_index = 0u; byte_index < size; ++byte_index)
+        payload[byte_index] =
+            (unsigned char)((byte_index * 131u + index * 17u) & 0xffu);
+      check_equal(
+          cnet_tls_test_round_trip(
+              &pair.client, &pair.server, payload, size),
+          SALTS_OK);
+      check_equal(
+          cnet_tls_test_round_trip(
+              &pair.server, &pair.client, payload, size),
+          SALTS_OK);
+    }
+
+    cnet_tls_test_pair_destroy(&pair);
+    free(payload);
+  }
+
+  it("defers provider receive while an application TLS write is pending") {
+    enum { payload_size = 64 * 1024 };
+    static const unsigned char control[] = {0x00u, 0x00u, 0x04u, 0x08u};
+    cnet_tls_test_pair pair;
+    unsigned char *payload = NULL;
+    unsigned char *received = NULL;
+    unsigned char control_received[sizeof(control)] = {0};
+    size_t received_size = 0u;
+    size_t control_size = 0u;
+    bool payload_complete = false;
+    bool control_complete = false;
+    bool peer_closed = false;
+    size_t transferred = 0u;
+    size_t iteration;
+
+    payload = (unsigned char *)malloc(payload_size);
+    received = (unsigned char *)malloc(payload_size);
+    check_not_null(payload);
+    check_not_null(received);
+    for (iteration = 0u; iteration < payload_size; ++iteration)
+      payload[iteration] =
+          (unsigned char)((iteration * 43u + 13u) & 0xffu);
+
+    check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+
+    /*
+     * A 64 KiB plaintext write cannot fit all resulting ciphertext in the
+     * bounded output ring at once, so the provider must retain a pending
+     * application record and report an incomplete logical write.
+     */
+    check_equal(
+        cnet_tls_write(
+            &pair.server, payload, payload_size, &payload_complete),
+        SALTS_OK);
+    check_false(payload_complete);
+
+    check_equal(
+        cnet_tls_write(
+            &pair.client, control, sizeof(control), &control_complete),
+        SALTS_OK);
+    check_true(control_complete);
+    check_equal(
+        cnet_tls_test_transfer_available(
+            &pair.client, &pair.server, &transferred),
+        SALTS_OK);
+    check_greater(transferred, (size_t)0u);
+
+    /*
+     * The incoming control record is complete, but entering GmSSL recv here
+     * would overwrite TLS_CONNECT.record while tls_send still owns a pending
+     * record. CNet must leave the ciphertext buffered until the application
+     * write has been fully accepted.
+     */
+    check_equal(
+        cnet_tls_read(
+            &pair.server, control_received, sizeof(control_received),
+            &control_size, &peer_closed),
+        SALTS_OK);
+    check_equal(control_size, (size_t)0u);
+    check_false(peer_closed);
+
+    for (iteration = 0u; iteration < 65536u; ++iteration) {
+      bool progressed = false;
+
+      check_equal(
+          cnet_tls_test_transfer_available(
+              &pair.server, &pair.client, &transferred),
+          SALTS_OK);
+      if (transferred != 0u) progressed = true;
+
+      while (received_size < payload_size) {
+        size_t size = 0u;
+        check_equal(
+            cnet_tls_read(
+                &pair.client, received + received_size,
+                payload_size - received_size, &size, &peer_closed),
+            SALTS_OK);
+        check_false(peer_closed);
+        if (size == 0u) break;
+        received_size += size;
+        progressed = true;
+      }
+
+      if (!payload_complete) {
+        check_equal(
+            cnet_tls_write(
+                &pair.server, payload, payload_size, &payload_complete),
+            SALTS_OK);
+      }
+
+      if (payload_complete && received_size == payload_size) break;
+      if (!progressed && !payload_complete) {
+        check_true(false);
+        break;
+      }
+    }
+
+    check_true(payload_complete);
+    check_equal(received_size, (size_t)payload_size);
+    check_equal(memcmp(received, payload, payload_size), 0);
+
+    control_size = 0u;
+    peer_closed = false;
+    check_equal(
+        cnet_tls_read(
+            &pair.server, control_received, sizeof(control_received),
+            &control_size, &peer_closed),
+        SALTS_OK);
+    check_false(peer_closed);
+    check_equal(control_size, sizeof(control));
+    check_equal(memcmp(control_received, control, sizeof(control)), 0);
+
+    cnet_tls_test_pair_destroy(&pair);
+    free(received);
+    free(payload);
+  }
+
+  it("preserves large retained slicev bytes through the public TLS owner path") {
+    static const char *server_alpn[] = {"h2"};
+    static const char *client_alpn[] = {"h2"};
+    enum {
+      frame_prefix_bytes = 9,
+      first_payload_bytes = 16383,
+      frame_payload_bytes = 16384,
+      frame_count = 4,
+      second_total_bytes =
+          frame_count * (frame_prefix_bytes + frame_payload_bytes)
+    };
+    cnet_client client = {0};
+    cnet_client server = {0};
+    cnet_listener listener = {0};
+    cnet_tls_client tls_client = {0};
+    cnet_tls_server tls_server = {0};
+    cnet_client_config client_config = cnet_tls_large_network_config();
+    cnet_client_config server_config = cnet_tls_large_network_config();
+    cnet_listener_config listener_config = {
+        .backend = client_config.backend,
+        .host = "127.0.0.1",
+        .port = 0u,
+        .backlog = 2u};
+    cnet_tls_server_config tls_server_config = {
+        .size = sizeof(tls_server_config),
+        .cert_file = CNET_TLS_TEST_IP_CERT,
+        .key_file = CNET_TLS_TEST_IP_KEY,
+        .client_auth = CNET_TLS_CLIENT_AUTH_NONE,
+        .alpn_protocols = server_alpn,
+        .alpn_protocol_count = 1u};
+    cnet_tls_client_config tls_client_config = {
+        .size = sizeof(tls_client_config),
+        .ca_file = CNET_TLS_TEST_IP_CA,
+        .server_name = "localhost",
+        .alpn_protocols = client_alpn,
+        .alpn_protocol_count = 1u};
+    cnet_tls_network_probe client_probe = {.client = &client};
+    cnet_tls_network_probe server_probe = {.client = &server};
+    cnet_connect_options connect_options;
+    cnet_connection client_connection = {0};
+    unsigned char *received = NULL;
+    unsigned char *expected = NULL;
+    char uri[64];
+    uint16_t port = 0u;
+    uint64_t deadline;
+    bool accepted = false;
+    size_t sent_before;
+    size_t index;
+
+    received = (unsigned char *)calloc(
+        second_total_bytes, sizeof(*received));
+    expected = (unsigned char *)calloc(
+        second_total_bytes, sizeof(*expected));
+    check_not_null(received);
+    check_not_null(expected);
+    server_probe.dynamic_received = received;
+    server_probe.dynamic_capacity = second_total_bytes;
+
+    check_equal(cnet_tls_server_init(&tls_server, &tls_server_config), SALTS_OK);
+    check_equal(cnet_tls_client_init(&tls_client, &tls_client_config), SALTS_OK);
+    check_equal(cnet_client_init(&client, &client_config), SALTS_OK);
+    check_equal(cnet_client_init(&server, &server_config), SALTS_OK);
+    check_equal(cnet_listener_init(&listener, &listener_config), SALTS_OK);
+    check_equal(cnet_listener_port(&listener, &port), SALTS_OK);
+    check_greater(
+        snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u",
+                 (unsigned int)port),
+        0);
+    connect_options = (cnet_connect_options){
+        .uri = uri,
+        .observer = {.on_state = cnet_tls_network_state,
+                     .on_receive = cnet_tls_network_receive,
+                     .user = &client_probe,
+                     .on_send = cnet_tls_network_send},
+        .tls_client = &tls_client};
+    check_equal(
+        cnet_connect(&client, &connect_options, &client_connection),
+        SALTS_OK);
+    check_equal(cnet_tls_client_destroy(&tls_client), SALTS_OK);
+
+    deadline = salts_monotonic_ms() + 5000u;
+    while ((!client_probe.connected || !server_probe.connected) &&
+           salts_monotonic_ms() < deadline)
+      check_equal(
+          cnet_tls_network_drive(
+              &client, &server, &listener, &tls_server,
+              &server_probe, &accepted),
+          SALTS_OK);
+    check_true(accepted);
+    check_true(client_probe.connected);
+    check_true(server_probe.connected);
+    check_false(client_probe.failed);
+    check_false(server_probe.failed);
+
+    {
+      mem_buffer_t *prefix = mem_get_buffer(
+          mem_global(), frame_prefix_bytes);
+      mem_buffer_t *payload = mem_get_buffer(
+          mem_global(), first_payload_bytes);
+      mem_slice_t slices[2] = {{0}};
+      unsigned char *prefix_data;
+      unsigned char *payload_data;
+
+      check_not_null(prefix);
+      check_not_null(payload);
+      prefix_data = (unsigned char *)mem_buffer_data(prefix);
+      payload_data = (unsigned char *)mem_buffer_data(payload);
+      prefix_data[0] = 0u;
+      prefix_data[1] = 0x3fu;
+      prefix_data[2] = 0xffu;
+      prefix_data[3] = 0u;
+      prefix_data[4] = 0u;
+      prefix_data[5] = 0u;
+      prefix_data[6] = 0u;
+      prefix_data[7] = 0u;
+      prefix_data[8] = 1u;
+      for (index = 0u; index < first_payload_bytes; ++index)
+        payload_data[index] = (unsigned char)((index * 29u + 7u) & 0xffu);
+      mem_set_used(prefix, frame_prefix_bytes);
+      mem_set_used(payload, first_payload_bytes);
+      memcpy(expected, prefix_data, frame_prefix_bytes);
+      memcpy(expected + frame_prefix_bytes,
+             payload_data, first_payload_bytes);
+      slices[0] = mem_slice(prefix, 0u, frame_prefix_bytes);
+      slices[1] = mem_slice(payload, 0u, first_payload_bytes);
+      check_not_null(slices[0].buffer);
+      check_not_null(slices[1].buffer);
+
+      check_equal(
+          cnet_receive(&server, server_probe.connection, 8u),
+          SALTS_OK);
+      sent_before = (size_t)client_probe.sent;
+      check_equal(
+          cnet_send_slicev(
+              &client, client_connection, slices, 2u),
+          SALTS_OK);
+      mem_slice_release(&slices[0]);
+      mem_slice_release(&slices[1]);
+      mem_buffer_release(prefix);
+      mem_buffer_release(payload);
+
+      deadline = salts_monotonic_ms() + 5000u;
+      while ((server_probe.received_size <
+                  frame_prefix_bytes + first_payload_bytes ||
+              (size_t)client_probe.sent < sent_before + 1u) &&
+             !server_probe.failed && !client_probe.failed &&
+             salts_monotonic_ms() < deadline)
+        check_equal(
+            cnet_tls_network_drive(
+                &client, &server, &listener, &tls_server,
+                &server_probe, &accepted),
+            SALTS_OK);
+      check_false(client_probe.failed);
+      check_false(server_probe.failed);
+      check_equal(
+          server_probe.received_size,
+          (size_t)(frame_prefix_bytes + first_payload_bytes));
+      check_equal(
+          memcmp(received, expected, server_probe.received_size),
+          0);
+    }
+
+    server_probe.received_size = 0u;
+    memset(received, 0, second_total_bytes);
+    memset(expected, 0, second_total_bytes);
+    check_equal(
+        cnet_receive(&server, server_probe.connection, 24u),
+        SALTS_OK);
+    sent_before = (size_t)client_probe.sent;
+
+    for (size_t frame = 0u; frame < frame_count; ++frame) {
+      mem_buffer_t *prefix = mem_get_buffer(
+          mem_global(), frame_prefix_bytes);
+      mem_buffer_t *payload = mem_get_buffer(
+          mem_global(), frame_payload_bytes);
+      mem_slice_t slices[2] = {{0}};
+      unsigned char *prefix_data;
+      unsigned char *payload_data;
+      const size_t offset =
+          frame * (frame_prefix_bytes + frame_payload_bytes);
+      const uint32_t stream_id = (uint32_t)(frame * 2u + 1u);
+
+      check_not_null(prefix);
+      check_not_null(payload);
+      prefix_data = (unsigned char *)mem_buffer_data(prefix);
+      payload_data = (unsigned char *)mem_buffer_data(payload);
+      prefix_data[0] = 0u;
+      prefix_data[1] = 0x40u;
+      prefix_data[2] = 0u;
+      prefix_data[3] = 0u;
+      prefix_data[4] = 0u;
+      prefix_data[5] = (unsigned char)((stream_id >> 24u) & 0x7fu);
+      prefix_data[6] = (unsigned char)((stream_id >> 16u) & 0xffu);
+      prefix_data[7] = (unsigned char)((stream_id >> 8u) & 0xffu);
+      prefix_data[8] = (unsigned char)(stream_id & 0xffu);
+      for (index = 0u; index < frame_payload_bytes; ++index)
+        payload_data[index] =
+            (unsigned char)((index * 31u + frame * 19u + 3u) & 0xffu);
+      mem_set_used(prefix, frame_prefix_bytes);
+      mem_set_used(payload, frame_payload_bytes);
+      memcpy(expected + offset, prefix_data, frame_prefix_bytes);
+      memcpy(expected + offset + frame_prefix_bytes,
+             payload_data, frame_payload_bytes);
+      slices[0] = mem_slice(prefix, 0u, frame_prefix_bytes);
+      slices[1] = mem_slice(payload, 0u, frame_payload_bytes);
+      check_not_null(slices[0].buffer);
+      check_not_null(slices[1].buffer);
+      check_equal(
+          cnet_send_slicev(
+              &client, client_connection, slices, 2u),
+          SALTS_OK);
+      mem_slice_release(&slices[0]);
+      mem_slice_release(&slices[1]);
+      mem_buffer_release(prefix);
+      mem_buffer_release(payload);
+    }
+
+    deadline = salts_monotonic_ms() + 5000u;
+    while ((server_probe.received_size < second_total_bytes ||
+            (size_t)client_probe.sent < sent_before + frame_count) &&
+           !server_probe.failed && !client_probe.failed &&
+           salts_monotonic_ms() < deadline)
+      check_equal(
+          cnet_tls_network_drive(
+              &client, &server, &listener, &tls_server,
+              &server_probe, &accepted),
+          SALTS_OK);
+    check_false(client_probe.failed);
+    check_false(server_probe.failed);
+    check_equal(server_probe.received_size,
+                (size_t)second_total_bytes);
+    check_equal(memcmp(received, expected, second_total_bytes), 0);
+
+    /*
+     * Mirror CHTTP H2 egress: the protocol layer materializes one contiguous
+     * connection-local wire buffer, then CNet retains/sends that logical
+     * buffer over TLS. Validate server -> client in both one-record-ish and
+     * multi-frame/multi-record shapes.
+     */
+    client_probe.dynamic_received = received;
+    client_probe.dynamic_capacity = second_total_bytes;
+    client_probe.received_size = 0u;
+    memset(received, 0, second_total_bytes);
+    memset(expected, 0, second_total_bytes);
+    {
+      const size_t wire_size =
+          frame_prefix_bytes + first_payload_bytes;
+      mem_buffer_t *wire = mem_get_buffer(mem_global(), wire_size);
+      unsigned char *wire_data;
+      check_not_null(wire);
+      wire_data = (unsigned char *)mem_buffer_data(wire);
+      wire_data[0] = 0u;
+      wire_data[1] = 0x3fu;
+      wire_data[2] = 0xffu;
+      wire_data[3] = 0u;
+      wire_data[4] = 0u;
+      wire_data[5] = 0u;
+      wire_data[6] = 0u;
+      wire_data[7] = 0u;
+      wire_data[8] = 1u;
+      for (index = frame_prefix_bytes; index < wire_size; ++index)
+        wire_data[index] =
+            (unsigned char)(((index - frame_prefix_bytes) * 37u + 11u) &
+                            0xffu);
+      mem_set_used(wire, wire_size);
+      memcpy(expected, wire_data, wire_size);
+
+      check_equal(cnet_receive(&client, client_connection, 8u), SALTS_OK);
+      sent_before = (size_t)server_probe.sent;
+      check_equal(
+          cnet_send_buffer(&server, server_probe.connection, wire),
+          SALTS_OK);
+      mem_buffer_release(wire);
+
+      deadline = salts_monotonic_ms() + 5000u;
+      while ((client_probe.received_size < wire_size ||
+              (size_t)server_probe.sent < sent_before + 1u) &&
+             !server_probe.failed && !client_probe.failed &&
+             salts_monotonic_ms() < deadline)
+        check_equal(
+            cnet_tls_network_drive(
+                &client, &server, &listener, &tls_server,
+                &server_probe, &accepted),
+            SALTS_OK);
+      check_false(client_probe.failed);
+      check_false(server_probe.failed);
+      check_equal(client_probe.received_size, wire_size);
+      check_equal(memcmp(received, expected, wire_size), 0);
+    }
+
+    client_probe.received_size = 0u;
+    memset(received, 0, second_total_bytes);
+    memset(expected, 0, second_total_bytes);
+    {
+      mem_buffer_t *wire =
+          mem_get_buffer(mem_global(), second_total_bytes);
+      unsigned char *wire_data;
+      check_not_null(wire);
+      wire_data = (unsigned char *)mem_buffer_data(wire);
+      for (size_t frame = 0u; frame < frame_count; ++frame) {
+        const size_t offset =
+            frame * (frame_prefix_bytes + frame_payload_bytes);
+        const uint32_t stream_id = (uint32_t)(frame * 2u + 1u);
+        wire_data[offset + 0u] = 0u;
+        wire_data[offset + 1u] = 0x40u;
+        wire_data[offset + 2u] = 0u;
+        wire_data[offset + 3u] = 0u;
+        wire_data[offset + 4u] = 0u;
+        wire_data[offset + 5u] =
+            (unsigned char)((stream_id >> 24u) & 0x7fu);
+        wire_data[offset + 6u] =
+            (unsigned char)((stream_id >> 16u) & 0xffu);
+        wire_data[offset + 7u] =
+            (unsigned char)((stream_id >> 8u) & 0xffu);
+        wire_data[offset + 8u] =
+            (unsigned char)(stream_id & 0xffu);
+        for (index = 0u; index < frame_payload_bytes; ++index)
+          wire_data[offset + frame_prefix_bytes + index] =
+              (unsigned char)((index * 41u + frame * 23u + 5u) & 0xffu);
+      }
+      mem_set_used(wire, second_total_bytes);
+      memcpy(expected, wire_data, second_total_bytes);
+
+      check_equal(cnet_receive(&client, client_connection, 24u), SALTS_OK);
+      sent_before = (size_t)server_probe.sent;
+      check_equal(
+          cnet_send_buffer(&server, server_probe.connection, wire),
+          SALTS_OK);
+      mem_buffer_release(wire);
+
+      deadline = salts_monotonic_ms() + 5000u;
+      while ((client_probe.received_size < second_total_bytes ||
+              (size_t)server_probe.sent < sent_before + 1u) &&
+             !server_probe.failed && !client_probe.failed &&
+             salts_monotonic_ms() < deadline)
+        check_equal(
+            cnet_tls_network_drive(
+                &client, &server, &listener, &tls_server,
+                &server_probe, &accepted),
+            SALTS_OK);
+      check_false(client_probe.failed);
+      check_false(server_probe.failed);
+      check_equal(
+          client_probe.received_size, (size_t)second_total_bytes);
+      check_equal(memcmp(received, expected, second_total_bytes), 0);
+    }
+
+    check_equal(cnet_close(&client, client_connection), SALTS_OK);
+    deadline = salts_monotonic_ms() + 5000u;
+    while ((!client_probe.terminal || !server_probe.terminal) &&
+           salts_monotonic_ms() < deadline)
+      check_equal(
+          cnet_tls_network_drive(
+              &client, &server, &listener, &tls_server,
+              &server_probe, &accepted),
+          SALTS_OK);
+    check_true(client_probe.terminal);
+    check_true(server_probe.terminal);
+    check_false(client_probe.failed);
+    check_false(server_probe.failed);
+
+    check_equal(cnet_listener_close(&listener), SALTS_OK);
+    check_equal(cnet_listener_destroy(&listener), SALTS_OK);
+    check_equal(cnet_client_stop(&client, 5000u), SALTS_OK);
+    check_equal(cnet_client_stop(&server, 5000u), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+    check_equal(cnet_client_destroy(&server), SALTS_OK);
+    check_equal(cnet_tls_server_destroy(&tls_server), SALTS_OK);
+    free(expected);
+    free(received);
+  }
 
   it("accepts explicit CA files with trailing NUL padding") {
     char *directory = tt_make_temp_dir("cnet-ca-nul-");
