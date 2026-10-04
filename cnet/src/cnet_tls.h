@@ -74,6 +74,12 @@ int cnet_tls_state_negotiated_cipher(const cnet_tls_state *state, char *buffer, 
 int cnet_tls_state_peer_certificate_sha256(
     const cnet_tls_state *state,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
+int cnet_tls_server_end_point_binding_from_certificate(
+    const uint8_t *certificate, size_t certificate_size,
+    uint8_t *output, size_t capacity, size_t *out_size);
+int cnet_tls_state_server_end_point_binding(
+    const cnet_tls_state *state, uint8_t *output, size_t capacity,
+    size_t *out_size);
 int cnet_tls_state_export_channel_binding(
     const cnet_tls_state *state, uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]);
 
