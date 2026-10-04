@@ -17,6 +17,16 @@ static const cmeta_type_desc cmeta_fake_vec_storage_type = {
     .identity = NULL
 };
 
+static const cmeta_type_desc cmeta_fake_alt_storage_type = {
+    .name = "cmeta_fake_alt_storage",
+    .size = sizeof(cmeta_fake_vec),
+    .align = _Alignof(cmeta_fake_vec),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = NULL,
+    .identity = NULL
+};
+
 static const cmeta_generic_desc cmeta_fake_vec_generic =
     CMETA_GENERIC_DESC_INIT("test.FakeVec", "FakeVec", 1u, 1u,
                             CMETA_GENERIC_CONTAINER);
@@ -118,6 +128,54 @@ spec("CMeta declared type metadata") {
     check_false(cmeta_declared_type_valid(&wrong_arity));
     check_false(cmeta_declared_type_valid(&missing_arg));
     check_false(cmeta_declared_type_valid(NULL));
+  }
+
+  it("compares generic applications semantically apart from storage and construction") {
+    static const cmeta_type_desc *const left_args[] = { &cmeta_type_int };
+    cmeta_type_desc int_clone = cmeta_type_int;
+    const cmeta_type_desc *right_args[] = { &int_clone };
+    static const cmeta_type_desc *const wrong_args[] = { &cmeta_type_long };
+    cmeta_generic_desc constructor_clone = cmeta_fake_vec_generic;
+    cmeta_generic_desc other_constructor =
+        CMETA_GENERIC_DESC_INIT("test.OtherVec", "OtherVec", 1u, 1u,
+                                CMETA_GENERIC_CONTAINER);
+    cmeta_declared_type left = {
+        &cmeta_fake_vec_storage_type, &cmeta_fake_vec_generic,
+        left_args, 1u, NULL};
+    cmeta_declared_type peer = {
+        &cmeta_fake_alt_storage_type, &constructor_clone,
+        right_args, 1u, &cmeta_fake_construct_ops};
+    cmeta_declared_type wrong_owner = {
+        &cmeta_fake_vec_storage_type, &other_constructor,
+        left_args, 1u, NULL};
+    cmeta_declared_type wrong_argument = {
+        &cmeta_fake_vec_storage_type, &cmeta_fake_vec_generic,
+        wrong_args, 1u, NULL};
+    cmeta_declared_type invalid = {
+        &cmeta_fake_vec_storage_type, &cmeta_fake_vec_generic,
+        NULL, 1u, NULL};
+
+    check_true(cmeta_declared_type_valid(&left));
+    check_true(cmeta_declared_type_valid(&peer));
+    check_true(&cmeta_fake_vec_generic != &constructor_clone);
+    check_true(&cmeta_type_int != &int_clone);
+    check_true(cmeta_generic_desc_equal(
+        &cmeta_fake_vec_generic, &constructor_clone));
+    check_true(cmeta_type_equal(&cmeta_type_int, &int_clone));
+    check_false(cmeta_type_equal(
+        left.storage_type, peer.storage_type));
+    check_false(cmeta_declared_type_constructible(&left));
+    check_true(cmeta_declared_type_constructible(&peer));
+
+    check_true(cmeta_declared_type_application_equal(&left, &peer));
+    check_true(cmeta_declared_type_application_equal(&peer, &left));
+    check_true(cmeta_declared_type_application_equal(&left, &left));
+    check_false(cmeta_declared_type_application_equal(
+        &left, &wrong_owner));
+    check_false(cmeta_declared_type_application_equal(
+        &left, &wrong_argument));
+    check_false(cmeta_declared_type_application_equal(&left, &invalid));
+    check_false(cmeta_declared_type_application_equal(NULL, &left));
   }
 
   it("requires a complete versioned construction capability") {
