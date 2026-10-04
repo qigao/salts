@@ -480,10 +480,12 @@ static int tls_public_one_way(
 
 static int tls_public_operation(
     tls_public_pair *pair, tls_public_mode mode) {
-  int status = tls_public_one_way(pair, true);
-  if (status != SALTS_OK || mode == TLS_PUBLIC_PUSH)
-    return status;
-  return tls_public_one_way(pair, false);
+  int status;
+  if (mode == TLS_PUBLIC_PUSH)
+    return tls_public_one_way(pair, true);
+  status = tls_public_one_way(pair, false);
+  if (status != SALTS_OK) return status;
+  return tls_public_one_way(pair, true);
 }
 
 static void tls_public_worker_run(void *user) {
