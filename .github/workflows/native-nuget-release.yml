@@ -176,89 +176,52 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.metadata.outputs.release_sha }}
-
       - name: Set up shared build dependencies
         id: shared_deps
         uses: ./.github/actions/setup-re2c-tools
-
       - name: Restore arm64-linux dependencies cache-only
         shell: bash
         run: |
           set -euo pipefail
           test "$(uname -m)" = "aarch64"
-          install_root="$GITHUB_WORKSPACE/vcpkg_installed"
-          rm -rf "$install_root"
-          "$VCPKG_ROOT/vcpkg" install \
-            --x-manifest-root=. \
-            --x-install-root="$install_root" \
-            --triplet arm64-linux \
-            --only-binarycaching
-          test -d "$install_root/arm64-linux"
-
+          rm -rf "$GITHUB_WORKSPACE/vcpkg_installed"
+          "$VCPKG_ROOT/vcpkg" install --x-manifest-root=. --x-install-root="$GITHUB_WORKSPACE/vcpkg_installed" --triplet arm64-linux --only-binarycaching
+          test -d "$GITHUB_WORKSPACE/vcpkg_installed/arm64-linux"
       - name: Configure native arm64 Release SDK
         shell: bash
         run: |
           set -euo pipefail
-          build="$GITHUB_WORKSPACE/build/linux-arm64-release"
-          prefix="$GITHUB_WORKSPACE/stage/sdk/linux-arm64"
-          cmake -S . -B "$build" -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
-            -DVCPKG_TARGET_TRIPLET=arm64-linux \
-            -DVCPKG_MANIFEST_MODE=OFF \
+          cmake -S . -B build/linux-arm64-release -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
+            -DVCPKG_TARGET_TRIPLET=arm64-linux -DVCPKG_MANIFEST_MODE=OFF \
             -DVCPKG_INSTALLED_DIR="$GITHUB_WORKSPACE/vcpkg_installed" \
-            -DSALTS_ENABLE_EPOLL_READINESS=ON \
-            -DENABLE_TESTS=OFF \
-            -DBUILD_TESTS=OFF \
-            -DBUILD_BENCHMARKS=OFF \
-            -DBUILD_EXAMPLES=OFF \
-            -DCMAKE_INSTALL_PREFIX="$prefix"
-
+            -DSALTS_ENABLE_EPOLL_READINESS=ON -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF \
+            -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/stage/sdk/linux-arm64"
       - name: Build native arm64 Release SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake --build "$GITHUB_WORKSPACE/build/linux-arm64-release" --parallel 2
-
+        run: cmake --build build/linux-arm64-release --parallel 2
       - name: Configure portable arm64 smoke tests
         shell: bash
         run: |
           set -euo pipefail
-          smoke="$GITHUB_WORKSPACE/build/linux-arm64-smoke"
-          cmake -S . -B "$smoke" -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
-            -DVCPKG_TARGET_TRIPLET=arm64-linux \
-            -DVCPKG_MANIFEST_MODE=OFF \
+          cmake -S . -B build/linux-arm64-smoke -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
+            -DVCPKG_TARGET_TRIPLET=arm64-linux -DVCPKG_MANIFEST_MODE=OFF \
             -DVCPKG_INSTALLED_DIR="$GITHUB_WORKSPACE/vcpkg_installed" \
-            -DSALTS_ENABLE_EPOLL_READINESS=ON \
-            -DENABLE_TESTS=ON \
-            -DBUILD_TESTS=ON \
-            -DBUILD_BENCHMARKS=OFF \
-            -DBUILD_EXAMPLES=OFF
-
+            -DSALTS_ENABLE_EPOLL_READINESS=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build and run portable arm64 smoke tests
         shell: bash
         run: |
           set -euo pipefail
-          smoke="$GITHUB_WORKSPACE/build/linux-arm64-smoke"
-          cmake --build "$smoke" --parallel 2 --target \
-            native_io_header_cpp_test \
-            cmeta_header_cpp_test \
-            cflow_header_cpp_test \
-            cnet_header_cpp_test
-          ctest --test-dir "$smoke" \
-            --no-tests=error \
-            --output-on-failure \
-            --timeout 60 \
-            -R '^(native_io_header_cpp_test|cmeta_header_cpp_test|cflow_header_cpp_test|cnet_header_cpp_test)
+          cmake --build build/linux-arm64-smoke --parallel 2 --target native_io_header_cpp_test cmeta_header_cpp_test cflow_header_cpp_test cnet_header_cpp_test
+          ctest --test-dir build/linux-arm64-smoke --no-tests=error --output-on-failure --timeout 60 -R '^(native_io_header_cpp_test|cmeta_header_cpp_test|cflow_header_cpp_test|cnet_header_cpp_test)$'
       - name: Install and qualify native arm64 SDK
         shell: bash
         run: |
           set -euo pipefail
-          build="$GITHUB_WORKSPACE/build/linux-arm64-release"
           prefix="$GITHUB_WORKSPACE/stage/sdk/linux-arm64"
-          cmake --install "$build" --strip
+          cmake --install build/linux-arm64-release --strip
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           test -f "$prefix/include/cmeta/function.h"
@@ -268,8 +231,6 @@ jobs:
           grep -F "Salts::CMeta" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
-          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ needs.metadata.outputs.version }}
           commit=${{ needs.metadata.outputs.release_sha }}
@@ -281,7 +242,6 @@ jobs:
           vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
           vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
           EOF
-
       - uses: actions/upload-artifact@v4
         with:
           name: salts-sdk-linux-arm64
@@ -696,8 +656,6 @@ jobs:
           grep -F "Salts::CMeta" package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
           grep -F "Salts::CFlow" package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
           grep -F "Salts::CNet" package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
-          grep -F "cmeta_function_abi_desc" package/sdk/linux-arm64/include/cmeta/function.h
-          grep -F "cflow_function_typed_filter_projection_admit" package/sdk/linux-arm64/include/cflow/function_projection.h
           test -f package/sdk/windows-x64/lib/cmake/Salts/SaltsConfig.cmake
           test -f package/sdk/windows-x64/include/cmeta/function.h
           test -f package/sdk/windows-x64/include/cflow/function_projection.h
@@ -792,22 +750,14 @@ jobs:
         with:
           name: salts-native-nuget
           path: dist
-
       - name: Restore packed Linux arm64 SDK
         shell: bash
         run: |
           set -euo pipefail
           test "$(uname -m)" = "aarch64"
-          package="dist/Salts.Native.${{ needs.metadata.outputs.version }}.nupkg"
-          test -f "$package"
-          rm -rf restored
-          mkdir -p restored
-          unzip -q "$package" -d restored
-          prefix="$GITHUB_WORKSPACE/restored/sdk/linux-arm64"
-          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
-          test -f "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          echo "SALTS_ARM64_PREFIX=$prefix" >> "$GITHUB_ENV"
-
+          unzip -q "dist/Salts.Native.${{ needs.metadata.outputs.version }}.nupkg" -d restored
+          test -f restored/sdk/linux-arm64/lib/cmake/Salts/SaltsConfig.cmake
+          echo "SALTS_ARM64_PREFIX=$GITHUB_WORKSPACE/restored/sdk/linux-arm64" >> "$GITHUB_ENV"
       - name: Build installed-target consumer
         shell: bash
         run: |
@@ -815,13 +765,10 @@ jobs:
           mkdir -p consumer
           cat > consumer/CMakeLists.txt <<'EOF'
           cmake_minimum_required(VERSION 3.20)
-          project(salts_linux_arm64_consumer C CXX)
+          project(salts_linux_arm64_consumer C)
           find_package(Salts CONFIG REQUIRED)
           add_executable(salts_linux_arm64_consumer main.c)
-          target_link_libraries(salts_linux_arm64_consumer PRIVATE
-            Salts::CMeta
-            Salts::CFlow
-            Salts::CNet)
+          target_link_libraries(salts_linux_arm64_consumer PRIVATE Salts::CMeta Salts::CFlow Salts::CNet)
           EOF
           cat > consumer/main.c <<'EOF'
           #include <cmeta/function.h>
@@ -829,662 +776,8 @@ jobs:
           #include <cnet/cnet.h>
           int main(void) { return 0; }
           EOF
-          cmake -S consumer -B consumer/build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$SALTS_ARM64_PREFIX"
+          cmake -S consumer -B consumer/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$SALTS_ARM64_PREFIX"
           cmake --build consumer/build --parallel 2
-          file consumer/build/salts_linux_arm64_consumer
-          consumer/build/salts_linux_arm64_consumer
-
-  publish:
-    name: Publish package and GitHub Release
-    needs: [metadata, pack, qualify_linux_arm64]
-    if: needs.metadata.outputs.publish == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: salts-native-nuget
-          path: dist
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-      - name: Enforce immutable release identity
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.metadata.outputs.tag }}
-          RELEASE_SHA: ${{ needs.metadata.outputs.release_sha }}
-        run: |
-          set -euo pipefail
-          if existing_tag="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha 2>/dev/null)"; then
-            if [ "$existing_tag" != "$RELEASE_SHA" ]; then
-              echo "tag $TAG resolves to $existing_tag, not $RELEASE_SHA" >&2
-              echo "bump the Salts project/package version before publishing a changed SDK" >&2
-              exit 1
-            fi
-            echo "tag $TAG already resolves to this commit"
-          else
-            echo "required release tag $TAG does not exist" >&2
-            exit 1
-          fi
-          if existing_release="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish 2>/dev/null)"; then
-            if [ "$existing_release" != "$RELEASE_SHA" ] && [ "$existing_release" != "$TAG" ]; then
-              echo "release $TAG targets $existing_release, not $RELEASE_SHA" >&2
-              exit 1
-            fi
-            echo "release $TAG already exists for this release identity"
-          fi
-      - name: Publish to GitHub Packages
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          dotnet nuget add source --username qigao --password "$GITHUB_TOKEN" --store-password-in-clear-text --name github https://nuget.pkg.github.com/qigao/index.json
-          dotnet nuget push "dist/Salts.Native.${{ needs.metadata.outputs.version }}.nupkg" --api-key "$GITHUB_TOKEN" --source github --skip-duplicate
-      - name: Create GitHub Release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.metadata.outputs.tag }}
-          VERSION: ${{ needs.metadata.outputs.version }}
-          RELEASE_SHA: ${{ needs.metadata.outputs.release_sha }}
-        run: |
-          set -euo pipefail
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "release $TAG already exists; package publish was idempotent"
-            exit 0
-          fi
-          gh release create "$TAG" dist/*.nupkg --repo "$GITHUB_REPOSITORY" \
-            --verify-tag --title "Salts $VERSION" --generate-notes
-
-
-      - name: Install and qualify native arm64 SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          build="$GITHUB_WORKSPACE/build/linux-arm64-release"
-          prefix="$GITHUB_WORKSPACE/stage/sdk/linux-arm64"
-          cmake --install "$build" --strip
-          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
-          test -f "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          test -f "$prefix/include/cmeta/function.h"
-          test -f "$prefix/include/cflow/function_projection.h"
-          test -f "$prefix/include/cmeta/interface.h"
-          test -f "$prefix/include/tinymeta/equality.h"
-          grep -F "Salts::CMeta" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
-          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
-          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
-          version=${{ needs.metadata.outputs.version }}
-          commit=${{ needs.metadata.outputs.release_sha }}
-          os=linux
-          arch=arm64
-          rid=linux-arm64
-          triplet=arm64-linux
-          profile=release
-          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
-          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
-          EOF
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: salts-sdk-linux-arm64
-          path: stage/sdk
-          if-no-files-found: error
-          compression-level: 9
-
-  macos:
-    name: macOS SDK
-    needs: metadata
-    if: needs.metadata.outputs.release == 'true'
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.metadata.outputs.release_sha }}
-      - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
-        id: shared_deps
-        uses: ./.github/actions/setup-re2c-tools
-      - name: Setup build environment
-        id: env
-        shell: bash
-        run: |
-          set -euo pipefail
-          brew install nasm
-          test -n "${VCPKG_ROOT:-}"
-          test -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
-          cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
-          mkdir -p "$cache"
-          echo "image=${ImageOS:-macos}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
-          echo "triplet=default-osx-${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
-      - name: Restore vcpkg binary cache
-        uses: actions/cache@v4
-        with:
-          path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
-          restore-keys: |
-            vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
-      - name: Configure minimal Release SDK
-        run: cmake --preset release-mac-ninja -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
-      - name: Build
-        run: cmake --build --preset build-default-mac --parallel 2
-      - name: Install SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          case "$RUNNER_ARCH" in
-            X64) rid=macos-x64 ;;
-            ARM64) rid=macos-arm64 ;;
-            *) echo "unsupported RUNNER_ARCH=$RUNNER_ARCH" >&2; exit 1 ;;
-          esac
-          prefix="$GITHUB_WORKSPACE/stage/sdk/$rid"
-          cmake --install build/mac-clang-release --prefix "$prefix" --strip
-          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
-          test -f "$prefix/include/cmeta/function.h"
-          test -f "$prefix/include/cflow/function_projection.h"
-          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
-          test -f "$prefix/include/cmeta/interface.h"
-          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
-          grep -F "cmeta_interface_desc_valid" "$prefix/include/cmeta/interface.h"
-          grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
-          grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
-          test -f "$prefix/include/tinymeta/equality.h"
-          test -f "$prefix/include/tinymock_cmeta.h"
-          test -f "$prefix/include/tinymock_function.h"
-          test -f "$prefix/include/tinymock_history.h"
-          test -f "$prefix/include/tinymock_actions.h"
-          test -f "$prefix/include/tinymock_return.h"
-          test -f "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
-          grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
-          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
-          version=${{ needs.metadata.outputs.version }}
-          commit=${{ needs.metadata.outputs.release_sha }}
-          os=macos
-          arch=$RUNNER_ARCH
-          profile=release
-          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
-          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
-          EOF
-      - uses: actions/upload-artifact@v4
-        with:
-          name: salts-sdk-macos
-          path: stage/sdk
-          if-no-files-found: error
-          compression-level: 9
-
-  windows:
-    name: Windows x64 SDK
-    needs: metadata
-    if: needs.metadata.outputs.release == 'true'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.metadata.outputs.release_sha }}
-      - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
-        id: shared_deps
-        uses: ./.github/actions/setup-re2c-tools
-      - name: Setup build environment
-        id: env
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $vcpkgRoot = $env:VCPKG_ROOT
-          if ([string]::IsNullOrWhiteSpace($vcpkgRoot)) { throw "VCPKG_ROOT is unavailable" }
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if ([string]::IsNullOrWhiteSpace($vsInstall)) { throw "Visual Studio x64 C++ toolchain was not found" }
-          $cache = Join-Path $env:GITHUB_WORKSPACE "build\vcpkg-binary-cache"
-          New-Item -ItemType Directory -Force -Path $cache | Out-Null
-          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
-          "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
-          "triplet=x64-windows" >> $env:GITHUB_OUTPUT
-      - name: Restore vcpkg binary cache
-        uses: actions/cache@v4
-        with:
-          path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
-          restore-keys: |
-            vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
-      - name: Configure minimal Release SDK
-        shell: cmd
-        run: |
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset win-release-user -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
-      - name: Build
-        shell: cmd
-        run: |
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --build --preset win-release-user --parallel 2
-      - name: Install SDK
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $prefix = Join-Path $env:GITHUB_WORKSPACE "stage\sdk\windows-x64"
-          cmake --install build/Msvc-Release --prefix $prefix --config Release
-
-          $config = Join-Path $prefix "lib\cmake\Salts\SaltsConfig.cmake"
-          $targets = Join-Path $prefix "lib\cmake\Salts\SaltsTargets.cmake"
-          $functionHeader = Join-Path $prefix "include\cmeta\function.h"
-          $projectionHeader = Join-Path $prefix "include\cflow\function_projection.h"
-          $interfaceHeader = Join-Path $prefix "include\cmeta\interface.h"
-          $tinyEqualityHeader = Join-Path $prefix "include\tinymeta\equality.h"
-          $tinymockHeader = Join-Path $prefix "include\tinymock_cmeta.h"
-          $tinymockFunctionHeader = Join-Path $prefix "include\tinymock_function.h"
-          $tinymockHistoryHeader = Join-Path $prefix "include\tinymock_history.h"
-          $tinymockActionsHeader = Join-Path $prefix "include\tinymock_actions.h"
-          $tinymockReturnHeader = Join-Path $prefix "include\tinymock_return.h"
-          $tinymockCMake = Join-Path $prefix "lib\cmake\Salts\SaltsTinyMock.cmake"
-          if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "missing $config" }
-          if (-not (Test-Path -LiteralPath $functionHeader -PathType Leaf)) { throw "missing $functionHeader" }
-          if (-not (Test-Path -LiteralPath $projectionHeader -PathType Leaf)) { throw "missing $projectionHeader" }
-          if (-not (Select-String -LiteralPath $projectionHeader -SimpleMatch "cflow_function_typed_filter_projection_admit" -Quiet)) { throw "missing typed FILTER projection in $projectionHeader" }
-          if (-not (Test-Path -LiteralPath $interfaceHeader -PathType Leaf)) { throw "missing $interfaceHeader" }
-          $interfaceText = Get-Content -LiteralPath $interfaceHeader -Raw
-          if ($interfaceText -notmatch "cmeta_interface_desc_valid") { throw "missing canonical Interface reflection in $interfaceHeader" }
-          if ($interfaceText -notmatch "cmeta_interface_desc_equal") { throw "missing canonical Interface equality in $interfaceHeader" }
-          if (-not (Select-String -LiteralPath $functionHeader -SimpleMatch "cmeta_function_abi_desc" -Quiet)) { throw "missing cmeta_function_abi_desc in $functionHeader" }
-          if (-not (Select-String -LiteralPath $functionHeader -SimpleMatch "FunctionAbi" -Quiet)) { throw "missing FunctionAbi in $functionHeader" }
-          if (-not (Test-Path -LiteralPath $tinyEqualityHeader -PathType Leaf)) { throw "missing $tinyEqualityHeader" }
-          if (-not (Test-Path -LiteralPath $tinymockHeader -PathType Leaf)) { throw "missing $tinymockHeader" }
-          if (-not (Test-Path -LiteralPath $tinymockFunctionHeader -PathType Leaf)) { throw "missing $tinymockFunctionHeader" }
-          if (-not (Test-Path -LiteralPath $tinymockHistoryHeader -PathType Leaf)) { throw "missing $tinymockHistoryHeader" }
-          if (-not (Test-Path -LiteralPath $tinymockActionsHeader -PathType Leaf)) { throw "missing $tinymockActionsHeader" }
-          if (-not (Test-Path -LiteralPath $tinymockReturnHeader -PathType Leaf)) { throw "missing $tinymockReturnHeader" }
-          if (-not (Test-Path -LiteralPath $tinymockCMake -PathType Leaf)) { throw "missing $tinymockCMake" }
-          if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::TinyMock" -Quiet)) {
-            throw "missing Salts::TinyMock export in $targets"
-          }
-          if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::CFlow" -Quiet)) {
-            throw "missing Salts::CFlow export in $targets"
-          }
-          if (-not (Select-String -LiteralPath $tinymockCMake -SimpleMatch "salts_tinymock_override_functions" -Quiet)) {
-            throw "missing TinyMock CMake helper in $tinymockCMake"
-          }
-          $manifest = @(
-            "version=${{ needs.metadata.outputs.version }}"
-            "commit=${{ needs.metadata.outputs.release_sha }}"
-            "os=windows"
-            "arch=x64"
-            "profile=release"
-            "vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}"
-            "vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}"
-          ) -join "`n"
-          [System.IO.File]::WriteAllText(
-            (Join-Path $prefix "salts-sdk-manifest.txt"),
-            $manifest + "`n",
-            [System.Text.UTF8Encoding]::new($false)
-          )
-      - uses: actions/upload-artifact@v4
-        with:
-          name: salts-sdk-windows-x64
-          path: stage/sdk
-          if-no-files-found: error
-          compression-level: 9
-
-  android:
-    name: Android arm64-v8a SDK
-    needs: metadata
-    if: needs.metadata.outputs.release == 'true'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.metadata.outputs.release_sha }}
-      - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
-        id: shared_deps
-        uses: ./.github/actions/setup-re2c-tools
-      - name: Setup build environment
-        id: env
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y nasm ninja-build
-          test -n "${VCPKG_ROOT:-}"
-          test -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
-          test -n "${ANDROID_NDK_HOME:-}"
-          cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
-          mkdir -p "$cache"
-          ndk_revision="$(awk -F'= ' '/Pkg.Revision/ {print $2}' "$ANDROID_NDK_HOME/source.properties")"
-          echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
-          echo "triplet=arm64-android" >> "$GITHUB_OUTPUT"
-          echo "ndk=$ndk_revision" >> "$GITHUB_OUTPUT"
-      - name: Restore vcpkg binary cache
-        uses: actions/cache@v4
-        with:
-          path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
-          restore-keys: |
-            vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
-      - name: Configure minimal Android Release SDK
-        run: cmake --preset android-arm64-v8a-release -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
-      - name: Build
-        run: cmake --build --preset build-android-arm64-v8a-release --parallel 2
-      - name: Install SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          prefix="$GITHUB_WORKSPACE/stage/sdk/android-arm64-v8a"
-          cmake --install build/android-arm64-v8a-release --prefix "$prefix"
-          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
-          test -f "$prefix/include/cmeta/function.h"
-          test -f "$prefix/include/cflow/function_projection.h"
-          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
-          test -f "$prefix/include/cmeta/interface.h"
-          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
-          grep -F "cmeta_interface_desc_valid" "$prefix/include/cmeta/interface.h"
-          grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
-          grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
-          test -f "$prefix/include/tinymeta/equality.h"
-          test -f "$prefix/include/tinymock_cmeta.h"
-          test -f "$prefix/include/tinymock_function.h"
-          test -f "$prefix/include/tinymock_history.h"
-          test -f "$prefix/include/tinymock_actions.h"
-          test -f "$prefix/include/tinymock_return.h"
-          test -f "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
-          grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
-          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
-          version=${{ needs.metadata.outputs.version }}
-          commit=${{ needs.metadata.outputs.release_sha }}
-          os=android
-          abi=arm64-v8a
-          api=android-24
-          profile=release
-          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
-          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
-          EOF
-      - uses: actions/upload-artifact@v4
-        with:
-          name: salts-sdk-android-arm64-v8a
-          path: stage/sdk
-          if-no-files-found: error
-          compression-level: 9
-
-  ios:
-    name: iOS SDK / ${{ matrix.name }}
-    needs: metadata
-    if: needs.metadata.outputs.release == 'true'
-    runs-on: macos-15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {name: device arm64, triplet: arm64-ios, rid: ios-arm64, sysroot: iphoneos}
-          - {name: simulator arm64, triplet: arm64-ios-simulator, rid: ios-simulator-arm64, sysroot: iphonesimulator}
-    env:
-      X_VCPKG_NUGET_ID_PREFIX: vcpkg-cache
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.metadata.outputs.release_sha }}
-
-      - name: Set up shared build dependencies
-        id: shared_deps
-        uses: ./.github/actions/setup-re2c-tools
-
-      - name: Restore iOS dependencies cache-only
-        shell: bash
-        run: |
-          set -euo pipefail
-          install_root="$RUNNER_TEMP/salts-ios-${{ matrix.triplet }}"
-          rm -rf "$install_root"
-          "$VCPKG_ROOT/vcpkg" install \
-            --x-manifest-root=. \
-            --x-install-root="$install_root" \
-            --triplet "${{ matrix.triplet }}" \
-            --only-binarycaching
-          echo "SALTS_IOS_VCPKG_INSTALLED=$install_root" >> "$GITHUB_ENV"
-
-      - name: Configure iOS Release SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          build="$GITHUB_WORKSPACE/build/${{ matrix.rid }}"
-          prefix="$GITHUB_WORKSPACE/stage/sdk/${{ matrix.rid }}"
-          cmake -S . -B "$build" -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
-            -DCMAKE_SYSTEM_NAME=iOS \
-            -DCMAKE_OSX_SYSROOT="${{ matrix.sysroot }}" \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \
-            -DVCPKG_TARGET_TRIPLET="${{ matrix.triplet }}" \
-            -DVCPKG_MANIFEST_MODE=OFF \
-            -DVCPKG_INSTALLED_DIR="$SALTS_IOS_VCPKG_INSTALLED" \
-            -DENABLE_TESTS=OFF \
-            -DBUILD_TESTS=OFF \
-            -DBUILD_BENCHMARKS=OFF \
-            -DBUILD_EXAMPLES=OFF \
-            -DCMAKE_INSTALL_PREFIX="$prefix"
-
-      - name: Build iOS SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake --build "build/${{ matrix.rid }}" --parallel 2
-
-      - name: Install and qualify iOS SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          build="$GITHUB_WORKSPACE/build/${{ matrix.rid }}"
-          prefix="$GITHUB_WORKSPACE/stage/sdk/${{ matrix.rid }}"
-          cmake --install "$build" --strip
-          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
-          test -f "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          test -f "$prefix/include/cmeta/function.h"
-          test -f "$prefix/include/cflow/function_projection.h"
-          test -f "$prefix/include/cmeta/interface.h"
-          test -f "$prefix/include/tinymeta/equality.h"
-          test -f "$prefix/include/tinymock_cmeta.h"
-          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
-          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
-          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
-          version=${{ needs.metadata.outputs.version }}
-          commit=${{ needs.metadata.outputs.release_sha }}
-          os=ios
-          rid=${{ matrix.rid }}
-          triplet=${{ matrix.triplet }}
-          profile=release
-          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
-          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
-          EOF
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: salts-sdk-${{ matrix.rid }}
-          path: stage/sdk
-          if-no-files-found: error
-          compression-level: 9
-
-  pack:
-    name: Pack Salts.Native
-    needs: [metadata, linux, linux_arm64, macos, windows, android, ios]
-    if: needs.metadata.outputs.release == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.metadata.outputs.release_sha }}
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: salts-sdk-*
-          path: package/sdk
-          merge-multiple: true
-      - name: Verify package payload
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f package/sdk/linux-x64/lib/cmake/Salts/SaltsConfig.cmake
-          test -f package/sdk/linux-x64/include/cmeta/function.h
-          test -f package/sdk/linux-x64/include/cflow/function_projection.h
-          grep -F "Salts::CFlow" package/sdk/linux-x64/lib/cmake/Salts/SaltsTargets.cmake
-          test -f package/sdk/linux-x64/include/cmeta/interface.h
-          test -f package/sdk/linux-x64/include/tinymeta/equality.h
-          test -f package/sdk/linux-arm64/lib/cmake/Salts/SaltsConfig.cmake
-          test -f package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
-          test -f package/sdk/linux-arm64/include/cmeta/function.h
-          test -f package/sdk/linux-arm64/include/cflow/function_projection.h
-          test -f package/sdk/linux-arm64/include/cmeta/interface.h
-          test -f package/sdk/linux-arm64/include/tinymeta/equality.h
-          grep -F "Salts::CMeta" package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
-          grep -F "Salts::CFlow" package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
-          grep -F "Salts::CNet" package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
-          grep -F "cmeta_function_abi_desc" package/sdk/linux-arm64/include/cmeta/function.h
-          grep -F "cflow_function_typed_filter_projection_admit" package/sdk/linux-arm64/include/cflow/function_projection.h
-          test -f package/sdk/windows-x64/lib/cmake/Salts/SaltsConfig.cmake
-          test -f package/sdk/windows-x64/include/cmeta/function.h
-          test -f package/sdk/windows-x64/include/cflow/function_projection.h
-          test -f package/sdk/windows-x64/include/cmeta/interface.h
-          test -f package/sdk/windows-x64/bin/cnet.dll
-          test -f package/sdk/windows-x64/bin/salts.dll
-          test ! -f package/sdk/windows-x64/bin/ssl.dll
-          test ! -f package/sdk/windows-x64/bin/crypto.dll
-          test ! -f package/sdk/windows-x64/bin/gmssl.dll
-          test -f package/sdk/android-arm64-v8a/lib/cmake/Salts/SaltsConfig.cmake
-          test -f package/sdk/android-arm64-v8a/include/cmeta/function.h
-          test -f package/sdk/android-arm64-v8a/include/cflow/function_projection.h
-          test -f package/sdk/android-arm64-v8a/include/cmeta/interface.h
-          test -f package/sdk/ios-arm64/lib/cmake/Salts/SaltsConfig.cmake
-          test -f package/sdk/ios-arm64/include/cmeta/function.h
-          test -f package/sdk/ios-arm64/include/cflow/function_projection.h
-          test -f package/sdk/ios-simulator-arm64/lib/cmake/Salts/SaltsConfig.cmake
-          test -f package/sdk/ios-simulator-arm64/include/cmeta/function.h
-          test -f package/sdk/ios-simulator-arm64/include/cflow/function_projection.h
-          grep -F "cmeta_function_abi_desc" package/sdk/linux-x64/include/cmeta/function.h
-          grep -F "cmeta_function_abi_desc" package/sdk/windows-x64/include/cmeta/function.h
-          grep -F "cmeta_function_abi_desc" package/sdk/android-arm64-v8a/include/cmeta/function.h
-          grep -F "cflow_function_typed_filter_projection_admit" package/sdk/linux-x64/include/cflow/function_projection.h
-          grep -F "cflow_function_typed_filter_projection_admit" package/sdk/windows-x64/include/cflow/function_projection.h
-          grep -F "cflow_function_typed_filter_projection_admit" package/sdk/android-arm64-v8a/include/cflow/function_projection.h
-          mac_header="$(find package/sdk -path '*/include/cmeta/function.h' -path '*macos-*' -print -quit)"
-          mac_projection="$(find package/sdk -path '*/include/cflow/function_projection.h' -path '*macos-*' -print -quit)"
-          mac_interface="$(find package/sdk -path '*/include/cmeta/interface.h' -path '*macos-*' -print -quit)"
-          test -n "$mac_header"
-          test -n "$mac_projection"
-          test -n "$mac_interface"
-          grep -F "cmeta_interface_desc_valid" package/sdk/linux-x64/include/cmeta/interface.h
-          grep -F "cmeta_interface_desc_equal" package/sdk/linux-x64/include/cmeta/interface.h
-          grep -F "cmeta_interface_desc_valid" package/sdk/windows-x64/include/cmeta/interface.h
-          grep -F "cmeta_interface_desc_equal" package/sdk/windows-x64/include/cmeta/interface.h
-          grep -F "cmeta_interface_desc_valid" package/sdk/android-arm64-v8a/include/cmeta/interface.h
-          grep -F "cmeta_interface_desc_equal" package/sdk/android-arm64-v8a/include/cmeta/interface.h
-          grep -F "cmeta_interface_desc_valid" "$mac_interface"
-          grep -F "cmeta_interface_desc_equal" "$mac_interface"
-          grep -F "cmeta_function_abi_desc" "$mac_header"
-          grep -F "cflow_function_typed_filter_projection_admit" "$mac_projection"
-          test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 7
-
-          mapfile -t cache_contracts < <(
-            grep -h '^vcpkg_cache_contract=' package/sdk/*/salts-sdk-manifest.txt |
-              tr -d '\r' |
-              sort -u
-          )
-          mapfile -t cache_revisions < <(
-            grep -h '^vcpkg_cache_revision=' package/sdk/*/salts-sdk-manifest.txt |
-              tr -d '\r' |
-              sort -u
-          )
-
-          printf 'vcpkg cache contracts (%d):\n' "${#cache_contracts[@]}"
-          printf '  %s\n' "${cache_contracts[@]}"
-          printf 'vcpkg cache revisions (%d):\n' "${#cache_revisions[@]}"
-          printf '  %s\n' "${cache_revisions[@]}"
-
-          test "${#cache_contracts[@]}" -eq 1
-          test "${#cache_revisions[@]}" -ge 1
-          while IFS= read -r manifest; do
-            test "$(grep -c '^vcpkg_cache_revision=' "$manifest")" -eq 1
-            revision="$(sed -n 's/^vcpkg_cache_revision=//p' "$manifest" | tr -d '\r')"
-            test -n "$revision"
-            printf '%s -> vcpkg_cache_revision=%s\n' "$manifest" "$revision"
-          done < <(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt -print | sort)
-          find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt -print
-          du -sh package/sdk
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-      - name: Create NuGet package
-        shell: bash
-        run: |
-          set -euo pipefail
-          dotnet pack packaging/nuget/Salts.Native.csproj --configuration Release --output dist -p:PackageVersion=${{ needs.metadata.outputs.version }} -p:PackageRoot="$GITHUB_WORKSPACE/package" -p:RepositoryCommit="${{ needs.metadata.outputs.release_sha }}"
-          test -f "dist/Salts.Native.${{ needs.metadata.outputs.version }}.nupkg"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: salts-native-nuget
-          path: dist/*.nupkg
-          if-no-files-found: error
-
-  qualify_linux_arm64:
-    name: Qualify restored Linux arm64 package
-    needs: [metadata, pack]
-    if: needs.metadata.outputs.release == 'true'
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: salts-native-nuget
-          path: dist
-
-      - name: Restore packed Linux arm64 SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(uname -m)" = "aarch64"
-          package="dist/Salts.Native.${{ needs.metadata.outputs.version }}.nupkg"
-          test -f "$package"
-          rm -rf restored
-          mkdir -p restored
-          unzip -q "$package" -d restored
-          prefix="$GITHUB_WORKSPACE/restored/sdk/linux-arm64"
-          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
-          test -f "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          echo "SALTS_ARM64_PREFIX=$prefix" >> "$GITHUB_ENV"
-
-      - name: Build installed-target consumer
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p consumer
-          cat > consumer/CMakeLists.txt <<'EOF'
-          cmake_minimum_required(VERSION 3.20)
-          project(salts_linux_arm64_consumer C CXX)
-          find_package(Salts CONFIG REQUIRED)
-          add_executable(salts_linux_arm64_consumer main.c)
-          target_link_libraries(salts_linux_arm64_consumer PRIVATE
-            Salts::CMeta
-            Salts::CFlow
-            Salts::CNet)
-          EOF
-          cat > consumer/main.c <<'EOF'
-          #include <cmeta/function.h>
-          #include <cflow/function_projection.h>
-          #include <cnet/cnet.h>
-          int main(void) { return 0; }
-          EOF
-          cmake -S consumer -B consumer/build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$SALTS_ARM64_PREFIX"
-          cmake --build consumer/build --parallel 2
-          file consumer/build/salts_linux_arm64_consumer
           consumer/build/salts_linux_arm64_consumer
 
   publish:
