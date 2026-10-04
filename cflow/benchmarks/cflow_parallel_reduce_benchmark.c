@@ -4,6 +4,7 @@
 #include <cflow/plan_internal.h>
 
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -76,6 +77,85 @@ static const cmeta_type_desc cflow_parallel_managed_bench_type = {
   .identity = NULL
 };
 
+typedef struct cflow_parallel_managed_probe_counts {
+  atomic_size_t copies;
+  atomic_size_t moves;
+  atomic_size_t destroys;
+  atomic_size_t invokes;
+} cflow_parallel_managed_probe_counts;
+
+typedef struct cflow_parallel_managed_probe_snapshot {
+  size_t copies;
+  size_t moves;
+  size_t destroys;
+  size_t invokes;
+} cflow_parallel_managed_probe_snapshot;
+
+static cflow_parallel_managed_probe_counts cflow_parallel_managed_probe;
+
+static void cflow_parallel_managed_probe_reset(void) {
+  atomic_store_explicit(
+      &cflow_parallel_managed_probe.copies, 0u, memory_order_relaxed);
+  atomic_store_explicit(
+      &cflow_parallel_managed_probe.moves, 0u, memory_order_relaxed);
+  atomic_store_explicit(
+      &cflow_parallel_managed_probe.destroys, 0u, memory_order_relaxed);
+  atomic_store_explicit(
+      &cflow_parallel_managed_probe.invokes, 0u, memory_order_relaxed);
+}
+
+static cflow_parallel_managed_probe_snapshot
+cflow_parallel_managed_probe_read(void) {
+  cflow_parallel_managed_probe_snapshot snapshot = {
+      atomic_load_explicit(
+          &cflow_parallel_managed_probe.copies, memory_order_relaxed),
+      atomic_load_explicit(
+          &cflow_parallel_managed_probe.moves, memory_order_relaxed),
+      atomic_load_explicit(
+          &cflow_parallel_managed_probe.destroys, memory_order_relaxed),
+      atomic_load_explicit(
+          &cflow_parallel_managed_probe.invokes, memory_order_relaxed)
+  };
+  return snapshot;
+}
+
+static bool cflow_parallel_managed_probe_copy(
+    void *destination, const void *source) {
+  atomic_fetch_add_explicit(
+      &cflow_parallel_managed_probe.copies, 1u, memory_order_relaxed);
+  return cflow_parallel_managed_bench_copy(destination, source);
+}
+
+static void cflow_parallel_managed_probe_move(
+    void *destination, void *source) {
+  atomic_fetch_add_explicit(
+      &cflow_parallel_managed_probe.moves, 1u, memory_order_relaxed);
+  cflow_parallel_managed_bench_move(destination, source);
+}
+
+static void cflow_parallel_managed_probe_destroy(void *value) {
+  atomic_fetch_add_explicit(
+      &cflow_parallel_managed_probe.destroys, 1u, memory_order_relaxed);
+  cflow_parallel_managed_bench_destroy(value);
+}
+
+static const cmeta_type_traits cflow_parallel_managed_probe_traits = {
+  .flags = CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY,
+  .copy_construct = cflow_parallel_managed_probe_copy,
+  .move_construct = cflow_parallel_managed_probe_move,
+  .destroy = cflow_parallel_managed_probe_destroy
+};
+
+static const cmeta_type_desc cflow_parallel_managed_probe_type = {
+  .name = "cflow_parallel_managed_probe_value",
+  .size = sizeof(cflow_parallel_managed_bench_value),
+  .align = _Alignof(cflow_parallel_managed_bench_value),
+  .kind = CMETA_T_OBJECT,
+  .pointee = NULL,
+  .traits = &cflow_parallel_managed_probe_traits,
+  .identity = NULL
+};
+
 static bool cflow_parallel_managed_bench_reduce_invoke(
     const cmeta_callable *self, void *out, const void *const *args) {
   const cflow_parallel_managed_bench_value *left;
@@ -89,28 +169,51 @@ static bool cflow_parallel_managed_bench_reduce_invoke(
   return true;
 }
 
-static bool cflow_parallel_managed_bench_plan(
-    cflow_plan *plan, cflow_plan_impl *impl, cflow_plan_inst *instruction) {
-  if (!plan || !impl || !instruction) return false;
+static bool cflow_parallel_managed_probe_reduce_invoke(
+    const cmeta_callable *self, void *out, const void *const *args) {
+  atomic_fetch_add_explicit(
+      &cflow_parallel_managed_probe.invokes, 1u, memory_order_relaxed);
+  return cflow_parallel_managed_bench_reduce_invoke(self, out, args);
+}
+
+static bool cflow_parallel_managed_bench_plan_for(
+    cflow_plan *plan, cflow_plan_impl *impl, cflow_plan_inst *instruction,
+    const cmeta_type_desc *type,
+    bool (*invoke)(const cmeta_callable *, void *, const void *const *)) {
+  if (!plan || !impl || !instruction || !type || !invoke) return false;
   memset(plan, 0, sizeof(*plan));
   memset(impl, 0, sizeof(*impl));
   memset(instruction, 0, sizeof(*instruction));
   instruction->opcode = CMETA_PLAN_REDUCE;
   instruction->step = cflow_plan_step_for_opcode(CMETA_PLAN_REDUCE);
-  instruction->input_type = &cflow_parallel_managed_bench_type;
-  instruction->output_type = &cflow_parallel_managed_bench_type;
-  instruction->call.invoke = cflow_parallel_managed_bench_reduce_invoke;
-  instruction->call.input_type = &cflow_parallel_managed_bench_type;
-  instruction->call.output_type = &cflow_parallel_managed_bench_type;
+  instruction->input_type = type;
+  instruction->output_type = type;
+  instruction->call.invoke = invoke;
+  instruction->call.input_type = type;
+  instruction->call.output_type = type;
   impl->code = instruction;
   impl->count = 1u;
   impl->terminal_reduce_index = 0u;
   impl->parallel_reduce_supported = true;
   impl->managed_values = true;
   plan->impl = impl;
-  plan->input_type = &cflow_parallel_managed_bench_type;
-  plan->output_type = &cflow_parallel_managed_bench_type;
+  plan->input_type = type;
+  plan->output_type = type;
   return true;
+}
+
+static bool cflow_parallel_managed_bench_plan(
+    cflow_plan *plan, cflow_plan_impl *impl, cflow_plan_inst *instruction) {
+  return cflow_parallel_managed_bench_plan_for(
+      plan, impl, instruction, &cflow_parallel_managed_bench_type,
+      cflow_parallel_managed_bench_reduce_invoke);
+}
+
+static bool cflow_parallel_managed_probe_plan(
+    cflow_plan *plan, cflow_plan_impl *impl, cflow_plan_inst *instruction) {
+  return cflow_parallel_managed_bench_plan_for(
+      plan, impl, instruction, &cflow_parallel_managed_probe_type,
+      cflow_parallel_managed_probe_reduce_invoke);
 }
 
 static long cflow_parallel_bench_expected(const long *input, size_t count) {
@@ -156,6 +259,35 @@ static long cflow_parallel_bench_expected(const long *input, size_t count) {
       cflow_result_destroy(&result);                                                \
     }                                                                                \
     check_true(parallel_ok);                                                        \
+  } while (0)
+
+
+#define CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE(label, worker_count)              \
+  do {                                                                             \
+    cflow_executor scaling_executor = {0};                                         \
+    cflow_plan_eval_options scaling_options = {                                    \
+        .mode = CFLOW_PLAN_EXECUTION_PARALLEL_REDUCE,                              \
+        .executor = &scaling_executor,                                              \
+        .max_tasks = (worker_count),                                                \
+        .min_items_per_task = CFLOW_PARALLEL_BENCH_MIN_ITEMS                       \
+    };                                                                             \
+    bool scaling_ok = false;                                                       \
+    check_true(cflow_executor_worker_init_with_capacity(                            \
+        &scaling_executor, (worker_count), (worker_count) * 2u));                  \
+    benchmark_ops("Managed Plan Reduce ordered parallel / 1 Mi values / " label,   \
+                  CFLOW_PARALLEL_BENCH_LARGE_SAMPLES / 2u,                         \
+                  CFLOW_PARALLEL_BENCH_LARGE_ITEMS) {                              \
+      cflow_result result = {0};                                                    \
+      scaling_ok = cflow_plan_eval_array_with_options(                             \
+          &managed_plan, managed_input, CFLOW_PARALLEL_BENCH_LARGE_ITEMS,          \
+          &scaling_options, &result);                                               \
+      if (scaling_ok && result.count == 1u)                                        \
+        cflow_parallel_bench_sink ^=                                               \
+            ((const cflow_parallel_managed_bench_value *)result.data)->value;      \
+      cflow_result_destroy(&result);                                                \
+    }                                                                              \
+    check_true(scaling_ok);                                                        \
+    cflow_executor_destroy(&scaling_executor);                                     \
   } while (0)
 
 #define CFLOW_PARALLEL_MANAGED_BENCH_CASE(label, item_count, sample_count)         \
@@ -215,6 +347,9 @@ suite("CFlow ordered parallel reduce benchmarks") {
     cflow_plan managed_plan = {0};
     cflow_plan_impl managed_impl = {0};
     cflow_plan_inst managed_instruction = {0};
+    cflow_plan managed_probe_plan = {0};
+    cflow_plan_impl managed_probe_impl = {0};
+    cflow_plan_inst managed_probe_instruction = {0};
     cflow_executor executor = {0};
     cflow_plan_eval_options options = {
         .mode = CFLOW_PLAN_EXECUTION_PARALLEL_REDUCE,
@@ -237,6 +372,8 @@ suite("CFlow ordered parallel reduce benchmarks") {
     check_true(cflow_plan_compile_surface(&plan, &stream.graph, NULL));
     check_true(cflow_parallel_managed_bench_plan(
         &managed_plan, &managed_impl, &managed_instruction));
+    check_true(cflow_parallel_managed_probe_plan(
+        &managed_probe_plan, &managed_probe_impl, &managed_probe_instruction));
     check_true(cflow_executor_worker_init_with_capacity(
         &executor, CFLOW_PARALLEL_BENCH_WORKERS,
         CFLOW_PARALLEL_BENCH_MAX_TASKS * 2u));
@@ -255,6 +392,47 @@ suite("CFlow ordered parallel reduce benchmarks") {
         CFLOW_PARALLEL_BENCH_LARGE_SAMPLES);
 
     printf("managed_parallel_reduce lifecycle=copy/move/destroy heap_payload=false\n");
+
+    {
+      cflow_result sequential_probe = {0};
+      cflow_result parallel_probe = {0};
+      cflow_parallel_managed_probe_snapshot sequential_counts;
+      cflow_parallel_managed_probe_snapshot parallel_counts;
+
+      cflow_parallel_managed_probe_reset();
+      check_true(cflow_plan_eval_array(
+          &managed_probe_plan, managed_input, CFLOW_PARALLEL_BENCH_SMALL_ITEMS,
+          &sequential_probe));
+      cflow_result_destroy(&sequential_probe);
+      sequential_counts = cflow_parallel_managed_probe_read();
+      check_equal(
+          sequential_counts.invokes,
+          (size_t)CFLOW_PARALLEL_BENCH_SMALL_ITEMS - 1u);
+
+      cflow_parallel_managed_probe_reset();
+      check_true(cflow_plan_eval_array_with_options(
+          &managed_probe_plan, managed_input, CFLOW_PARALLEL_BENCH_SMALL_ITEMS,
+          &options, &parallel_probe));
+      cflow_result_destroy(&parallel_probe);
+      parallel_counts = cflow_parallel_managed_probe_read();
+      check_equal(
+          parallel_counts.invokes,
+          (size_t)CFLOW_PARALLEL_BENCH_SMALL_ITEMS - 1u);
+
+      printf(
+          "managed_lifecycle_counts mode=sequential items=%u copy=%zu move=%zu "
+          "destroy=%zu invoke=%zu\n",
+          CFLOW_PARALLEL_BENCH_SMALL_ITEMS,
+          sequential_counts.copies, sequential_counts.moves,
+          sequential_counts.destroys, sequential_counts.invokes);
+      printf(
+          "managed_lifecycle_counts mode=parallel workers=%u items=%u copy=%zu "
+          "move=%zu destroy=%zu invoke=%zu\n",
+          CFLOW_PARALLEL_BENCH_WORKERS, CFLOW_PARALLEL_BENCH_SMALL_ITEMS,
+          parallel_counts.copies, parallel_counts.moves,
+          parallel_counts.destroys, parallel_counts.invokes);
+    }
+
     CFLOW_PARALLEL_MANAGED_BENCH_CASE(
         "1 Ki values", CFLOW_PARALLEL_BENCH_SMALL_ITEMS,
         CFLOW_PARALLEL_BENCH_SMALL_SAMPLES / 2u);
@@ -264,6 +442,12 @@ suite("CFlow ordered parallel reduce benchmarks") {
     CFLOW_PARALLEL_MANAGED_BENCH_CASE(
         "1 Mi values", CFLOW_PARALLEL_BENCH_LARGE_ITEMS,
         CFLOW_PARALLEL_BENCH_LARGE_SAMPLES / 2u);
+
+    printf("managed_parallel_reduce_worker_scaling items=%u\n",
+           CFLOW_PARALLEL_BENCH_LARGE_ITEMS);
+    CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=1", 1u);
+    CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=2", 2u);
+    CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=4", 4u);
 
     cflow_executor_destroy(&executor);
     cflow_plan_destroy(&plan);
@@ -276,5 +460,6 @@ suite("CFlow ordered parallel reduce benchmarks") {
   }
 }
 
+#undef CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE
 #undef CFLOW_PARALLEL_MANAGED_BENCH_CASE
 #undef CFLOW_PARALLEL_BENCH_CASE
