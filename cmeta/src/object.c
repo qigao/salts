@@ -354,7 +354,7 @@ cmeta_status cmeta_object_field_assign(
 }
 
 cmeta_receiver_resolve_status cmeta_object_method_resolve(
-    const cmeta_object_ref *ref, const char *owner_name,
+    const cmeta_object_ref *ref, const cmeta_generic_desc *owner,
     const char *method_name,
     const cmeta_type_desc *const *argument_types, size_t argument_count,
     cmeta_receiver_resolution *out) {
@@ -364,6 +364,6 @@ cmeta_receiver_resolve_status cmeta_object_method_resolve(
     if (ref->methods == NULL)
         return CMETA_RECEIVER_RESOLVE_INVALID_METHOD_SET;
     return cmeta_receiver_method_resolve(
-        ref->methods, ref->data->storage_type, owner_name, method_name,
+        ref->methods, ref->data->storage_type, owner, method_name,
         argument_types, argument_count, out);
 }
