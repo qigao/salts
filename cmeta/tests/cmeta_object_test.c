@@ -1,5 +1,6 @@
 #include <cmeta/invokable.h>
 #include <cmeta/object.h>
+#include <cmeta/object_interface.h>
 #include <string.h>
 #include "tinytest.h"
 
@@ -78,6 +79,107 @@ static const cmeta_data_desc object_box_data = {
     .collection_ops = NULL,
     .map_ops = NULL,
     .construct_ops = NULL
+};
+
+#define OBJECT_READER_METHODS(X,I) \
+    X(I,R0,int,value,_)
+
+CMETA_INTERFACE(object_reader, OBJECT_READER_METHODS);
+
+static int object_box_reader_value(void *self) {
+    return ((object_box *)self)->value;
+}
+
+CMETA_IMPLEMENTS(object_reader, object_box_reader, 0u,
+    .value = object_box_reader_value
+);
+
+CMETA_OBJECT_INTERFACE_ADAPTER(object_reader);
+
+#define OBJECT_WRITER_METHODS(X,I) \
+    X(I,R1,int,add,int,delta)
+
+CMETA_INTERFACE(object_writer, OBJECT_WRITER_METHODS);
+
+static int object_box_writer_add(void *self, int delta) {
+    object_box *box = (object_box *)self;
+    box->value += delta;
+    return box->value;
+}
+
+CMETA_IMPLEMENTS(object_writer, object_box_writer, 0u,
+    .add = object_box_writer_add
+);
+
+CMETA_OBJECT_INTERFACE_ADAPTER(object_writer);
+
+#define OBJECT_WAITABLE_METHODS(X,I) \
+    X(I,R0,int,state,_)
+
+CMETA_INTERFACE(object_waitable, OBJECT_WAITABLE_METHODS);
+CMETA_OBJECT_INTERFACE_ADAPTER(object_waitable);
+
+#define OBJECT_OWNER_METHODS(X,I) \
+    X(I,D0,void,destroy,_)
+
+CMETA_INTERFACE(object_owner, OBJECT_OWNER_METHODS);
+CMETA_OBJECT_INTERFACE_ADAPTER(object_owner);
+
+static size_t object_interface_project_calls;
+
+static cmeta_status object_box_interface_project(
+    void *context,
+    const cmeta_object_ref *object,
+    const cmeta_interface_desc *expected,
+    cmeta_interface_projection *out) {
+    (void)context;
+    ++object_interface_project_calls;
+    if (object == NULL || object->object == NULL || expected == NULL ||
+        out == NULL)
+        return CMETA_INVALID_ARGUMENT;
+
+    *out = (cmeta_interface_projection)CMETA_INTERFACE_PROJECTION_INIT;
+    if (cmeta_interface_desc_equal(expected, object_reader_interface())) {
+        out->interface = object_reader_interface();
+        out->self = object->object;
+        out->dispatch = &object_box_reader_vtable;
+        return CMETA_OK;
+    }
+    if (cmeta_interface_desc_equal(expected, object_writer_interface())) {
+        out->interface = object_writer_interface();
+        out->self = object->object;
+        out->dispatch = &object_box_writer_vtable;
+        return CMETA_OK;
+    }
+    return CMETA_TRAIT_MISSING;
+}
+
+static const cmeta_object_interface_provider object_interface_provider = {
+    .size = sizeof(cmeta_object_interface_provider),
+    .context = NULL,
+    .project = object_box_interface_project
+};
+
+static cmeta_status object_box_foreign_interface_project(
+    void *context,
+    const cmeta_object_ref *object,
+    const cmeta_interface_desc *expected,
+    cmeta_interface_projection *out) {
+    (void)context;
+    (void)expected;
+    if (object == NULL || object->object == NULL || out == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    *out = (cmeta_interface_projection)CMETA_INTERFACE_PROJECTION_INIT;
+    out->interface = object_reader_interface();
+    out->self = object->object;
+    out->dispatch = &object_box_reader_vtable;
+    return CMETA_OK;
+}
+
+static const cmeta_object_interface_provider object_foreign_interface_provider = {
+    .size = sizeof(cmeta_object_interface_provider),
+    .context = NULL,
+    .project = object_box_foreign_interface_project
 };
 
 static const cmeta_param_desc object_add_params[] = {
@@ -394,6 +496,85 @@ static void object_test_destroy(void *context, void *object) {
     object_lifecycle_counts *counts = (object_lifecycle_counts *)context;
     if (counts != NULL && object != NULL)
         counts->destroys += 1;
+}
+
+spec("CMeta ObjectRef Interface projection") {
+    it("projects multiple borrowed capabilities over one native identity") {
+        object_box box = {7};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        object_reader reader = object_reader_bind(NULL, NULL);
+        object_writer writer = object_writer_bind(NULL, NULL);
+
+        object_interface_project_calls = 0u;
+        check_true(cmeta_object_interface_provider_valid(
+            &object_interface_provider));
+        check_equal(cmeta_object_borrow(
+                        &object, &box, &object_box_data, NULL),
+                    CMETA_OK);
+
+        check_equal(object_reader_borrow_from_object(
+                        &object, &object_interface_provider, &reader),
+                    CMETA_OK);
+        check_equal(object_writer_borrow_from_object(
+                        &object, &object_interface_provider, &writer),
+                    CMETA_OK);
+        check_true(object_reader_valid(&reader));
+        check_true(object_writer_valid(&writer));
+        check_true(reader.self == &box);
+        check_true(writer.self == &box);
+        check_equal(object_interface_project_calls, (size_t)2u);
+
+        check_equal(object_reader_value(&reader), 7);
+        check_equal(object_writer_add(&writer, 5), 12);
+        check_equal(object_reader_value(&reader), 12);
+        check_equal(box.value, 12);
+
+        cmeta_object_release(&object);
+    }
+
+    it("fails closed for unsupported and foreign capabilities") {
+        object_box box = {3};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        object_waitable waitable = object_waitable_bind(NULL, NULL);
+        object_writer writer = object_writer_bind(NULL, NULL);
+
+        check_equal(cmeta_object_borrow(
+                        &object, &box, &object_box_data, NULL),
+                    CMETA_OK);
+        check_equal(object_waitable_borrow_from_object(
+                        &object, &object_interface_provider, &waitable),
+                    CMETA_TRAIT_MISSING);
+        check_false(object_waitable_valid(&waitable));
+
+        check_equal(object_writer_borrow_from_object(
+                        &object, &object_foreign_interface_provider, &writer),
+                    CMETA_CALLBACK_ERROR);
+        check_false(object_writer_valid(&writer));
+
+        cmeta_object_release(&object);
+    }
+
+    it("rejects owning Interface projection before provider dispatch") {
+        object_box box = {9};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        object_owner owner = object_owner_bind(NULL, NULL);
+        size_t calls_before;
+
+        check_equal(cmeta_object_borrow(
+                        &object, &box, &object_box_data, NULL),
+                    CMETA_OK);
+        calls_before = object_interface_project_calls;
+        check_true(cmeta_interface_desc_has_owning_method(
+            object_owner_interface()));
+        check_equal(object_owner_borrow_from_object(
+                        &object, &object_interface_provider, &owner),
+                    CMETA_TRAIT_MISSING);
+        check_equal(object_interface_project_calls, calls_before);
+        check_false(object_owner_valid(&owner));
+        check_equal(box.value, 9);
+
+        cmeta_object_release(&object);
+    }
 }
 
 spec("CMeta canonical borrowed object") {
