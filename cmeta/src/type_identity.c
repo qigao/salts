@@ -79,11 +79,10 @@ bool cmeta_type_identity_valid(const cmeta_type_identity *identity) {
     return false;
 }
 
-static bool cmeta_generic_desc_equal(const cmeta_generic_desc *a,
-                                     const cmeta_generic_desc *b) {
-    if (a == b) return a != NULL;
-    return a && b && cmeta_nonempty(a->stable_id) &&
-           cmeta_nonempty(b->stable_id) &&
+bool cmeta_generic_desc_equal(const cmeta_generic_desc *a,
+                              const cmeta_generic_desc *b) {
+    if (a == b) return a != NULL && cmeta_generic_desc_valid(a);
+    return cmeta_generic_desc_valid(a) && cmeta_generic_desc_valid(b) &&
            strcmp(a->stable_id, b->stable_id) == 0;
 }
 
