@@ -540,7 +540,15 @@ static node_action semantic_reduce(run_impl *r, cflow_node_id i, const cflow_nod
             r->reduce_value[i].storage, owned->storage };
         if (!cflow_value_slot_init(&next, n->output_type))
             return NODE_FAIL;
-        if (!cmeta_callable_invoke(&n->fn, next.storage, args)) {
+        if (n->param_kind == CFLOW_NODE_PARAM_TYPED_ADAPTER) {
+            if (!cflow_graph_explicit_adapter_callable_valid(n->fn) ||
+                !cmeta_type_equal(n->input_type, n->output_type) ||
+                n->fn.invoke == NULL ||
+                !n->fn.invoke(&n->fn, next.storage, args)) {
+                cflow_value_slot_destroy(&next);
+                return NODE_FAIL;
+            }
+        } else if (!cmeta_callable_invoke(&n->fn, next.storage, args)) {
             cflow_value_slot_destroy(&next);
             return NODE_FAIL;
         }

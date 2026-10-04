@@ -73,6 +73,50 @@ long cflow_projection_binary(long left, long right) {
 
 CFLOW_REFLECTED_ADAPTER(cflow_projection_binary);
 
+FunctionDeclResult(
+    associative, long, CMETA_RESULT_VALUE, cflow_projection_typed_reduce_sum,
+    (long, left, CMETA_PARAM_IN),
+    (long, right, CMETA_PARAM_IN));
+
+long cflow_projection_typed_reduce_sum(long left, long right) {
+    return left + right;
+}
+
+FunctionDeclResult(
+    value, long, CMETA_RESULT_VALUE, cflow_projection_typed_reduce_value,
+    (long, left, CMETA_PARAM_IN),
+    (long, right, CMETA_PARAM_IN));
+
+long cflow_projection_typed_reduce_value(long left, long right) {
+    return left + right;
+}
+
+static bool cflow_typed_reduce_sum_invoke(
+    const cmeta_callable *self,
+    void *out,
+    const void *const *args) {
+    long left;
+    long right;
+    (void)self;
+    if (!out || !args || !args[0] || !args[1]) return false;
+    memcpy(&left, args[0], sizeof(left));
+    memcpy(&right, args[1], sizeof(right));
+    left += right;
+    memcpy(out, &left, sizeof(left));
+    return true;
+}
+
+static cmeta_callable cflow_typed_reduce_adapter(
+    const cmeta_function_desc *function) {
+    cmeta_callable adapter = {0};
+    adapter.meta.effects = function ? function->effects : CMETA_EFFECT_UNKNOWN;
+    adapter.meta.properties =
+        function ? function->properties : CMETA_PROP_NONE;
+    adapter.invoke = cflow_typed_reduce_sum_invoke;
+    adapter.dispatch = CMETA_CALLABLE_DISPATCH_ADAPTER;
+    return adapter;
+}
+
 FunctionDeclAsAbi(fallible, int, &cmeta_type_int, CMETA_ABI_SCALAR,
                   cflow_projection_out,
     (int *, output, CMETA_PARAM_OUT,
@@ -308,6 +352,134 @@ static void check_int_result(
 }
 
 suite("CFlow reflected function projection") {
+    it("admits FunctionDesc-first typed REDUCE without a finite callable signature") {
+        cflow_function_typed_adapter_projection projection = {0};
+        cflow_graph graph = {0};
+        cflow_plan plan = {0};
+        cflow_result direct = {0};
+        cflow_result compiled = {0};
+        const cflow_subgraph *root;
+        const long input[] = {1L, 2L, 3L, 4L};
+        const long expected[] = {10L};
+        const char *validation = NULL;
+
+        check_equal(
+            cflow_function_typed_reduce_projection_admit(
+                FunctionMeta(cflow_projection_typed_reduce_sum),
+                FunctionAbi(cflow_projection_typed_reduce_sum),
+                cflow_typed_reduce_adapter(
+                    FunctionMeta(cflow_projection_typed_reduce_sum)),
+                &cmeta_type_long,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_OK);
+        check_true(cflow_function_typed_reduce_projection_valid(
+            &projection));
+        check_equal(projection.callable.meta.sig, CMETA_SIG_INVALID);
+        check_equal(projection.function->result_flags,
+                    (cmeta_result_flags)CMETA_RESULT_VALUE);
+        check_true(cmeta_type_equal(
+            projection.input_type, &cmeta_type_long));
+        check_true(cmeta_type_equal(
+            projection.output_type, &cmeta_type_long));
+
+        cflow_graph_init(&graph, &cmeta_type_long);
+        check_true(cflow_graph_add_function_typed_reduce_projection(
+            &graph, &projection));
+        check_true(cflow_graph_validate(&graph, &validation));
+        check_null(validation);
+
+        root = cflow_graph_subgraph(&graph, graph.root);
+        check_not_null(root);
+        check_equal(root->node_count, (size_t)2u);
+        check_equal(root->nodes[1].op, CFLOW_OP_REDUCE);
+        check_equal(
+            root->nodes[1].param_kind,
+            CFLOW_NODE_PARAM_TYPED_ADAPTER);
+
+        check_true(cflow_eval_array(&graph, input, 4u, &direct));
+        check_equal(direct.count, (size_t)1u);
+        check_true(cmeta_type_equal(direct.type, &cmeta_type_long));
+        check_equal(direct.data, expected, sizeof(expected));
+
+        check_true(cflow_plan_compile_surface(&plan, &graph, NULL));
+        check_true(cflow_plan_parallel_reduce_supported(&plan));
+        check_true(cflow_plan_eval_array(
+            &plan, input, 4u, &compiled));
+        check_equal(compiled.count, (size_t)1u);
+        check_true(cmeta_type_equal(compiled.type, &cmeta_type_long));
+        check_equal(compiled.data, expected, sizeof(expected));
+
+        cflow_result_destroy(&compiled);
+        cflow_result_destroy(&direct);
+        cflow_plan_destroy(&plan);
+        cflow_graph_destroy(&graph);
+    }
+
+    it("keeps typed REDUCE admission separate from parallel eligibility") {
+        cflow_function_typed_adapter_projection projection = {0};
+        cflow_graph graph = {0};
+        cflow_plan plan = {0};
+
+        check_equal(
+            cflow_function_typed_reduce_projection_admit(
+                FunctionMeta(cflow_projection_typed_reduce_value),
+                FunctionAbi(cflow_projection_typed_reduce_value),
+                cflow_typed_reduce_adapter(
+                    FunctionMeta(cflow_projection_typed_reduce_value)),
+                &cmeta_type_long,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_OK);
+        cflow_graph_init(&graph, &cmeta_type_long);
+        check_true(cflow_graph_add_function_typed_reduce_projection(
+            &graph, &projection));
+        check_true(cflow_plan_compile_surface(&plan, &graph, NULL));
+        check_false(cflow_plan_parallel_reduce_supported(&plan));
+
+        cflow_plan_destroy(&plan);
+        cflow_graph_destroy(&graph);
+    }
+
+    it("rejects typed REDUCE without authoritative value-result semantics") {
+        cflow_function_typed_adapter_projection projection = {0};
+        cmeta_callable adapter =
+            cflow_typed_reduce_adapter(FunctionMeta(cflow_projection_binary));
+        cmeta_function_desc wrong_type =
+            *FunctionMeta(cflow_projection_typed_reduce_sum);
+        cmeta_function_abi_desc wrong_abi =
+            *FunctionAbi(cflow_projection_typed_reduce_sum);
+
+        check_equal(
+            FunctionMeta(cflow_projection_binary)->result_flags,
+            (cmeta_result_flags)CMETA_RESULT_UNKNOWN);
+        check_equal(
+            cflow_function_typed_reduce_projection_admit(
+                FunctionMeta(cflow_projection_binary),
+                FunctionAbi(cflow_projection_binary),
+                adapter,
+                &cmeta_type_long,
+                &projection),
+            CFLOW_FUNCTION_PROJECTION_UNSUPPORTED_SHAPE);
+
+        wrong_type.return_type = &cmeta_type_int;
+        wrong_abi.function = &wrong_type;
+        adapter = cflow_typed_reduce_adapter(&wrong_type);
+        check_equal(
+            cflow_function_typed_reduce_projection_admit(
+                &wrong_type, &wrong_abi, adapter,
+                &cmeta_type_long, &projection),
+            CFLOW_FUNCTION_PROJECTION_UNSUPPORTED_SHAPE);
+
+        adapter = cflow_typed_reduce_adapter(
+            FunctionMeta(cflow_projection_typed_reduce_sum));
+        adapter.invoke = NULL;
+        check_equal(
+            cflow_function_typed_reduce_projection_admit(
+                FunctionMeta(cflow_projection_typed_reduce_sum),
+                FunctionAbi(cflow_projection_typed_reduce_sum),
+                adapter, &cmeta_type_long, &projection),
+            CFLOW_FUNCTION_PROJECTION_INVALID_ADAPTER);
+    }
+
     it("admits erased typed FILTER predicates and preserves element type") {
         cflow_function_typed_adapter_projection projection = {0};
         cflow_graph graph = {0};

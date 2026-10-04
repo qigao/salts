@@ -554,10 +554,11 @@ bool cflow_graph_create_explicit_typed_adapter_node(
     uint64_t version;
 
     if (!sg || !out_node ||
-        (op != CFLOW_OP_MAP && op != CFLOW_OP_FILTER) ||
+        (op != CFLOW_OP_MAP && op != CFLOW_OP_FILTER &&
+         op != CFLOW_OP_REDUCE) ||
         !cmeta_type_desc_valid(input_type) || input_type->size == 0u ||
         !cmeta_type_desc_valid(output_type) || output_type->size == 0u ||
-        (op == CFLOW_OP_FILTER &&
+        ((op == CFLOW_OP_FILTER || op == CFLOW_OP_REDUCE) &&
          !cmeta_type_equal(input_type, output_type)) ||
         !cflow_graph_explicit_adapter_callable_valid(fn))
         return fail(g, "invalid explicit typed adapter node");
@@ -1521,7 +1522,8 @@ static bool validate_subgraph_nodes(const cflow_graph *g,
             }
         } else if (node->param_kind == CFLOW_NODE_PARAM_TYPED_ADAPTER) {
             if ((node->op != CFLOW_OP_MAP &&
-                 node->op != CFLOW_OP_FILTER) ||
+                 node->op != CFLOW_OP_FILTER &&
+                 node->op != CFLOW_OP_REDUCE) ||
                 !node->has_fn ||
                 node->fn_chain_count != 0u || node->has_relation ||
                 node->subgraph_count != 0u ||
@@ -1529,7 +1531,8 @@ static bool validate_subgraph_nodes(const cflow_graph *g,
                 node->input_type->size == 0u ||
                 !cmeta_type_desc_valid(node->output_type) ||
                 node->output_type->size == 0u ||
-                (node->op == CFLOW_OP_FILTER &&
+                ((node->op == CFLOW_OP_FILTER ||
+                  node->op == CFLOW_OP_REDUCE) &&
                  !cmeta_type_equal(
                      node->input_type, node->output_type)) ||
                 !cflow_graph_explicit_adapter_callable_valid(node->fn)) {

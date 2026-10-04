@@ -309,6 +309,100 @@ bool cflow_graph_add_function_typed_filter_projection(
         projection->output_type);
 }
 
+static bool typed_reduce_reflection_shape_valid(
+    const cmeta_function_desc *function,
+    const cmeta_function_abi_desc *abi,
+    const cmeta_type_desc *value_type) {
+    const cmeta_param_desc *left;
+    const cmeta_param_desc *right;
+    cmeta_abi_carrier left_abi;
+    cmeta_abi_carrier right_abi;
+
+    if (function == NULL || abi == NULL ||
+        function->param_count != 2u ||
+        function->result_flags != CMETA_RESULT_VALUE ||
+        !cmeta_type_desc_valid(value_type) || value_type->size == 0u ||
+        !cmeta_type_equal(function->return_type, value_type))
+        return false;
+
+    left_abi = cmeta_function_param_abi(abi, 0u);
+    right_abi = cmeta_function_param_abi(abi, 1u);
+    left = cmeta_function_param(function, 0u);
+    right = cmeta_function_param(function, 1u);
+    if (left == NULL || right == NULL ||
+        left->flags != CMETA_PARAM_IN ||
+        right->flags != CMETA_PARAM_IN ||
+        !cmeta_type_equal(left->type, value_type) ||
+        !cmeta_type_equal(right->type, value_type))
+        return false;
+
+    return left_abi != CMETA_ABI_UNSPECIFIED &&
+           left_abi != CMETA_ABI_OPAQUE &&
+           right_abi != CMETA_ABI_UNSPECIFIED &&
+           right_abi != CMETA_ABI_OPAQUE &&
+           abi->return_carrier != CMETA_ABI_UNSPECIFIED &&
+           abi->return_carrier != CMETA_ABI_OPAQUE &&
+           abi->return_carrier != CMETA_ABI_VOID;
+}
+
+cflow_function_projection_status
+cflow_function_typed_reduce_projection_admit(
+    const cmeta_function_desc *function,
+    const cmeta_function_abi_desc *abi,
+    cmeta_callable adapter,
+    const cmeta_type_desc *value_type,
+    cflow_function_typed_adapter_projection *out) {
+    if (out == NULL)
+        return CFLOW_FUNCTION_PROJECTION_INVALID_ARGUMENT;
+    memset(out, 0, sizeof(*out));
+
+    if (!cmeta_function_desc_valid(function))
+        return CFLOW_FUNCTION_PROJECTION_INVALID_REFLECTION;
+    if (!cmeta_function_abi_desc_valid(abi) ||
+        !cmeta_function_desc_equal(function, abi->function))
+        return CFLOW_FUNCTION_PROJECTION_INVALID_ABI;
+    if (!typed_reduce_reflection_shape_valid(function, abi, value_type))
+        return CFLOW_FUNCTION_PROJECTION_UNSUPPORTED_SHAPE;
+    if (!cflow_graph_explicit_adapter_callable_valid(adapter))
+        return CFLOW_FUNCTION_PROJECTION_INVALID_ADAPTER;
+    if (adapter.meta.effects != function->effects ||
+        adapter.meta.properties != function->properties)
+        return CFLOW_FUNCTION_PROJECTION_CONTRACT_MISMATCH;
+
+    out->size = sizeof(*out);
+    out->function = function;
+    out->abi = abi;
+    out->callable = adapter;
+    out->input_type = value_type;
+    out->output_type = value_type;
+    return CFLOW_FUNCTION_PROJECTION_OK;
+}
+
+bool cflow_function_typed_reduce_projection_valid(
+    const cflow_function_typed_adapter_projection *projection) {
+    return projection != NULL &&
+           cflow_function_typed_adapter_projection_valid(projection) &&
+           typed_reduce_reflection_shape_valid(
+               projection->function, projection->abi,
+               projection->input_type) &&
+           cmeta_type_equal(
+               projection->input_type, projection->output_type);
+}
+
+bool cflow_graph_add_function_typed_reduce_projection(
+    cflow_graph *graph,
+    const cflow_function_typed_adapter_projection *projection) {
+    if (graph == NULL ||
+        !cflow_function_typed_reduce_projection_valid(projection))
+        return false;
+    return cflow_graph_add_explicit_typed_adapter(
+        graph,
+        CFLOW_OP_REDUCE,
+        projection->callable,
+        projection->input_type,
+        projection->output_type);
+}
+
 cflow_function_projection_status cflow_function_action_projection_admit(
     const cmeta_function_desc *function,
     const cmeta_function_abi_desc *abi,

@@ -171,6 +171,27 @@ static bool prepare_explicit_filter_call(cflow_plan_call *out,
     return true;
 }
 
+static bool prepare_explicit_reduce_call(cflow_plan_call *out,
+                                         const cflow_node *node) {
+    cflow_plan_call prepared = {0};
+
+    if (!out || !node || node->op != CFLOW_OP_REDUCE ||
+        node->param_kind != CFLOW_NODE_PARAM_TYPED_ADAPTER ||
+        !cflow_graph_explicit_adapter_callable_valid(node->fn) ||
+        !cmeta_type_desc_valid(node->input_type) ||
+        node->input_type->size == 0u ||
+        !cmeta_type_equal(node->input_type, node->output_type))
+        return false;
+
+    prepared.fn = node->fn;
+    prepared.invoke = node->fn.invoke;
+    prepared.raw_batch = NULL;
+    prepared.input_type = node->input_type;
+    prepared.output_type = node->output_type;
+    *out = prepared;
+    return true;
+}
+
 static bool checked_add(size_t left, size_t right, size_t *sum) {
     if (!sum || left > SIZE_MAX - right) return false;
     *sum = left + right;
@@ -223,6 +244,34 @@ static bool call_is_parallel_prefix(const cflow_plan_call *call) {
         cmeta_properties_include(call->fn.meta.properties, required);
 }
 
+static bool call_is_parallel_reducer(
+    const cflow_plan_inst *reduce) {
+    const cmeta_properties required =
+        CMETA_PROP_TOTAL | CMETA_PROP_ASSOCIATIVE | CMETA_PROP_NO_ALIAS;
+
+    if (!reduce || reduce->opcode != CMETA_PLAN_REDUCE ||
+        reduce->has_reduce_seed ||
+        !cmeta_type_equal(reduce->input_type, reduce->output_type))
+        return false;
+
+    if (reduce->param_kind != CFLOW_NODE_PARAM_TYPED_ADAPTER)
+        return cflow_callable_declares_associative_endomap(
+            reduce->call.fn);
+
+    return reduce->call.invoke != NULL &&
+           cmeta_type_desc_valid(reduce->call.input_type) &&
+           reduce->call.input_type->size != 0u &&
+           cmeta_type_equal(
+               reduce->call.input_type, reduce->input_type) &&
+           cmeta_type_equal(
+               reduce->call.output_type, reduce->output_type) &&
+           cflow_graph_explicit_adapter_callable_valid(
+               reduce->call.fn) &&
+           cmeta_effects_are_pure(reduce->call.fn.meta.effects) &&
+           cmeta_properties_include(
+               reduce->call.fn.meta.properties, required);
+}
+
 static void prepare_parallel_reduce(cflow_plan_impl *impl) {
     const cflow_plan_inst *reduce;
 
@@ -230,10 +279,7 @@ static void prepare_parallel_reduce(cflow_plan_impl *impl) {
     impl->terminal_reduce_index = SIZE_MAX;
     if (!impl->count) return;
     reduce = &impl->code[impl->count - 1u];
-    if (reduce->opcode != CMETA_PLAN_REDUCE ||
-        reduce->has_reduce_seed ||
-        !cmeta_type_equal(reduce->input_type, reduce->output_type) ||
-        !cflow_callable_declares_associative_endomap(reduce->call.fn))
+    if (!call_is_parallel_reducer(reduce))
         return;
 
     for (size_t pc = 0u; pc + 1u < impl->count; ++pc) {
@@ -512,6 +558,12 @@ bool cflow_plan_compile(cflow_plan *plan,
                     !cmeta_type_equal(n->input_type, n->output_type))
                     return plan_compile_fail(
                         plan, &index, "slice instruction metadata is invalid");
+            } else if (op == CMETA_PLAN_REDUCE &&
+                       n->param_kind == CFLOW_NODE_PARAM_TYPED_ADAPTER) {
+                if (!prepare_explicit_reduce_call(&inst.call, n))
+                    return plan_compile_fail(
+                        plan, &index,
+                        "explicit typed reduce predecode failed");
             } else {
                 inst.call.fn = n->fn;
                 inst.call.invoke = n->fn.invoke;
