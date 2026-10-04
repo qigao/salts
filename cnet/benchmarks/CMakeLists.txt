@@ -57,6 +57,20 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF)
+
+  cmake_add_benchmark(cnet_tls_public_owner_benchmark
+    SOURCES cnet_tls_public_owner_benchmark.c
+    LIBS Salts::CNet Salts::Platform Salts::Core
+    FOLDER "cnet/benchmarks")
+  target_compile_definitions(cnet_tls_public_owner_benchmark PRIVATE
+    "CNET_TLS_BENCH_CA=\"${CNET_TLS_BENCH_CA}\""
+    "CNET_TLS_BENCH_CERT=\"${CNET_TLS_BENCH_CERT}\""
+    "CNET_TLS_BENCH_KEY=\"${CNET_TLS_BENCH_KEY}\"")
+  target_include_directories(cnet_tls_public_owner_benchmark PRIVATE ../src)
+  set_target_properties(cnet_tls_public_owner_benchmark PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF)
 endif()
 
 unset(CNET_TLS_BENCH_CA)
