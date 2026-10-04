@@ -68,6 +68,72 @@ cmake_add_test(cmeta_declared_type_test
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
+if(NOT CMAKE_CROSSCOMPILING)
+  set(CMETA_INSPECTION_TEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/inspection")
+  set(CMETA_INSPECTION_GENERATED_DIR
+      "${CMAKE_CURRENT_BINARY_DIR}/inspection-generated")
+  set(CMETA_INSPECTION_GENERATED_SOURCE
+      "${CMETA_INSPECTION_GENERATED_DIR}/cmeta_inspection_generated.c")
+
+  add_library(cmeta_inspection_runtime STATIC
+    inspection/cmeta_inspection_runtime.c)
+  target_include_directories(cmeta_inspection_runtime PUBLIC
+    "${CMETA_INSPECTION_TEST_DIR}")
+  set_target_properties(cmeta_inspection_runtime PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+    FOLDER "cmeta/tests/inspection")
+
+  add_library(cmeta_inspection_metadata STATIC
+    inspection/cmeta_inspection_metadata.c)
+  target_include_directories(cmeta_inspection_metadata PUBLIC
+    "${CMETA_INSPECTION_TEST_DIR}")
+  target_link_libraries(cmeta_inspection_metadata PRIVATE Salts::CMeta)
+  set_target_properties(cmeta_inspection_metadata PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+    FOLDER "cmeta/tests/inspection")
+
+  add_executable(cmeta_inspection_codegen
+    inspection/cmeta_inspection_codegen.c)
+  target_include_directories(cmeta_inspection_codegen PRIVATE
+    "${CMETA_INSPECTION_TEST_DIR}")
+  target_link_libraries(cmeta_inspection_codegen PRIVATE
+    Salts::CMeta cmeta_inspection_metadata)
+  set_target_properties(cmeta_inspection_codegen PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+    FOLDER "cmeta/tests/inspection")
+
+  add_custom_command(
+    OUTPUT "${CMETA_INSPECTION_GENERATED_SOURCE}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${CMETA_INSPECTION_GENERATED_DIR}"
+    COMMAND $<TARGET_FILE:cmeta_inspection_codegen>
+            "${CMETA_INSPECTION_GENERATED_SOURCE}"
+    COMMAND ${CMAKE_COMMAND}
+            -DGENERATED=${CMETA_INSPECTION_GENERATED_SOURCE}
+            -P "${CMETA_INSPECTION_TEST_DIR}/verify_cmeta_inspection_generated.cmake"
+    DEPENDS cmeta_inspection_codegen
+    VERBATIM)
+
+  add_executable(cmeta_inspection_generated_test
+    "${CMETA_INSPECTION_GENERATED_SOURCE}")
+  target_include_directories(cmeta_inspection_generated_test PRIVATE
+    "${CMETA_INSPECTION_TEST_DIR}")
+  target_link_libraries(cmeta_inspection_generated_test PRIVATE
+    cmeta_inspection_runtime)
+  set_target_properties(cmeta_inspection_generated_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+    FOLDER "cmeta/tests/inspection")
+  add_test(NAME cmeta_inspection_generated_test
+           COMMAND cmeta_inspection_generated_test)
+
+  add_test(
+    NAME cmeta_inspection_codegen_rejects_mismatch
+    COMMAND ${CMAKE_COMMAND}
+            -DTOOL=$<TARGET_FILE:cmeta_inspection_codegen>
+            -DOUTPUT=${CMETA_INSPECTION_GENERATED_DIR}/rejected.c
+            -P "${CMETA_INSPECTION_TEST_DIR}/verify_cmeta_inspection_rejection.cmake")
+endif()
+
 cmake_add_test(cmeta_container_type_test
   SOURCES cmeta_container_type_test.c
   LIBS Salts::CMeta Salts::TinyTest
