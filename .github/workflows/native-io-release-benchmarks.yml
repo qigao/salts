@@ -187,7 +187,8 @@ jobs:
                   (($_ -like "cmake/*.cmake" -or $_ -like "cmake/**/*.cmake") -and
                     $_ -notlike "cmake/ci/*") -or
                   $_ -eq "CMakeLists.txt" -or
-                  $_ -eq "CMakePresets.json"
+                  $_ -eq "CMakePresets.json" -or
+                  $_ -eq ".github/workflows/native-io-release-benchmarks.yml"
                 }).Count -gt 0
               $dependencyChanged = @($changed | Where-Object {
                   $_ -eq "vcpkg.json" -or $_ -eq "vcpkg-configuration.json"
