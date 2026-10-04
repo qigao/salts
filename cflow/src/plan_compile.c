@@ -228,7 +228,7 @@ static void prepare_parallel_reduce(cflow_plan_impl *impl) {
 
     if (!impl) return;
     impl->terminal_reduce_index = SIZE_MAX;
-    if (!impl->count || impl->managed_values) return;
+    if (!impl->count) return;
     reduce = &impl->code[impl->count - 1u];
     if (reduce->opcode != CMETA_PLAN_REDUCE ||
         reduce->has_reduce_seed ||

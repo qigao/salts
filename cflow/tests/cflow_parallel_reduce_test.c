@@ -1,10 +1,12 @@
 #include "tinytest.h"
 
 #include <cflow/cflow.h>
+#include <cflow/plan_internal.h>
 #include <salts/thread.h>
 
 #include <stdint.h>
 #include <stdatomic.h>
+#include <stdlib.h>
 #include <string.h>
 
 static _Atomic size_t cflow_parallel_prefix_calls;
@@ -15,6 +17,128 @@ static _Atomic size_t cflow_parallel_successes_at_failure;
 static _Atomic bool cflow_parallel_delay_failure;
 static _Atomic bool cflow_parallel_gate_open;
 static _Atomic bool cflow_parallel_gate_started;
+
+static _Atomic size_t cflow_parallel_managed_live;
+static _Atomic size_t cflow_parallel_managed_destroyed;
+static _Atomic int cflow_parallel_managed_fail_right;
+
+typedef struct cflow_parallel_managed_value {
+  _Alignas(64) int *resource;
+} cflow_parallel_managed_value;
+
+static cflow_parallel_managed_value cflow_parallel_managed_make(int value) {
+  cflow_parallel_managed_value result = {0};
+  result.resource = (int *)malloc(sizeof(*result.resource));
+  if (result.resource) {
+    *result.resource = value;
+    atomic_fetch_add(&cflow_parallel_managed_live, 1u);
+  }
+  return result;
+}
+
+static bool cflow_parallel_managed_copy(void *destination_,
+                                        const void *source_) {
+  cflow_parallel_managed_value *destination =
+      (cflow_parallel_managed_value *)destination_;
+  const cflow_parallel_managed_value *source =
+      (const cflow_parallel_managed_value *)source_;
+  if (!destination || !source) return false;
+  destination->resource = NULL;
+  if (!source->resource) return true;
+  *destination = cflow_parallel_managed_make(*source->resource);
+  return destination->resource != NULL;
+}
+
+static void cflow_parallel_managed_move(void *destination_, void *source_) {
+  cflow_parallel_managed_value *destination =
+      (cflow_parallel_managed_value *)destination_;
+  cflow_parallel_managed_value *source =
+      (cflow_parallel_managed_value *)source_;
+  if (!destination || !source) return;
+  destination->resource = source->resource;
+  source->resource = NULL;
+}
+
+static void cflow_parallel_managed_destroy(void *value_) {
+  cflow_parallel_managed_value *value =
+      (cflow_parallel_managed_value *)value_;
+  if (!value) return;
+  if (value->resource) {
+    free(value->resource);
+    value->resource = NULL;
+    atomic_fetch_sub(&cflow_parallel_managed_live, 1u);
+  }
+  atomic_fetch_add(&cflow_parallel_managed_destroyed, 1u);
+}
+
+static const cmeta_type_traits cflow_parallel_managed_traits = {
+  .flags = CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY,
+  .copy_construct = cflow_parallel_managed_copy,
+  .move_construct = cflow_parallel_managed_move,
+  .destroy = cflow_parallel_managed_destroy
+};
+
+static const cmeta_type_desc cflow_parallel_managed_type = {
+  .name = "cflow_parallel_managed_value",
+  .size = sizeof(cflow_parallel_managed_value),
+  .align = _Alignof(cflow_parallel_managed_value),
+  .kind = CMETA_T_OBJECT,
+  .pointee = NULL,
+  .traits = &cflow_parallel_managed_traits,
+  .identity = NULL
+};
+
+static bool cflow_parallel_managed_reduce_invoke(
+    const cmeta_callable *self, void *out, const void *const *args) {
+  const cflow_parallel_managed_value *left;
+  const cflow_parallel_managed_value *right;
+  cflow_parallel_managed_value sum;
+  int fail_right;
+
+  (void)self;
+  if (!out || !args || !args[0] || !args[1]) return false;
+  left = (const cflow_parallel_managed_value *)args[0];
+  right = (const cflow_parallel_managed_value *)args[1];
+  if (!left->resource || !right->resource) return false;
+  fail_right = atomic_load(&cflow_parallel_managed_fail_right);
+  if (fail_right != INT32_MIN && *right->resource == fail_right)
+    return false;
+  sum = cflow_parallel_managed_make(*left->resource + *right->resource);
+  if (!sum.resource) return false;
+  *(cflow_parallel_managed_value *)out = sum;
+  return true;
+}
+
+static bool cflow_parallel_managed_plan(cflow_plan *plan,
+                                        cflow_plan_impl *impl,
+                                        cflow_plan_inst *instruction) {
+  if (!plan || !impl || !instruction) return false;
+  memset(plan, 0, sizeof(*plan));
+  memset(impl, 0, sizeof(*impl));
+  memset(instruction, 0, sizeof(*instruction));
+  instruction->opcode = CMETA_PLAN_REDUCE;
+  instruction->step = cflow_plan_step_for_opcode(CMETA_PLAN_REDUCE);
+  instruction->input_type = &cflow_parallel_managed_type;
+  instruction->output_type = &cflow_parallel_managed_type;
+  instruction->call.invoke = cflow_parallel_managed_reduce_invoke;
+  instruction->call.input_type = &cflow_parallel_managed_type;
+  instruction->call.output_type = &cflow_parallel_managed_type;
+  impl->code = instruction;
+  impl->count = 1u;
+  impl->terminal_reduce_index = 0u;
+  impl->parallel_reduce_supported = true;
+  impl->managed_values = true;
+  plan->impl = impl;
+  plan->input_type = &cflow_parallel_managed_type;
+  plan->output_type = &cflow_parallel_managed_type;
+  return true;
+}
+
+static void cflow_parallel_managed_destroy_inputs(
+    cflow_parallel_managed_value *values, size_t count) {
+  for (size_t index = 0u; index < count; ++index)
+    cflow_parallel_managed_destroy(&values[index]);
+}
 
 typed(reduce, associative, long, cflow_parallel_left,
       (long left, long right)) {
@@ -73,7 +197,7 @@ static void cflow_parallel_gate_task(void *user) {
 
 typedef struct cflow_parallel_eval_thread {
   const cflow_plan *plan;
-  const long *inputs;
+  const void *inputs;
   size_t input_count;
   cflow_plan_eval_options options;
   cflow_result result;
@@ -88,7 +212,7 @@ static void cflow_parallel_eval_thread_run(void *user) {
 
 typedef struct cflow_parallel_callback_eval {
   const cflow_plan *plan;
-  const long *inputs;
+  const void *inputs;
   size_t input_count;
   cflow_plan_eval_options options;
   cflow_result result;
@@ -272,6 +396,197 @@ suite("CFlow ordered parallel reduce") {
     cflow_executor_destroy(&cflow_parallel_state.executor);
     cflow_plan_destroy(&cflow_parallel_state.plan);
     cflow_stream_destroy(&cflow_parallel_state.stream);
+  }
+
+  it("reduces managed values in parallel without leaking internal ownership") {
+    cflow_parallel_managed_value input[] = {
+        cflow_parallel_managed_make(1), cflow_parallel_managed_make(2),
+        cflow_parallel_managed_make(3), cflow_parallel_managed_make(4),
+        cflow_parallel_managed_make(5), cflow_parallel_managed_make(6),
+        cflow_parallel_managed_make(7), cflow_parallel_managed_make(8)};
+    cflow_plan plan = {0};
+    cflow_plan_impl impl = {0};
+    cflow_plan_inst instruction = {0};
+    cflow_result result = {0};
+    cflow_parallel_reduce_fixture *state = &cflow_parallel_state;
+    const cflow_parallel_managed_value *output;
+
+    atomic_store(&cflow_parallel_managed_live, 8u);
+    atomic_store(&cflow_parallel_managed_destroyed, 0u);
+    atomic_store(&cflow_parallel_managed_fail_right, INT32_MIN);
+    check_true(cflow_parallel_managed_plan(&plan, &impl, &instruction));
+    check_true(cflow_plan_parallel_reduce_supported(&plan));
+    check_true(cflow_plan_eval_array_with_options(
+        &plan, input, 8u, &state->options, &result));
+    check_equal(result.count, (size_t)1u);
+    check_true(cmeta_type_equal(result.type, &cflow_parallel_managed_type));
+    output = (const cflow_parallel_managed_value *)result.data;
+    check_not_null(output);
+    check_not_null(output->resource);
+    check_equal(*output->resource, 36);
+    check_equal((uintptr_t)result.data % _Alignof(cflow_parallel_managed_value),
+                (uintptr_t)0u);
+    check_equal(atomic_load(&cflow_parallel_managed_live), (size_t)9u);
+
+    cflow_result_destroy(&result);
+    check_equal(atomic_load(&cflow_parallel_managed_live), (size_t)8u);
+    cflow_parallel_managed_destroy_inputs(input, 8u);
+    check_equal(atomic_load(&cflow_parallel_managed_live), (size_t)0u);
+  }
+
+  it("joins managed tasks and destroys every internal value on reducer failure") {
+    cflow_parallel_managed_value input[] = {
+        cflow_parallel_managed_make(1), cflow_parallel_managed_make(2),
+        cflow_parallel_managed_make(3), cflow_parallel_managed_make(4),
+        cflow_parallel_managed_make(5), cflow_parallel_managed_make(6),
+        cflow_parallel_managed_make(7), cflow_parallel_managed_make(8)};
+    cflow_plan plan = {0};
+    cflow_plan_impl impl = {0};
+    cflow_plan_inst instruction = {0};
+    cflow_result result = {0};
+    cflow_parallel_reduce_fixture *state = &cflow_parallel_state;
+
+    atomic_store(&cflow_parallel_managed_live, 8u);
+    atomic_store(&cflow_parallel_managed_destroyed, 0u);
+    atomic_store(&cflow_parallel_managed_fail_right, 4);
+    check_true(cflow_parallel_managed_plan(&plan, &impl, &instruction));
+    check_false(cflow_plan_eval_array_with_options(
+        &plan, input, 8u, &state->options, &result));
+    check_null(result.data);
+    check_equal(result.count, (size_t)0u);
+    check_equal(atomic_load(&cflow_parallel_managed_live), (size_t)8u);
+    check_true(cflow_executor_wait_idle(&state->executor));
+    check_equal(cflow_executor_pending(&state->executor), (size_t)0u);
+
+    cflow_result_destroy(&result);
+    cflow_parallel_managed_destroy_inputs(input, 8u);
+    check_equal(atomic_load(&cflow_parallel_managed_live), (size_t)0u);
+  }
+
+  it("cleans managed state after bounded executor admission failure") {
+    cflow_parallel_managed_value input[] = {
+        cflow_parallel_managed_make(11), cflow_parallel_managed_make(12),
+        cflow_parallel_managed_make(13), cflow_parallel_managed_make(14),
+        cflow_parallel_managed_make(15), cflow_parallel_managed_make(16),
+        cflow_parallel_managed_make(17), cflow_parallel_managed_make(18)};
+    cflow_plan plan = {0};
+    cflow_plan_impl impl = {0};
+    cflow_plan_inst instruction = {0};
+    cflow_executor executor = {0};
+    cflow_executor_stats stats = {0};
+    cflow_parallel_eval_thread eval = {0};
+    salts_thread_t thread = NULL;
+    size_t attempts = 0u;
+
+    atomic_store(&cflow_parallel_managed_live, 8u);
+    atomic_store(&cflow_parallel_managed_destroyed, 0u);
+    atomic_store(&cflow_parallel_managed_fail_right, INT32_MIN);
+    atomic_store(&cflow_parallel_gate_open, false);
+    atomic_store(&cflow_parallel_gate_started, false);
+    check_true(cflow_parallel_managed_plan(&plan, &impl, &instruction));
+    check_true(cflow_executor_worker_init_with_capacity(&executor, 1u, 1u));
+    check_true(cflow_executor_post(&executor, cflow_parallel_gate_task, NULL));
+    while (!atomic_load(&cflow_parallel_gate_started) && attempts++ < 500u)
+      salts_sleep_ms(1u);
+    check_true(atomic_load(&cflow_parallel_gate_started));
+
+    eval.plan = &plan;
+    eval.inputs = input;
+    eval.input_count = 8u;
+    eval.options = (cflow_plan_eval_options){
+        .mode = CFLOW_PLAN_EXECUTION_PARALLEL_REDUCE,
+        .executor = &executor,
+        .max_tasks = 4u,
+        .min_items_per_task = 2u};
+    check_equal(salts_thread_create(
+        &thread, cflow_parallel_eval_thread_run, &eval), 0);
+
+    attempts = 0u;
+    do {
+      check_true(cflow_executor_get_stats(&executor, &stats));
+      if (stats.rejected_full) break;
+      salts_sleep_ms(1u);
+    } while (attempts++ < 500u);
+    check_equal(stats.rejected_full, (size_t)1u);
+
+    atomic_store(&cflow_parallel_gate_open, true);
+    check_equal(salts_thread_join(&thread), 0);
+    check_false(eval.ok);
+    check_null(eval.result.data);
+    check_equal(atomic_load(&cflow_parallel_managed_live), (size_t)8u);
+    check_true(cflow_executor_wait_idle(&executor));
+
+    cflow_result_destroy(&eval.result);
+    cflow_executor_destroy(&executor);
+    cflow_parallel_managed_destroy_inputs(input, 8u);
+    check_equal(atomic_load(&cflow_parallel_managed_live), (size_t)0u);
+  }
+
+  it("cleans managed state when WorkerExecutor cancels pending shards") {
+    cflow_parallel_managed_value input[] = {
+        cflow_parallel_managed_make(21), cflow_parallel_managed_make(22),
+        cflow_parallel_managed_make(23), cflow_parallel_managed_make(24),
+        cflow_parallel_managed_make(25), cflow_parallel_managed_make(26),
+        cflow_parallel_managed_make(27), cflow_parallel_managed_make(28)};
+    cflow_plan plan = {0};
+    cflow_plan_impl impl = {0};
+    cflow_plan_inst instruction = {0};
+    cflow_executor executor = {0};
+    cflow_executor_control control = {0};
+    cflow_executor_protocol_stats stats = {0};
+    cflow_parallel_eval_thread eval = {0};
+    salts_thread_t thread = NULL;
+    size_t attempts = 0u;
+
+    atomic_store(&cflow_parallel_managed_live, 8u);
+    atomic_store(&cflow_parallel_managed_destroyed, 0u);
+    atomic_store(&cflow_parallel_managed_fail_right, INT32_MIN);
+    atomic_store(&cflow_parallel_gate_open, false);
+    atomic_store(&cflow_parallel_gate_started, false);
+    check_true(cflow_parallel_managed_plan(&plan, &impl, &instruction));
+    check_true(cflow_executor_worker_init_with_capacity(&executor, 1u, 4u));
+    check_true(cflow_executor_as_control(&executor, &control));
+    check_true(cflow_executor_post(&executor, cflow_parallel_gate_task, NULL));
+    while (!atomic_load(&cflow_parallel_gate_started) && attempts++ < 500u)
+      salts_sleep_ms(1u);
+    check_true(atomic_load(&cflow_parallel_gate_started));
+
+    eval.plan = &plan;
+    eval.inputs = input;
+    eval.input_count = 8u;
+    eval.options = (cflow_plan_eval_options){
+        .mode = CFLOW_PLAN_EXECUTION_PARALLEL_REDUCE,
+        .executor = &executor,
+        .max_tasks = 4u,
+        .min_items_per_task = 2u};
+    check_equal(salts_thread_create(
+        &thread, cflow_parallel_eval_thread_run, &eval), 0);
+
+    attempts = 0u;
+    do {
+      check_true(cflow_executor_control_get_stats(&control, &stats));
+      if (stats.accepted == 5u) break;
+      salts_sleep_ms(1u);
+    } while (attempts++ < 500u);
+    check_equal(stats.accepted, (size_t)5u);
+
+    check_true(cflow_executor_control_shutdown(
+        &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
+    atomic_store(&cflow_parallel_gate_open, true);
+    check_equal(salts_thread_join(&thread), 0);
+    check_false(eval.ok);
+    check_null(eval.result.data);
+    check_equal(cflow_executor_control_wait_idle(&control),
+                CFLOW_EXECUTOR_WAIT_IDLE);
+    check_true(cflow_executor_control_get_stats(&control, &stats));
+    check_equal(stats.accepted, stats.completed + stats.cancelled);
+    check_equal(stats.cancelled, (size_t)4u);
+    check_equal(atomic_load(&cflow_parallel_managed_live), (size_t)8u);
+
+    cflow_result_destroy(&eval.result);
+    cflow_executor_destroy(&executor);
+    cflow_parallel_managed_destroy_inputs(input, 8u);
+    check_equal(atomic_load(&cflow_parallel_managed_live), (size_t)0u);
   }
 
   it("rejects empty and one-item inputs without sequential fallback") {
