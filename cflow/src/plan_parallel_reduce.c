@@ -186,6 +186,12 @@ static bool parallel_reduce_frame_allocate_tasks(
     if (!frame->tasks) return false;
 
     if (frame->managed_values) {
+        /*
+         * Each worker toggles its partial/scratch slot live state on every
+         * reduction step. Keep write-hot slot metadata on the same isolation
+         * stride used by trivial partial storage to avoid cross-task cache-line
+         * sharing without changing value lifecycle semantics.
+         */
         if (sizeof(cflow_value_slot) >
             SIZE_MAX - (CFLOW_PARALLEL_REDUCE_WRITE_ISOLATION - 1u))
             return false;
