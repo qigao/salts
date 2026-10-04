@@ -82,6 +82,8 @@ typedef struct cflow_parallel_managed_probe_counts {
   atomic_size_t moves;
   atomic_size_t destroys;
   atomic_size_t invokes;
+  atomic_size_t active_invokes;
+  atomic_size_t peak_invokes;
 } cflow_parallel_managed_probe_counts;
 
 typedef struct cflow_parallel_managed_probe_snapshot {
@@ -89,6 +91,8 @@ typedef struct cflow_parallel_managed_probe_snapshot {
   size_t moves;
   size_t destroys;
   size_t invokes;
+  size_t active_invokes;
+  size_t peak_invokes;
 } cflow_parallel_managed_probe_snapshot;
 
 static cflow_parallel_managed_probe_counts cflow_parallel_managed_probe;
@@ -102,6 +106,10 @@ static void cflow_parallel_managed_probe_reset(void) {
       &cflow_parallel_managed_probe.destroys, 0u, memory_order_relaxed);
   atomic_store_explicit(
       &cflow_parallel_managed_probe.invokes, 0u, memory_order_relaxed);
+  atomic_store_explicit(
+      &cflow_parallel_managed_probe.active_invokes, 0u, memory_order_relaxed);
+  atomic_store_explicit(
+      &cflow_parallel_managed_probe.peak_invokes, 0u, memory_order_relaxed);
 }
 
 static cflow_parallel_managed_probe_snapshot
@@ -114,7 +122,11 @@ cflow_parallel_managed_probe_read(void) {
       atomic_load_explicit(
           &cflow_parallel_managed_probe.destroys, memory_order_relaxed),
       atomic_load_explicit(
-          &cflow_parallel_managed_probe.invokes, memory_order_relaxed)
+          &cflow_parallel_managed_probe.invokes, memory_order_relaxed),
+      atomic_load_explicit(
+          &cflow_parallel_managed_probe.active_invokes, memory_order_relaxed),
+      atomic_load_explicit(
+          &cflow_parallel_managed_probe.peak_invokes, memory_order_relaxed)
   };
   return snapshot;
 }
@@ -171,9 +183,27 @@ static bool cflow_parallel_managed_bench_reduce_invoke(
 
 static bool cflow_parallel_managed_probe_reduce_invoke(
     const cmeta_callable *self, void *out, const void *const *args) {
+  const size_t active =
+      atomic_fetch_add_explicit(
+          &cflow_parallel_managed_probe.active_invokes,
+          1u, memory_order_relaxed) + 1u;
+  size_t peak = atomic_load_explicit(
+      &cflow_parallel_managed_probe.peak_invokes, memory_order_relaxed);
+  bool ok;
+
+  while (peak < active &&
+         !atomic_compare_exchange_weak_explicit(
+             &cflow_parallel_managed_probe.peak_invokes,
+             &peak, active,
+             memory_order_relaxed, memory_order_relaxed)) {
+  }
   atomic_fetch_add_explicit(
       &cflow_parallel_managed_probe.invokes, 1u, memory_order_relaxed);
-  return cflow_parallel_managed_bench_reduce_invoke(self, out, args);
+  ok = cflow_parallel_managed_bench_reduce_invoke(self, out, args);
+  atomic_fetch_sub_explicit(
+      &cflow_parallel_managed_probe.active_invokes,
+      1u, memory_order_relaxed);
+  return ok;
 }
 
 static bool cflow_parallel_managed_bench_plan_for(
@@ -302,6 +332,25 @@ static long cflow_parallel_bench_expected(const long *input, size_t count) {
            scaling_stats.accepted, scaling_stats.completed,                        \
            scaling_stats.cancelled, scaling_stats.rejected_full,                   \
            scaling_stats.rejected_closed, scaling_stats.rejected_would_block);     \
+    {                                                                              \
+      cflow_result concurrency_probe = {0};                                        \
+      cflow_parallel_managed_probe_snapshot concurrency_counts;                    \
+      cflow_parallel_managed_probe_reset();                                        \
+      check_true(cflow_plan_eval_array_with_options(                               \
+          &managed_probe_plan, managed_input, CFLOW_PARALLEL_BENCH_MEDIUM_ITEMS,   \
+          &scaling_options, &concurrency_probe));                                  \
+      cflow_result_destroy(&concurrency_probe);                                    \
+      concurrency_counts = cflow_parallel_managed_probe_read();                    \
+      check_equal(concurrency_counts.active_invokes, (size_t)0u);                  \
+      check(concurrency_counts.peak_invokes >= 1u);                                \
+      check(concurrency_counts.peak_invokes <= (size_t)(worker_count));            \
+      check(concurrency_counts.peak_invokes <= scaling_tasks);                     \
+      printf("managed_parallel_reduce_concurrency workers=%zu tasks=%zu "           \
+             "items=%u peak_invokes=%zu invokes=%zu\\n",                         \
+             (size_t)(worker_count), scaling_tasks,                                \
+             CFLOW_PARALLEL_BENCH_MEDIUM_ITEMS,                                    \
+             concurrency_counts.peak_invokes, concurrency_counts.invokes);         \
+    }                                                                              \
     cflow_executor_destroy(&scaling_executor);                                     \
   } while (0)
 
