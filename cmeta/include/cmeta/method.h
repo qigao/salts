@@ -21,7 +21,17 @@ typedef struct cmeta_receiver_method_set {
     const cmeta_type_desc *receiver_type;
     const cmeta_receiver_method *methods;
     size_t method_count;
-    const char *owner_name;
+
+    /*
+     * Optional canonical generic operation namespace.
+     *
+     * NULL means ordinary receiver methods whose semantic owner is fully
+     * identified by receiver_type. Generic operation sets (for example
+     * CSTL List.add) publish the canonical constructor descriptor instead of
+     * a display/name string. Equality is semantic through stable_id, never
+     * descriptor address identity.
+     */
+    const cmeta_generic_desc *owner;
 } cmeta_receiver_method_set;
 
 /** Validate one reflected receiver method independent of any owning set. */
@@ -72,7 +82,7 @@ cmeta_receiver_resolve_status
 cmeta_receiver_method_resolve(
     const cmeta_receiver_method_set *set,
     const cmeta_type_desc *receiver_type,
-    const char *owner_name,
+    const cmeta_generic_desc *owner,
     const char *method_name,
     const cmeta_type_desc *const *argument_types,
     size_t argument_count,
