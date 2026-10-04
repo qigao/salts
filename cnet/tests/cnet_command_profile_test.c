@@ -44,7 +44,12 @@ spec("CNet command queue diagnostic profile") {
     check_equal(profile.payload_copy_calls, UINT64_C(1));
     check_true(profile.publish_ns >= profile.payload_publish_ns);
     check_true(profile.payload_publish_ns >= profile.payload_copy_ns);
-    check_true(profile.payload_copy_ns > UINT64_C(0));
+    /*
+     * A single 4 KiB memcpy can legitimately complete within one timer tick
+     * on fast Apple Silicon runners. The call counters prove that profiling
+     * observed the copy; elapsed nanoseconds are allowed to be zero for one
+     * sample while preserving the inclusive timing hierarchy above.
+     */
 
     check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
     check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
