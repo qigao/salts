@@ -3,6 +3,8 @@
 #include <salts/error_codes.h>
 
 #include <gmssl/tls.h>
+#include <gmssl/digest.h>
+#include <gmssl/oid.h>
 #include <gmssl/x509_cer.h>
 #include <gmssl/x509_ext.h>
 #include <gmssl/asn1.h>
@@ -1519,6 +1521,97 @@ int cnet_tls_state_peer_certificate_sha256(
   }
   buffer[sizeof(digest) * 2u] = '\0';
   return SALTS_OK;
+}
+
+static const DIGEST *cnet_tls_server_end_point_digest(int signature_algor) {
+  switch (signature_algor) {
+    case OID_rsasign_with_md5:
+    case OID_rsasign_with_sha1:
+    case OID_ecdsa_with_sha1:
+      return DIGEST_sha256();
+    case OID_rsasign_with_sha224:
+    case OID_ecdsa_with_sha224:
+      return DIGEST_sha224();
+    case OID_rsasign_with_sha256:
+    case OID_ecdsa_with_sha256:
+      return DIGEST_sha256();
+    case OID_rsasign_with_sha384:
+    case OID_ecdsa_with_sha384:
+      return DIGEST_sha384();
+    case OID_rsasign_with_sha512:
+    case OID_ecdsa_with_sha512:
+      return DIGEST_sha512();
+    case OID_rsasign_with_sm3:
+    case OID_sm2sign_with_sm3:
+      return DIGEST_sm3();
+    default:
+      return NULL;
+  }
+}
+
+int cnet_tls_server_end_point_binding_from_certificate(
+    const uint8_t *certificate, size_t certificate_size,
+    uint8_t *output, size_t capacity, size_t *out_size) {
+  uint8_t digest_bytes[DIGEST_MAX_SIZE];
+  const DIGEST *digest_algor;
+  size_t digest_size = 0u;
+  int signature_algor = OID_undef;
+  size_t clear_size;
+
+  if (output == NULL || capacity == 0u || out_size == NULL ||
+      certificate == NULL || certificate_size == 0u)
+    return SALTS_EINVAL;
+  clear_size = capacity < CNET_TLS_SERVER_END_POINT_MAX_BYTES
+                   ? capacity
+                   : CNET_TLS_SERVER_END_POINT_MAX_BYTES;
+  memset(output, 0, clear_size);
+  *out_size = 0u;
+
+  if (x509_cert_get_signature_algor(certificate, certificate_size,
+                                    &signature_algor) != 1)
+    return SALTS_EPROTO;
+  digest_algor = cnet_tls_server_end_point_digest(signature_algor);
+  if (digest_algor == NULL ||
+      digest_algor->digest_size > CNET_TLS_SERVER_END_POINT_MAX_BYTES)
+    return SALTS_ENOTSUP;
+
+  *out_size = digest_algor->digest_size;
+  if (capacity < digest_algor->digest_size) return SALTS_EMSGSIZE;
+  if (digest(digest_algor, certificate, certificate_size, digest_bytes,
+             &digest_size) != 1 ||
+      digest_size != digest_algor->digest_size) {
+    memset(digest_bytes, 0, sizeof(digest_bytes));
+    return SALTS_EIO;
+  }
+  memcpy(output, digest_bytes, digest_size);
+  memset(digest_bytes, 0, sizeof(digest_bytes));
+  return SALTS_OK;
+}
+
+int cnet_tls_state_server_end_point_binding(
+    const cnet_tls_state *state, uint8_t *output, size_t capacity,
+    size_t *out_size) {
+  const uint8_t *certificate = NULL;
+  size_t certificate_size = 0u;
+  size_t clear_size;
+  int result;
+
+  if (output == NULL || capacity == 0u || out_size == NULL) return SALTS_EINVAL;
+  clear_size = capacity < CNET_TLS_SERVER_END_POINT_MAX_BYTES
+                   ? capacity
+                   : CNET_TLS_SERVER_END_POINT_MAX_BYTES;
+  memset(output, 0, clear_size);
+  *out_size = 0u;
+  if (state == NULL || CNET_TLS_ENGINE(state) == NULL ||
+      !state->handshake_complete)
+    return SALTS_ENOTCONN;
+
+  result = tls_get_peer_certificate(&CNET_TLS_ENGINE(state)->connection,
+                                    &certificate, &certificate_size);
+  if (result < 0) return SALTS_EIO;
+  if (result == 0) return SALTS_ENOENT;
+  return cnet_tls_server_end_point_binding_from_certificate(
+      certificate, certificate_size, output, capacity, out_size);
 }
 
 int cnet_tls_state_export_channel_binding(
