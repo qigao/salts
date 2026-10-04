@@ -820,6 +820,29 @@ int cnet_shards_tls_peer_certificate_sha256(
              : SALTS_ENOENT;
 }
 
+int cnet_shards_tls_server_end_point_binding(
+    cnet_shards *shards, cnet_shard_connection connection,
+    uint8_t *output, size_t capacity, size_t *out_size) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_shard_record *record;
+  size_t clear_size;
+  if (output == NULL || capacity == 0u || out_size == NULL)
+    return SALTS_EINVAL;
+  clear_size = capacity < CNET_TLS_SERVER_END_POINT_MAX_BYTES
+                   ? capacity
+                   : CNET_TLS_SERVER_END_POINT_MAX_BYTES;
+  memset(output, 0, clear_size);
+  *out_size = 0u;
+  if (impl == NULL || !cnet_shard_connection_valid(connection))
+    return SALTS_ENOENT;
+  record = cnet_shards_get_record(impl, connection.shard);
+  return record != NULL
+             ? cnet_owner_tls_server_end_point_binding(
+                   &record->owner, connection.session, output, capacity,
+                   out_size)
+             : SALTS_ENOENT;
+}
+
 int cnet_shards_tls_export_channel_binding(cnet_shards *shards, cnet_shard_connection connection,
                                            uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
