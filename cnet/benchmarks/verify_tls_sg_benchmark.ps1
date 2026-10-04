@@ -12,7 +12,7 @@ if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
 }
 
 $rows = @(Import-Csv -LiteralPath $Path)
-$payloads = @(1024, 8192, 32768, 65536)
+$payloads = @(1024, 8192, 16384, 24576, 32768, 49152, 65536, 131072)
 $segments = @(2, 4, 8, 16)
 $expectedRows = $payloads.Count * (1 + 2 * $segments.Count)
 
@@ -56,6 +56,7 @@ function Validate-Row($row, [int]$payload, [int]$segmentCount,
   $p95 = Parse-Double $row.p95_ns_per_op "p95_ns_per_op"
   $rate = Parse-Double $row.median_bytes_per_second "median_bytes_per_second"
   $writes = Parse-Double $row.median_tls_write_calls_per_op "median_tls_write_calls_per_op"
+  $records = Parse-Double $row.median_tls_records_per_op "median_tls_records_per_op"
   $cipher = Parse-Double $row.median_cipher_bytes_per_op "median_cipher_bytes_per_op"
   $copied = Parse-Double $row.plaintext_copied_bytes_per_op "plaintext_copied_bytes_per_op"
   $owners = [int]$row.retained_owner_count
@@ -63,8 +64,15 @@ function Validate-Row($row, [int]$payload, [int]$segmentCount,
   if ($iterations -le 0 -or $replicates -ne 11) {
     throw "invalid benchmark sample dimensions payload=$payload segments=$segmentCount style=$style iterations=$iterations replicates=$replicates"
   }
-  if ($p50 -le 0.0 -or $p95 -lt $p50 -or $rate -le 0.0 -or $writes -le 0.0) {
-    throw "invalid timing/rate/calls payload=$payload segments=$segmentCount style=$style p50=$p50 p95=$p95 rate=$rate writes=$writes"
+  if ($p50 -le 0.0 -or $p95 -lt $p50 -or $rate -le 0.0 -or
+      $writes -le 0.0 -or $records -le 0.0) {
+    throw "invalid timing/rate/calls payload=$payload segments=$segmentCount style=$style p50=$p50 p95=$p95 rate=$rate writes=$writes records=$records"
+  }
+
+  $segmentBytes = [int]($payload / $segmentCount)
+  $expectedRecords = $segmentCount * [math]::Ceiling($segmentBytes / 16384.0)
+  if ([math]::Abs($records - $expectedRecords) -gt 0.000001) {
+    throw "TLS record count mismatch payload=$payload segments=$segmentCount style=$style expected=$expectedRecords actual=$records"
   }
   if ($cipher -le [double]$payload) {
     throw "cipher bytes/op must exceed plaintext bytes payload=$payload segments=$segmentCount style=$style cipher=$cipher"
@@ -82,6 +90,7 @@ function Validate-Row($row, [int]$payload, [int]$segmentCount,
     P95 = $p95
     Rate = $rate
     Writes = $writes
+    Records = $records
     Cipher = $cipher
   }
 }
@@ -109,9 +118,9 @@ foreach ($payload in $payloads) {
     $p50Delta = ($adjacent.P50 / $discontiguous.P50 - 1.0) * 100.0
     $p95Delta = ($adjacent.P95 / $discontiguous.P95 - 1.0) * 100.0
     $rateDelta = ($adjacent.Rate / $discontiguous.Rate - 1.0) * 100.0
-    $message = ("TLS SG adjacent evidence payload={0} segments={1}: calls={2:F3} vs {3:F3}, p50_delta={4:+0.00;-0.00;0.00}%, p95_delta={5:+0.00;-0.00;0.00}%, rate_delta={6:+0.00;-0.00;0.00}%" -f $payload, $segmentCount, $adjacent.Writes, $discontiguous.Writes, $p50Delta, $p95Delta, $rateDelta)
+    $message = ("TLS SG adjacent evidence payload={0} segments={1}: calls={2:F3} vs {3:F3}, records={4:F3} vs {5:F3}, p50_delta={6:+0.00;-0.00;0.00}%, p95_delta={7:+0.00;-0.00;0.00}%, rate_delta={8:+0.00;-0.00;0.00}%" -f $payload, $segmentCount, $adjacent.Writes, $discontiguous.Writes, $adjacent.Records, $discontiguous.Records, $p50Delta, $p95Delta, $rateDelta)
     Write-Host $message
   }
 }
 
-Write-Host "TLS retained SG benchmark contract passed: backend=$Backend rows=$($rows.Count), adjacent/discontiguous layouts, zero plaintext copies, retained-owner counts, provider-call collapse"
+Write-Host "TLS retained SG benchmark contract passed: backend=$Backend rows=$($rows.Count), 1K..128K record transitions, adjacent/discontiguous layouts, zero plaintext copies, retained-owner counts, provider-call collapse"
