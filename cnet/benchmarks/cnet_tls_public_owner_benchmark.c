@@ -392,6 +392,25 @@ static int tls_public_pair_init(
 static void tls_public_pair_destroy(tls_public_pair *pair) {
   if (pair == NULL) return;
 
+  if (pair->client_initialized && pair->client_probe.connected &&
+      !pair->client_probe.terminal)
+    (void)cnet_close(
+        &pair->client, pair->client_probe.connection);
+  if (pair->server_initialized && pair->server_probe.connected &&
+      !pair->server_probe.terminal)
+    (void)cnet_close(
+        &pair->server, pair->server_probe.connection);
+  if (pair->client_initialized && pair->server_initialized) {
+    const uint64_t deadline =
+        salts_monotonic_ms() + TLS_PUBLIC_TIMEOUT_MS;
+    while ((!pair->client_probe.terminal ||
+            !pair->server_probe.terminal) &&
+           salts_monotonic_ms() < deadline) {
+      if (tls_public_drive(pair, 0u) != SALTS_OK) break;
+      salts_thread_yield();
+    }
+  }
+
   if (pair->listener_initialized) {
     (void)cnet_listener_close(&pair->listener);
     (void)cnet_listener_destroy(&pair->listener);
