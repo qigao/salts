@@ -647,6 +647,25 @@ jobs:
           ctest --test-dir "${{ matrix.build_dir }}" -R '^(cflow_seeded_reduce_test|cflow_pipeline_test|cflow_plan_managed_test|cflow_parallel_reduce_test|cflow_io_native_test|cflow_io_native(_sharded)?_adapter_test|cflow_io_cnet_adapter_test|cflow_header_cpp_test|cflow_cnet_header_cpp_test|cflow_cnet_dependency_contract_test|cflow_pipe_data_plane_contract_test)$' --timeout 60 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Run CFlow ordered parallel reduce benchmark
+        if: needs.scope.outputs.cflow == 'true' && matrix.family == 'linux' && matrix.backend == 'io_uring'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 \
+            --target cflow_parallel_reduce_benchmark
+          mkdir -p native-io-results
+          benchmark="$GITHUB_WORKSPACE/${{ matrix.build_dir }}/bin/cflow_parallel_reduce_benchmark"
+          test -x "$benchmark"
+          "$benchmark" | tee native-io-results/cflow-parallel-reduce.txt
+          {
+            echo ""
+            echo "## CFlow ordered parallel reduce measurement"
+            echo '~~~text'
+            cat native-io-results/cflow-parallel-reduce.txt
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Run CNet contract tests
         if: needs.scope.outputs.cnet_contracts == 'true'
         shell: pwsh
