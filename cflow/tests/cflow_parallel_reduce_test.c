@@ -1,6 +1,7 @@
 #include "tinytest.h"
 
 #include <cflow/cflow.h>
+#include <cflow/plan_internal.h>
 #include <salts/thread.h>
 
 #include <stdint.h>
