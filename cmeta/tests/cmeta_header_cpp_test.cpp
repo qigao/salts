@@ -47,6 +47,10 @@ static_assert(std::is_standard_layout_v<cmeta_interface_desc>,
 static_assert(std::is_same_v<decltype(&cmeta_data_enum_assign_bits),
               cmeta_status (*)(const cmeta_data_desc *, void *, uint64_t)>,
               "canonical enum assignment does not narrow through int64_t");
+static_assert(std::is_same_v<decltype(&cmeta_declared_type_application_equal),
+              bool (*)(const cmeta_declared_type *,
+                       const cmeta_declared_type *)>,
+              "declared generic application inspection remains a plain C API");
 
 Struct(cmeta_cpp_record,
     (int, value),
