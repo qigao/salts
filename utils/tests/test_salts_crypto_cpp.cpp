@@ -23,6 +23,7 @@ spec("salts_crypto C++ ABI") {
     std::uint8_t des_key[SALTS_DES_KEY_BYTES] = {};
     std::uint8_t des_iv[SALTS_DES_BLOCK_BYTES] = {};
     std::uint8_t des_data[SALTS_DES_BLOCK_BYTES] = {};
+    salts_sha256_stream *stream = nullptr;
     int equal = 0;
 
     check_equal(salts_md5("abc", static_cast<std::size_t>(3), md5), SALTS_OK);
@@ -38,6 +39,12 @@ spec("salts_crypto C++ ABI") {
                                   "data", static_cast<std::size_t>(4),
                                   sha256_mac),
                 SALTS_OK);
+    check_equal(salts_sha256_stream_create(&stream), SALTS_OK);
+    check_equal(salts_sha256_stream_update(stream, "abc", static_cast<std::size_t>(3)),
+                SALTS_OK);
+    check_equal(salts_sha256_stream_finish(stream, sha256_mac), SALTS_OK);
+    salts_sha256_stream_destroy(stream);
+    stream = nullptr;
     check_equal(salts_des_cbc_encrypt(des_key, des_iv, des_data,
                                       sizeof(des_data), des_data),
                 SALTS_OK);
@@ -52,5 +59,6 @@ spec("salts_crypto C++ ABI") {
                 SALTS_OK);
     check_equal(salts_crypto_equal(md5, md5, sizeof(md5), &equal), SALTS_OK);
     check_equal(equal, 1);
+    salts_crypto_clear(sha256_mac, sizeof(sha256_mac));
   }
 }
