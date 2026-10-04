@@ -19,7 +19,7 @@ for raw in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
 expected_modes = {"push", "echo"}
 expected_temperatures = {"fresh", "warm"}
 expected_payloads = {16384, 32768, 65536}
-expected_owners = {1, 2, 4}
+expected_owners = {1, 2, 4, 8}
 
 groups = {}
 for row in rows:
@@ -104,7 +104,7 @@ for mode in ("push", "echo"):
             baseline = groups[(mode, temp, payload, 1)]
             baseline_rate = median(baseline, "ops_per_second")
             baseline_cpu = median(baseline, "cpu_ns_per_op")
-            for owners in (1, 2, 4):
+            for owners in (1, 2, 4, 8):
                 points = groups[(mode, temp, payload, owners)]
                 rate = median(points, "ops_per_second")
                 cpu = median(points, "cpu_ns_per_op")
