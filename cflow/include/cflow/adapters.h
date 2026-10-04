@@ -45,7 +45,8 @@ bool cflow_collect_result_is_ok(cflow_collect_result result);
 
 /* cflow_result owns one contiguous value buffer. Result-producing adapters
  * accept only graphs whose value types have TRIVIAL_COPY and TRIVIAL_DESTROY;
- * sequential compiled Plans may additionally return COPY/MOVE/DESTROY values.
+ * compiled Plans may additionally return COPY/MOVE/DESTROY values through the
+ * sequential path and eligible unseeded associative ordered parallel reduce.
  * cflow_result_destroy() applies the result type's lifecycle when required. */
 
 /* Byte collection is a façade over Reactive Subscription execution. Structured
