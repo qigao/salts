@@ -53,7 +53,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
  * Header-local Range capability generators
  * ------------------------------------------------------------------------- */
 
-#define CMETA_CONTAINER1_INDEX_RANGE_DEFINE_WITH_TYPE(name, type, type_desc, prefix, flags, version_accessor, collector_factory) \
+#define CMETA_CONTAINER1_INDEX_RANGE_DEFINE_WITH_TYPE_EXT(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr) \
     CMETA_LOCAL const cmeta_type_desc name##_element_cmeta_type = { \
         CMETA_CONTAINER_STR(type), sizeof(type), _Alignof(type), CMETA_T_OBJECT, NULL, NULL, NULL \
     }; \
@@ -95,12 +95,15 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, \
         (type_desc), NULL, NULL, \
-        name##_cmeta_erased_range, NULL, NULL, NULL, (collector_factory), NULL \
+        name##_cmeta_erased_range, NULL, NULL, NULL, (collector_factory), (ext_expr) \
     };
+#define CMETA_CONTAINER1_INDEX_RANGE_DEFINE_WITH_TYPE(name, type, type_desc, prefix, flags, version_accessor, collector_factory) \
+    CMETA_CONTAINER1_INDEX_RANGE_DEFINE_WITH_TYPE_EXT(name, type, type_desc, prefix, flags, version_accessor, collector_factory, NULL)
+
 
 #define CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name, type, prefix, flags, version_accessor, collector_factory) \
     CMETA_CONTAINER1_INDEX_RANGE_DEFINE_WITH_TYPE(name, type, CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), prefix, flags, version_accessor, collector_factory)
-#define CMETA_CONTAINER1_LINK_RANGE_DEFINE_WITH_TYPE(name, type, type_desc, prefix, flags, version_accessor, collector_factory) \
+#define CMETA_CONTAINER1_LINK_RANGE_DEFINE_WITH_TYPE_EXT(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr) \
     CMETA_LOCAL const cmeta_type_desc name##_element_cmeta_type = { \
         CMETA_CONTAINER_STR(type), sizeof(type), _Alignof(type), CMETA_T_OBJECT, NULL, NULL, NULL \
     }; \
@@ -137,8 +140,11 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, \
         (type_desc), NULL, NULL, \
-        name##_cmeta_erased_range, NULL, NULL, NULL, (collector_factory), NULL \
+        name##_cmeta_erased_range, NULL, NULL, NULL, (collector_factory), (ext_expr) \
     };
+#define CMETA_CONTAINER1_LINK_RANGE_DEFINE_WITH_TYPE(name, type, type_desc, prefix, flags, version_accessor, collector_factory) \
+    CMETA_CONTAINER1_LINK_RANGE_DEFINE_WITH_TYPE_EXT(name, type, type_desc, prefix, flags, version_accessor, collector_factory, NULL)
+
 
 #define CMETA_CONTAINER1_LINK_RANGE_DEFINE(name, type, prefix, flags, version_accessor, collector_factory) \
     CMETA_CONTAINER1_LINK_RANGE_DEFINE_WITH_TYPE(name, type, CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), prefix, flags, version_accessor, collector_factory)
@@ -409,7 +415,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
  * Sparse one-type Range (set/hash-set style)
  * ------------------------------------------------------------------------- */
 
-#define CMETA_CONTAINER1_SLOT_RANGE_DEFINE_WITH_TYPE(name, type, type_desc, prefix, flags, version_accessor, collector_factory) \
+#define CMETA_CONTAINER1_SLOT_RANGE_DEFINE_WITH_TYPE_EXT(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr) \
     CMETA_LOCAL const cmeta_type_desc name##_element_cmeta_type = { \
         CMETA_CONTAINER_STR(type), sizeof(type), _Alignof(type), CMETA_T_OBJECT, NULL, NULL, NULL \
     }; \
@@ -455,8 +461,11 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, \
         (type_desc), NULL, NULL, \
-        name##_cmeta_erased_range, NULL, NULL, NULL, (collector_factory), NULL \
+        name##_cmeta_erased_range, NULL, NULL, NULL, (collector_factory), (ext_expr) \
     };
+#define CMETA_CONTAINER1_SLOT_RANGE_DEFINE_WITH_TYPE(name, type, type_desc, prefix, flags, version_accessor, collector_factory) \
+    CMETA_CONTAINER1_SLOT_RANGE_DEFINE_WITH_TYPE_EXT(name, type, type_desc, prefix, flags, version_accessor, collector_factory, NULL)
+
 
 #define CMETA_CONTAINER1_SLOT_RANGE_DEFINE(name, type, prefix, flags, version_accessor, collector_factory) \
     CMETA_CONTAINER1_SLOT_RANGE_DEFINE_WITH_TYPE(name, type, CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), prefix, flags, version_accessor, collector_factory)
@@ -515,7 +524,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         CMETA_TYPEOF_OR(value_type, &name##_value_cmeta_type), \
         semantic_flags, equal_member, hash_member, compare_member)
 
-#define CMETA_CONTAINER2_RANGES_DEFINE_WITH_TYPES(name, key_type, value_type, key_desc, value_desc, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags, version_accessor, collector_factory) \
+#define CMETA_CONTAINER2_RANGES_DEFINE_WITH_TYPES_EXT(name, key_type, value_type, key_desc, value_desc, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags, version_accessor, collector_factory, ext_expr) \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
         CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, NULL, NULL \
     }; \
@@ -633,8 +642,11 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         (key_desc), \
         (value_desc), \
         name##_cmeta_erased_entries_range, name##_cmeta_erased_keys_range, name##_cmeta_erased_values_range, \
-        name##_cmeta_erased_entries_range, (collector_factory), NULL \
+        name##_cmeta_erased_entries_range, (collector_factory), (ext_expr) \
     };
+#define CMETA_CONTAINER2_RANGES_DEFINE_WITH_TYPES(name, key_type, value_type, key_desc, value_desc, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags, version_accessor, collector_factory) \
+    CMETA_CONTAINER2_RANGES_DEFINE_WITH_TYPES_EXT(name, key_type, value_type, key_desc, value_desc, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags, version_accessor, collector_factory, NULL)
+
 
 #define CMETA_CONTAINER2_RANGES_DEFINE(name, key_type, value_type, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags, version_accessor, collector_factory) \
     CMETA_CONTAINER2_RANGES_DEFINE_WITH_TYPES(name, key_type, value_type, \
@@ -645,7 +657,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
 /* Ordered trees expose stable derived entry links. Their cursor follows one
  * link per next() call, avoiding repeated rank scans while retaining the
  * public allocation-free cmeta_range contract. */
-#define CMETA_CONTAINER2_LINK_RANGES_DEFINE_WITH_TYPES(name, key_type, value_type, key_desc, value_desc, prefix, key_flags, value_flags, entry_flags, version_accessor, collector_factory) \
+#define CMETA_CONTAINER2_LINK_RANGES_DEFINE_WITH_TYPES_EXT(name, key_type, value_type, key_desc, value_desc, prefix, key_flags, value_flags, entry_flags, version_accessor, collector_factory, ext_expr) \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
         CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, NULL, NULL \
     }; \
@@ -705,8 +717,11 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
     CMETA_INLINE cmeta_range name##_cmeta_erased_values_range(const void *object) { return name##_values_range((const name *)object); } \
     CMETA_INLINE cmeta_range name##_cmeta_erased_entries_range(const void *object) { return name##_entries_range((const name *)object); } \
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
-        CMETA_CONTAINER_STR(name), &name##_cmeta_type, NULL, (key_desc), (value_desc), name##_cmeta_erased_entries_range, name##_cmeta_erased_keys_range, name##_cmeta_erased_values_range, name##_cmeta_erased_entries_range, (collector_factory), NULL \
+        CMETA_CONTAINER_STR(name), &name##_cmeta_type, NULL, (key_desc), (value_desc), name##_cmeta_erased_entries_range, name##_cmeta_erased_keys_range, name##_cmeta_erased_values_range, name##_cmeta_erased_entries_range, (collector_factory), (ext_expr) \
     };
+
+#define CMETA_CONTAINER2_LINK_RANGES_DEFINE_WITH_TYPES(name, key_type, value_type, key_desc, value_desc, prefix, key_flags, value_flags, entry_flags, version_accessor, collector_factory) \
+    CMETA_CONTAINER2_LINK_RANGES_DEFINE_WITH_TYPES_EXT(name, key_type, value_type, key_desc, value_desc, prefix, key_flags, value_flags, entry_flags, version_accessor, collector_factory, NULL)
 
 
 #define CMETA_CONTAINER2_LINK_RANGES_DEFINE(name, key_type, value_type, prefix, key_flags, value_flags, entry_flags, version_accessor, collector_factory) \

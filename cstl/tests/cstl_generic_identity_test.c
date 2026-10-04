@@ -20,6 +20,16 @@ static const cmeta_type_desc generic_only_key_type = {
     .identity = &generic_only_key_identity
 };
 
+typed(Vec, NamedIntVec, int);
+typed(Set, NamedIntSet, int);
+typed(Map, NamedIntLongMap, int, long);
+
+typed(Vec, ExplicitIntVec, int, &cmeta_type_int, &cmeta_data_int);
+typed(Set, ExplicitIntSet, int, &cmeta_type_int, &cmeta_data_int);
+typed(Map, ExplicitIntLongMap, int, long,
+      &cmeta_type_int, &cmeta_data_int,
+      &cmeta_type_long, &cmeta_data_long);
+
 /* Canonical constructors are part of the generic metadata contract. Keeping
  * these references direct makes the public-symbol requirement compile-time
  * visible instead of relying only on runtime descriptor traversal. */
@@ -111,6 +121,77 @@ suite("CSTL generic type identities") {
         check_true(cmeta_container_type_application_valid(&values));
         check_true(cmeta_type_equal(
             cmeta_container_type_argument(&values, 0u), &cmeta_type_int));
+    }
+
+    it("publishes canonical applications for named typed facades") {
+        NamedIntVec named_vec = {0};
+        NamedIntSet named_set = {0};
+        NamedIntLongMap named_map = {0};
+        ExplicitIntVec explicit_vec = {0};
+        ExplicitIntSet explicit_set = {0};
+        ExplicitIntLongMap explicit_map = {0};
+
+        check_equal(NamedIntVec_init(&named_vec, 4u), STL_OK);
+        check_equal(NamedIntSet_init(&named_set, 4u), STL_OK);
+        check_equal(NamedIntLongMap_init(&named_map, 4u), STL_OK);
+        check_equal(ExplicitIntVec_init(&explicit_vec, 4u), STL_OK);
+        check_equal(ExplicitIntSet_init(&explicit_set, 4u), STL_OK);
+        check_equal(ExplicitIntLongMap_init(&explicit_map, 4u), STL_OK);
+
+#define CHECK_NAMED_UNARY(handle_, generic_)                                   \
+        do {                                                                    \
+            check_true(cmeta_container_type_application_valid(&(handle_)));     \
+            check_true(cmeta_container_type_constructor(&(handle_)) ==          \
+                       &(generic_));                                             \
+            check_equal(cmeta_container_type_arity(&(handle_)), (size_t)1u);    \
+            check_true(cmeta_type_equal(                                        \
+                cmeta_container_type_argument(&(handle_), 0u),                  \
+                &cmeta_type_int));                                               \
+            check_null(cmeta_container_type_argument(&(handle_), 1u));          \
+        } while (0)
+
+#define CHECK_NAMED_BINARY(handle_, generic_)                                  \
+        do {                                                                    \
+            check_true(cmeta_container_type_application_valid(&(handle_)));     \
+            check_true(cmeta_container_type_constructor(&(handle_)) ==          \
+                       &(generic_));                                             \
+            check_equal(cmeta_container_type_arity(&(handle_)), (size_t)2u);    \
+            check_true(cmeta_type_equal(                                        \
+                cmeta_container_type_argument(&(handle_), 0u),                  \
+                &cmeta_type_int));                                               \
+            check_true(cmeta_type_equal(                                        \
+                cmeta_container_type_argument(&(handle_), 1u),                  \
+                &cmeta_type_long));                                              \
+            check_null(cmeta_container_type_argument(&(handle_), 2u));          \
+        } while (0)
+
+        CHECK_NAMED_UNARY(named_vec, stl_vec_generic_desc);
+        CHECK_NAMED_UNARY(named_set, stl_set_generic_desc);
+        CHECK_NAMED_BINARY(named_map, stl_map_generic_desc);
+        CHECK_NAMED_UNARY(explicit_vec, stl_vec_generic_desc);
+        CHECK_NAMED_UNARY(explicit_set, stl_set_generic_desc);
+        CHECK_NAMED_BINARY(explicit_map, stl_map_generic_desc);
+
+        NamedIntVec_destroy(&named_vec);
+        NamedIntSet_destroy(&named_set);
+        NamedIntLongMap_destroy(&named_map);
+        ExplicitIntVec_destroy(&explicit_vec);
+        ExplicitIntSet_destroy(&explicit_set);
+        ExplicitIntLongMap_destroy(&explicit_map);
+
+        check_null(cmeta_container_type_constructor(&named_vec));
+        check_null(cmeta_container_type_constructor(&explicit_map));
+
+        check_equal(NamedIntVec_init(&named_vec, 2u), STL_OK);
+        check_equal(ExplicitIntLongMap_init(&explicit_map, 2u), STL_OK);
+        CHECK_NAMED_UNARY(named_vec, stl_vec_generic_desc);
+        CHECK_NAMED_BINARY(explicit_map, stl_map_generic_desc);
+
+        NamedIntVec_destroy(&named_vec);
+        ExplicitIntLongMap_destroy(&explicit_map);
+
+#undef CHECK_NAMED_UNARY
+#undef CHECK_NAMED_BINARY
     }
 
     it("does not invent a generic application for a raw byte container") {

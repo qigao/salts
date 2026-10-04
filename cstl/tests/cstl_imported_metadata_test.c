@@ -30,6 +30,12 @@ spec("CSTL imported semantic metadata") {
         ImportSafeTstrVec_collection_data.collection_ops->storage_type));
 
     check_equal(ImportSafeTstrVec_init(&values, 8u), STL_OK);
+    check_true(cmeta_container_type_application_valid(&values));
+    check_true(cmeta_container_type_constructor(&values) ==
+               &stl_vec_generic_desc);
+    check_true(cmeta_container_type_argument(&values, 0u) ==
+               SALTS_TSTR_CMETA_TYPE_REF);
+    check_null(cmeta_container_type_argument(&values, 1u));
     check_equal(ImportSafeTstrVec_push(&values, source), STL_OK);
     check_equal(ImportSafeTstrVec_size(&values), (size_t)1u);
 
@@ -91,6 +97,14 @@ spec("CSTL imported semantic metadata") {
     check_not_null(query);
 
     check_equal(ImportSafeTstrIntMap_init(&values, 4u), STL_OK);
+    check_true(cmeta_container_type_application_valid(&values));
+    check_true(cmeta_container_type_constructor(&values) ==
+               &stl_map_generic_desc);
+    check_true(cmeta_container_type_argument(&values, 0u) ==
+               SALTS_TSTR_CMETA_TYPE_REF);
+    check_true(cmeta_container_type_argument(&values, 1u) ==
+               &cmeta_type_int);
+    check_null(cmeta_container_type_argument(&values, 2u));
     check_equal(ImportSafeTstrIntMap_put(&values, beta, 20), STL_OK);
     check_equal(ImportSafeTstrIntMap_put(&values, alpha, 10), STL_OK);
     check_equal(ImportSafeTstrIntMap_size(&values), (size_t)2u);
