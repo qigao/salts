@@ -8,6 +8,7 @@ and CI caches are intentionally excluded.
 ## Package layout
 
 - `sdk/linux-x64/` - Linux x64 install prefix
+- `sdk/linux-arm64/` - Linux arm64 install prefix
 - `sdk/windows-x64/` - Windows x64 install prefix
 - `sdk/macos-x64/` or `sdk/macos-arm64/` - macOS install prefix matching the release runner
 - `sdk/android-arm64-v8a/` - Android arm64-v8a install prefix

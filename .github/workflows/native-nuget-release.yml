@@ -167,6 +167,88 @@ jobs:
           if-no-files-found: error
           compression-level: 9
 
+  linux_arm64:
+    name: Linux arm64 SDK
+    needs: metadata
+    if: needs.metadata.outputs.release == 'true'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.release_sha }}
+      - name: Set up shared build dependencies
+        id: shared_deps
+        uses: ./.github/actions/setup-re2c-tools
+      - name: Restore arm64-linux dependencies cache-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "aarch64"
+          rm -rf "$GITHUB_WORKSPACE/vcpkg_installed"
+          "$VCPKG_ROOT/vcpkg" install --x-manifest-root=. --x-install-root="$GITHUB_WORKSPACE/vcpkg_installed" --triplet arm64-linux --only-binarycaching
+          test -d "$GITHUB_WORKSPACE/vcpkg_installed/arm64-linux"
+      - name: Configure native arm64 Release SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build/linux-arm64-release -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
+            -DVCPKG_TARGET_TRIPLET=arm64-linux -DVCPKG_MANIFEST_MODE=OFF \
+            -DVCPKG_INSTALLED_DIR="$GITHUB_WORKSPACE/vcpkg_installed" \
+            -DSALTS_ENABLE_EPOLL_READINESS=ON -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF \
+            -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/stage/sdk/linux-arm64"
+      - name: Build native arm64 Release SDK
+        run: cmake --build build/linux-arm64-release --parallel 2
+      - name: Configure portable arm64 smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build/linux-arm64-smoke -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
+            -DVCPKG_TARGET_TRIPLET=arm64-linux -DVCPKG_MANIFEST_MODE=OFF \
+            -DVCPKG_INSTALLED_DIR="$GITHUB_WORKSPACE/vcpkg_installed" \
+            -DSALTS_ENABLE_EPOLL_READINESS=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+      - name: Build and run portable arm64 smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/linux-arm64-smoke --parallel 2 --target native_io_header_cpp_test cmeta_header_cpp_test cflow_header_cpp_test cnet_header_cpp_test
+          ctest --test-dir build/linux-arm64-smoke --no-tests=error --output-on-failure --timeout 60 -R '^(native_io_header_cpp_test|cmeta_header_cpp_test|cflow_header_cpp_test|cnet_header_cpp_test)$'
+      - name: Install and qualify native arm64 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$GITHUB_WORKSPACE/stage/sdk/linux-arm64"
+          cmake --install build/linux-arm64-release --strip
+          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/cmeta/function.h"
+          test -f "$prefix/include/cflow/function_projection.h"
+          test -f "$prefix/include/cmeta/interface.h"
+          test -f "$prefix/include/tinymeta/equality.h"
+          grep -F "Salts::CMeta" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
+          version=${{ needs.metadata.outputs.version }}
+          commit=${{ needs.metadata.outputs.release_sha }}
+          os=linux
+          arch=arm64
+          rid=linux-arm64
+          triplet=arm64-linux
+          profile=release
+          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
+          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salts-sdk-linux-arm64
+          path: stage/sdk
+          if-no-files-found: error
+          compression-level: 9
+
   macos:
     name: macOS SDK
     needs: metadata
@@ -543,7 +625,7 @@ jobs:
 
   pack:
     name: Pack Salts.Native
-    needs: [metadata, linux, macos, windows, android, ios]
+    needs: [metadata, linux, linux_arm64, macos, windows, android, ios]
     if: needs.metadata.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -565,6 +647,15 @@ jobs:
           grep -F "Salts::CFlow" package/sdk/linux-x64/lib/cmake/Salts/SaltsTargets.cmake
           test -f package/sdk/linux-x64/include/cmeta/interface.h
           test -f package/sdk/linux-x64/include/tinymeta/equality.h
+          test -f package/sdk/linux-arm64/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
+          test -f package/sdk/linux-arm64/include/cmeta/function.h
+          test -f package/sdk/linux-arm64/include/cflow/function_projection.h
+          test -f package/sdk/linux-arm64/include/cmeta/interface.h
+          test -f package/sdk/linux-arm64/include/tinymeta/equality.h
+          grep -F "Salts::CMeta" package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
+          grep -F "Salts::CFlow" package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
+          grep -F "Salts::CNet" package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
           test -f package/sdk/windows-x64/lib/cmake/Salts/SaltsConfig.cmake
           test -f package/sdk/windows-x64/include/cmeta/function.h
           test -f package/sdk/windows-x64/include/cflow/function_projection.h
@@ -606,7 +697,7 @@ jobs:
           grep -F "cmeta_interface_desc_equal" "$mac_interface"
           grep -F "cmeta_function_abi_desc" "$mac_header"
           grep -F "cflow_function_typed_filter_projection_admit" "$mac_projection"
-          test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 6
+          test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 7
 
           mapfile -t cache_contracts < <(
             grep -h '^vcpkg_cache_contract=' package/sdk/*/salts-sdk-manifest.txt |
@@ -649,9 +740,49 @@ jobs:
           path: dist/*.nupkg
           if-no-files-found: error
 
+  qualify_linux_arm64:
+    name: Qualify restored Linux arm64 package
+    needs: [metadata, pack]
+    if: needs.metadata.outputs.release == 'true'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: salts-native-nuget
+          path: dist
+      - name: Restore packed Linux arm64 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "aarch64"
+          unzip -q "dist/Salts.Native.${{ needs.metadata.outputs.version }}.nupkg" -d restored
+          test -f restored/sdk/linux-arm64/lib/cmake/Salts/SaltsConfig.cmake
+          echo "SALTS_ARM64_PREFIX=$GITHUB_WORKSPACE/restored/sdk/linux-arm64" >> "$GITHUB_ENV"
+      - name: Build installed-target consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p consumer
+          cat > consumer/CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.20)
+          project(salts_linux_arm64_consumer C)
+          find_package(Salts CONFIG REQUIRED)
+          add_executable(salts_linux_arm64_consumer main.c)
+          target_link_libraries(salts_linux_arm64_consumer PRIVATE Salts::CMeta Salts::CFlow Salts::CNet)
+          EOF
+          cat > consumer/main.c <<'EOF'
+          #include <cmeta/function.h>
+          #include <cflow/function_projection.h>
+          #include <cnet/cnet.h>
+          int main(void) { return 0; }
+          EOF
+          cmake -S consumer -B consumer/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$SALTS_ARM64_PREFIX"
+          cmake --build consumer/build --parallel 2
+          consumer/build/salts_linux_arm64_consumer
+
   publish:
     name: Publish package and GitHub Release
-    needs: [metadata, pack]
+    needs: [metadata, pack, qualify_linux_arm64]
     if: needs.metadata.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
