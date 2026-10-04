@@ -22,6 +22,22 @@ static const uint8_t HMAC_MD5_HI_THERE[SALTS_MD5_DIGEST_BYTES] = {
     0x92, 0x94, 0x72, 0x7a, 0x36, 0x38, 0xbb, 0x1c,
     0x13, 0xf4, 0x8e, 0xf8, 0x15, 0x8b, 0xfc, 0x9d};
 
+static const uint8_t DES_CBC_KEY[SALTS_DES_KEY_BYTES] = {
+    0x01,0x23,0x45,0x67,0x89,0xab,0xcd,0xef};
+
+static const uint8_t DES_CBC_IV[SALTS_DES_BLOCK_BYTES] = {
+    0x12,0x34,0x56,0x78,0x90,0xab,0xcd,0xef};
+
+static const uint8_t DES_CBC_PLAINTEXT[24] = {
+    0x4e,0x6f,0x77,0x20,0x69,0x73,0x20,0x74,
+    0x68,0x65,0x20,0x74,0x69,0x6d,0x65,0x20,
+    0x66,0x6f,0x72,0x20,0x61,0x6c,0x6c,0x20};
+
+static const uint8_t DES_CBC_CIPHERTEXT[24] = {
+    0xe5,0xc7,0xcd,0xde,0x87,0x2b,0xf2,0x7c,
+    0x43,0xe9,0x34,0x00,0x8c,0x38,0x9c,0x0f,
+    0x68,0x37,0x88,0x49,0x9a,0x7c,0x05,0xf6};
+
 static const uint8_t AES128_CFB_KEY[SALTS_AES128_KEY_BYTES] = {
     0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
     0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c};
@@ -78,6 +94,37 @@ spec("salts_crypto") {
 
     check_equal(salts_hmac_md5(key, sizeof(key), "Hi There", 8u, mac), SALTS_OK);
     check_equal(memcmp(mac, HMAC_MD5_HI_THERE, sizeof(mac)), 0);
+  }
+
+  it("computes legacy DES-CBC known vector and decrypt round-trip") {
+    uint8_t encrypted[sizeof(DES_CBC_PLAINTEXT)];
+    uint8_t decrypted[sizeof(DES_CBC_PLAINTEXT)];
+
+    check_equal(salts_des_cbc_encrypt(
+                    DES_CBC_KEY, DES_CBC_IV,
+                    DES_CBC_PLAINTEXT, sizeof(DES_CBC_PLAINTEXT), encrypted),
+                SALTS_OK);
+    check_equal(memcmp(encrypted, DES_CBC_CIPHERTEXT, sizeof(encrypted)), 0);
+
+    check_equal(salts_des_cbc_decrypt(
+                    DES_CBC_KEY, DES_CBC_IV,
+                    encrypted, sizeof(encrypted), decrypted),
+                SALTS_OK);
+    check_equal(memcmp(decrypted, DES_CBC_PLAINTEXT, sizeof(decrypted)), 0);
+  }
+
+  it("supports in-place legacy DES-CBC") {
+    uint8_t buffer[sizeof(DES_CBC_PLAINTEXT)];
+    memcpy(buffer, DES_CBC_PLAINTEXT, sizeof(buffer));
+
+    check_equal(salts_des_cbc_encrypt(
+                    DES_CBC_KEY, DES_CBC_IV, buffer, sizeof(buffer), buffer),
+                SALTS_OK);
+    check_equal(memcmp(buffer, DES_CBC_CIPHERTEXT, sizeof(buffer)), 0);
+    check_equal(salts_des_cbc_decrypt(
+                    DES_CBC_KEY, DES_CBC_IV, buffer, sizeof(buffer), buffer),
+                SALTS_OK);
+    check_equal(memcmp(buffer, DES_CBC_PLAINTEXT, sizeof(buffer)), 0);
   }
 
   it("computes NIST AES-128-CFB128 encrypt and decrypt vectors") {
@@ -168,6 +215,22 @@ spec("salts_crypto") {
     check_equal(salts_hmac_sha256(NULL, 1u, "", 0u, mac), SALTS_EINVAL);
     check_equal(salts_hmac_sha256("", 0u, NULL, 1u, mac), SALTS_EINVAL);
     check_equal(salts_hmac_sha256("", 0u, "", 0u, NULL), SALTS_EINVAL);
+
+    check_equal(salts_des_cbc_encrypt(
+                    DES_CBC_KEY, DES_CBC_IV, NULL, 0u, NULL),
+                SALTS_OK);
+    check_equal(salts_des_cbc_encrypt(
+                    NULL, DES_CBC_IV, NULL, 0u, NULL),
+                SALTS_EINVAL);
+    check_equal(salts_des_cbc_encrypt(
+                    DES_CBC_KEY, NULL, NULL, 0u, NULL),
+                SALTS_EINVAL);
+    check_equal(salts_des_cbc_encrypt(
+                    DES_CBC_KEY, DES_CBC_IV, DES_CBC_PLAINTEXT, 7u, mac),
+                SALTS_EINVAL);
+    check_equal(salts_des_cbc_encrypt(
+                    DES_CBC_KEY, DES_CBC_IV, NULL, SALTS_DES_BLOCK_BYTES, mac),
+                SALTS_EINVAL);
 
     check_equal(salts_aes128_cfb_encrypt(
                     AES128_CFB_KEY, AES128_CFB_IV, NULL, 0u, NULL),

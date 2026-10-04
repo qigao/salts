@@ -1,6 +1,7 @@
 #include "salts_crypto.h"
 
 #include <gmssl/aes.h>
+#include <gmssl/des.h>
 #include <gmssl/digest.h>
 #include <gmssl/hmac.h>
 #include <gmssl/md5.h>
@@ -124,6 +125,37 @@ int salts_hmac_sha256(const void *key, size_t key_size,
                       uint8_t out[SALTS_SHA256_DIGEST_BYTES]) {
   return salts_hmac(DIGEST_sha256(), SALTS_SHA256_DIGEST_BYTES,
                     key, key_size, data, data_size, out);
+}
+
+static int salts_des_cbc_crypt(
+    const uint8_t key[SALTS_DES_KEY_BYTES],
+    const uint8_t iv[SALTS_DES_BLOCK_BYTES],
+    const void *input, size_t size, void *output, int decrypt) {
+  int result;
+
+  if (key == NULL || iv == NULL ||
+      (size % SALTS_DES_BLOCK_BYTES) != 0u ||
+      (size != 0u && (input == NULL || output == NULL)))
+    return SALTS_EINVAL;
+
+  result = decrypt
+      ? des_cbc_decrypt(key, iv, (const uint8_t *)input, size, (uint8_t *)output)
+      : des_cbc_encrypt(key, iv, (const uint8_t *)input, size, (uint8_t *)output);
+  return result == 1 ? SALTS_OK : SALTS_EIO;
+}
+
+int salts_des_cbc_encrypt(
+    const uint8_t key[SALTS_DES_KEY_BYTES],
+    const uint8_t iv[SALTS_DES_BLOCK_BYTES],
+    const void *input, size_t size, void *output) {
+  return salts_des_cbc_crypt(key, iv, input, size, output, 0);
+}
+
+int salts_des_cbc_decrypt(
+    const uint8_t key[SALTS_DES_KEY_BYTES],
+    const uint8_t iv[SALTS_DES_BLOCK_BYTES],
+    const void *input, size_t size, void *output) {
+  return salts_des_cbc_crypt(key, iv, input, size, output, 1);
 }
 
 static int salts_aes128_cfb_crypt(

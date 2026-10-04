@@ -16,6 +16,8 @@ extern "C" {
 #define SALTS_SHA256_DIGEST_BYTES 32u
 #define SALTS_AES128_KEY_BYTES 16u
 #define SALTS_AES_BLOCK_BYTES 16u
+#define SALTS_DES_KEY_BYTES 8u
+#define SALTS_DES_BLOCK_BYTES 8u
 
 /**
  * Compute MD5 over one contiguous byte range.
@@ -102,6 +104,44 @@ SALTS_C_API int salts_hmac_sha1(const void *key, size_t key_size,
 SALTS_C_API int salts_hmac_sha256(const void *key, size_t key_size,
                                   const void *data, size_t data_size,
                                   uint8_t out[SALTS_SHA256_DIGEST_BYTES]);
+
+/**
+ * Encrypt whole DES-CBC blocks.
+ *
+ * DES is exposed only for legacy protocol compatibility. Padding remains the
+ * responsibility of the protocol layer.
+ *
+ * @param key Caller-owned 8-byte DES key.
+ * @param iv Caller-owned 8-byte initial CBC block.
+ * @param input Input bytes; NULL is allowed only when size is zero.
+ * @param size Input/output byte count; must be a multiple of 8.
+ * @param output Output bytes; NULL is allowed only when size is zero. Input and
+ * output may alias exactly for in-place operation.
+ * @return SALTS_OK, SALTS_EINVAL, or SALTS_EIO.
+ */
+SALTS_C_API int salts_des_cbc_encrypt(
+    const uint8_t key[SALTS_DES_KEY_BYTES],
+    const uint8_t iv[SALTS_DES_BLOCK_BYTES],
+    const void *input, size_t size, void *output);
+
+/**
+ * Decrypt whole DES-CBC blocks.
+ *
+ * DES is exposed only for legacy protocol compatibility. Padding remains the
+ * responsibility of the protocol layer.
+ *
+ * @param key Caller-owned 8-byte DES key.
+ * @param iv Caller-owned 8-byte initial CBC block.
+ * @param input Input bytes; NULL is allowed only when size is zero.
+ * @param size Input/output byte count; must be a multiple of 8.
+ * @param output Output bytes; NULL is allowed only when size is zero. Input and
+ * output may alias exactly for in-place operation.
+ * @return SALTS_OK, SALTS_EINVAL, or SALTS_EIO.
+ */
+SALTS_C_API int salts_des_cbc_decrypt(
+    const uint8_t key[SALTS_DES_KEY_BYTES],
+    const uint8_t iv[SALTS_DES_BLOCK_BYTES],
+    const void *input, size_t size, void *output);
 
 /**
  * Encrypt one byte range with AES-128-CFB128.
