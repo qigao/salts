@@ -66,6 +66,9 @@ extern const cmeta_generic_desc cmeta_option_generic_desc;
 extern const cmeta_generic_desc cmeta_result_generic_desc;
 
 bool cmeta_generic_desc_valid(const cmeta_generic_desc *desc);
+/** Semantic constructor equality. Descriptor addresses may differ across TUs/DSOs. */
+bool cmeta_generic_desc_equal(const cmeta_generic_desc *a,
+                              const cmeta_generic_desc *b);
 bool cmeta_generic_accepts_arity(const cmeta_generic_desc *desc, size_t arity);
 bool cmeta_type_application_valid(
     const cmeta_generic_desc *constructor,

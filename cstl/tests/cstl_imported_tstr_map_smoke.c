@@ -57,11 +57,7 @@ int main(void) {
 
   set = ImportSafeTstrSmokeMap_receiver_method_set();
   if (!cmeta_receiver_method_set_valid(set) ||
-      set->owner_name == NULL ||
-      set->owner_name[0] != 'M' ||
-      set->owner_name[1] != 'a' ||
-      set->owner_name[2] != 'p' ||
-      set->owner_name[3] != '\0') {
+      !cmeta_generic_desc_equal(set->owner, &stl_map_generic_desc)) {
     rc = 7;
     goto cleanup_map;
   }

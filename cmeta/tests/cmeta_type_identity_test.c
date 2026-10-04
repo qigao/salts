@@ -60,6 +60,24 @@ static const cmeta_type_identity cmeta_test_canonical_pair_clone_application =
 
 const cmeta_type_identity *cmeta_type_identity_peer_pair(void);
 
+spec("CMeta generic descriptor identity") {
+  it("compares provider descriptors by stable constructor identity") {
+    cmeta_generic_desc clone = cmeta_option_generic_desc;
+    cmeta_generic_desc other = cmeta_result_generic_desc;
+
+    clone.display_name = "OptionClone";
+    check_true(cmeta_generic_desc_valid(&clone));
+    check_true(cmeta_generic_desc_equal(&cmeta_option_generic_desc, &clone));
+    check_true(cmeta_generic_desc_equal(&clone, &cmeta_option_generic_desc));
+    check_false(cmeta_generic_desc_equal(&clone, &other));
+
+    clone.stable_id = "";
+    check_false(cmeta_generic_desc_valid(&clone));
+    check_false(cmeta_generic_desc_equal(&cmeta_option_generic_desc, &clone));
+    check_false(cmeta_generic_desc_equal(NULL, &cmeta_option_generic_desc));
+  }
+}
+
 spec("CMeta generic type applications") {
   it("publishes canonical built-in value generic constructors") {
     check_true(cmeta_generic_desc_valid(&cmeta_pair_generic_desc));

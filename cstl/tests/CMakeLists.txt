@@ -132,7 +132,7 @@ if(NOT CMAKE_CROSSCOMPILING)
   cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_wrong_owner
     wrong_owner.cmeta.c
-    "generic owner 'Vec' does not match IntList owner 'List'")
+    "generic owner identity 'cstl.Vec' does not match IntList owner identity 'cstl.List'")
   cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_unknown_receiver
     unknown_receiver.cmeta.c

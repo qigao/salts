@@ -20,7 +20,7 @@ typedef struct cmeta_type_desc cmeta_type_desc;
  * A provider's bootstrap entry must compare the requested epoch with THIS
  * header constant before returning any descriptor pointers. Do not use a
  * host-resolved runtime query to advertise the provider's build epoch. */
-#define CMETA_REFLECTION_ABI_VERSION UINT32_C(2)
+#define CMETA_REFLECTION_ABI_VERSION UINT32_C(3)
 
 /* Returns the linked CMeta library's reflection epoch, for checking it against
  * the caller's headers. Plugin bootstrap must separately check its own epoch. */

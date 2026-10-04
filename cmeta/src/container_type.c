@@ -141,14 +141,6 @@ bool cmeta_container_type_application_valid(const void *object) {
         ops->constructor, ops->arity == 0u ? NULL : identities, ops->arity);
 }
 
-static bool cmeta_generic_same(const cmeta_generic_desc *left,
-                               const cmeta_generic_desc *right) {
-    if (left == right)
-        return left != NULL && cmeta_generic_desc_valid(left);
-    return cmeta_generic_desc_valid(left) && cmeta_generic_desc_valid(right) &&
-           strcmp(left->stable_id, right->stable_id) == 0;
-}
-
 cmeta_status cmeta_container_bind_types(
     void *object, const cmeta_declared_type *declared) {
     const cmeta_container_construct_ops *construction;
@@ -165,7 +157,7 @@ cmeta_status cmeta_container_bind_types(
 
     type_ops = cmeta_container_type_ops_of_descriptor(construction->descriptor);
     if (type_ops == NULL ||
-        !cmeta_generic_same(type_ops->constructor, declared->constructor) ||
+        !cmeta_generic_desc_equal(type_ops->constructor, declared->constructor) ||
         type_ops->arity != declared->arity)
         return CMETA_INVALID_ARGUMENT;
 

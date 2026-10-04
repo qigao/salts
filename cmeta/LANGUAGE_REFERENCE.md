@@ -333,7 +333,7 @@ Unload order is: stop new admissions, drain calls/runs, destroy dependent values
 and consumers while their callbacks are live, then release the final module
 reference. Validators require live storage and cannot detect an unloaded pointer.
 
-`CMETA_REFLECTION_ABI_VERSION` is the reflection layout epoch. The result-semantic FunctionDesc layout is reflection epoch 2. A provider bootstrap
+`CMETA_REFLECTION_ABI_VERSION` is the reflection layout epoch. Epoch 2 introduced result-semantic FunctionDesc layout; epoch 3 replaces receiver-method owner strings with optional canonical `cmeta_generic_desc` identity. Ordinary receiver methods use a null generic owner, while generic operation sets publish their constructor descriptor. A provider bootstrap
 must accept a fixed-width requested epoch and reject a mismatch **before publishing
 descriptor pointers**. The provider compares against its own header constant;
 `cmeta_reflection_abi_version()` returns the linked CMeta library's epoch and checks

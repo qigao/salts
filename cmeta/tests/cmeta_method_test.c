@@ -47,8 +47,15 @@ static const cmeta_receiver_method method_entries[] = {
 
 static const cmeta_receiver_method_set method_set = {
     sizeof(cmeta_receiver_method_set), &method_box_type,
-    method_entries, 1u, "Box"
+    method_entries, 1u, NULL
 };
+
+static const cmeta_generic_desc method_box_generic =
+    CMETA_GENERIC_DESC_INIT(
+        "test.MethodBox", "MethodBox", 1u, 1u, CMETA_GENERIC_HANDLE);
+static const cmeta_generic_desc method_other_generic =
+    CMETA_GENERIC_DESC_INIT(
+        "test.Other", "Other", 1u, 1u, CMETA_GENERIC_HANDLE);
 
 spec("CMeta receiver method set") {
     it("validates and finds a canonical receiver method") {
@@ -56,7 +63,7 @@ spec("CMeta receiver method set") {
 
         check_true(cmeta_receiver_method_reflection_valid(&method_entries[0]));
         check_true(cmeta_receiver_method_set_valid(&method_set));
-        check_equal(method_set.owner_name, "Box");
+        check_null(method_set.owner);
         method = cmeta_receiver_method_find(&method_set, "add");
         check_not_null(method);
         check_equal(method->name, "add");
@@ -65,11 +72,13 @@ spec("CMeta receiver method set") {
         check_null(cmeta_receiver_method_find(&method_set, "missing"));
     }
 
-    it("resolves receiver call semantics with precise diagnostics") {
+    it("resolves ordinary and generic owner semantics precisely") {
         cmeta_receiver_resolution resolution = CMETA_RECEIVER_RESOLUTION_INIT;
         const cmeta_type_desc *one_int[] = {&cmeta_type_int};
         const cmeta_type_desc *one_long[] = {&cmeta_type_long};
         cmeta_type_desc other_type = method_box_type;
+        cmeta_receiver_method_set generic_set = method_set;
+        cmeta_generic_desc generic_clone = method_box_generic;
         cmeta_receiver_resolve_status status;
 
         status = cmeta_receiver_method_resolve(
@@ -81,14 +90,25 @@ spec("CMeta receiver method set") {
 
         resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
         status = cmeta_receiver_method_resolve(
-            &method_set, &method_box_type, "Box", "add",
+            &method_set, &method_box_type, &method_box_generic, "add",
+            one_int, 1u, &resolution);
+        check_equal(status, CMETA_RECEIVER_RESOLVE_OWNER_MISMATCH);
+
+        generic_set.owner = &method_box_generic;
+        check_true(cmeta_receiver_method_set_valid(&generic_set));
+        check_true(cmeta_generic_desc_equal(
+            generic_set.owner, &generic_clone));
+
+        resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
+        status = cmeta_receiver_method_resolve(
+            &generic_set, &method_box_type, &generic_clone, "add",
             one_int, 1u, &resolution);
         check_equal(status, CMETA_RECEIVER_RESOLVE_OK);
         check_true(resolution.method == &method_entries[0]);
 
         resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
         status = cmeta_receiver_method_resolve(
-            &method_set, &method_box_type, "Other", "add",
+            &generic_set, &method_box_type, &method_other_generic, "add",
             one_int, 1u, &resolution);
         check_equal(status, CMETA_RECEIVER_RESOLVE_OWNER_MISMATCH);
 
@@ -165,9 +185,18 @@ spec("CMeta receiver method set") {
         invalid.receiver_type = &other_type;
         check_false(cmeta_receiver_method_set_valid(&invalid));
 
-        invalid = method_set;
-        invalid.owner_name = NULL;
-        check_false(cmeta_receiver_method_set_valid(&invalid));
+        {
+            const cmeta_generic_desc malformed_owner = {
+                .stable_id = "",
+                .display_name = "Malformed",
+                .min_arity = 1u,
+                .max_arity = 1u,
+                .category = CMETA_GENERIC_HANDLE
+            };
+            invalid = method_set;
+            invalid.owner = &malformed_owner;
+            check_false(cmeta_receiver_method_set_valid(&invalid));
+        }
     }
 
     it("rejects malformed ABI and missing storage") {

@@ -463,7 +463,7 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
    sizeof(cmeta_receiver_method_set), &name##_cmeta_type, \
    name##_receiver_methods, \
    sizeof(name##_receiver_methods) / sizeof(name##_receiver_methods[0]), \
-   CMETA_CONTAINER_STR(kind) \
+   SALTS_META_GENERIC_DESC(kind) \
  }; \
  CMETA_INLINE const cmeta_receiver_method_set *name##_receiver_method_set(void) { \
    return &name##_receiver_method_set_value; \
@@ -553,7 +553,7 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
    sizeof(cmeta_receiver_method_set), &name##_cmeta_type, \
    name##_receiver_methods, \
    sizeof(name##_receiver_methods) / sizeof(name##_receiver_methods[0]), \
-   CMETA_CONTAINER_STR(kind) \
+   SALTS_META_GENERIC_DESC(kind) \
  }; \
  CMETA_INLINE const cmeta_receiver_method_set *name##_receiver_method_set(void) { \
    return &name##_receiver_method_set_value; \
