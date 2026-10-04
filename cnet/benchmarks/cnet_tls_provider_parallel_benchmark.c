@@ -74,7 +74,16 @@ typedef struct tls_parallel_worker {
   size_t pair_count;
   uint64_t tls_records;
   uint64_t cipher_bytes;
+  uint64_t cpu_ns;
 } tls_parallel_worker;
+
+static uint64_t tls_parallel_thread_cpu_ns(void) {
+  struct timespec value = {0};
+  if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value) != 0)
+    return 0u;
+  return (uint64_t)value.tv_sec * UINT64_C(1000000000) +
+         (uint64_t)value.tv_nsec;
+}
 
 static int tls_parallel_u64_compare(const void *left, const void *right) {
   const uint64_t a = *(const uint64_t *)left;
@@ -401,6 +410,8 @@ static void tls_parallel_worker_run(void *user) {
     salts_thread_yield();
 
   if (status == SALTS_OK) {
+    const uint64_t cpu_started_ns =
+        tls_parallel_thread_cpu_ns();
     for (index = 0u;
          index < shared->ops_per_owner; ++index) {
       tls_parallel_pair *pair =
@@ -416,6 +427,14 @@ static void tls_parallel_worker_run(void *user) {
       }
       worker->latencies_ns[index] =
           salts_hrtime() - started_ns;
+    }
+    {
+      const uint64_t cpu_finished_ns =
+          tls_parallel_thread_cpu_ns();
+      worker->cpu_ns =
+          cpu_finished_ns >= cpu_started_ns
+              ? cpu_finished_ns - cpu_started_ns
+              : 0u;
     }
   }
 
@@ -450,8 +469,7 @@ int main(int argc, char **argv) {
   uint64_t total_cipher_bytes = 0u;
   uint64_t started_ns;
   uint64_t wall_ns;
-  clock_t cpu_started;
-  clock_t cpu_elapsed;
+  uint64_t total_cpu_ns = 0u;
   tls_parallel_mode mode;
   const char *temperature;
   int status = SALTS_OK;
@@ -562,7 +580,6 @@ int main(int argc, char **argv) {
 
   status = atomic_load_explicit(
       &shared.first_error, memory_order_acquire);
-  cpu_started = clock();
   started_ns = salts_hrtime();
   atomic_store_explicit(
       &shared.start, true, memory_order_release);
@@ -572,7 +589,6 @@ int main(int argc, char **argv) {
          owner_count)
     salts_thread_yield();
   wall_ns = salts_hrtime() - started_ns;
-  cpu_elapsed = clock() - cpu_started;
 
   if (status == SALTS_OK)
     status = atomic_load_explicit(
@@ -591,6 +607,7 @@ int main(int argc, char **argv) {
         ++samples;
     total_records += workers[owner].tls_records;
     total_cipher_bytes += workers[owner].cipher_bytes;
+    total_cpu_ns += workers[owner].cpu_ns;
   }
 
   if (status == SALTS_OK && samples != total_ops)
@@ -604,9 +621,7 @@ int main(int argc, char **argv) {
             : 0.0;
     const double cpu_ns_per_op =
         total_ops != 0u
-            ? ((double)cpu_elapsed * 1.0e9 /
-               (double)CLOCKS_PER_SEC) /
-                  (double)total_ops
+            ? (double)total_cpu_ns / (double)total_ops
             : 0.0;
     printf(
         "{\"benchmark\":\"cnet_tls_provider_parallel\","
