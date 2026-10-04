@@ -33,6 +33,28 @@ bool cmeta_declared_type_valid(const cmeta_declared_type *declared) {
         declared->arity);
 }
 
+bool cmeta_declared_type_application_equal(
+    const cmeta_declared_type *left,
+    const cmeta_declared_type *right) {
+    size_t i;
+
+    if (left == right)
+        return left != NULL && cmeta_declared_type_valid(left);
+    if (!cmeta_declared_type_valid(left) ||
+        !cmeta_declared_type_valid(right) ||
+        left->arity != right->arity ||
+        !cmeta_generic_desc_equal(left->constructor, right->constructor))
+        return false;
+
+    for (i = 0u; i < left->arity; ++i) {
+        if (!cmeta_type_equal(
+                cmeta_declared_type_argument(left, i),
+                cmeta_declared_type_argument(right, i)))
+            return false;
+    }
+    return true;
+}
+
 bool cmeta_declared_type_constructible(const cmeta_declared_type *declared) {
     const cmeta_container_construct_ops *ops;
 
