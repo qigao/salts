@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   tag:
@@ -58,3 +59,14 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$RELEASE_TAG" "$RELEASE_SHA" -m "Salts 1.8.21"
           git push origin "$RELEASE_TAG"
+
+      - name: Dispatch canonical native release workflow
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run native-nuget-release.yml \
+            --ref master \
+            -f release_sha="$RELEASE_SHA" \
+            -f tag="$RELEASE_TAG"
