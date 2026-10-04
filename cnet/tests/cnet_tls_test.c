@@ -64,6 +64,59 @@ static int cnet_tls_test_transfer(cnet_tls_state *source, cnet_tls_state *target
   }
 }
 
+static int cnet_tls_test_drive_large_write(
+    cnet_tls_state *source, cnet_tls_state *target,
+    const unsigned char *payload, size_t payload_size,
+    unsigned char *received) {
+  size_t received_total = 0u;
+  bool complete = false;
+  size_t iteration;
+
+  if (source == NULL || target == NULL || payload == NULL ||
+      received == NULL || payload_size == 0u)
+    return SALTS_EINVAL;
+
+  for (iteration = 0u; iteration < 4096u; ++iteration) {
+    unsigned char cipher[997];
+    size_t cipher_size = 0u;
+    int status;
+
+    if (!complete) {
+      status = cnet_tls_write(source, payload, payload_size, &complete);
+      if (status != SALTS_OK) return status;
+    }
+
+    status = cnet_tls_take_cipher(
+        source, cipher, sizeof(cipher), &cipher_size);
+    if (status != SALTS_OK && status != SALTS_ENOENT) return status;
+    if (status == SALTS_OK) {
+      size_t plain_size = 0u;
+      bool peer_closed = false;
+      if (cipher_size == 0u) return SALTS_EPROTO;
+      status = cnet_tls_feed_cipher(target, cipher, cipher_size);
+      if (status != SALTS_OK) return status;
+
+      do {
+        plain_size = 0u;
+        status = cnet_tls_read(
+            target, received + received_total,
+            payload_size - received_total,
+            &plain_size, &peer_closed);
+        if (status != SALTS_OK) return status;
+        if (peer_closed) return SALTS_ECONNABORTED;
+        if (plain_size > payload_size - received_total)
+          return SALTS_EPROTO;
+        received_total += plain_size;
+      } while (plain_size != 0u && received_total < payload_size);
+    }
+
+    if (complete && status == SALTS_ENOENT &&
+        received_total == payload_size)
+      return SALTS_OK;
+  }
+  return SALTS_ETIMEDOUT;
+}
+
 static int cnet_tls_test_pair_init(cnet_tls_test_pair *pair) {
   static const char *server_alpn[] = {"h2", "http/1.1"};
   static const char *client_alpn[] = {"http/1.1", "h2"};
@@ -583,6 +636,55 @@ spec("CNet bounded TLS engine") {
     check_equal(received_size, (size_t)payload_size);
     check_equal(memcmp(received, payload, payload_size), 0);
     check_false(peer_closed);
+
+    cnet_tls_test_pair_destroy(&pair);
+    free(received);
+    free(payload);
+  }
+
+  it("preserves TLS 1.3 records across fragmented repeated 64 KiB writes") {
+    enum { payload_size = 64 * 1024, rounds = 4 };
+    cnet_tls_test_pair pair;
+    unsigned char *payload = NULL;
+    unsigned char *received = NULL;
+    size_t round;
+
+    payload = (unsigned char *)malloc(payload_size);
+    received = (unsigned char *)malloc(payload_size);
+    check_not_null(payload);
+    check_not_null(received);
+
+    check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
+    check_equal(cnet_tls_state_set_protocol_range(
+                    &pair.client,
+                    CNET_TLS_PROTOCOL_VERSION_1_3,
+                    CNET_TLS_PROTOCOL_VERSION_1_3),
+                SALTS_OK);
+    check_equal(cnet_tls_state_set_protocol_range(
+                    &pair.server,
+                    CNET_TLS_PROTOCOL_VERSION_1_3,
+                    CNET_TLS_PROTOCOL_VERSION_1_3),
+                SALTS_OK);
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+    check_equal(cnet_tls_state_io_buffer_bytes(&pair.client),
+                (size_t)CNET_TLS_MIN_IO_BUFFER_BYTES);
+    check_equal(cnet_tls_state_io_buffer_bytes(&pair.server),
+                (size_t)CNET_TLS_MIN_IO_BUFFER_BYTES);
+
+    for (round = 0u; round < rounds; ++round) {
+      size_t index;
+      for (index = 0u; index < payload_size; ++index)
+        payload[index] =
+            (unsigned char)((index * 37u + round * 53u) & 0xffu);
+      memset(received, 0, payload_size);
+
+      check_equal(
+          cnet_tls_test_drive_large_write(
+              &pair.server, &pair.client,
+              payload, payload_size, received),
+          SALTS_OK);
+      check_equal(memcmp(received, payload, payload_size), 0);
+    }
 
     cnet_tls_test_pair_destroy(&pair);
     free(received);
