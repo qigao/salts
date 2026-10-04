@@ -106,7 +106,7 @@ theorem borrowed_result_has_no_cleanup
     some { ty := borrowTy, ownership := ownership } at atBorrowed
   rw [borrowedAt] at atBorrowed
   cases atBorrowed
-  exact borrowed_not_cleanup required
+  cases required
 
 theorem live_borrow_blocks_owner_release
     {borrowTy ownerTy : Ty}
