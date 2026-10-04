@@ -262,10 +262,12 @@ static long cflow_parallel_bench_expected(const long *input, size_t count) {
   } while (0)
 
 
-#define CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE(label, worker_count)              \
+#define CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE(label, worker_count, task_count) \
   do {                                                                             \
     cflow_executor scaling_executor = {0};                                         \
-    const size_t scaling_tasks = (worker_count) == 1u ? 2u : (worker_count);       \
+    cflow_executor_control scaling_control = {0};                                  \
+    cflow_executor_protocol_stats scaling_stats = {0};                             \
+    const size_t scaling_tasks = (task_count);                                     \
     cflow_plan_eval_options scaling_options = {                                    \
         .mode = CFLOW_PLAN_EXECUTION_PARALLEL_REDUCE,                              \
         .executor = &scaling_executor,                                              \
@@ -275,6 +277,7 @@ static long cflow_parallel_bench_expected(const long *input, size_t count) {
     bool scaling_ok = false;                                                       \
     check_true(cflow_executor_worker_init_with_capacity(                            \
         &scaling_executor, (worker_count), scaling_tasks * 2u));                   \
+    check_true(cflow_executor_as_control(&scaling_executor, &scaling_control));     \
     benchmark_ops("Managed Plan Reduce ordered parallel / 1 Mi values / " label,   \
                   CFLOW_PARALLEL_BENCH_LARGE_SAMPLES / 2u,                         \
                   CFLOW_PARALLEL_BENCH_LARGE_ITEMS) {                              \
@@ -288,6 +291,17 @@ static long cflow_parallel_bench_expected(const long *input, size_t count) {
       cflow_result_destroy(&result);                                                \
     }                                                                              \
     check_true(scaling_ok);                                                        \
+    check_true(cflow_executor_control_get_stats(                                   \
+        &scaling_control, &scaling_stats));                                        \
+    check_equal(scaling_stats.accepted, scaling_stats.completed);                  \
+    check_equal(scaling_stats.cancelled, (size_t)0u);                              \
+    printf("managed_parallel_reduce_executor workers=%zu tasks=%zu "               \
+           "accepted=%zu completed=%zu cancelled=%zu rejected_full=%zu "           \
+           "rejected_closed=%zu rejected_would_block=%zu\\n",                    \
+           (size_t)(worker_count), scaling_tasks,                                  \
+           scaling_stats.accepted, scaling_stats.completed,                        \
+           scaling_stats.cancelled, scaling_stats.rejected_full,                   \
+           scaling_stats.rejected_closed, scaling_stats.rejected_would_block);     \
     cflow_executor_destroy(&scaling_executor);                                     \
   } while (0)
 
@@ -446,11 +460,13 @@ suite("CFlow ordered parallel reduce benchmarks") {
 
     printf(
         "managed_parallel_reduce_worker_scaling items=%u "
-        "workers=1 uses two tasks on one worker to preserve parallel admission\n",
+        "workers/tasks are varied independently\n",
         CFLOW_PARALLEL_BENCH_LARGE_ITEMS);
-    CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=1", 1u);
-    CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=2", 2u);
-    CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=4", 4u);
+    CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=1 tasks=2", 1u, 2u);
+    CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=2 tasks=2", 2u, 2u);
+    CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=2 tasks=4", 2u, 4u);
+    CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=4 tasks=2", 4u, 2u);
+    CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=4 tasks=4", 4u, 4u);
 
     cflow_executor_destroy(&executor);
     cflow_plan_destroy(&plan);
