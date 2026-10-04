@@ -1186,7 +1186,7 @@ done:
 
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
-        puts("cmeta-lower 4");
+        puts("cmeta-lower 5");
         return 0;
     }
     if (argc != 3) {
