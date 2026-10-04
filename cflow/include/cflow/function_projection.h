@@ -132,6 +132,27 @@ bool cflow_graph_add_function_typed_filter_projection(
     cflow_graph *graph,
     const cflow_function_typed_adapter_projection *projection);
 
+/*
+ * Explicit homogeneous T(T,T)->T REDUCE adapter. The reflected result must
+ * explicitly publish CMETA_RESULT_VALUE; REDUCE never infers value ownership
+ * from C spelling or ABI carrier. Sequential admission does not require
+ * associativity. Parallel eligibility remains a separate Plan property gate.
+ */
+cflow_function_projection_status
+cflow_function_typed_reduce_projection_admit(
+    const cmeta_function_desc *function,
+    const cmeta_function_abi_desc *abi,
+    cmeta_callable adapter,
+    const cmeta_type_desc *value_type,
+    cflow_function_typed_adapter_projection *out);
+
+bool cflow_function_typed_reduce_projection_valid(
+    const cflow_function_typed_adapter_projection *projection);
+
+bool cflow_graph_add_function_typed_reduce_projection(
+    cflow_graph *graph,
+    const cflow_function_typed_adapter_projection *projection);
+
 cflow_function_projection_status cflow_function_action_projection_admit(
     const cmeta_function_desc *function,
     const cmeta_function_abi_desc *abi,
