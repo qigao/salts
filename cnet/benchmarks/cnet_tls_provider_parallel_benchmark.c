@@ -275,11 +275,9 @@ static int tls_parallel_pair_init(
 
 static void tls_parallel_pair_destroy(tls_parallel_pair *pair) {
   if (pair == NULL) return;
-  if (pair->initialized) {
-    cnet_tls_state_destroy(&pair->server);
-    cnet_tls_state_destroy(&pair->client);
-    (void)cnet_tls_server_destroy(&pair->server_context);
-  }
+  cnet_tls_state_destroy(&pair->server);
+  cnet_tls_state_destroy(&pair->client);
+  (void)cnet_tls_server_destroy(&pair->server_context);
   free(pair->received);
   memset(pair, 0, sizeof(*pair));
 }
@@ -523,30 +521,38 @@ int main(int argc, char **argv) {
   atomic_init(&shared.first_error, SALTS_OK);
 
   memset(workers, 0, sizeof(workers));
-  for (size_t owner = 0u; owner < owner_count; ++owner) {
-    workers[owner].shared = &shared;
-    workers[owner].first_pair =
-        owner * (TLS_PARALLEL_PAIRS / owner_count);
-    workers[owner].pair_count =
-        TLS_PARALLEL_PAIRS / owner_count;
-    workers[owner].latencies_ns =
-        latencies + owner * ops_per_owner;
-    status = salts_thread_create(
-        &threads[owner], tls_parallel_worker_run,
-        &workers[owner]);
-    if (status != SALTS_OK) {
-      tls_parallel_set_error(&shared, status);
-      for (size_t missing = owner;
-           missing < owner_count; ++missing) {
-        atomic_fetch_add_explicit(
-            &shared.ready, 1u, memory_order_release);
-        atomic_fetch_add_explicit(
-            &shared.measured_done, 1u, memory_order_release);
+  {
+    size_t created_count = 0u;
+    for (size_t owner = 0u; owner < owner_count; ++owner) {
+      workers[owner].shared = &shared;
+      workers[owner].first_pair =
+          owner * (TLS_PARALLEL_PAIRS / owner_count);
+      workers[owner].pair_count =
+          TLS_PARALLEL_PAIRS / owner_count;
+      workers[owner].latencies_ns =
+          latencies + owner * ops_per_owner;
+      status = salts_thread_create(
+          &threads[owner], tls_parallel_worker_run,
+          &workers[owner]);
+      if (status != SALTS_OK) {
+        tls_parallel_set_error(&shared, status);
+        break;
       }
-      owner_count = owner;
-      break;
+      thread_started[owner] = true;
+      ++created_count;
     }
-    thread_started[owner] = true;
+    if (created_count != owner_count) {
+      atomic_store_explicit(
+          &shared.start, true, memory_order_release);
+      atomic_store_explicit(
+          &shared.cleanup, true, memory_order_release);
+      for (size_t owner = 0u; owner < created_count; ++owner) {
+        (void)salts_thread_join(&threads[owner]);
+        salts_thread_destroy(&threads[owner]);
+      }
+      status = status == SALTS_OK ? SALTS_EIO : status;
+      goto cleanup;
+    }
   }
 
   while (atomic_load_explicit(
