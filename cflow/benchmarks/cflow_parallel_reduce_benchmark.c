@@ -366,8 +366,10 @@ static double cflow_parallel_managed_merge_probe_ns(
           ((const cflow_parallel_managed_bench_value *)result.data)->value;
     }
     cflow_result_destroy(&result);
-    for (size_t index = 0u; index < task_count; ++index)
+    for (size_t index = 0u; index < task_count; ++index) {
+      cflow_parallel_managed_bench_destroy(&values[index]);
       cflow_value_slot_destroy(&partials[index]);
+    }
   }
 
   check_true(ok);
