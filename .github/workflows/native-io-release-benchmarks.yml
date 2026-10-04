@@ -256,6 +256,7 @@ jobs:
               $cnetSgBench = @($changed | Where-Object {
                   $_ -like "cnet/benchmarks/*tls_sg*" -or
                   $_ -like "cnet/benchmarks/*tls_provider_parallel*" -or
+                  $_ -like "cnet/benchmarks/*tls_public_owner*" -or
                   $_ -like "cnet/benchmarks/*sg_benchmark*" -or
                   $_ -like "cnet/benchmarks/verify_tls_sg_benchmark.ps1" -or
                   $_ -eq "cnet/benchmarks/cnet_io_benchmark.c"
@@ -578,7 +579,7 @@ jobs:
             -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
           cmake --build --preset "${{ matrix.build_preset }}" \
             --target native_io_test native_io_sharded_test native_io_header_cpp_test \
-              native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark cnet_tls_provider_parallel_benchmark \
+              native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark cnet_tls_provider_parallel_benchmark cnet_tls_public_owner_benchmark \
               cnet_websocket_parser_test cnet_websocket_test \
               cnet_session_test cnet_command_test cnet_uri_test \
               cnet_transport_test cnet_owner_test cnet_owner_profile_test \
@@ -1805,6 +1806,44 @@ jobs:
             echo "## CNet TLS provider parallel attribution"
             echo
             cat "$result_dir/cnet-tls-provider-parallel.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run public CNet TLS owner attribution
+        if: matrix.family == 'linux' && matrix.backend == 'epoll' && needs.scope.outputs.cnet_sg == 'true'
+        shell: bash
+        env:
+          CNET_TLS_PUBLIC_OWNER_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_tls_public_owner_benchmark
+        run: |
+          set -euo pipefail
+          result_dir="$GITHUB_WORKSPACE/native-io-results"
+          mkdir -p "$result_dir"
+          benchmark="$GITHUB_WORKSPACE/$CNET_TLS_PUBLIC_OWNER_EXECUTABLE"
+          test -x "$benchmark"
+          jsonl="$result_dir/cnet-tls-public-owner.jsonl"
+          : > "$jsonl"
+
+          for repeat in 1 2 3; do
+            for temperature in fresh warm; do
+              for mode in push echo; do
+                for payload in 16384 32768 65536; do
+                  for owners in 1 2 4; do
+                    echo "public repeat=$repeat temperature=$temperature mode=$mode payload=$payload owners=$owners"
+                    CNET_TLS_PUBLIC_OWNER_OPS=48 \
+                      "$benchmark" "$mode" "$payload" "$owners" "$temperature" \
+                      | tee -a "$jsonl"
+                  done
+                done
+              done
+            done
+          done
+
+          python3 ./cnet/benchmarks/verify_tls_public_owner_benchmark.py "$jsonl" \
+            | tee "$result_dir/cnet-tls-public-owner.md"
+          {
+            echo
+            echo "## CNet public TLS owner attribution"
+            echo
+            cat "$result_dir/cnet-tls-public-owner.md"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run borrowed-copy versus owned receive benchmark
