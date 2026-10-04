@@ -133,7 +133,13 @@ theorem end_borrow_preserves_owner {borrowTy ownerTy : Ty}
     HasOwnership
       (endBorrow context relations borrowed owner valid).1
       owner ownerOwnership := by
-  simpa [endBorrow, OwnershipContext.set, different] using ownerCurrent
+  change
+    (endBorrow context relations borrowed owner valid).1 owner.token =
+      some { ty := ownerTy, ownership := ownerOwnership }
+  rw [end_borrow_preserves_other
+        context relations borrowed owner valid
+        (candidate := owner.token) different]
+  exact ownerCurrent
 
 /-- The moved binding is updated in the post-context. -/
 theorem move_updates_source {Γ : Env} {ty : Ty}
