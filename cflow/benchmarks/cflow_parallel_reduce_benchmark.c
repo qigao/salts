@@ -2,6 +2,9 @@
 
 #include <cflow/cflow.h>
 #include <cflow/plan_internal.h>
+#include <salts/clock.h>
+
+#include "../src/result_storage.h"
 
 #include <stdint.h>
 #include <stdatomic.h>
@@ -18,7 +21,9 @@ enum {
   CFLOW_PARALLEL_BENCH_LARGE_ITEMS = 1024u * 1024u,
   CFLOW_PARALLEL_BENCH_SMALL_SAMPLES = 1000u,
   CFLOW_PARALLEL_BENCH_MEDIUM_SAMPLES = 100u,
-  CFLOW_PARALLEL_BENCH_LARGE_SAMPLES = 10u
+  CFLOW_PARALLEL_BENCH_LARGE_SAMPLES = 10u,
+  CFLOW_PARALLEL_BENCH_MERGE_SAMPLES = 2000u,
+  CFLOW_PARALLEL_BENCH_CLOCK_SAMPLES = 10000u
 };
 
 static volatile long cflow_parallel_bench_sink;
@@ -250,6 +255,195 @@ static long cflow_parallel_bench_expected(const long *input, size_t count) {
   long total = 0L;
   for (size_t index = 0u; index < count; ++index) total += input[index];
   return total;
+}
+
+static uint64_t cflow_parallel_bench_clock_overhead_ns(void) {
+  uint64_t total = 0u;
+  for (size_t sample = 0u;
+       sample < (size_t)CFLOW_PARALLEL_BENCH_CLOCK_SAMPLES;
+       ++sample) {
+    const uint64_t started = salts_hrtime();
+    const uint64_t finished = salts_hrtime();
+    if (finished >= started) total += finished - started;
+  }
+  return total / (uint64_t)CFLOW_PARALLEL_BENCH_CLOCK_SAMPLES;
+}
+
+static uint64_t cflow_parallel_bench_adjust_elapsed(
+    uint64_t started, uint64_t finished, uint64_t clock_overhead_ns) {
+  const uint64_t elapsed = finished >= started ? finished - started : 0u;
+  return elapsed > clock_overhead_ns ? elapsed - clock_overhead_ns : 0u;
+}
+
+static bool cflow_parallel_managed_merge_probe_once(
+    cflow_value_slot *partials, size_t task_count, cflow_result *out) {
+  cflow_value_slot acc = {0};
+  cflow_value_slot tmp = {0};
+  void *result_allocation = NULL;
+  unsigned char *result_data = NULL;
+  bool ok =
+      partials && task_count >= 2u &&
+      task_count <= (size_t)CFLOW_PARALLEL_BENCH_MAX_TASKS &&
+      out &&
+      cflow_value_slot_init(&acc, &cflow_parallel_managed_bench_type) &&
+      cflow_value_slot_init(&tmp, &cflow_parallel_managed_bench_type) &&
+      cflow_value_slot_move(&acc, &partials[0]);
+
+  for (size_t index = 1u; ok && index < task_count; ++index) {
+    const void *args[2] = {
+        acc.storage,
+        partials[index].live ? partials[index].storage : NULL
+    };
+    if (!partials[index].live ||
+        !cflow_parallel_managed_bench_reduce_invoke(NULL, tmp.storage, args)) {
+      ok = false;
+      break;
+    }
+    tmp.live = true;
+    cflow_value_slot_reset(&acc);
+    if (!cflow_value_slot_move(&acc, &tmp)) {
+      ok = false;
+      break;
+    }
+  }
+
+  if (ok) {
+    ok = cflow_result_storage_allocate(
+        &cflow_parallel_managed_bench_type, 1u,
+        &result_allocation, &result_data);
+  }
+  if (ok) {
+    ok = cflow_value_move_construct(
+        &cflow_parallel_managed_bench_type, result_data, acc.storage);
+    if (ok) acc.live = false;
+  }
+  if (ok) {
+    out->data = result_data;
+    out->count = 1u;
+    out->type = &cflow_parallel_managed_bench_type;
+    result_allocation = NULL;
+    result_data = NULL;
+  }
+
+  free(result_allocation);
+  cflow_value_slot_destroy(&tmp);
+  cflow_value_slot_destroy(&acc);
+  return ok;
+}
+
+static double cflow_parallel_managed_merge_probe_ns(
+    size_t task_count, size_t samples, uint64_t clock_overhead_ns) {
+  uint64_t total_ns = 0u;
+  bool ok = true;
+
+  for (size_t sample = 0u; sample < samples && ok; ++sample) {
+    cflow_value_slot partials[CFLOW_PARALLEL_BENCH_MAX_TASKS] = {{0}};
+    cflow_parallel_managed_bench_value values[
+        CFLOW_PARALLEL_BENCH_MAX_TASKS] = {{0}};
+    cflow_result result = {0};
+    uint64_t started;
+    uint64_t finished;
+
+    for (size_t index = 0u; index < task_count; ++index) {
+      values[index].value = (long)(index + 1u);
+      ok = cflow_value_slot_init(
+               &partials[index], &cflow_parallel_managed_bench_type) &&
+           cflow_value_slot_copy(&partials[index], &values[index]);
+      if (!ok) break;
+    }
+
+    if (ok) {
+      started = salts_hrtime();
+      ok = cflow_parallel_managed_merge_probe_once(
+          partials, task_count, &result);
+      finished = salts_hrtime();
+      total_ns += cflow_parallel_bench_adjust_elapsed(
+          started, finished, clock_overhead_ns);
+    }
+
+    if (ok && result.count == 1u && result.data) {
+      cflow_parallel_bench_sink ^=
+          ((const cflow_parallel_managed_bench_value *)result.data)->value;
+    }
+    cflow_result_destroy(&result);
+    for (size_t index = 0u; index < task_count; ++index) {
+      cflow_parallel_managed_bench_destroy(&values[index]);
+      cflow_value_slot_destroy(&partials[index]);
+    }
+  }
+
+  check_true(ok);
+  return ok && samples != 0u
+      ? (double)total_ns / (double)samples
+      : 0.0;
+}
+
+static double cflow_parallel_managed_eval_probe_ns(
+    const cflow_plan *plan,
+    const cflow_parallel_managed_bench_value *input,
+    size_t item_count,
+    size_t worker_count,
+    size_t task_count,
+    size_t samples,
+    uint64_t clock_overhead_ns) {
+  cflow_executor executor = {0};
+  cflow_plan_eval_options options = {
+      .mode = CFLOW_PLAN_EXECUTION_PARALLEL_REDUCE,
+      .executor = &executor,
+      .max_tasks = task_count,
+      .min_items_per_task = CFLOW_PARALLEL_BENCH_MIN_ITEMS
+  };
+  uint64_t total_ns = 0u;
+  bool ok = cflow_executor_worker_init_with_capacity(
+      &executor, worker_count, task_count * 2u);
+
+  for (size_t sample = 0u; sample < samples && ok; ++sample) {
+    cflow_result result = {0};
+    const uint64_t started = salts_hrtime();
+    ok = cflow_plan_eval_array_with_options(
+        plan, input, item_count, &options, &result);
+    const uint64_t finished = salts_hrtime();
+
+    total_ns += cflow_parallel_bench_adjust_elapsed(
+        started, finished, clock_overhead_ns);
+    if (ok && result.count == 1u && result.data) {
+      cflow_parallel_bench_sink ^=
+          ((const cflow_parallel_managed_bench_value *)result.data)->value;
+    }
+    cflow_result_destroy(&result);
+  }
+
+  cflow_executor_destroy(&executor);
+  check_true(ok);
+  return ok && samples != 0u
+      ? (double)total_ns / (double)samples
+      : 0.0;
+}
+
+static void cflow_parallel_managed_report_merge_share(
+    const cflow_plan *plan,
+    const cflow_parallel_managed_bench_value *input,
+    size_t worker_count,
+    size_t task_count,
+    uint64_t clock_overhead_ns) {
+  const size_t eval_samples =
+      (size_t)CFLOW_PARALLEL_BENCH_LARGE_SAMPLES / 2u;
+  const double merge_ns = cflow_parallel_managed_merge_probe_ns(
+      task_count, (size_t)CFLOW_PARALLEL_BENCH_MERGE_SAMPLES,
+      clock_overhead_ns);
+  const double eval_ns = cflow_parallel_managed_eval_probe_ns(
+      plan, input, (size_t)CFLOW_PARALLEL_BENCH_LARGE_ITEMS,
+      worker_count, task_count, eval_samples, clock_overhead_ns);
+  const double share = eval_ns > 0.0 ? merge_ns * 100.0 / eval_ns : 0.0;
+
+  printf(
+      "managed_parallel_reduce_merge_share workers=%zu tasks=%zu items=%u "
+      "eval_ns=%.2f merge_ns=%.2f merge_share_pct=%.4f "
+      "merge_samples=%u eval_samples=%zu clock_overhead_ns=%llu\n",
+      worker_count, task_count, CFLOW_PARALLEL_BENCH_LARGE_ITEMS,
+      eval_ns, merge_ns, share,
+      CFLOW_PARALLEL_BENCH_MERGE_SAMPLES, eval_samples,
+      (unsigned long long)clock_overhead_ns);
 }
 
 #define CFLOW_PARALLEL_BENCH_CASE(label, item_count, sample_count)                 \
@@ -516,6 +710,24 @@ suite("CFlow ordered parallel reduce benchmarks") {
     CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=2 tasks=4", 2u, 4u);
     CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=4 tasks=2", 4u, 2u);
     CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=4 tasks=4", 4u, 4u);
+
+    {
+      const uint64_t clock_overhead_ns =
+          cflow_parallel_bench_clock_overhead_ns();
+      printf(
+          "managed_parallel_reduce_merge_probe clock_overhead_ns=%llu "
+          "merge_samples=%u\n",
+          (unsigned long long)clock_overhead_ns,
+          CFLOW_PARALLEL_BENCH_MERGE_SAMPLES);
+      cflow_parallel_managed_report_merge_share(
+          &managed_plan, managed_input, 2u, 2u, clock_overhead_ns);
+      cflow_parallel_managed_report_merge_share(
+          &managed_plan, managed_input, 2u, 4u, clock_overhead_ns);
+      cflow_parallel_managed_report_merge_share(
+          &managed_plan, managed_input, 4u, 2u, clock_overhead_ns);
+      cflow_parallel_managed_report_merge_share(
+          &managed_plan, managed_input, 4u, 4u, clock_overhead_ns);
+    }
 
     cflow_executor_destroy(&executor);
     cflow_plan_destroy(&plan);
