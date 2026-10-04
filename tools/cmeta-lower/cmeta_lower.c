@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../../cstl/include/cstl/detail/generic_ids.h"
+
 typedef struct cmeta_lower_buffer {
     char *data;
     size_t size;
@@ -11,7 +13,7 @@ typedef struct cmeta_lower_buffer {
 } cmeta_lower_buffer;
 
 typedef struct cmeta_lower_type {
-    char owner[64];
+    char owner_id[64];
     char concrete[128];
     char lifecycle_accessor[160];
 } cmeta_lower_type;
@@ -236,17 +238,31 @@ static int cmeta_lower_identifier(
     return 1;
 }
 
-static int cmeta_lower_container_owner(const char *owner) {
-    static const char *const owners[] = {
-        "Vec", "Deque", "List", "Stack", "Queue", "Heap",
-        "Set", "HashSet", "HashMap", "Map", "MultiMap",
-        "BTree", "BPlusTree"
-    };
+typedef struct cmeta_lower_generic_owner {
+    const char *token;
+    const char *stable_id;
+} cmeta_lower_generic_owner;
+
+#define CMETA_LOWER_GENERIC_OWNER_ROW(kind) \
+    { #kind, CSTL_GENERIC_STABLE_ID(kind) },
+
+static const cmeta_lower_generic_owner cmeta_lower_generic_owners[] = {
+    CSTL_GENERIC_OWNER_KINDS(CMETA_LOWER_GENERIC_OWNER_ROW)
+};
+
+#undef CMETA_LOWER_GENERIC_OWNER_ROW
+
+static const char *cmeta_lower_container_owner_id(const char *owner) {
     size_t i;
-    for (i = 0u; i < sizeof(owners) / sizeof(owners[0]); ++i)
-        if (strcmp(owner, owners[i]) == 0)
-            return 1;
-    return 0;
+    if (owner == NULL) return NULL;
+    for (i = 0u;
+         i < sizeof(cmeta_lower_generic_owners) /
+                 sizeof(cmeta_lower_generic_owners[0]);
+         ++i) {
+        if (strcmp(owner, cmeta_lower_generic_owners[i].token) == 0)
+            return cmeta_lower_generic_owners[i].stable_id;
+    }
+    return NULL;
 }
 
 static const cmeta_lower_type *
@@ -259,23 +275,24 @@ cmeta_lower_find_type(const cmeta_lower_context *context, const char *concrete) 
 }
 
 static int cmeta_lower_owner_registered(
-    const cmeta_lower_context *context, const char *owner) {
+    const cmeta_lower_context *context, const char *owner_id) {
     size_t i;
+    if (owner_id == NULL) return 0;
     for (i = 0u; i < context->type_count; ++i)
-        if (strcmp(context->types[i].owner, owner) == 0)
+        if (strcmp(context->types[i].owner_id, owner_id) == 0)
             return 1;
     return 0;
 }
 
 static int cmeta_lower_add_type(
     cmeta_lower_context *context, size_t offset,
-    const char *owner, const char *concrete) {
+    const char *owner_id, const char *concrete) {
     cmeta_lower_type *next;
     size_t capacity;
     const cmeta_lower_type *existing = cmeta_lower_find_type(context, concrete);
 
     if (existing != NULL) {
-        if (strcmp(existing->owner, owner) != 0) {
+        if (strcmp(existing->owner_id, owner_id) != 0) {
             cmeta_lower_set_errorf(
                 context, offset, "typed concrete type '", concrete,
                 "' is registered with conflicting owners");
@@ -297,8 +314,8 @@ static int cmeta_lower_add_type(
     }
 
     (void)snprintf(
-        context->types[context->type_count].owner,
-        sizeof(context->types[context->type_count].owner), "%s", owner);
+        context->types[context->type_count].owner_id,
+        sizeof(context->types[context->type_count].owner_id), "%s", owner_id);
     (void)snprintf(
         context->types[context->type_count].concrete,
         sizeof(context->types[context->type_count].concrete), "%s", concrete);
@@ -318,6 +335,7 @@ static int cmeta_lower_parse_typed(
     size_t end;
     char owner[64];
     char concrete[128];
+    const char *owner_id;
 
     if (i >= size || source[i] != '(')
         return 1;
@@ -332,9 +350,10 @@ static int cmeta_lower_parse_typed(
             source, size, i, concrete, sizeof(concrete), &end))
         return 1;
 
-    if (!cmeta_lower_container_owner(owner))
+    owner_id = cmeta_lower_container_owner_id(owner);
+    if (owner_id == NULL)
         return 1;
-    return cmeta_lower_add_type(context, i, owner, concrete);
+    return cmeta_lower_add_type(context, i, owner_id, concrete);
 }
 
 static int cmeta_lower_collect_types(cmeta_lower_context *context) {
@@ -790,12 +809,14 @@ static int cmeta_lower_try_generic_call(
     char replacement[320];
     const cmeta_lower_symbol *symbol;
     const cmeta_lower_type *type;
+    const char *owner_id;
 
     (void)next_offset;
     if (!cmeta_lower_split_operation(
             ident, owner, sizeof(owner), method, sizeof(method)))
         return 0;
-    if (!cmeta_lower_owner_registered(context, owner))
+    owner_id = cmeta_lower_container_owner_id(owner);
+    if (owner_id == NULL || !cmeta_lower_owner_registered(context, owner_id))
         return 0;
 
     i = cmeta_lower_skip_space(source, size, ident_end);
@@ -822,12 +843,12 @@ static int cmeta_lower_try_generic_call(
             "' has no typed owner");
         return -1;
     }
-    if (strcmp(type->owner, owner) != 0) {
+    if (strcmp(type->owner_id, owner_id) != 0) {
         char message[256];
         (void)snprintf(
             message, sizeof(message),
-            "generic owner '%s' does not match %s owner '%s'",
-            owner, symbol->concrete, type->owner);
+            "generic owner identity '%s' does not match %s owner identity '%s'",
+            owner_id, symbol->concrete, type->owner_id);
         cmeta_lower_set_error(context, ident_start, message);
         return -1;
     }
