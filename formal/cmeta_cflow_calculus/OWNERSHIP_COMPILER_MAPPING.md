@@ -99,8 +99,18 @@ DSO unload                   -> only after runtime quiescence
 ```
 
 A live `BorrowedFrom(view, lease)` makes final lease release unsafe in the
-formal model. Runtime registry generation/lease/callback checks remain the
-dynamic backstop.
+formal model. The valid teardown sequence is explicit:
+
+```text
+endBorrow(view)
+    -> view released + owner edge cleared
+    -> discharge/release PluginLease
+```
+
+This mirrors the real DSO ordering qualified by Salts #778: dependent
+ObjectRef/Interface views are dropped before the final lease release, then the
+registry may reach quiescence and unload. Runtime registry
+generation/lease/callback checks remain the dynamic backstop.
 
 Reflection descriptors do not embed leases.
 
