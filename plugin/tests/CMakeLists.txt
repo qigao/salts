@@ -51,6 +51,7 @@ set(plugin_fixture_targets
   salts_plugin_fixture_c
   salts_plugin_fixture_cpp
   salts_plugin_fixture_object_interface
+  salts_plugin_fixture_generic_graph
   salts_plugin_fixture_missing_query
   salts_plugin_fixture_rejected
   salts_plugin_fixture_obsolete
@@ -67,6 +68,8 @@ add_library(salts_plugin_fixture_c SHARED fixture_plugin_c.c)
 add_library(salts_plugin_fixture_cpp SHARED fixture_plugin_cpp.cpp)
 add_library(salts_plugin_fixture_object_interface SHARED
   fixture_plugin_object_interface.c)
+add_library(salts_plugin_fixture_generic_graph SHARED
+  fixture_plugin_generic_graph.c)
 add_library(salts_plugin_fixture_missing_query SHARED
   fixture_plugin_missing_query.c)
 add_library(salts_plugin_fixture_rejected SHARED
@@ -106,6 +109,7 @@ endforeach()
 set_target_properties(
   salts_plugin_fixture_c
   salts_plugin_fixture_object_interface
+  salts_plugin_fixture_generic_graph
   salts_plugin_fixture_missing_query
   salts_plugin_fixture_rejected
   salts_plugin_fixture_obsolete
@@ -139,6 +143,7 @@ cmake_add_test(salts_plugin_loader_test
     "PLUGIN_VALID_C_PATH=\"$<TARGET_FILE:salts_plugin_fixture_c>\""
     "PLUGIN_VALID_CPP_PATH=\"$<TARGET_FILE:salts_plugin_fixture_cpp>\""
     "PLUGIN_OBJECT_INTERFACE_PATH=\"$<TARGET_FILE:salts_plugin_fixture_object_interface>\""
+    "PLUGIN_GENERIC_GRAPH_PATH=\"$<TARGET_FILE:salts_plugin_fixture_generic_graph>\""
     "PLUGIN_MISSING_QUERY_PATH=\"$<TARGET_FILE:salts_plugin_fixture_missing_query>\""
     "PLUGIN_REJECTED_PATH=\"$<TARGET_FILE:salts_plugin_fixture_rejected>\""
     "PLUGIN_OBSOLETE_PATH=\"$<TARGET_FILE:salts_plugin_fixture_obsolete>\""

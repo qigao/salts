@@ -66,6 +66,27 @@ load
 Everything borrowed from a Plugin DSO remains valid only while a live lease
 keeps the module loaded.
 
+That rule applies to the complete reachable reflection graph, not only the
+top-level export pointer:
+
+```text
+Function / Interface export
+    -> FunctionDesc / InterfaceDesc
+    -> TypeDesc / TypeIdentity
+    -> GenericDesc
+    -> DataDesc / lifecycle providers when referenced
+```
+
+Descriptor copies and semantic-equality matches do not retain the module.
+Cross-DSO type/generic comparison uses CMeta semantic identity; descriptor
+addresses are never module-independent identity. Consumers must drop every
+borrowed descriptor/view and destroy values whose lifecycle callbacks live in
+the provider before releasing the final Plugin lease.
+
+Standalone TYPE/DATA/GENERIC exports are not part of the current Plugin ABI.
+Reachable Function/Interface descriptor graphs are the canonical publication
+path unless a real consumer proves independent type discovery is required.
+
 ## CFlow composition
 
 There is no Plugin -> CFlow or CFlow -> Plugin dependency.
