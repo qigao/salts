@@ -3,6 +3,7 @@ name: Windows native SDK package check
 on:
   pull_request:
     paths:
+      - "utils/**"
       - "cnet/src/**"
       - "cnet/include/**"
       - "cnet/CMakeLists.txt"
