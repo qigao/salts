@@ -98,6 +98,11 @@ def set (relations : BorrowRelations) (borrowed owner : Nat) : BorrowRelations :
   fun candidate =>
     if candidate = borrowed then some owner else relations candidate
 
+/-- End one borrow edge without changing unrelated borrow relations. -/
+def clear (relations : BorrowRelations) (borrowed : Nat) : BorrowRelations :=
+  fun candidate =>
+    if candidate = borrowed then none else relations candidate
+
 end BorrowRelations
 
 /-- A borrowed result may escape only when it is tied to one live authority. -/
@@ -127,6 +132,22 @@ def admitBorrowedResult {borrowTy ownerTy : Ty}
     OwnershipContext × BorrowRelations :=
   (context.set borrowed .borrowed,
    relations.set borrowed.token owner.token)
+
+
+/--
+End one valid borrow before its authoritative owner becomes terminal.
+
+The borrowed binding becomes released and its owner edge is cleared. The owner
+itself is untouched. This is compiler/control-plane lifetime state only; no
+runtime release/destroy operation is implied for a borrowed view.
+-/
+def endBorrow {borrowTy ownerTy : Ty}
+    (context : OwnershipContext) (relations : BorrowRelations)
+    (borrowed : Value borrowTy) (owner : Value ownerTy)
+    (_bound : BorrowedFrom context relations borrowed owner) :
+    OwnershipContext × BorrowRelations :=
+  (context.set borrowed .released,
+   relations.clear borrowed.token)
 
 
 /-- Canonical semantic classes for a reflected function result.
