@@ -191,6 +191,7 @@ static void test_external_tls_listener_shared_progress(void) {
   cnet_connection outbound = {0};
   cnet_connection accepted = {0};
   bool listener_consumed = false;
+  bool accept_completion_seen = false;
   bool accepted_started = false;
   uint64_t deadline;
   char uri[64];
@@ -256,7 +257,9 @@ static void test_external_tls_listener_shared_progress(void) {
                &listener, &server, &client, &backend,
                25u, &listener_consumed) == SALTS_OK);
 
-    if (listener_consumed && !accepted_started) {
+    if (listener_consumed) accept_completion_seen = true;
+
+    if (accept_completion_seen && !accepted_started) {
       native_io_request blocked = {0};
       assert(cnet_listener_submit_external_accept(
                  &listener, &blocked) == SALTS_EALREADY);
@@ -270,7 +273,7 @@ static void test_external_tls_listener_shared_progress(void) {
     }
   }
 
-  assert(listener_consumed);
+  assert(accept_completion_seen);
   assert(accepted_started);
   assert(client_probe.connected);
   assert(server_probe.connected);
