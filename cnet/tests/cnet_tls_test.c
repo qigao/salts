@@ -204,6 +204,8 @@ typedef struct cnet_tls_network_probe {
   cnet_client *client;
   cnet_connection connection;
   char received[16];
+  unsigned char *received_external;
+  size_t received_capacity;
   char alpn[16];
   char tls_version[16];
   char tls_cipher[128];
@@ -259,13 +261,23 @@ static void cnet_tls_network_state(void *user, cnet_connection connection,
 static void cnet_tls_network_receive(void *user, cnet_connection connection,
                                      const cnet_receive_view *view) {
   cnet_tls_network_probe *probe = (cnet_tls_network_probe *)user;
+  unsigned char *target;
+  size_t capacity;
   (void)connection;
+  if (probe == NULL) return;
+  target = probe->received_external != NULL
+               ? probe->received_external
+               : (unsigned char *)probe->received;
+  capacity = probe->received_external != NULL
+                 ? probe->received_capacity
+                 : sizeof(probe->received);
   if (view == NULL || view->kind != CNET_MESSAGE_BYTES ||
-      view->size > sizeof(probe->received) - probe->received_size) {
+      probe->received_size > capacity ||
+      view->size > capacity - probe->received_size) {
     probe->failed = 1;
     return;
   }
-  memcpy(probe->received + probe->received_size, view->data, view->size);
+  memcpy(target + probe->received_size, view->data, view->size);
   probe->received_size += view->size;
 }
 
