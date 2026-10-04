@@ -9,6 +9,7 @@
 #include <gmssl/sha1.h>
 #include <gmssl/sha2.h>
 
+#include <stdlib.h>
 #include <string.h>
 
 int salts_md5(const void *data, size_t size,
@@ -36,6 +37,11 @@ int salts_sha1(const void *data, size_t size,
   return SALTS_OK;
 }
 
+struct salts_sha256_stream {
+  SHA256_CTX context;
+  int finished;
+};
+
 int salts_sha256(const void *data, size_t size,
                  uint8_t out[SALTS_SHA256_DIGEST_BYTES]) {
   SHA256_CTX context;
@@ -46,6 +52,50 @@ int salts_sha256(const void *data, size_t size,
   sha256_finish(&context, out);
   memset(&context, 0, sizeof(context));
   return SALTS_OK;
+}
+
+int salts_sha256_stream_create(salts_sha256_stream **out_stream) {
+  salts_sha256_stream *stream;
+  if (out_stream == NULL) return SALTS_EINVAL;
+  *out_stream = NULL;
+  stream = (salts_sha256_stream *)calloc(1u, sizeof(*stream));
+  if (stream == NULL) return SALTS_ENOMEM;
+  sha256_init(&stream->context);
+  *out_stream = stream;
+  return SALTS_OK;
+}
+
+int salts_sha256_stream_reset(salts_sha256_stream *stream) {
+  if (stream == NULL) return SALTS_EINVAL;
+  gmssl_secure_clear(&stream->context, sizeof(stream->context));
+  sha256_init(&stream->context);
+  stream->finished = 0;
+  return SALTS_OK;
+}
+
+int salts_sha256_stream_update(salts_sha256_stream *stream,
+                               const void *data, size_t size) {
+  if (stream == NULL || stream->finished ||
+      (data == NULL && size != 0u))
+    return SALTS_EINVAL;
+  if (size != 0u) sha256_update(&stream->context, (const uint8_t *)data, size);
+  return SALTS_OK;
+}
+
+int salts_sha256_stream_finish(
+    salts_sha256_stream *stream,
+    uint8_t out[SALTS_SHA256_DIGEST_BYTES]) {
+  if (stream == NULL || out == NULL || stream->finished) return SALTS_EINVAL;
+  sha256_finish(&stream->context, out);
+  gmssl_secure_clear(&stream->context, sizeof(stream->context));
+  stream->finished = 1;
+  return SALTS_OK;
+}
+
+void salts_sha256_stream_destroy(salts_sha256_stream *stream) {
+  if (stream == NULL) return;
+  gmssl_secure_clear(stream, sizeof(*stream));
+  free(stream);
 }
 
 int salts_hmac_md5(const void *key, size_t key_size,
