@@ -116,8 +116,12 @@ foreach ($payload in $payloads) {
     if ($discontiguous.Writes + 0.000001 -lt [double]$segmentCount) {
       throw "discontiguous TLS writes/op lower than plaintext segment count payload=$payload segments=$segmentCount writes=$($discontiguous.Writes)"
     }
-    if ($segmentCount -ge 8 -and $adjacent.Writes + 0.000001 -ge $discontiguous.Writes) {
-      throw "8/16-slice adjacent layout did not reduce TLS provider calls payload=$payload segments=$segmentCount adjacent=$($adjacent.Writes) discontiguous=$($discontiguous.Writes)"
+    $contiguousRecordFloor = [math]::Ceiling($payload / 16384.0)
+    $segmentRecordFloor =
+      $segmentCount * [math]::Ceiling(($payload / $segmentCount) / 16384.0)
+    if ($segmentRecordFloor -gt $contiguousRecordFloor -and
+        $adjacent.Writes + 0.000001 -ge $discontiguous.Writes) {
+      throw "adjacent layout did not reduce TLS provider calls when discontiguous segmentation increases the record floor payload=$payload segments=$segmentCount adjacent=$($adjacent.Writes) discontiguous=$($discontiguous.Writes)"
     }
 
     $p50Delta = ($adjacent.P50 / $discontiguous.P50 - 1.0) * 100.0
