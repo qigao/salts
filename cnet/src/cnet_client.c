@@ -1243,6 +1243,38 @@ int cnet_tls_peer_certificate_sha256(cnet_client *client, cnet_connection connec
   return status;
 }
 
+int cnet_tls_server_end_point_binding(
+    cnet_client *client, cnet_connection connection,
+    uint8_t *output, size_t capacity, size_t *out_size) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_shard_connection internal = {0};
+  cnet_client_record *record;
+  cnet_session_state session_state = CNET_SESSION_FREE;
+  size_t clear_size;
+  int status;
+
+  if (output == NULL || capacity == 0u || out_size == NULL)
+    return SALTS_EINVAL;
+  clear_size = capacity < CNET_TLS_SERVER_END_POINT_MAX_BYTES
+                   ? capacity
+                   : CNET_TLS_SERVER_END_POINT_MAX_BYTES;
+  memset(output, 0, clear_size);
+  *out_size = 0u;
+  if (impl == NULL) return SALTS_EINVAL;
+
+  record = cnet_client_find_record(impl, connection, &internal);
+  if (record == NULL) status = SALTS_ENOENT;
+  else if (record->scheme != CNET_URI_TLS) status = SALTS_ENOTSUP;
+  else if (cnet_client_record_session_state(impl, record, &session_state) !=
+               SALTS_OK ||
+           session_state != CNET_SESSION_OPEN)
+    status = SALTS_ENOTCONN;
+  else
+    status = cnet_shards_tls_server_end_point_binding(
+        &impl->shards, internal, output, capacity, out_size);
+  return status;
+}
+
 int cnet_tls_export_channel_binding(cnet_client *client, cnet_connection connection,
                                     uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]) {
   cnet_client_impl *impl = cnet_client_get(client);
