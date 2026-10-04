@@ -3014,6 +3014,27 @@ int cnet_owner_tls_peer_certificate_sha256(
   return cnet_tls_state_peer_certificate_sha256(&session->tls, buffer);
 }
 
+int cnet_owner_tls_server_end_point_binding(
+    cnet_owner *owner, cnet_session_handle session_handle,
+    uint8_t *output, size_t capacity, size_t *out_size) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  size_t clear_size;
+  if (output == NULL || capacity == 0u || out_size == NULL)
+    return SALTS_EINVAL;
+  clear_size = capacity < CNET_TLS_SERVER_END_POINT_MAX_BYTES
+                   ? capacity
+                   : CNET_TLS_SERVER_END_POINT_MAX_BYTES;
+  memset(output, 0, clear_size);
+  *out_size = 0u;
+  if (impl == NULL) return SALTS_EINVAL;
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (session->peer.scheme != CNET_URI_TLS) return SALTS_ENOTSUP;
+  return cnet_tls_state_server_end_point_binding(
+      &session->tls, output, capacity, out_size);
+}
+
 int cnet_owner_tls_export_channel_binding(
     cnet_owner *owner, cnet_session_handle session_handle,
     uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]) {
