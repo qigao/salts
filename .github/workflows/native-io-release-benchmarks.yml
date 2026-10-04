@@ -715,13 +715,20 @@ jobs:
             git worktree remove --force $baselineSource 2>$null
           }
 
+      - name: Build CFlow ordered parallel reduce benchmark / Windows
+        if: needs.scope.outputs.cflow == 'true' && matrix.family == 'windows' && matrix.backend == 'iocp'
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target cflow_parallel_reduce_benchmark
+          if errorlevel 1 exit /b 1
+
       - name: Run CFlow ordered parallel reduce benchmark / Windows
         if: needs.scope.outputs.cflow == 'true' && matrix.family == 'windows' && matrix.backend == 'iocp'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target cflow_parallel_reduce_benchmark
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
           New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
           $benchmark = Join-Path $env:GITHUB_WORKSPACE "${{ matrix.build_dir }}/bin/cflow_parallel_reduce_benchmark.exe"
