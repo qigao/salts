@@ -99,7 +99,12 @@ theorem borrowed_result_has_no_cleanup
     ¬ContextNeedsCleanup context borrowed := by
   intro cleanup
   rcases cleanup with ⟨ownership, atBorrowed, required⟩
-  rw [bound.1] at atBorrowed
+  have borrowedAt := bound.1
+  change context borrowed.token =
+    some { ty := borrowTy, ownership := .borrowed } at borrowedAt
+  change context borrowed.token =
+    some { ty := borrowTy, ownership := ownership } at atBorrowed
+  rw [borrowedAt] at atBorrowed
   cases atBorrowed
   exact borrowed_not_cleanup required
 
