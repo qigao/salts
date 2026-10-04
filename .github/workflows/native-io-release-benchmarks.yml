@@ -578,7 +578,7 @@ jobs:
             -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
           cmake --build --preset "${{ matrix.build_preset }}" \
             --target native_io_test native_io_sharded_test native_io_header_cpp_test \
-              native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark \
+              native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark cnet_tls_provider_parallel_benchmark \
               cnet_websocket_parser_test cnet_websocket_test \
               cnet_session_test cnet_command_test cnet_uri_test \
               cnet_transport_test cnet_owner_test cnet_owner_profile_test \
