@@ -265,15 +265,16 @@ static long cflow_parallel_bench_expected(const long *input, size_t count) {
 #define CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE(label, worker_count)              \
   do {                                                                             \
     cflow_executor scaling_executor = {0};                                         \
+    const size_t scaling_tasks = (worker_count) == 1u ? 2u : (worker_count);       \
     cflow_plan_eval_options scaling_options = {                                    \
         .mode = CFLOW_PLAN_EXECUTION_PARALLEL_REDUCE,                              \
         .executor = &scaling_executor,                                              \
-        .max_tasks = (worker_count),                                                \
+        .max_tasks = scaling_tasks,                                                 \
         .min_items_per_task = CFLOW_PARALLEL_BENCH_MIN_ITEMS                       \
     };                                                                             \
     bool scaling_ok = false;                                                       \
     check_true(cflow_executor_worker_init_with_capacity(                            \
-        &scaling_executor, (worker_count), (worker_count) * 2u));                  \
+        &scaling_executor, (worker_count), scaling_tasks * 2u));                   \
     benchmark_ops("Managed Plan Reduce ordered parallel / 1 Mi values / " label,   \
                   CFLOW_PARALLEL_BENCH_LARGE_SAMPLES / 2u,                         \
                   CFLOW_PARALLEL_BENCH_LARGE_ITEMS) {                              \
@@ -443,8 +444,10 @@ suite("CFlow ordered parallel reduce benchmarks") {
         "1 Mi values", CFLOW_PARALLEL_BENCH_LARGE_ITEMS,
         CFLOW_PARALLEL_BENCH_LARGE_SAMPLES / 2u);
 
-    printf("managed_parallel_reduce_worker_scaling items=%u\n",
-           CFLOW_PARALLEL_BENCH_LARGE_ITEMS);
+    printf(
+        "managed_parallel_reduce_worker_scaling items=%u "
+        "workers=1 uses two tasks on one worker to preserve parallel admission\n",
+        CFLOW_PARALLEL_BENCH_LARGE_ITEMS);
     CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=1", 1u);
     CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=2", 2u);
     CFLOW_PARALLEL_MANAGED_WORKER_BENCH_CASE("workers=4", 4u);
