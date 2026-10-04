@@ -1709,7 +1709,7 @@ jobs:
             for temperature in fresh warm; do
               for mode in push echo; do
                 for payload in 16384 32768 65536; do
-                  for owners in 1 2 4; do
+                  for owners in 1 2 4 8; do
                     echo "provider repeat=$repeat temperature=$temperature mode=$mode payload=$payload owners=$owners"
                     CNET_TLS_PROVIDER_PARALLEL_OPS=64 \
                       "$benchmark" "$mode" "$payload" "$owners" "$temperature" \
