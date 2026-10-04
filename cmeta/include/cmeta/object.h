@@ -253,7 +253,7 @@ cmeta_status cmeta_object_field_assign(
  * produced an exact receiver-bound callable and receiver-elided FunctionData.
  */
 cmeta_receiver_resolve_status cmeta_object_method_resolve(
-    const cmeta_object_ref *ref, const char *owner_name,
+    const cmeta_object_ref *ref, const cmeta_generic_desc *owner,
     const char *method_name,
     const cmeta_type_desc *const *argument_types, size_t argument_count,
     cmeta_receiver_resolution *out);
