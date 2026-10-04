@@ -3,6 +3,7 @@ name: Android arm64 runtime qualification
 on:
   pull_request:
     paths:
+      - "utils/**"
       - "platform/**"
       - "concurrency/**"
       - "cmeta/**"
@@ -19,6 +20,7 @@ on:
   push:
     branches: [master]
     paths:
+      - "utils/**"
       - "platform/**"
       - "concurrency/**"
       - "cmeta/**"
