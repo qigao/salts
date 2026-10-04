@@ -6,7 +6,22 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-enum { CNET_TLS_SERVER_NAME_CAPACITY = 254 };
+enum {
+  CNET_TLS_SERVER_NAME_CAPACITY = 254,
+  CNET_TLS_PEER_CHAIN_MAX_CERTIFICATES = 5,
+  CNET_TLS_PEER_CHAIN_MAX_BYTES = 4096
+};
+
+typedef struct cnet_tls_peer_certificate {
+  const uint8_t *data;
+  size_t size;
+} cnet_tls_peer_certificate;
+
+typedef struct cnet_tls_peer_certificate_chain {
+  cnet_tls_peer_certificate certificates[CNET_TLS_PEER_CHAIN_MAX_CERTIFICATES];
+  size_t count;
+  size_t total_bytes;
+} cnet_tls_peer_certificate_chain;
 
 typedef struct cnet_tls_context cnet_tls_context;
 
@@ -74,6 +89,12 @@ int cnet_tls_state_negotiated_cipher(const cnet_tls_state *state, char *buffer, 
 int cnet_tls_state_peer_certificate_sha256(
     const cnet_tls_state *state,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
+int cnet_tls_peer_certificate_chain_parse(
+    const uint8_t *data, size_t size,
+    cnet_tls_peer_certificate_chain *out_chain);
+int cnet_tls_state_peer_certificate_chain(
+    const cnet_tls_state *state,
+    cnet_tls_peer_certificate_chain *out_chain);
 int cnet_tls_server_end_point_binding_from_certificate(
     const uint8_t *certificate, size_t certificate_size,
     uint8_t *output, size_t capacity, size_t *out_size);

@@ -1614,6 +1614,69 @@ int cnet_tls_state_server_end_point_binding(
       certificate, certificate_size, output, capacity, out_size);
 }
 
+int cnet_tls_peer_certificate_chain_parse(
+    const uint8_t *data, size_t size,
+    cnet_tls_peer_certificate_chain *out_chain) {
+  cnet_tls_peer_certificate_chain candidate = {0};
+  size_t count = 0u;
+  size_t index;
+  size_t total = 0u;
+
+  if (out_chain == NULL) return SALTS_EINVAL;
+  memset(out_chain, 0, sizeof(*out_chain));
+  if (data == NULL || size == 0u) return SALTS_ENOENT;
+  if (size > CNET_TLS_PEER_CHAIN_MAX_BYTES) return SALTS_ERANGE;
+
+  if (x509_certs_get_count(data, size, &count) != 1)
+    return SALTS_EPROTO;
+  if (count == 0u) return SALTS_EPROTO;
+  if (count > CNET_TLS_PEER_CHAIN_MAX_CERTIFICATES)
+    return SALTS_ERANGE;
+
+  for (index = 0u; index < count; ++index) {
+    const uint8_t *cert = NULL;
+    size_t cert_size = 0u;
+    size_t offset;
+    if (x509_certs_get_cert_by_index(
+            data, size, index, &cert, &cert_size) != 1 ||
+        cert == NULL || cert_size == 0u ||
+        cert < data || cert > data + size)
+      return SALTS_EPROTO;
+    offset = (size_t)(cert - data);
+    if (cert_size > size - offset || total > size - cert_size)
+      return SALTS_EPROTO;
+    candidate.certificates[index].data = cert;
+    candidate.certificates[index].size = cert_size;
+    total += cert_size;
+  }
+
+  if (total != size) return SALTS_EPROTO;
+  candidate.count = count;
+  candidate.total_bytes = total;
+  *out_chain = candidate;
+  return SALTS_OK;
+}
+
+int cnet_tls_state_peer_certificate_chain(
+    const cnet_tls_state *state,
+    cnet_tls_peer_certificate_chain *out_chain) {
+  const cnet_tls_gmssl_state *engine;
+  if (out_chain == NULL) return SALTS_EINVAL;
+  memset(out_chain, 0, sizeof(*out_chain));
+  if (state == NULL || (engine = CNET_TLS_ENGINE(state)) == NULL)
+    return SALTS_EINVAL;
+  if (!state->handshake_complete) return SALTS_ENOTCONN;
+  if (engine->connection.peer_cert_chain_len == 0u)
+    return SALTS_ENOENT;
+  if (engine->connection.peer_cert_chain_len >
+      CNET_TLS_PEER_CHAIN_MAX_BYTES)
+    return SALTS_ERANGE;
+  return cnet_tls_peer_certificate_chain_parse(
+      engine->connection.peer_cert_chain,
+      engine->connection.peer_cert_chain_len,
+      out_chain);
+}
+
 int cnet_tls_state_export_channel_binding(
     const cnet_tls_state *state,
     uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]) {

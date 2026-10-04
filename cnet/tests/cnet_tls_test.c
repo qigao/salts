@@ -1118,6 +1118,66 @@ spec("CNet bounded TLS engine") {
     cnet_tls_test_pair_destroy(&pair);
   }
 
+  it("projects the peer certificate chain with bounded ordered views") {
+    cnet_tls_test_pair pair;
+    cnet_tls_peer_certificate_chain chain = {0};
+    cnet_tls_peer_certificate_chain parsed = {0};
+    unsigned char *duplicated = NULL;
+    size_t leaf_size;
+
+    check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
+    check_equal(cnet_tls_state_peer_certificate_chain(&pair.client, &chain),
+                SALTS_ENOTCONN);
+    check_equal(chain.count, (size_t)0u);
+    check_equal(chain.total_bytes, (size_t)0u);
+
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+    check_equal(cnet_tls_state_peer_certificate_chain(&pair.client, &chain),
+                SALTS_OK);
+    check_greater(chain.count, (size_t)0u);
+    check_true(chain.count <= CNET_TLS_PEER_CHAIN_MAX_CERTIFICATES);
+    check_greater(chain.total_bytes, (size_t)0u);
+    check_true(chain.total_bytes <= CNET_TLS_PEER_CHAIN_MAX_BYTES);
+    check_not_null(chain.certificates[0].data);
+    check_greater(chain.certificates[0].size, (size_t)0u);
+
+    leaf_size = chain.certificates[0].size;
+    check_true(leaf_size <= CNET_TLS_PEER_CHAIN_MAX_BYTES / 2u);
+    duplicated = (unsigned char *)malloc(leaf_size * 2u);
+    check_not_null(duplicated);
+    memcpy(duplicated, chain.certificates[0].data, leaf_size);
+    memcpy(duplicated + leaf_size, chain.certificates[0].data, leaf_size);
+
+    check_equal(cnet_tls_peer_certificate_chain_parse(
+                    duplicated, leaf_size * 2u, &parsed),
+                SALTS_OK);
+    check_equal(parsed.count, (size_t)2u);
+    check_equal(parsed.total_bytes, leaf_size * 2u);
+    check_true(parsed.certificates[0].data == duplicated);
+    check_true(parsed.certificates[1].data == duplicated + leaf_size);
+    check_equal(parsed.certificates[0].size, leaf_size);
+    check_equal(parsed.certificates[1].size, leaf_size);
+
+    memset(&parsed, 0x5a, sizeof(parsed));
+    check_equal(cnet_tls_peer_certificate_chain_parse(
+                    duplicated, leaf_size * 2u - 1u, &parsed),
+                SALTS_EPROTO);
+    check_equal(parsed.count, (size_t)0u);
+    check_equal(parsed.total_bytes, (size_t)0u);
+    check_null(parsed.certificates[0].data);
+
+    memset(&parsed, 0x5a, sizeof(parsed));
+    check_equal(cnet_tls_peer_certificate_chain_parse(
+                    duplicated, CNET_TLS_PEER_CHAIN_MAX_BYTES + 1u, &parsed),
+                SALTS_ERANGE);
+    check_equal(parsed.count, (size_t)0u);
+    check_equal(parsed.total_bytes, (size_t)0u);
+    check_null(parsed.certificates[0].data);
+
+    free(duplicated);
+    cnet_tls_test_pair_destroy(&pair);
+  }
+
   it("reports negotiated TLS protocol and cipher only after handshake") {
     cnet_tls_test_pair pair;
     char client_version[16] = {0};
