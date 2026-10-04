@@ -19,6 +19,9 @@ extern "C" {
 #define SALTS_DES_KEY_BYTES 8u
 #define SALTS_DES_BLOCK_BYTES 8u
 
+/** Opaque provider-neutral incremental SHA-256 context. */
+typedef struct salts_sha256_stream salts_sha256_stream;
+
 /**
  * Compute MD5 over one contiguous byte range.
  *
@@ -58,6 +61,34 @@ SALTS_C_API int salts_sha1(const void *data, size_t size,
  */
 SALTS_C_API int salts_sha256(const void *data, size_t size,
                              uint8_t out[SALTS_SHA256_DIGEST_BYTES]);
+
+/**
+ * Create an incremental SHA-256 context.
+ *
+ * The returned context owns provider state privately; no provider type crosses
+ * the public ABI. Destroy the context with salts_sha256_stream_destroy().
+ */
+SALTS_C_API int salts_sha256_stream_create(salts_sha256_stream **out_stream);
+
+/** Reset an incremental SHA-256 context to the empty-message state. */
+SALTS_C_API int salts_sha256_stream_reset(salts_sha256_stream *stream);
+
+/**
+ * Add one byte range to an incremental SHA-256 context.
+ * NULL data is accepted only when size is zero.
+ */
+SALTS_C_API int salts_sha256_stream_update(salts_sha256_stream *stream,
+                                           const void *data, size_t size);
+
+/**
+ * Finish the current digest. Further update/finish calls fail until reset.
+ */
+SALTS_C_API int salts_sha256_stream_finish(
+    salts_sha256_stream *stream,
+    uint8_t out[SALTS_SHA256_DIGEST_BYTES]);
+
+/** Wipe provider state and release an incremental SHA-256 context. */
+SALTS_C_API void salts_sha256_stream_destroy(salts_sha256_stream *stream);
 
 /**
  * Compute HMAC-MD5 over one contiguous byte range.
