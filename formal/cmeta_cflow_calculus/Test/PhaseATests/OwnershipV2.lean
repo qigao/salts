@@ -73,6 +73,62 @@ theorem functionViewBoundToLease :
   exact ⟨functionViewBorrowed, rfl,
     ⟨.owned, pluginLeaseOwned, LifetimeAuthority.owned⟩⟩
 
+def endedFunctionView : OwnershipContext × BorrowRelations :=
+  endBorrow pluginContext pluginBorrows functionView pluginLease
+    functionViewBoundToLease
+
+example :
+    endedFunctionView.1 functionView.token =
+      some { ty := descriptorTy, ownership := .released } :=
+  end_borrow_updates_source
+    pluginContext pluginBorrows functionView pluginLease
+    functionViewBoundToLease
+
+example : endedFunctionView.2 functionView.token = none :=
+  end_borrow_clears_relation
+    pluginContext pluginBorrows functionView pluginLease
+    functionViewBoundToLease
+
+example : ¬ContextReadable endedFunctionView.1 functionView :=
+  end_borrow_source_not_readable
+    pluginContext pluginBorrows functionView pluginLease
+    functionViewBoundToLease
+
+theorem pluginLeaseOwnedAfterFunctionViewEnd :
+    HasOwnership endedFunctionView.1 pluginLease .owned := by
+  exact end_borrow_preserves_owner
+    pluginContext pluginBorrows functionView pluginLease
+    functionViewBoundToLease .owned pluginLeaseOwned (by decide)
+
+def releasedPluginAfterFunctionViewEnd : OwnershipContext :=
+  discharge endedFunctionView.1 pluginLease .owned
+    pluginLeaseOwnedAfterFunctionViewEnd NeedsCleanup.owned
+
+example :
+    releasedPluginAfterFunctionViewEnd pluginLease.token =
+      some { ty := leaseTy, ownership := .released } :=
+  discharge_updates_source
+    endedFunctionView.1 pluginLease .owned
+    pluginLeaseOwnedAfterFunctionViewEnd NeedsCleanup.owned
+
+example :
+    releasedPluginAfterFunctionViewEnd functionView.token =
+      some { ty := descriptorTy, ownership := .released } := by
+  have preserved :=
+    discharge_preserves_other
+      endedFunctionView.1 pluginLease .owned
+      pluginLeaseOwnedAfterFunctionViewEnd NeedsCleanup.owned
+      (candidate := functionView.token) (by decide)
+  rw [preserved]
+  exact end_borrow_updates_source
+    pluginContext pluginBorrows functionView pluginLease
+    functionViewBoundToLease
+
+example : endedFunctionView.2 functionView.token = none :=
+  end_borrow_clears_relation
+    pluginContext pluginBorrows functionView pluginLease
+    functionViewBoundToLease
+
 def releasedPluginContext : OwnershipContext :=
   discharge pluginContext pluginLease .owned
     pluginLeaseOwned NeedsCleanup.owned
