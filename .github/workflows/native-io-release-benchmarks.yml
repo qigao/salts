@@ -37,10 +37,13 @@ on:
       - "cflow/include/cflow/plan.h"
       - "cflow/include/cflow/plan_internal.h"
       - "cflow/src/plan_exec.c"
+      - "cflow/src/plan_compile.c"
+      - "cflow/src/plan_parallel_reduce.c"
       - "cflow/src/adapters.c"
       - "cflow/include/cflow/adapters.h"
       - "cflow/tests/cflow_pipeline_test.c"
       - "cflow/tests/cflow_plan_managed_test.c"
+      - "cflow/tests/cflow_parallel_reduce_test.c"
       - "cflow/benchmarks/**"
   push:
     branches: [master]
@@ -79,10 +82,13 @@ on:
       - "cflow/include/cflow/plan.h"
       - "cflow/include/cflow/plan_internal.h"
       - "cflow/src/plan_exec.c"
+      - "cflow/src/plan_compile.c"
+      - "cflow/src/plan_parallel_reduce.c"
       - "cflow/src/adapters.c"
       - "cflow/include/cflow/adapters.h"
       - "cflow/tests/cflow_pipeline_test.c"
       - "cflow/tests/cflow_plan_managed_test.c"
+      - "cflow/tests/cflow_parallel_reduce_test.c"
       - "cflow/benchmarks/**"
   workflow_dispatch:
 
