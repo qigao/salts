@@ -15,7 +15,9 @@ concrete use cases require it.
 **Tags:** C11 · generic-programming · metadata · reflection · traits · interfaces · contracts · code-generation
 
 The authoritative syntax and layering contract is
-[`LANGUAGE_REFERENCE.md`](LANGUAGE_REFERENCE.md).
+[`LANGUAGE_REFERENCE.md`](LANGUAGE_REFERENCE.md). Compiler/tooling reflection
+inspection follows [`INSPECTION.md`](INSPECTION.md): immutable descriptors plus
+canonical semantic queries, without a second meta object model or runtime RTTI.
 
 ## Public programming model
 
