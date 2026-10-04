@@ -114,6 +114,11 @@ example :
 example :
     releasedPluginAfterFunctionViewEnd functionView.token =
       some { ty := descriptorTy, ownership := .released } := by
+  change
+    discharge endedFunctionView.1 pluginLease .owned
+      pluginLeaseOwnedAfterFunctionViewEnd NeedsCleanup.owned
+      functionView.token =
+        some { ty := descriptorTy, ownership := .released }
   rw [discharge_preserves_other
         endedFunctionView.1 pluginLease .owned
         pluginLeaseOwnedAfterFunctionViewEnd NeedsCleanup.owned
