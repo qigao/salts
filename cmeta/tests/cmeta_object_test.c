@@ -234,7 +234,7 @@ static const cmeta_receiver_method_set object_method_set = {
     .receiver_type = &object_box_type,
     .methods = object_methods,
     .method_count = 1u,
-    .owner_name = "ObjectBox"
+    .owner = NULL
 };
 
 static const cmeta_param_desc object_add_projected_params[] = {
@@ -888,7 +888,7 @@ spec("CMeta canonical borrowed object") {
                         &object, &box, &object_box_data, &object_method_set),
                     CMETA_OK);
         check_equal(cmeta_object_method_resolve(
-                        &object, "ObjectBox", "add",
+                        &object, NULL, "add",
                         arguments, 1u, &resolution),
                     CMETA_RECEIVER_RESOLVE_OK);
         check_true(resolution.method == &object_methods[0]);
@@ -924,7 +924,7 @@ spec("CMeta canonical borrowed object") {
         check_true(object.method_provider == &object_method_provider);
 
         check_equal(cmeta_object_method_resolve(
-                        &object, "ObjectBox", "add",
+                        &object, NULL, "add",
                         arguments, 1u, &resolution),
                     CMETA_RECEIVER_RESOLVE_OK);
         check_true(resolution.method == &object_methods[0]);
