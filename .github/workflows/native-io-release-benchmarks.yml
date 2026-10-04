@@ -255,6 +255,7 @@ jobs:
                 }).Count -gt 0
               $cnetSgBench = @($changed | Where-Object {
                   $_ -like "cnet/benchmarks/*tls_sg*" -or
+                  $_ -like "cnet/benchmarks/*tls_provider_parallel*" -or
                   $_ -like "cnet/benchmarks/*sg_benchmark*" -or
                   $_ -like "cnet/benchmarks/verify_tls_sg_benchmark.ps1" -or
                   $_ -eq "cnet/benchmarks/cnet_io_benchmark.c"
