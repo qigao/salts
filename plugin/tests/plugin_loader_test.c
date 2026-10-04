@@ -2,6 +2,9 @@
 #include <salts/thread.h>
 #include <tinytest.h>
 
+#include <cmeta/object_interface.h>
+
+#include "plugin_object_interface_fixture.h"
 #include "plugin_slow_query_fixture.h"
 
 #include <stdatomic.h>
@@ -13,6 +16,9 @@
 #endif
 #ifndef PLUGIN_VALID_CPP_PATH
 #error "PLUGIN_VALID_CPP_PATH is required"
+#endif
+#ifndef PLUGIN_OBJECT_INTERFACE_PATH
+#error "PLUGIN_OBJECT_INTERFACE_PATH is required"
 #endif
 #ifndef PLUGIN_MISSING_QUERY_PATH
 #error "PLUGIN_MISSING_QUERY_PATH is required"
@@ -35,6 +41,44 @@
 #ifndef PLUGIN_SLOW_QUERY_B_PATH
 #error "PLUGIN_SLOW_QUERY_B_PATH is required"
 #endif
+
+CMETA_OBJECT_INTERFACE_ADAPTER(plugin_object_fixture_api);
+
+typedef struct plugin_object_projection_context {
+    const salts_plugin_export *interface_export;
+} plugin_object_projection_context;
+
+static cmeta_status plugin_object_project_interface(
+    void *context,
+    const cmeta_object_ref *object,
+    const cmeta_interface_desc *expected,
+    cmeta_interface_projection *out) {
+    const plugin_object_projection_context *projection =
+        (const plugin_object_projection_context *)context;
+    const salts_plugin_export *entry;
+    const plugin_object_fixture_api *api;
+
+    if (projection == NULL || object == NULL || expected == NULL ||
+        out == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    entry = projection->interface_export;
+    if (entry == NULL || entry->kind != SALTS_PLUGIN_EXPORT_INTERFACE ||
+        entry->value.interface.desc == NULL ||
+        entry->value.interface.value == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (!cmeta_interface_desc_equal(entry->value.interface.desc, expected))
+        return CMETA_TRAIT_MISSING;
+
+    api = (const plugin_object_fixture_api *)entry->value.interface.value;
+    if (!plugin_object_fixture_api_valid(api) || api->self != object->object)
+        return CMETA_TYPE_MISMATCH;
+
+    *out = (cmeta_interface_projection)CMETA_INTERFACE_PROJECTION_INIT;
+    out->interface = entry->value.interface.desc;
+    out->self = api->self;
+    out->dispatch = api->vtable;
+    return CMETA_OK;
+}
 
 typedef struct plugin_slow_load_context {
     salts_plugin_registry *registry;
@@ -215,6 +259,129 @@ describe("bounded registry") {
                     SALTS_PLUGIN_OK);
         check_equal(salts_plugin_registry_request_stop(&registry, ref),
                     SALTS_PLUGIN_OK);
+        check_equal(salts_plugin_registry_poll_quiescent(
+                        &registry, ref, &quiescent),
+                    SALTS_PLUGIN_OK);
+        check_true(quiescent);
+        check_equal(salts_plugin_registry_unload(&registry, ref),
+                    SALTS_PLUGIN_OK);
+        destroy_registry(&registry);
+    }
+
+    it("keeps ObjectRef and Interface views lease-bound to one DSO identity") {
+        salts_plugin_registry registry = make_registry(1u);
+        salts_plugin_ref ref = {0};
+        salts_plugin_lease lease = {0};
+        const salts_plugin_manifest *manifest = NULL;
+        const salts_plugin_export *interface_entry = NULL;
+        const salts_plugin_export *identity_entry = NULL;
+        plugin_object_fixture_state *state = NULL;
+        plugin_object_fixture_api *exported_api = NULL;
+        plugin_object_fixture_api projected =
+            plugin_object_fixture_api_bind(NULL, NULL);
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        plugin_object_projection_context projection_context = {0};
+        cmeta_object_interface_provider provider = {
+            .size = sizeof(cmeta_object_interface_provider),
+            .context = &projection_context,
+            .project = plugin_object_project_interface
+        };
+        const cmeta_data_desc *field_data = NULL;
+        const void *field_value = NULL;
+        bool quiescent = true;
+
+        check_equal(salts_plugin_registry_load(
+                        &registry, PLUGIN_OBJECT_INTERFACE_PATH, &ref),
+                    SALTS_PLUGIN_OK);
+        check_equal(salts_plugin_registry_start(&registry, ref),
+                    SALTS_PLUGIN_OK);
+        check_equal(salts_plugin_registry_acquire(
+                        &registry, ref, &lease, &manifest),
+                    SALTS_PLUGIN_OK);
+        check_true(salts_plugin_lease_valid(lease));
+        check_not_null(manifest);
+
+        check_equal(salts_plugin_manifest_find_export(
+                        manifest, "service", &interface_entry),
+                    SALTS_PLUGIN_OK);
+        check_equal(salts_plugin_export_require_interface(
+                        interface_entry, "test.object.service", 1u, 1u,
+                        plugin_object_fixture_api_interface()),
+                    SALTS_PLUGIN_OK);
+        check_not_null(interface_entry);
+        exported_api = (plugin_object_fixture_api *)
+            interface_entry->value.interface.value;
+        check_true(plugin_object_fixture_api_valid(exported_api));
+
+        check_equal(salts_plugin_manifest_find_export(
+                        manifest, "borrow_identity", &identity_entry),
+                    SALTS_PLUGIN_OK);
+        check_equal(salts_plugin_export_require_function(
+                        identity_entry, "test.object.identity", 1u, 1u),
+                    SALTS_PLUGIN_OK);
+        check_not_null(identity_entry);
+        check_true(cmeta_function_desc_valid(identity_entry->value.function.desc));
+        check_true(cmeta_function_abi_desc_valid(identity_entry->value.function.abi));
+        check_equal(
+            identity_entry->value.function.desc->result_flags &
+                CMETA_RESULT_CLASS_MASK,
+            CMETA_RESULT_BORROWED);
+        check_equal(identity_entry->value.function.abi->return_carrier,
+                    CMETA_ABI_OBJECT_POINTER);
+        check_true(identity_entry->value.function.invoke(
+            identity_entry->value.function.context, &state, NULL, 0u));
+        check_not_null(state);
+        check_true(exported_api->self == state);
+
+        check_true(cmeta_data_desc_valid(&plugin_object_fixture_data));
+        check_equal(cmeta_object_borrow(
+                        &object, state, &plugin_object_fixture_data, NULL),
+                    CMETA_OK);
+        check_true(cmeta_object_ref_valid(&object));
+
+        projection_context.interface_export = interface_entry;
+        check_equal(plugin_object_fixture_api_borrow_from_object(
+                        &object, &provider, &projected),
+                    CMETA_OK);
+        check_true(plugin_object_fixture_api_valid(&projected));
+        check_true(projected.self == state);
+        check_true(projected.vtable == exported_api->vtable);
+
+        check_equal(cmeta_object_field_read(
+                        &object, "value", &field_data, &field_value),
+                    CMETA_OK);
+        check_true(field_data == &cmeta_data_int);
+        check_true(field_value == &state->value);
+        check_equal(*(const int *)field_value, 7);
+
+        check_equal(plugin_object_fixture_api_add(&projected, 5), 12);
+        check_equal(plugin_object_fixture_api_value(exported_api), 12);
+        check_equal(cmeta_object_field_read(
+                        &object, "value", &field_data, &field_value),
+                    CMETA_OK);
+        check_equal(*(const int *)field_value, 12);
+
+        check_equal(salts_plugin_registry_request_stop(&registry, ref),
+                    SALTS_PLUGIN_OK);
+        check_equal(salts_plugin_registry_unload(&registry, ref),
+                    SALTS_PLUGIN_BUSY);
+        check_equal(salts_plugin_registry_poll_quiescent(
+                        &registry, ref, &quiescent),
+                    SALTS_PLUGIN_OK);
+        check_false(quiescent);
+
+        projected = plugin_object_fixture_api_bind(NULL, NULL);
+        exported_api = NULL;
+        interface_entry = NULL;
+        identity_entry = NULL;
+        manifest = NULL;
+        cmeta_object_release(&object);
+        check_false(cmeta_object_ref_valid(&object));
+        state = NULL;
+
+        check_equal(salts_plugin_registry_release(&registry, &lease),
+                    SALTS_PLUGIN_OK);
+        check_false(salts_plugin_lease_valid(lease));
         check_equal(salts_plugin_registry_poll_quiescent(
                         &registry, ref, &quiescent),
                     SALTS_PLUGIN_OK);
