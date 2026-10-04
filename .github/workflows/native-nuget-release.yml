@@ -24,6 +24,16 @@ on:
       - "packaging/nuget/**"
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: "Exact immutable release commit SHA"
+        required: true
+        type: string
+      tag:
+        description: "Existing immutable release tag"
+        required: true
+        type: string
 permissions:
   contents: read
   packages: read
@@ -53,7 +63,11 @@ jobs:
           set -euo pipefail
           release=true
           publish=false
-          release_sha="$GITHUB_SHA"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            release_sha="${{ inputs.release_sha }}"
+          else
+            release_sha="$GITHUB_SHA"
+          fi
 
           test -n "$release_sha"
           git cat-file -e "$release_sha^{commit}"
@@ -75,14 +89,30 @@ jobs:
           expected_tag="v$version"
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             test "$GITHUB_REF_TYPE" = "tag"
-            if [ "$GITHUB_REF_NAME" != "$expected_tag" ]; then
-              echo "release tag mismatch: requested=$GITHUB_REF_NAME expected=$expected_tag" >&2
-              exit 1
-            fi
+            requested_tag="$GITHUB_REF_NAME"
             publish=true
-          elif [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            requested_tag="${{ inputs.tag }}"
+            publish=true
+          elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            requested_tag="$expected_tag"
+          else
             echo "unsupported native package event: $GITHUB_EVENT_NAME" >&2
             exit 1
+          fi
+
+          if [ "$requested_tag" != "$expected_tag" ]; then
+            echo "release tag mismatch: requested=$requested_tag expected=$expected_tag" >&2
+            exit 1
+          fi
+
+          if [ "$publish" = "true" ]; then
+            git fetch origin "refs/tags/$expected_tag:refs/tags/$expected_tag" --force
+            tagged_commit="$(git rev-list -n 1 "$expected_tag")"
+            if [ "$tagged_commit" != "$release_sha" ]; then
+              echo "release tag $expected_tag resolves to $tagged_commit, not $release_sha" >&2
+              exit 1
+            fi
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
