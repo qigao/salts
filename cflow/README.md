@@ -334,6 +334,22 @@ parse C prototypes at runtime.
 The reflected descriptors are control-plane truth. Once a projection is added
 to a Graph, Graph/Plan execution stores a copied bound callable and borrowed
 input/output descriptor pointers, and performs no reflection lookup per value.
+Callable capture has one explicit ownership rule:
+
+```text
+inline capture bytes                         Graph/Plan-owned snapshot
+pointer/descriptor/provider/code referenced  borrowed transitive dependency
+managed stream/reduce/runtime values          CMeta lifecycle owner
+Plugin/module code                            outer Plugin lease
+```
+
+Graph clone copies the inline bytes by value. It does not recursively retain,
+clone, release, or destroy resources reachable through those bytes. Consequently
+a captured pointer remains a borrowed pointer to the same external identity in
+every Graph/Plan copy, and that owner must outlive every use. Managed values that
+need copy/move/destroy must use CFlow's typed value-lifecycle paths rather than
+being hidden in inline capture.
+
 Copying the callable does not retain its executable code module or borrowed
 captures. The host must keep providers loaded until projections, derived
 Graphs/Plans, active runs and values using provider trait callbacks are finished.

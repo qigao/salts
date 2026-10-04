@@ -250,8 +250,17 @@ typedef enum cmeta_callable_dispatch {
 
 /* First-class immutable callable value. Plain typed functions and capturing
  * C-meta lambdas share this exact representation. dispatch states whether the
- * adapter or resolved raw target is authoritative. capture is copied by value
- * with the Graph, Subgraph snapshots and compiled plans. */
+ * adapter or resolved raw target is authoritative.
+ *
+ * capture is a Graph/Plan-owned immutable byte snapshot copied by value with
+ * Graph clones, Subgraph snapshots and compiled plans. Ownership stops at the
+ * bytes: pointers, descriptors, providers, code modules, or other resources
+ * referenced by those bytes remain borrowed external dependencies. Copying or
+ * destroying a callable never retains/releases/destroys such transitive
+ * resources. Managed values that require copy/move/destroy belong in a typed
+ * lifecycle owner (for example CFlow value slots), not in inline capture under
+ * an assumption of automatic destruction.
+ */
 struct cmeta_callable {
     cmeta_fn meta; /* sig may be resolved lazily before Graph insertion */
     cmeta_callable_resolve_fn resolve;

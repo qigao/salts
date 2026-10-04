@@ -63,6 +63,15 @@ lambda1(map, value, long, cflow_test_captured_add,
     return (long)value + increment;
 }
 
+typedef struct cflow_test_borrowed_capture {
+    int *increment;
+} cflow_test_borrowed_capture;
+
+lambda1(map, value, long, cflow_test_borrowed_ptr_add,
+        int, value, cflow_test_borrowed_capture, capture) {
+    return (long)value + (long)*capture.increment;
+}
+
 static void cflow_test_check_expected(const cflow_result *result) {
     const double *values;
 
@@ -453,6 +462,59 @@ suite("CFlow pipeline") {
         cflow_result_destroy(&result);
         cflow_plan_destroy(&plan);
         cflow_stream_destroy(&stream);
+    }
+
+    it("owns capture bytes but borrows transitive pointer identity across clone") {
+        cflow_stream stream = {0};
+        cflow_graph clone = {0};
+        cflow_result result = {0};
+        cflow_test_borrowed_capture original_capture = {0};
+        cflow_test_borrowed_capture cloned_capture = {0};
+        int external_increment = 10;
+        const int input[] = {1, 2};
+        const long expected[] = {21L, 22L};
+        cflow_map_callable callable =
+            cflow_test_borrowed_ptr_add(
+                (cflow_test_borrowed_capture){&external_increment});
+        const cflow_node *source_node;
+        const cflow_node *clone_node;
+
+        clone.root = CMETA_INVALID_ID;
+        check_not_null(cflow_stream_init(&stream, &cmeta_type_int));
+        check_not_null(stream.map(&stream, callable));
+        check_true(cflow_graph_clone(&clone, &stream.graph));
+
+        source_node = cflow_subgraph_node(
+            cflow_graph_subgraph(&stream.graph, stream.graph.root), 1u);
+        clone_node = cflow_subgraph_node(
+            cflow_graph_subgraph(&clone, clone.root), 1u);
+        check_not_null(source_node);
+        check_not_null(clone_node);
+        check_equal(source_node->fn.capture_size,
+                    sizeof(cflow_test_borrowed_capture));
+        check_equal(clone_node->fn.capture_size,
+                    sizeof(cflow_test_borrowed_capture));
+        check_true(&source_node->fn.capture != &clone_node->fn.capture);
+
+        memcpy(&original_capture, source_node->fn.capture.bytes,
+               sizeof(original_capture));
+        memcpy(&cloned_capture, clone_node->fn.capture.bytes,
+               sizeof(cloned_capture));
+        check_true(original_capture.increment == &external_increment);
+        check_true(cloned_capture.increment == &external_increment);
+
+        external_increment = 20;
+        cflow_stream_destroy(&stream);
+        check_equal(external_increment, 20);
+
+        check_true(cflow_eval_array(&clone, input, 2u, &result));
+        check_equal(result.count, (size_t)2u);
+        check_true(cmeta_type_equal(result.type, &cmeta_type_long));
+        check_equal(result.data, expected, sizeof(expected));
+
+        cflow_result_destroy(&result);
+        cflow_graph_destroy(&clone);
+        check_equal(external_increment, 20);
     }
 
     it("keeps capturing maps on the adapter path") {
