@@ -18,7 +18,7 @@ enum {
   TLS_PARALLEL_RECORD_HEADER_BYTES = 5,
   TLS_PARALLEL_TRANSFER_BYTES = 4096,
   TLS_PARALLEL_DEFAULT_OPS = 64,
-  TLS_PARALLEL_WARMUP_OPS = 8
+  TLS_PARALLEL_WARMUP_ROUNDS_PER_PAIR = 4
 };
 
 #ifndef CNET_TLS_BENCH_CA
@@ -57,7 +57,7 @@ typedef struct tls_parallel_shared {
   size_t payload_size;
   size_t owner_count;
   size_t ops_per_owner;
-  size_t warmup_ops;
+  size_t warmup_rounds_per_pair;
   tls_parallel_mode mode;
   atomic_size_t ready;
   atomic_size_t measured_done;
@@ -392,12 +392,15 @@ static void tls_parallel_worker_run(void *user) {
   }
 
   if (status == SALTS_OK) {
-    for (size_t warm = 0u; warm < shared->warmup_ops; ++warm) {
-      tls_parallel_pair *pair =
-          &worker->pairs[warm % worker->pair_count];
-      status = tls_parallel_operation(
-          pair, shared->mode, shared->payload,
-          shared->payload_size, NULL, NULL);
+    for (size_t warm = 0u;
+         warm < shared->warmup_rounds_per_pair; ++warm) {
+      for (size_t pair_index = 0u;
+           pair_index < worker->pair_count; ++pair_index) {
+        status = tls_parallel_operation(
+            &worker->pairs[pair_index], shared->mode,
+            shared->payload, shared->payload_size, NULL, NULL);
+        if (status != SALTS_OK) break;
+      }
       if (status != SALTS_OK) break;
     }
   }
@@ -462,7 +465,7 @@ int main(int argc, char **argv) {
   size_t payload_size;
   size_t owner_count;
   size_t total_ops;
-  size_t warmup_ops;
+  size_t warmup_rounds_per_pair;
   size_t ops_per_owner;
   size_t samples = 0u;
   uint64_t total_records = 0u;
@@ -498,10 +501,10 @@ int main(int argc, char **argv) {
 
   if (strcmp(argv[4], "fresh") == 0) {
     temperature = "fresh";
-    warmup_ops = 0u;
+    warmup_rounds_per_pair = 0u;
   } else if (strcmp(argv[4], "warm") == 0) {
     temperature = "warm";
-    warmup_ops = TLS_PARALLEL_WARMUP_OPS;
+    warmup_rounds_per_pair = TLS_PARALLEL_WARMUP_ROUNDS_PER_PAIR;
   } else {
     return 2;
   }
@@ -530,7 +533,7 @@ int main(int argc, char **argv) {
   shared.payload_size = payload_size;
   shared.owner_count = owner_count;
   shared.ops_per_owner = ops_per_owner;
-  shared.warmup_ops = warmup_ops;
+  shared.warmup_rounds_per_pair = warmup_rounds_per_pair;
   shared.mode = mode;
   atomic_init(&shared.ready, 0u);
   atomic_init(&shared.measured_done, 0u);
