@@ -22,7 +22,7 @@ extern "C" {
  * A plugin built for another epoch must be rebuilt before descriptor pointers
  * are consumed.
  */
-#define SALTS_PLUGIN_ABI_VERSION 3u
+#define SALTS_PLUGIN_ABI_VERSION 4u
 #define SALTS_PLUGIN_QUERY_SYMBOL "salts_plugin_query"
 
 #define SALTS_PLUGIN_MAX_EXPORTS 256u
