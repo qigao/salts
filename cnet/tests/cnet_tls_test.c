@@ -42,6 +42,28 @@ static const char CNET_TLS_TEST_CERTIFICATE[] =
     "x9YTzT8UMLc26vY1RiF6uwODUJzmSaqmefmapVsWrgi3\n"
     "-----END CERTIFICATE-----\n";
 
+static int cnet_tls_test_read_fixture(const char *path, uint8_t *buffer,
+                                      size_t capacity, size_t *out_size) {
+  FILE *file;
+  size_t size;
+  int trailing;
+  if (path == NULL || buffer == NULL || capacity == 0u || out_size == NULL)
+    return SALTS_EINVAL;
+  *out_size = 0u;
+  file = fopen(path, "rb");
+  if (file == NULL) return SALTS_EIO;
+  size = fread(buffer, 1u, capacity, file);
+  trailing = fgetc(file);
+  if (ferror(file) || trailing != EOF) {
+    (void)fclose(file);
+    return SALTS_EMSGSIZE;
+  }
+  (void)fclose(file);
+  if (size == 0u) return SALTS_EIO;
+  *out_size = size;
+  return SALTS_OK;
+}
+
 typedef struct cnet_tls_test_pair {
   cnet_tls_server server_context;
   cnet_tls_state client;
@@ -1399,6 +1421,39 @@ spec("CNet bounded TLS engine") {
     cnet_tls_test_pair_destroy(&pair);
   }
 
+  it("derives RFC 5929 tls-server-end-point from a SHA-384 certificate signature") {
+    static const uint8_t expected[] = {
+        0xf9u, 0xccu, 0xacu, 0x9fu, 0xefu, 0x55u, 0x8cu, 0x77u,
+        0x04u, 0xd2u, 0x37u, 0x4au, 0xa6u, 0x00u, 0xe0u, 0x95u,
+        0x46u, 0xc9u, 0xb3u, 0x6cu, 0xe5u, 0xd6u, 0x09u, 0xafu,
+        0xcdu, 0x49u, 0xacu, 0xfbu, 0xd6u, 0x9fu, 0x37u, 0xa4u,
+        0x28u, 0x94u, 0x4fu, 0x2bu, 0x63u, 0x3fu, 0x7fu, 0xdbu,
+        0x6bu, 0x30u, 0xecu, 0xa2u, 0xc3u, 0x01u, 0x16u, 0x06u};
+    uint8_t certificate[2048] = {0};
+    uint8_t binding[CNET_TLS_SERVER_END_POINT_MAX_BYTES] = {0};
+    uint8_t short_binding[47] = {0};
+    size_t certificate_size = 0u;
+    size_t binding_size = 0u;
+
+    check_equal(cnet_tls_test_read_fixture(
+                    CNET_TLS_TEST_SHA384_DER, certificate,
+                    sizeof(certificate), &certificate_size),
+                SALTS_OK);
+    check_equal(cnet_tls_server_end_point_binding_from_certificate(
+                    certificate, certificate_size, binding, sizeof(binding),
+                    &binding_size),
+                SALTS_OK);
+    check_equal(binding_size, sizeof(expected));
+    check_equal(memcmp(binding, expected, sizeof(expected)), 0);
+
+    binding_size = 0u;
+    check_equal(cnet_tls_server_end_point_binding_from_certificate(
+                    certificate, certificate_size, short_binding,
+                    sizeof(short_binding), &binding_size),
+                SALTS_EMSGSIZE);
+    check_equal(binding_size, sizeof(expected));
+  }
+
   it("drives verified TLS and ALPN through the public listener and client APIs") {
     static const char request[] = "ping";
     static const char second_request[] = "more";
@@ -1427,7 +1482,14 @@ spec("CNet bounded TLS engine") {
     cnet_start_tls_options upgrade = CNET_START_TLS_OPTIONS_INIT;
     cnet_connection client_connection = {0};
     mem_buffer_t *final_buffer = NULL;
+    static const uint8_t expected_server_end_point[] = {
+        0xe5u, 0xbbu, 0xecu, 0x0eu, 0x49u, 0x9du, 0xc1u, 0x00u,
+        0xdbu, 0xc2u, 0x41u, 0x4eu, 0x7au, 0x09u, 0xc6u, 0x87u,
+        0xe0u, 0xefu, 0xbeu, 0x47u, 0x38u, 0x16u, 0x26u, 0x2cu,
+        0x16u, 0xacu, 0x85u, 0xd1u, 0xd7u, 0xb6u, 0x71u, 0xdau};
     char peer_certificate_sha256[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY] = {0};
+    uint8_t server_end_point[CNET_TLS_SERVER_END_POINT_MAX_BYTES] = {0};
+    size_t server_end_point_size = 0u;
     uint8_t client_channel_binding[CNET_TLS_CHANNEL_BINDING_BYTES] = {0};
     uint8_t server_channel_binding[CNET_TLS_CHANNEL_BINDING_BYTES] = {0};
     char server_name[] = "localhost";
@@ -1469,6 +1531,11 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_tls_client_destroy(&tls_client), SALTS_OK);
     check_null(tls_client.impl);
     client_probe.connection = client_connection;
+    check_equal(cnet_tls_server_end_point_binding(
+                    &client, client_connection, server_end_point,
+                    sizeof(server_end_point), &server_end_point_size),
+                SALTS_ENOTCONN);
+    check_equal(server_end_point_size, (size_t)0u);
 
     deadline = salts_monotonic_ms() + 5000u;
     while ((!client_probe.connected || !server_probe.connected) && salts_monotonic_ms() < deadline)
@@ -1510,6 +1577,20 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_tls_peer_certificate_sha256(&server, server_probe.connection,
                                                  peer_certificate_sha256),
                 SALTS_ENOENT);
+    check_equal(cnet_tls_server_end_point_binding(
+                    &client, client_connection, server_end_point,
+                    sizeof(server_end_point), &server_end_point_size),
+                SALTS_OK);
+    check_equal(server_end_point_size, sizeof(expected_server_end_point));
+    check_equal(memcmp(server_end_point, expected_server_end_point,
+                       sizeof(expected_server_end_point)),
+                0);
+    server_end_point_size = 0u;
+    check_equal(cnet_tls_server_end_point_binding(
+                    &server, server_probe.connection, server_end_point,
+                    sizeof(server_end_point), &server_end_point_size),
+                SALTS_ENOENT);
+    check_equal(server_end_point_size, (size_t)0u);
     check_equal(cnet_tls_export_channel_binding(&client, client_connection,
                                                 client_channel_binding),
                 SALTS_OK);
