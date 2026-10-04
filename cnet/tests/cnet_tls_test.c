@@ -1006,6 +1006,188 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_tls_server_destroy(&tls_server), SALTS_OK);
   }
 
+  it("carries large verified TLS records through public NativeIO sockets") {
+    enum {
+      large_size = 64 * 1024,
+      burst_part_size = 16383,
+      burst_parts = 4,
+      burst_size = burst_part_size * burst_parts,
+      receive_capacity = large_size
+    };
+    static const char *server_alpn[] = {"h2"};
+    static const char *client_alpn[] = {"h2"};
+    unsigned char *large_payload = NULL;
+    unsigned char *burst_payload = NULL;
+    unsigned char *received = NULL;
+    cnet_client client = {0};
+    cnet_client server = {0};
+    cnet_listener listener = {0};
+    cnet_tls_client tls_client = {0};
+    cnet_tls_server tls_server = {0};
+    cnet_client_config client_config = cnet_tls_network_config();
+    cnet_client_config server_config = cnet_tls_network_config();
+    cnet_listener_config listener_config;
+    cnet_tls_server_config tls_server_config;
+    cnet_tls_client_config tls_client_config;
+    cnet_tls_network_probe client_probe = {.client = &client};
+    cnet_tls_network_probe server_probe = {.client = &server};
+    cnet_connect_options connect_options;
+    cnet_connection client_connection = {0};
+    char uri[64];
+    uint16_t port = 0u;
+    uint64_t deadline;
+    bool accepted = false;
+    size_t part;
+    int status;
+
+    large_payload = (unsigned char *)malloc(large_size);
+    burst_payload = (unsigned char *)malloc(burst_size);
+    received = (unsigned char *)malloc(receive_capacity);
+    check_not_null(large_payload);
+    check_not_null(burst_payload);
+    check_not_null(received);
+    memset(large_payload, 0x5au, large_size);
+    for (part = 0u; part < burst_parts; ++part)
+      memset(burst_payload + part * burst_part_size,
+             (int)(0x31u + (unsigned int)part), burst_part_size);
+    memset(received, 0, receive_capacity);
+
+    client_config.max_send_bytes = large_size;
+    client_config.receive_buffer_bytes = 128u * 1024u;
+    client_config.command_capacity = 32u;
+    client_config.request_capacity = 16u;
+    client_config.event_capacity = 32u;
+    server_config = client_config;
+
+    listener_config =
+        (cnet_listener_config){.backend = client_config.backend,
+                               .host = "127.0.0.1",
+                               .port = 0u,
+                               .backlog = 2u};
+    tls_server_config =
+        (cnet_tls_server_config){.size = sizeof(tls_server_config),
+                                 .cert_file = CNET_TLS_TEST_IP_CERT,
+                                 .key_file = CNET_TLS_TEST_IP_KEY,
+                                 .client_auth = CNET_TLS_CLIENT_AUTH_NONE,
+                                 .alpn_protocols = server_alpn,
+                                 .alpn_protocol_count = 1u};
+    tls_client_config =
+        (cnet_tls_client_config){.size = sizeof(tls_client_config),
+                                 .ca_file = CNET_TLS_TEST_IP_CA,
+                                 .server_name = "localhost",
+                                 .alpn_protocols = client_alpn,
+                                 .alpn_protocol_count = 1u};
+
+    check_equal(cnet_tls_server_init(&tls_server, &tls_server_config), SALTS_OK);
+    check_equal(cnet_tls_client_init(&tls_client, &tls_client_config), SALTS_OK);
+    check_equal(cnet_client_init(&client, &client_config), SALTS_OK);
+    check_equal(cnet_client_init(&server, &server_config), SALTS_OK);
+    check_equal(cnet_listener_init(&listener, &listener_config), SALTS_OK);
+    check_equal(cnet_listener_port(&listener, &port), SALTS_OK);
+    check_greater(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u",
+                           (unsigned int)port),
+                  0);
+
+    client_probe.received_external = received;
+    client_probe.received_capacity = receive_capacity;
+    connect_options =
+        (cnet_connect_options){.uri = uri,
+                               .observer = {.on_state = cnet_tls_network_state,
+                                            .on_receive = cnet_tls_network_receive,
+                                            .user = &client_probe,
+                                            .on_send = cnet_tls_network_send},
+                               .tls_client = &tls_client};
+    check_equal(cnet_connect(&client, &connect_options, &client_connection), SALTS_OK);
+    client_probe.connection = client_connection;
+
+    deadline = salts_monotonic_ms() + 5000u;
+    while ((!client_probe.connected || !server_probe.connected) &&
+           salts_monotonic_ms() < deadline) {
+      status = cnet_tls_network_drive(&client, &server, &listener, &tls_server,
+                                      &server_probe, &accepted);
+      check_equal(status, SALTS_OK);
+    }
+    check_true(accepted);
+    check_true(client_probe.connected);
+    check_true(server_probe.connected);
+    check_false(client_probe.failed);
+    check_false(server_probe.failed);
+
+    /*
+     * One large logical plaintext send. The public CNet owner must survive
+     * arbitrary TCP ciphertext fragmentation with the minimum 17-KiB TLS BIO.
+     */
+    check_equal(cnet_receive(&client, client_connection, 16u), SALTS_OK);
+    check_equal(cnet_tls_test_send_bytes(&server, server_probe.connection,
+                                         large_payload, large_size),
+                SALTS_OK);
+    deadline = salts_monotonic_ms() + 5000u;
+    while (client_probe.received_size < large_size &&
+           !client_probe.terminal && !client_probe.failed &&
+           salts_monotonic_ms() < deadline) {
+      status = cnet_tls_network_drive(&client, &server, &listener, &tls_server,
+                                      &server_probe, &accepted);
+      check_equal(status, SALTS_OK);
+    }
+    check_false(client_probe.failed);
+    check_equal(client_probe.failure_status, 0);
+    check_null(client_probe.failure_stage);
+    check_equal(client_probe.received_size, (size_t)large_size);
+    check_equal(memcmp(received, large_payload, large_size), 0);
+
+    /*
+     * Back-to-back near-record-sized writes model the bursty ciphertext shape
+     * that H2 multiplexing can generate without depending on HTTP framing.
+     */
+    client_probe.received_size = 0u;
+    memset(received, 0, receive_capacity);
+    check_equal(cnet_receive(&client, client_connection, 32u), SALTS_OK);
+    for (part = 0u; part < burst_parts; ++part) {
+      check_equal(cnet_tls_test_send_bytes(
+                      &server, server_probe.connection,
+                      burst_payload + part * burst_part_size,
+                      burst_part_size),
+                  SALTS_OK);
+    }
+    deadline = salts_monotonic_ms() + 5000u;
+    while (client_probe.received_size < burst_size &&
+           !client_probe.terminal && !client_probe.failed &&
+           salts_monotonic_ms() < deadline) {
+      status = cnet_tls_network_drive(&client, &server, &listener, &tls_server,
+                                      &server_probe, &accepted);
+      check_equal(status, SALTS_OK);
+    }
+    check_false(client_probe.failed);
+    check_equal(client_probe.failure_status, 0);
+    check_null(client_probe.failure_stage);
+    check_equal(client_probe.received_size, (size_t)burst_size);
+    check_equal(memcmp(received, burst_payload, burst_size), 0);
+
+    check_equal(cnet_close(&client, client_connection), SALTS_OK);
+    deadline = salts_monotonic_ms() + 5000u;
+    while ((!client_probe.terminal || !server_probe.terminal) &&
+           salts_monotonic_ms() < deadline) {
+      status = cnet_tls_network_drive(&client, &server, &listener, &tls_server,
+                                      &server_probe, &accepted);
+      check_equal(status, SALTS_OK);
+    }
+    check_true(client_probe.terminal);
+    check_true(server_probe.terminal);
+
+    check_equal(cnet_listener_close(&listener), SALTS_OK);
+    check_equal(cnet_listener_destroy(&listener), SALTS_OK);
+    check_equal(cnet_client_stop(&client, 5000u), SALTS_OK);
+    check_equal(cnet_client_stop(&server, 5000u), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+    check_equal(cnet_client_destroy(&server), SALTS_OK);
+    check_equal(cnet_tls_client_destroy(&tls_client), SALTS_OK);
+    check_equal(cnet_tls_server_destroy(&tls_server), SALTS_OK);
+
+    free(received);
+    free(burst_payload);
+    free(large_payload);
+  }
+
   it("upgrades one negotiated plaintext connection in place and carries TLS bytes") {
     static const char plaintext_request[] = "STARTTLS";
     static const char plaintext_response[] = "READY";
