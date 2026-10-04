@@ -78,6 +78,63 @@ theorem released_not_authority : ¬LifetimeAuthority .released := by
   intro authority
   cases authority
 
+/-- Ending a borrow makes the borrowed binding terminal. -/
+theorem end_borrow_updates_source {borrowTy ownerTy : Ty}
+    (context : OwnershipContext) (relations : BorrowRelations)
+    (borrowed : Value borrowTy) (owner : Value ownerTy)
+    (valid : BorrowedFrom context relations borrowed owner) :
+    (endBorrow context relations borrowed owner valid).1 borrowed.token =
+      some { ty := borrowTy, ownership := .released } := by
+  simp [endBorrow, OwnershipContext.set]
+
+/-- Ending a borrow removes its owner edge. -/
+theorem end_borrow_clears_relation {borrowTy ownerTy : Ty}
+    (context : OwnershipContext) (relations : BorrowRelations)
+    (borrowed : Value borrowTy) (owner : Value ownerTy)
+    (valid : BorrowedFrom context relations borrowed owner) :
+    (endBorrow context relations borrowed owner valid).2 borrowed.token = none := by
+  simp [endBorrow, BorrowRelations.clear]
+
+/-- An ended borrow cannot be read through the old binding. -/
+theorem end_borrow_source_not_readable {borrowTy ownerTy : Ty}
+    (context : OwnershipContext) (relations : BorrowRelations)
+    (borrowed : Value borrowTy) (owner : Value ownerTy)
+    (valid : BorrowedFrom context relations borrowed owner) :
+    ¬ContextReadable (endBorrow context relations borrowed owner valid).1 borrowed := by
+  intro readable
+  rcases readable with ⟨postOwnership, atSource, postReadable⟩
+  have releasedAt :=
+    end_borrow_updates_source context relations borrowed owner valid
+  change
+    (endBorrow context relations borrowed owner valid).1 borrowed.token =
+      some { ty := borrowTy, ownership := postOwnership } at atSource
+  rw [releasedAt] at atSource
+  cases atSource
+  exact released_not_readable postReadable
+
+/-- Ending one borrow leaves every unrelated ownership token unchanged. -/
+theorem end_borrow_preserves_other {borrowTy ownerTy : Ty}
+    (context : OwnershipContext) (relations : BorrowRelations)
+    (borrowed : Value borrowTy) (owner : Value ownerTy)
+    (valid : BorrowedFrom context relations borrowed owner)
+    {candidate : Nat} (different : candidate ≠ borrowed.token) :
+    (endBorrow context relations borrowed owner valid).1 candidate =
+      context candidate := by
+  simp [endBorrow, OwnershipContext.set, different]
+
+/-- Ending a borrow preserves a distinct authoritative owner's state. -/
+theorem end_borrow_preserves_owner {borrowTy ownerTy : Ty}
+    (context : OwnershipContext) (relations : BorrowRelations)
+    (borrowed : Value borrowTy) (owner : Value ownerTy)
+    (valid : BorrowedFrom context relations borrowed owner)
+    (ownerOwnership : Ownership)
+    (ownerCurrent : HasOwnership context owner ownerOwnership)
+    (different : owner.token ≠ borrowed.token) :
+    HasOwnership
+      (endBorrow context relations borrowed owner valid).1
+      owner ownerOwnership := by
+  simpa [endBorrow, OwnershipContext.set, different] using ownerCurrent
+
 /-- The moved binding is updated in the post-context. -/
 theorem move_updates_source {Γ : Env} {ty : Ty}
     (context : OwnershipContext) (value : Value ty)
