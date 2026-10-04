@@ -872,6 +872,8 @@ spec("CNet public client API") {
     int ready = 0;
     unsigned char received = 0u;
     char peer_certificate_sha256[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY] = {0};
+    uint8_t server_end_point[CNET_TLS_SERVER_END_POINT_MAX_BYTES] = {0};
+    size_t server_end_point_size = 0u;
     const unsigned char request_value = 31u;
     const unsigned char response_value = 47u;
 
@@ -921,6 +923,11 @@ spec("CNet public client API") {
     check_true(stream_peer.port != 0u);
     check_equal(cnet_tls_peer_certificate_sha256(&client, connection, peer_certificate_sha256),
                 SALTS_ENOTSUP);
+    check_equal(cnet_tls_server_end_point_binding(
+                    &client, connection, server_end_point,
+                    sizeof(server_end_point), &server_end_point_size),
+                SALTS_ENOTSUP);
+    check_equal(server_end_point_size, (size_t)0u);
     check_equal(cnet_receive(&client, connection, 1u), SALTS_OK);
     check_equal(send(peer, (const char *)&request_value, (int)sizeof(request_value), 0),
                 (int)sizeof(request_value));

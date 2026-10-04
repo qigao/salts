@@ -68,6 +68,9 @@ typedef struct cnet_connection {
  */
 #define CNET_TLS_CHANNEL_BINDING_BYTES 32u
 
+/** Maximum digest width of an RFC 5929 tls-server-end-point binding. */
+#define CNET_TLS_SERVER_END_POINT_MAX_BYTES 64u
+
 typedef enum cnet_connection_state {
   CNET_CONNECTION_CONNECTING = 1,
   CNET_CONNECTION_CONNECTED,
@@ -1142,6 +1145,23 @@ int cnet_tls_negotiated_cipher(cnet_client *client, cnet_connection connection, 
 
 int cnet_tls_peer_certificate_sha256(cnet_client *client, cnet_connection connection,
                                      char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
+
+/**
+ * Copies the RFC 5929 `tls-server-end-point` binding for the verified peer
+ * leaf certificate on this exact TLS connection. MD5/SHA-1 certificate
+ * signatures are upgraded to SHA-256; otherwise the certificate signature
+ * digest is used. `out_size` receives the required/copied digest width.
+ *
+ * The query is valid only after TLS verification succeeds and while the
+ * generation-checked connection remains open. Plaintext returns
+ * `SALTS_ENOTSUP`; incomplete TLS returns `SALTS_ENOTCONN`; a missing peer
+ * certificate returns `SALTS_ENOENT`; an unsupported certificate signature
+ * digest returns `SALTS_ENOTSUP`; an undersized output returns
+ * `SALTS_EMSGSIZE` with the required width in `out_size`.
+ */
+int cnet_tls_server_end_point_binding(cnet_client *client, cnet_connection connection,
+                                      uint8_t *output, size_t capacity,
+                                      size_t *out_size);
 
 /**
  * Exports exactly CNET_TLS_CHANNEL_BINDING_BYTES using the

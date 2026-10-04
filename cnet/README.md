@@ -453,6 +453,13 @@ supported.
 `cnet_tls_peer_certificate_sha256()` copies the verified peer leaf certificate
 fingerprint while the TLS connection remains open; a server session whose peer
 did not present a client certificate returns `SALTS_ENOENT`.
+`cnet_tls_server_end_point_binding()` exposes the distinct RFC 5929
+`tls-server-end-point` semantic value for SASL-style channel binding. It hashes
+the exact verified peer leaf DER certificate with the certificate signature
+digest, upgrading MD5/SHA-1 signatures to SHA-256 as required by RFC 5929.
+This API is intentionally separate from `cnet_tls_export_channel_binding()`,
+which remains the RFC 9266-style `EXPORTER-Channel-Binding` contract; callers
+must not substitute one binding type for the other.
 
 Servers that need transport identity can use `cnet_listener_accept_peer()` or
 `cnet_listener_accept_tls_peer()`. They preserve the existing accept lifecycle
