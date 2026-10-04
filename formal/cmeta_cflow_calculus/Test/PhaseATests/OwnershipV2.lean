@@ -127,4 +127,70 @@ example :
   reflected_result_admission_updates_source
     (fun _ => none) reflectedResult .value .owned rfl
 
+def borrowedResultOwner : Value leaseTy where
+  token := 41
+
+def borrowedResultView : Value descriptorTy where
+  token := 42
+
+def borrowedResultContext : OwnershipContext := fun token =>
+  if token = borrowedResultOwner.token then
+    some { ty := leaseTy, ownership := .owned }
+  else none
+
+theorem borrowedResultOwnerOwned :
+    HasOwnership borrowedResultContext borrowedResultOwner .owned := by
+  rfl
+
+theorem borrowedResultOwnerAuthority :
+    ContextAuthority borrowedResultContext borrowedResultOwner :=
+  ⟨.owned, borrowedResultOwnerOwned, LifetimeAuthority.owned⟩
+
+def borrowedResultPost : OwnershipContext × BorrowRelations :=
+  admitBorrowedResult
+    borrowedResultContext (fun _ => none)
+    borrowedResultView borrowedResultOwner
+    (by decide) borrowedResultOwnerAuthority
+
+example :
+    BorrowEscapeSafe borrowedResultPost.1 borrowedResultPost.2
+      borrowedResultView :=
+  admitted_borrowed_result_escape_safe
+    borrowedResultContext (fun _ => none)
+    borrowedResultView borrowedResultOwner
+    (by decide) borrowedResultOwnerAuthority
+
+example :
+    ¬ContextNeedsCleanup borrowedResultPost.1 borrowedResultView := by
+  exact borrowed_result_has_no_cleanup
+    borrowedResultPost.1 borrowedResultPost.2
+    borrowedResultView borrowedResultOwner
+    (admitted_borrowed_result_is_bound
+      borrowedResultContext (fun _ => none)
+      borrowedResultView borrowedResultOwner
+      (by decide) borrowedResultOwnerAuthority)
+
+example :
+    ¬OwnerReleaseSafe
+      borrowedResultPost.1 borrowedResultPost.2 borrowedResultOwner := by
+  exact live_borrow_blocks_owner_release
+    borrowedResultPost.1 borrowedResultPost.2
+    borrowedResultView borrowedResultOwner
+    (admitted_borrowed_result_is_bound
+      borrowedResultContext (fun _ => none)
+      borrowedResultView borrowedResultOwner
+      (by decide) borrowedResultOwnerAuthority)
+
+example : joinOwnership .owned .owned = some .owned :=
+  join_owned_owned_preserves
+
+example : joinOwnership .moved .moved = some .moved :=
+  join_moved_moved_preserves
+
+example : joinOwnership .owned .moved = none :=
+  join_owned_moved_rejected
+
+example : joinOwnership .moved .owned = none :=
+  join_moved_owned_rejected
+
 end CMetaCFlowCalculus.Tests.OwnershipV2
