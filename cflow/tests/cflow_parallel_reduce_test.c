@@ -1,6 +1,7 @@
 #include "tinytest.h"
 
 #include <cflow/cflow.h>
+#include <cflow/function_projection.h>
 #include <cflow/plan_internal.h>
 #include <salts/thread.h>
 
@@ -88,6 +89,46 @@ static const cmeta_type_desc cflow_parallel_managed_type = {
   .identity = NULL
 };
 
+static const cmeta_param_desc cflow_parallel_managed_reduce_params[] = {
+  {
+    .size = sizeof(cmeta_param_desc),
+    .name = "left",
+    .type = &cflow_parallel_managed_type,
+    .flags = CMETA_PARAM_IN
+  },
+  {
+    .size = sizeof(cmeta_param_desc),
+    .name = "right",
+    .type = &cflow_parallel_managed_type,
+    .flags = CMETA_PARAM_IN
+  }
+};
+
+static const cmeta_function_desc cflow_parallel_managed_reduce_function = {
+  .size = sizeof(cmeta_function_desc),
+  .name = "cflow.parallel.managed.reduce",
+  .return_type = &cflow_parallel_managed_type,
+  .params = cflow_parallel_managed_reduce_params,
+  .param_count = 2u,
+  .effects = CMETA_EFFECT_PURE,
+  .properties = CMETA_PROP_DETERMINISTIC | CMETA_PROP_TOTAL |
+                CMETA_PROP_ASSOCIATIVE | CMETA_PROP_NO_ALIAS,
+  .result_flags = CMETA_RESULT_VALUE
+};
+
+static const cmeta_abi_carrier cflow_parallel_managed_reduce_param_abi[] = {
+  CMETA_ABI_AGGREGATE,
+  CMETA_ABI_AGGREGATE
+};
+
+static const cmeta_function_abi_desc cflow_parallel_managed_reduce_abi = {
+  .size = sizeof(cmeta_function_abi_desc),
+  .function = &cflow_parallel_managed_reduce_function,
+  .return_carrier = CMETA_ABI_AGGREGATE,
+  .param_carriers = cflow_parallel_managed_reduce_param_abi,
+  .param_count = 2u
+};
+
 static bool cflow_parallel_managed_reduce_invoke(
     const cmeta_callable *self, void *out, const void *const *args) {
   const cflow_parallel_managed_value *left;
@@ -107,6 +148,41 @@ static bool cflow_parallel_managed_reduce_invoke(
   if (!sum.resource) return false;
   *(cflow_parallel_managed_value *)out = sum;
   return true;
+}
+
+static cmeta_callable cflow_parallel_managed_reduce_adapter(void) {
+  cmeta_callable adapter = {0};
+  adapter.meta.effects = cflow_parallel_managed_reduce_function.effects;
+  adapter.meta.properties = cflow_parallel_managed_reduce_function.properties;
+  adapter.invoke = cflow_parallel_managed_reduce_invoke;
+  adapter.dispatch = CMETA_CALLABLE_DISPATCH_ADAPTER;
+  return adapter;
+}
+
+static bool cflow_parallel_managed_projected_plan(
+    cflow_graph *graph,
+    cflow_plan *plan) {
+  cflow_function_typed_adapter_projection projection = {0};
+  const char *validation = NULL;
+
+  if (!graph || !plan ||
+      cflow_function_typed_reduce_projection_admit(
+          &cflow_parallel_managed_reduce_function,
+          &cflow_parallel_managed_reduce_abi,
+          cflow_parallel_managed_reduce_adapter(),
+          &cflow_parallel_managed_type,
+          &projection) != CFLOW_FUNCTION_PROJECTION_OK)
+    return false;
+
+  cflow_graph_init(graph, &cflow_parallel_managed_type);
+  if (!cflow_graph_add_function_typed_reduce_projection(
+          graph, &projection) ||
+      !cflow_graph_validate(graph, &validation) ||
+      validation != NULL ||
+      !cflow_plan_compile_surface(plan, graph, NULL))
+    return false;
+
+  return cflow_plan_parallel_reduce_supported(plan);
 }
 
 static bool cflow_parallel_managed_plan(cflow_plan *plan,
@@ -396,6 +472,60 @@ suite("CFlow ordered parallel reduce") {
     cflow_executor_destroy(&cflow_parallel_state.executor);
     cflow_plan_destroy(&cflow_parallel_state.plan);
     cflow_stream_destroy(&cflow_parallel_state.stream);
+  }
+
+  it("admits a custom managed FunctionDesc reducer without widening cmeta_sig") {
+    cflow_parallel_managed_value input[8] = {0};
+    cflow_graph graph = {0};
+    cflow_plan plan = {0};
+    cflow_result sequential = {0};
+    cflow_result parallel = {0};
+    cflow_parallel_reduce_fixture *state = &cflow_parallel_state;
+    const cflow_parallel_managed_value *output;
+    size_t index;
+
+    atomic_store(&cflow_parallel_managed_live, 0u);
+    atomic_store(&cflow_parallel_managed_destroyed, 0u);
+    atomic_store(&cflow_parallel_managed_fail_right, INT32_MIN);
+    for (index = 0u; index < 8u; ++index)
+      input[index] = cflow_parallel_managed_make((int)index + 1);
+
+    check_equal(atomic_load(&cflow_parallel_managed_live), (size_t)8u);
+    check_true(cmeta_function_desc_valid(
+        &cflow_parallel_managed_reduce_function));
+    check_true(cmeta_function_abi_desc_valid(
+        &cflow_parallel_managed_reduce_abi));
+    check_true(cflow_parallel_managed_projected_plan(&graph, &plan));
+    check_true(cflow_plan_parallel_reduce_supported(&plan));
+
+    check_true(cflow_plan_eval_array(
+        &plan, input, 8u, &sequential));
+    check_equal(sequential.count, (size_t)1u);
+    check_true(cmeta_type_equal(
+        sequential.type, &cflow_parallel_managed_type));
+    output = (const cflow_parallel_managed_value *)sequential.data;
+    check_not_null(output);
+    check_not_null(output->resource);
+    check_equal(*output->resource, 36);
+    cflow_result_destroy(&sequential);
+    check_equal(atomic_load(&cflow_parallel_managed_live), (size_t)8u);
+
+    check_true(cflow_plan_eval_array_with_options(
+        &plan, input, 8u, &state->options, &parallel));
+    check_equal(parallel.count, (size_t)1u);
+    check_true(cmeta_type_equal(
+        parallel.type, &cflow_parallel_managed_type));
+    output = (const cflow_parallel_managed_value *)parallel.data;
+    check_not_null(output);
+    check_not_null(output->resource);
+    check_equal(*output->resource, 36);
+    cflow_result_destroy(&parallel);
+    check_equal(atomic_load(&cflow_parallel_managed_live), (size_t)8u);
+
+    cflow_plan_destroy(&plan);
+    cflow_graph_destroy(&graph);
+    cflow_parallel_managed_destroy_inputs(input, 8u);
+    check_equal(atomic_load(&cflow_parallel_managed_live), (size_t)0u);
   }
 
   it("reduces managed values in parallel without leaking internal ownership") {
