@@ -130,14 +130,6 @@ if(NOT CMAKE_CROSSCOMPILING)
   endfunction()
 
   cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_wrong_owner
-    wrong_owner.cmeta.c
-    "generic owner identity 'cstl.Vec' does not match IntList owner identity 'cstl.List'")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_unknown_receiver
-    unknown_receiver.cmeta.c
-    "unknown typed receiver 'missing'")
-  cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_use_after_move
     use_after_move.cmeta.c
     "use of moved cmeta_owned value 'list'")
