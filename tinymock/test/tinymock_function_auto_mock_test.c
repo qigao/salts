@@ -45,10 +45,8 @@ suite("TinyMock reflected free functions") {
 
     check_equal(tinymock_function_consumer_run(9), 17);
 
-    tinymock_mock_verify_times(
-        TINYMOCk_FUNCTION(tinymock_fixture_add), 1);
-    tinymock_mock_verify_times(
-        TINYMOCk_FUNCTION(tinymock_fixture_answer), 1);
+    TINYMOCk_FUNCTION_VERIFY_TIMES(tinymock_fixture_add, 1);
+    TINYMOCk_FUNCTION_VERIFY_TIMES(tinymock_fixture_answer, 1);
 
     {
       int expected_left = 9;
@@ -126,8 +124,7 @@ suite("TinyMock reflected free functions") {
     check_equal(
         tinymock_function_consumer_write_size(9, &written), 7);
     check_equal(written, (size_t)64);
-    tinymock_mock_verify_times(
-        TINYMOCk_FUNCTION(tinymock_fixture_write_size), 1);
+    TINYMOCk_FUNCTION_VERIFY_TIMES(tinymock_fixture_write_size, 1);
 
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_adjust_int);
     {
@@ -170,8 +167,7 @@ suite("TinyMock reflected free functions") {
         tinymock_fixture_nullable_out, "written", nullable_value));
 
     check_equal(tinymock_function_consumer_nullable_out(NULL), 3);
-    tinymock_mock_verify_times(
-        TINYMOCk_FUNCTION(tinymock_fixture_nullable_out), 1);
+    TINYMOCk_FUNCTION_VERIFY_TIMES(tinymock_fixture_nullable_out, 1);
 
     check_equal(input, 5);
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_nullable_out);
@@ -193,10 +189,8 @@ suite("TinyMock reflected free functions") {
     tinymock_function_consumer_shutdown();
 
     check_equal(written, (size_t)77);
-    tinymock_mock_verify_times(
-        TINYMOCk_FUNCTION(tinymock_fixture_notify), 1);
-    tinymock_mock_verify_times(
-        TINYMOCk_FUNCTION(tinymock_fixture_shutdown), 1);
+    TINYMOCk_FUNCTION_VERIFY_TIMES(tinymock_fixture_notify, 1);
+    TINYMOCk_FUNCTION_VERIFY_TIMES(tinymock_fixture_shutdown, 1);
 
     check_true(TINYMOCk_FUNCTION_ARG_EQUAL_TYPED(
         tinymock_fixture_notify, 0, "event", expected_event));
@@ -234,8 +228,7 @@ suite("TinyMock reflected free functions") {
     result = tinymock_function_consumer_box(input);
     check_equal(result.value, 41);
 
-    tinymock_mock_verify_times(
-        TINYMOCk_FUNCTION(tinymock_fixture_box_copy), 1);
+    TINYMOCk_FUNCTION_VERIFY_TIMES(tinymock_fixture_box_copy, 1);
     check_true(TINYMOCk_FUNCTION_ARG_EQUAL_TYPED(
         tinymock_fixture_box_copy, 0, "input", expected_input));
 
@@ -260,16 +253,12 @@ suite("TinyMock reflected free functions") {
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_box_copy);
   }
 
-  it("uses typed scalar and pointer returns independently of legacy dispatch defaults") {
+  it("uses typed scalar and pointer returns") {
     int typed_add = 88;
     int pointer_value = 123;
     int *typed_pointer = &pointer_value;
 
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_add);
-    tinymock_mock_set_default_return(
-        TINYMOCk_FUNCTION(tinymock_fixture_add),
-        TINYMOCk_RETURN(17));
-
     check_true(TINYMOCk_FUNCTION_SET_RETURN(
         tinymock_fixture_add, typed_add));
     check_equal(tinymock_function_consumer_run(1), 88);
@@ -302,8 +291,7 @@ suite("TinyMock reflected free functions") {
     check_equal(
         tinymock_function_consumer_apply_callback(tinymock_test_callback_a, 4),
         77);
-    tinymock_mock_verify_times(
-        TINYMOCk_FUNCTION(tinymock_fixture_apply_callback), 1);
+    TINYMOCk_FUNCTION_VERIFY_TIMES(tinymock_fixture_apply_callback, 1);
 
     check_true(TINYMOCk_FUNCTION_ARG_EQUAL_TYPED(
         tinymock_fixture_apply_callback, 0, "callback",
@@ -351,8 +339,7 @@ suite("TinyMock reflected free functions") {
     result = tinymock_function_consumer_mode(input);
     check_equal((int)result, (int)TINYMOCK_FIXTURE_MODE_DONE);
 
-    tinymock_mock_verify_times(
-        TINYMOCk_FUNCTION(tinymock_fixture_mode_echo), 1);
+    TINYMOCk_FUNCTION_VERIFY_TIMES(tinymock_fixture_mode_echo, 1);
 
     check_true(TINYMOCk_FUNCTION_ARG_EQUAL_TYPED(
         tinymock_fixture_mode_echo, 0, "input", expected));
@@ -400,12 +387,9 @@ suite("TinyMock reflected free functions") {
     check_equal(tinymock_function_consumer_run(1), -3);
     check_equal(tinymock_function_consumer_run(2), -3);
 
-    tinymock_mock_verify_times(
-        TINYMOCk_FUNCTION(tinymock_fixture_add), 2);
-    tinymock_mock_verify_at_least(
-        TINYMOCk_FUNCTION(tinymock_fixture_answer), 2);
-    tinymock_mock_verify_at_most(
-        TINYMOCk_FUNCTION(tinymock_fixture_answer), 2);
+    TINYMOCk_FUNCTION_VERIFY_TIMES(tinymock_fixture_add, 2);
+    TINYMOCk_FUNCTION_VERIFY_AT_LEAST(tinymock_fixture_answer, 2);
+    TINYMOCk_FUNCTION_VERIFY_AT_MOST(tinymock_fixture_answer, 2);
 
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_add);
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_answer);
