@@ -119,6 +119,9 @@ static void tls_public_profile_add(
   TLS_PUBLIC_PROFILE_ADD(tls_write_submit_bytes);
   TLS_PUBLIC_PROFILE_ADD(tls_write_completion_calls);
   TLS_PUBLIC_PROFILE_ADD(tls_write_completion_bytes);
+  TLS_PUBLIC_PROFILE_ADD(tls_read_completion_calls);
+  TLS_PUBLIC_PROFILE_ADD(tls_read_completion_bytes);
+  TLS_PUBLIC_PROFILE_ADD(tls_plaintext_receive_calls);
   TLS_PUBLIC_PROFILE_ADD(tls_plaintext_receive_bytes);
 #undef TLS_PUBLIC_PROFILE_ADD
 }
@@ -858,6 +861,9 @@ int main(int argc, char **argv) {
         "\"server_tls_write_submit_bytes\":%llu,"
         "\"server_tls_write_completions\":%llu,"
         "\"server_tls_write_completion_bytes\":%llu,"
+        "\"client_tls_read_completions\":%llu,"
+        "\"client_tls_read_completion_bytes\":%llu,"
+        "\"client_tls_plaintext_receive_calls\":%llu,"
         "\"client_tls_plaintext_receive_bytes\":%llu,"
         "\"p50_ns\":%llu,"
         "\"p95_ns\":%llu,"
@@ -877,6 +883,9 @@ int main(int argc, char **argv) {
         (unsigned long long)server_profile.tls_write_submit_bytes,
         (unsigned long long)server_profile.tls_write_completion_calls,
         (unsigned long long)server_profile.tls_write_completion_bytes,
+        (unsigned long long)client_profile.tls_read_completion_calls,
+        (unsigned long long)client_profile.tls_read_completion_bytes,
+        (unsigned long long)client_profile.tls_plaintext_receive_calls,
         (unsigned long long)client_profile.tls_plaintext_receive_bytes,
         (unsigned long long)tls_public_percentile(
             latencies, samples, 50u),
