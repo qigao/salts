@@ -63,9 +63,9 @@ suite("TinyMock reflected free functions") {
       int expected_right = 25;
       tinymock_cmeta_captor captor;
 
-      check_true(TINYMOCk_FUNCTION_ARG_EQUAL(
+      check_true(TINYMOCk_FUNCTION_ARG_EQUAL_TYPED(
           tinymock_fixture_add, 0, "left", expected_left));
-      check_equal(TINYMOCk_FUNCTION_COUNT_EQUAL(
+      check_equal(TINYMOCk_FUNCTION_COUNT_EQUAL_TYPED(
           tinymock_fixture_add, "right", expected_right), (size_t)1);
 
       tinymock_cmeta_captor_init(&captor);
@@ -103,13 +103,13 @@ suite("TinyMock reflected free functions") {
     }
 
     check_equal(tinymock_function_consumer_pointer(&value), 33);
-    check_true(TINYMOCk_FUNCTION_ARG_EQUAL(
+    check_true(TINYMOCk_FUNCTION_ARG_POINTER_EQUAL(
         tinymock_fixture_pointer, 0, "value", expected));
 
     {
       int other = 7;
       int *different = &other;
-      check_false(TINYMOCk_FUNCTION_ARG_EQUAL(
+      check_false(TINYMOCk_FUNCTION_ARG_POINTER_EQUAL(
           tinymock_fixture_pointer, 0, "value", different));
     }
 
@@ -206,7 +206,7 @@ suite("TinyMock reflected free functions") {
     tinymock_mock_verify_times(
         TINYMOCk_FUNCTION(tinymock_fixture_shutdown), 1);
 
-    check_true(TINYMOCk_FUNCTION_ARG_EQUAL(
+    check_true(TINYMOCk_FUNCTION_ARG_EQUAL_TYPED(
         tinymock_fixture_notify, 0, "event", expected_event));
 
     tinymock_cmeta_captor_init(&captor);
