@@ -17,6 +17,7 @@ on:
       - "cmeta/**"
       - "cstl/**"
       - "concurrency/**"
+      - "coroutine/**"
       - "utils/**"
       - "tinytest/**"
       - "tinymock/**"
