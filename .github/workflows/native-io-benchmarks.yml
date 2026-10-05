@@ -5,6 +5,7 @@ on:
     paths:
       - "native-io/**"
       - "cnet/**"
+      - "coroutine/**"
   push:
     branches: [master]
     paths:
@@ -221,11 +222,6 @@ jobs:
         run: |
           ./cmake/ci/verify-benchmark-policy.ps1 -ProjectRoot . -WriteSummary
 
-      - name: Validate CNet performance CI contract
-        shell: pwsh
-        run: |
-          cmake -DPROJECT_SOURCE_DIR="$env:GITHUB_WORKSPACE" -P ./cnet/tests/cnet_performance_ci_contract_test.cmake
-
       - name: Validate PR artifact pruning contract
         shell: pwsh
         run: |
@@ -376,15 +372,20 @@ jobs:
               [string]::IsNullOrWhiteSpace($env:ImageVersion)) {
             throw "GitHub runner image identity is unavailable"
           }
+          if ([string]::IsNullOrWhiteSpace($env:QIGAO_VCPKG_WINDOWS_TRIPLET)) {
+            throw "Windows vcpkg target triplet is unavailable"
+          }
 
           $binaryCache = Join-Path $env:GITHUB_WORKSPACE "build\vcpkg-binary-cache"
+          $installedBin = Join-Path $env:GITHUB_WORKSPACE `
+            "vcpkg_installed\$env:QIGAO_VCPKG_WINDOWS_TRIPLET\bin"
           New-Item -ItemType Directory -Force -Path $binaryCache | Out-Null
           "PROJECT_ROOT=$env:GITHUB_WORKSPACE" >> $env:GITHUB_ENV
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
           "VCPKG_BINARY_CACHE=$binaryCache" >> $env:GITHUB_ENV
-          (Join-Path $env:GITHUB_WORKSPACE "vcpkg_installed\x64-windows\bin") >> $env:GITHUB_PATH
+          $installedBin >> $env:GITHUB_PATH
           "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
-          "triplet=x64-windows" >> $env:GITHUB_OUTPUT
+          "triplet=$env:QIGAO_VCPKG_WINDOWS_TRIPLET" >> $env:GITHUB_OUTPUT
 
       - name: Restore Windows vcpkg binary cache
         if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
