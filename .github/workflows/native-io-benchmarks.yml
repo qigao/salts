@@ -557,29 +557,48 @@ jobs:
             -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
           cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
 
-      - name: Build pre-slot-isolation CFlow benchmark / Windows
+      - name: Prepare pre-slot-isolation CFlow benchmark / Windows
         if: needs.scope.outputs.cflow == 'true' && matrix.family == 'windows' && matrix.backend == 'iocp' && github.event_name == 'pull_request'
-        shell: cmd
+        shell: pwsh
         env:
           CFLOW_SLOT_ISOLATION_BASE_SHA: 847857cdbd637030c3f3e893f68a6e1796831977
         run: |
+          $ErrorActionPreference = "Stop"
+          $baselineSource = Join-Path $env:RUNNER_TEMP "salts-cflow-before-slot-isolation"
+          if (Test-Path -LiteralPath $baselineSource) {
+            git worktree remove --force $baselineSource 2>$null
+            Remove-Item -LiteralPath $baselineSource -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          git worktree add --detach $baselineSource $env:CFLOW_SLOT_ISOLATION_BASE_SHA
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Historical baseline 847857c couples BUILD_BENCHMARKS to BUILD_TESTS.
+          # Patch only that old configure-time gate. The historical sources and
+          # benchmark implementation remain unchanged.
+          $optionsPath = Join-Path $baselineSource "CMakeOptions.cmake"
+          $content = Get-Content -LiteralPath $optionsPath -Raw
+          $old = @'
+          cmake_dependent_option(BUILD_BENCHMARKS "Build benchmark executables" ON
+                                 "BUILD_TESTS" OFF)
+          '@
+          $new = 'option(BUILD_BENCHMARKS "Build benchmark executables" ON)'
+          if (-not $content.Contains($old)) {
+            throw "historical BUILD_BENCHMARKS gate not found"
+          }
+          $content = $content.Replace($old, $new)
+          Set-Content -LiteralPath $optionsPath -Value $content -NoNewline
+
+      - name: Build pre-slot-isolation CFlow benchmark / Windows
+        if: needs.scope.outputs.cflow == 'true' && matrix.family == 'windows' && matrix.backend == 'iocp' && github.event_name == 'pull_request'
+        shell: cmd
+        run: |
           set "BASELINE_SOURCE=%RUNNER_TEMP%\salts-cflow-before-slot-isolation"
-          if exist "%BASELINE_SOURCE%" rmdir /s /q "%BASELINE_SOURCE%"
-          git worktree add --detach "%BASELINE_SOURCE%" "%CFLOW_SLOT_ISOLATION_BASE_SHA%"
-          if errorlevel 1 exit /b 1
           cd /d "%BASELINE_SOURCE%"
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-
-          rem Historical baseline 847857c couples BUILD_BENCHMARKS to BUILD_TESTS
-          rem and its old Windows preset selects x64-windows. Patch only that old
-          rem option declaration, then configure with the current canonical v145
-          rem toolchain/triplet. Build still compiles the whole configured graph.
-          powershell -NoProfile -ExecutionPolicy Bypass -Command "$p='CMakeOptions.cmake'; $s=Get-Content -LiteralPath $p -Raw; $s=$s -replace 'cmake_dependent_option\(BUILD_BENCHMARKS ""Build benchmark executables"" ON\s+""BUILD_TESTS"" OFF\)','option(BUILD_BENCHMARKS ""Build benchmark executables"" ON)'; if($s -notmatch 'option\(BUILD_BENCHMARKS'){ throw 'historical BUILD_BENCHMARKS gate patch failed' }; Set-Content -LiteralPath $p -Value $s -NoNewline"
-          if errorlevel 1 exit /b 1
-
           set "BASELINE_PKGCONF=%BASELINE_SOURCE%\vcpkg_installed\%QIGAO_VCPKG_WINDOWS_HOST_TRIPLET%\tools\pkgconf\pkgconf.exe"
+
           cmake -S . -B build\Msvc-Release -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DCMAKE_TOOLCHAIN_FILE="%QIGAO_VCPKG_TOOLCHAIN_FILE%" ^
@@ -591,6 +610,8 @@ jobs:
             -DBUILD_BENCHMARKS=ON -DBUILD_EXAMPLES=OFF ^
             -DPKG_CONFIG_EXECUTABLE="%BASELINE_PKGCONF%"
           if errorlevel 1 exit /b 1
+
+          rem CI policy: build the complete configured graph; never name targets.
           cmake --build build\Msvc-Release --parallel 2
           if errorlevel 1 exit /b 1
           if not exist "build\Msvc-Release\bin\cflow_parallel_reduce_benchmark.exe" exit /b 1
