@@ -28,10 +28,10 @@ branch.
 
 1. structured scope exits / `defer` (first direct-call slice implemented);
 2. explicit error propagation with deterministic cleanup;
-3. exact Interface receiver calls;
+3. canonical `cmeta_type(...)` declarations binding native type + Reflection + lifecycle;
 4. finite enum/variant `match`;
-5. finite typed collection iteration;
-6. generic source spelling resolving only to canonical concrete native types.
+5. finite collection/range iteration lowered to ordinary C functions;
+6. reflected function parameter/result ownership contracts.
 
 ## Hard exclusions
 
@@ -42,7 +42,9 @@ does not own:
 - universal borrow checking;
 - closure escape analysis;
 - async/await state-machine compilation;
-- C++ overload/conversion semantics;
+- C++ overload/conversion semantics or template spelling;
+- Interface/vtable/object execution syntax;
+- receiver-method/object syntax expansion;
 - runtime RTTI or method-name invocation.
 
 Those belong in a real AST/IR/CFG compiler or a domain runtime.
@@ -80,3 +82,13 @@ Required before Ready-for-review:
 `owned(T)`. It is intentionally stricter than the eventual surface: tracked
 owned captures and non-local control transfers remain rejected until a sound
 finite rule is proven.
+
+## Function-oriented rule
+
+This branch does not introduce an OO surface. New lowering must remain based on
+ordinary C types and ordinary C functions. Reflection describes type/data/
+function semantics; it does not create objects, virtual dispatch, method
+namespaces, interfaces, or capability casts.
+
+Existing receiver shorthand is not expanded by this Epic and no new feature may
+depend on it. New collection/range lowering targets concrete C functions.
