@@ -6,6 +6,9 @@ typed(List, IntList, int);
 typed(Set, IntSet, int);
 typed(Map, IntMap, int, int);
 
+typedef IntList ExternalList;
+CMETA_LIFECYCLE(ExternalList, IntList_cmeta_data);
+
 int main(void) {
     const char *literal = "list.add(99); List_add(&list, 99);";
     const char *ownership_literal =
@@ -53,6 +56,12 @@ int main(void) {
     }
 
     if (list.add(50) != STL_OK) return 15;
+
+    {
+        owned(ExternalList) external_cleanup;
+        (void)IntList_init(&external_cleanup, 2u);
+        (void)IntList_add(&external_cleanup, 52);
+    }
 
     {
         owned(IntList) cleanup_first;
