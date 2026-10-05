@@ -125,4 +125,3 @@ jobs:
           ctest --test-dir build/linux-gcc-debug \
             -R '^(cnet_(owner|session|event|dispatcher|api|tls|datagram|stop_contract)_test)$' \
             --timeout 90 --output-on-failure
-
