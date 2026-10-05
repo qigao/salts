@@ -14,6 +14,19 @@ static bool tinymock_cmeta_return_function_ok(
           tinymock_cmeta_function_equal(state->function, function));
 }
 
+static bool tinymock_cmeta_return_semantics_supported(
+    const cmeta_function_desc *function) {
+  cmeta_result_flags result_class;
+
+  if (!function)
+    return false;
+
+  result_class = function->result_flags & CMETA_RESULT_CLASS_MASK;
+  return result_class == CMETA_RESULT_UNKNOWN ||
+         result_class == CMETA_RESULT_VALUE ||
+         result_class == CMETA_RESULT_BORROWED;
+}
+
 void tinymock_cmeta_return_init(
     tinymock_cmeta_return *state,
     const cmeta_function_desc *function) {
@@ -40,7 +53,8 @@ bool tinymock_cmeta_return_set(
     tinymock_cmeta_return *state,
     const cmeta_function_desc *function,
     const void *value) {
-  if (!value || !tinymock_cmeta_return_function_ok(state, function))
+  if (!value || !tinymock_cmeta_return_function_ok(state, function) ||
+      !tinymock_cmeta_return_semantics_supported(function))
     return false;
 
   tinymock_cmeta_value_reset(&state->value);
