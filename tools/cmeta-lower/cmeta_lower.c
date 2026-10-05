@@ -588,7 +588,7 @@ static int cmeta_lower_emit_symbol_cleanup(
         return 1;
     if (symbol->lifecycle_accessor[0] == '\0') {
         cmeta_lower_set_errorf(
-            context, offset, "owned value '", symbol->name,
+            context, offset, "cmeta_owned value '", symbol->name,
             "' has no canonical lifecycle binding");
         return 0;
     }
@@ -707,12 +707,12 @@ static int cmeta_lower_try_owned_declaration(
     const cmeta_lower_type *owned_type;
     cmeta_lower_symbol *owned_symbol;
 
-    if (ident_end - ident_start != strlen("owned") ||
-        strncmp(source + ident_start, "owned", strlen("owned")) != 0)
+    if (ident_end - ident_start != strlen("cmeta_owned") ||
+        strncmp(source + ident_start, "cmeta_owned", strlen("cmeta_owned")) != 0)
         return 0;
     if (i >= size || source[i] != '(') {
         cmeta_lower_set_error(
-            context, ident_start, "owned declaration requires owned(Type)");
+            context, ident_start, "cmeta_owned declaration requires cmeta_owned(Type)");
         return -1;
     }
 
@@ -720,14 +720,14 @@ static int cmeta_lower_try_owned_declaration(
     if (!cmeta_lower_identifier(
             source, size, i, type_name, sizeof(type_name), &type_end)) {
         cmeta_lower_set_error(
-            context, ident_start, "owned(...) requires a simple named type");
+            context, ident_start, "cmeta_owned(...) requires a simple named type");
         return -1;
     }
 
     i = cmeta_lower_skip_space_comments(source, size, type_end);
     if (i >= size || source[i] != ')') {
         cmeta_lower_set_error(
-            context, ident_start, "owned(...) requires exactly one named type");
+            context, ident_start, "cmeta_owned(...) requires exactly one named type");
         return -1;
     }
 
@@ -735,14 +735,14 @@ static int cmeta_lower_try_owned_declaration(
     if (!cmeta_lower_identifier(
             source, size, name_start, name, sizeof(name), &name_end)) {
         cmeta_lower_set_error(
-            context, ident_start, "owned(...) declaration requires a variable name");
+            context, ident_start, "cmeta_owned(...) declaration requires a variable name");
         return -1;
     }
 
     suffix = cmeta_lower_skip_space_comments(source, size, name_end);
     if (suffix >= size) {
         cmeta_lower_set_error(
-            context, ident_start, "unterminated owned declaration");
+            context, ident_start, "unterminated cmeta_owned declaration");
         return -1;
     }
 
@@ -753,41 +753,41 @@ static int cmeta_lower_try_owned_declaration(
         if (zero >= size || source[zero] != '{') {
             cmeta_lower_set_error(
                 context, ident_start,
-                "owned initializer must be canonical zero {0}");
+                "cmeta_owned initializer must be canonical zero {0}");
             return -1;
         }
         zero = cmeta_lower_skip_space_comments(source, size, zero + 1u);
         if (zero >= size || source[zero] != '0') {
             cmeta_lower_set_error(
                 context, ident_start,
-                "owned initializer must be canonical zero {0}");
+                "cmeta_owned initializer must be canonical zero {0}");
             return -1;
         }
         zero = cmeta_lower_skip_space_comments(source, size, zero + 1u);
         if (zero >= size || source[zero] != '}') {
             cmeta_lower_set_error(
                 context, ident_start,
-                "owned initializer must be canonical zero {0}");
+                "cmeta_owned initializer must be canonical zero {0}");
             return -1;
         }
         semicolon = cmeta_lower_skip_space_comments(source, size, zero + 1u);
         if (semicolon >= size || source[semicolon] != ';') {
             cmeta_lower_set_error(
                 context, ident_start,
-                "owned initializer must end after canonical zero {0}");
+                "cmeta_owned initializer must end after canonical zero {0}");
             return -1;
         }
     } else {
         cmeta_lower_set_error(
             context, ident_start,
-            "owned declaration requires canonical zero initialization");
+            "cmeta_owned declaration requires canonical zero initialization");
         return -1;
     }
 
     owned_type = cmeta_lower_find_type(context, type_name);
     if (owned_type == NULL || owned_type->lifecycle_accessor[0] == '\0') {
         cmeta_lower_set_errorf(
-            context, ident_start, "owned type '", type_name,
+            context, ident_start, "cmeta_owned type '", type_name,
             "' has no canonical lifecycle binding");
         return -1;
     }
@@ -831,7 +831,7 @@ static int cmeta_lower_try_move(
     char value_name[128];
     cmeta_lower_symbol *symbol;
 
-    if (strcmp(ident, "move") != 0)
+    if (strcmp(ident, "cmeta_move") != 0)
         return 0;
 
     i = cmeta_lower_skip_space_comments(source, size, ident_end);
@@ -841,13 +841,13 @@ static int cmeta_lower_try_move(
     if (!cmeta_lower_identifier(
             source, size, i, value_name, sizeof(value_name), &value_end)) {
         cmeta_lower_set_error(
-            context, ident_start, "move(...) requires one owned variable");
+            context, ident_start, "cmeta_move(...) requires one cmeta_owned variable");
         return -1;
     }
     i = cmeta_lower_skip_space_comments(source, size, value_end);
     if (i >= size || source[i] != ')') {
         cmeta_lower_set_error(
-            context, ident_start, "move(...) requires exactly one owned variable");
+            context, ident_start, "cmeta_move(...) requires exactly one cmeta_owned variable");
         return -1;
     }
 
@@ -855,13 +855,13 @@ static int cmeta_lower_try_move(
     if (symbol == NULL ||
         symbol->ownership == CMETA_LOWER_OWNERSHIP_NONE) {
         cmeta_lower_set_errorf(
-            context, ident_start, "move requires owned value '",
+            context, ident_start, "cmeta_move requires cmeta_owned value '",
             value_name, "'");
         return -1;
     }
     if (symbol->ownership == CMETA_LOWER_OWNERSHIP_MOVED) {
         cmeta_lower_set_errorf(
-            context, ident_start, "owned value '",
+            context, ident_start, "cmeta_owned value '",
             value_name, "' moved more than once");
         return -1;
     }
@@ -883,7 +883,7 @@ static int cmeta_lower_validate_symbol_use(
         symbol->ownership != CMETA_LOWER_OWNERSHIP_MOVED)
         return 1;
     cmeta_lower_set_errorf(
-        context, offset, "use of moved owned value '", ident, "'");
+        context, offset, "use of moved cmeta_owned value '", ident, "'");
     return 0;
 }
 
@@ -1075,7 +1075,7 @@ static int cmeta_lower_transform(
             size_t next = end;
             int rewrite;
 
-            if (statement_start && strcmp(ident, "owned") == 0) {
+            if (statement_start && strcmp(ident, "cmeta_owned") == 0) {
                 rewrite = cmeta_lower_try_owned_declaration(
                     context, output, i, end, depth, &next);
                 if (rewrite < 0)
