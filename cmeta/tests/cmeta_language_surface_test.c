@@ -11,8 +11,8 @@
 #define REQUIRE(expr) do { if (!(expr)) return __LINE__; } while (0)
 
 cmeta_struct(SurfacePoint,
-    (int, x),
-    (long, y)
+    cmeta_field(int, x)
+    cmeta_field(long, y)
 );
 
 cmeta_enum(SurfaceState,
@@ -26,8 +26,8 @@ typedef struct SurfaceNode {
 } SurfaceNode;
 
 cmeta_struct(SurfaceOwner,
-    (int, id),
-    (SurfaceNode, node)
+    cmeta_field(int, id)
+    cmeta_field(SurfaceNode, node)
 );
 
 cmeta_intrusive(SurfaceOwner, node, SurfaceNode);
