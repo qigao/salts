@@ -150,6 +150,10 @@ if(NOT CMAKE_CROSSCOMPILING)
     unknown_owned.cmeta.c
     "owned type 'MissingResource' has no canonical lifecycle binding")
   cstl_add_cmeta_lower_rejection_test(
+    cstl_cmeta_lower_conflicting_lifecycle
+    conflicting_lifecycle.cmeta.c
+    "lifecycle binding for type 'IntList' conflicts with an existing canonical accessor")
+  cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_early_return_cleanup
     early_return_cleanup.cmeta.c
     "early return exits live owned value 'value'")
