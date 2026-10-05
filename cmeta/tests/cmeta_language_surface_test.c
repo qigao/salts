@@ -10,12 +10,12 @@
 
 #define REQUIRE(expr) do { if (!(expr)) return __LINE__; } while (0)
 
-Struct(SurfacePoint,
+cmeta_struct(SurfacePoint,
     (int, x),
     (long, y)
 );
 
-Enum(SurfaceState,
+cmeta_enum(SurfaceState,
     (SURFACE_READY, "ready"),
     (SURFACE_DONE, 20, "done"),
     (SURFACE_AFTER, "after")
@@ -64,7 +64,7 @@ static void surface_box_destroy(void *value_) {
     if (value != NULL) value->value = 0;
 }
 
-Traits(SurfaceBox,
+cmeta_traits(SurfaceBox,
     (equal, surface_box_equal),
     (hash, surface_box_hash),
     (compare, surface_box_compare),
@@ -73,10 +73,10 @@ Traits(SurfaceBox,
     (destroy, surface_box_destroy)
 );
 
-typed(Option, SurfaceMaybeInt, int);
-typed(Pair, SurfacePair, int, long);
-typed(Tuple, SurfaceTuple3, int, long, double);
-typed(Result, SurfaceResult, int, int);
+cmeta_type(Option, SurfaceMaybeInt, int);
+cmeta_type(Pair, SurfacePair, int, long);
+cmeta_type(Tuple, SurfaceTuple3, int, long, double);
+cmeta_type(Result, SurfaceResult, int, int);
 
 typed_any(value, int, surface_increment, (int value)) {
     return value + 1;
