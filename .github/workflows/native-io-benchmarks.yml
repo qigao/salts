@@ -360,32 +360,32 @@ jobs:
             family: linux
             backend: epoll
             artifact: linux-epoll
-            configure_preset: linux-release-user
-            build_preset: linux-release-user
+            configure_preset: ci-linux-benchmark-user
+            build_preset: ci-linux-benchmark-user
             build_dir: build/linux-gcc-release
           - host: io_uring / Ubuntu 24.04 GCC
             runner: ubuntu-24.04
             family: linux
             backend: io_uring
             artifact: linux-io-uring
-            configure_preset: linux-release-user
-            build_preset: linux-release-user
+            configure_preset: ci-linux-benchmark-user
+            build_preset: ci-linux-benchmark-user
             build_dir: build/linux-gcc-release
           - host: IOCP / Windows 2025 MSVC v145
             runner: windows-2025
             family: windows
             backend: iocp
             artifact: windows-iocp
-            configure_preset: win-release-user
-            build_preset: win-release-user
+            configure_preset: ci-win-benchmark-user
+            build_preset: ci-win-benchmark-user
             build_dir: build/Msvc-Release
           - host: kqueue / macOS 15 AppleClang
             runner: macos-15
             family: mac
             backend: kqueue
             artifact: macos-kqueue
-            configure_preset: mac-release-user
-            build_preset: mac-release-user
+            configure_preset: ci-mac-benchmark-user
+            build_preset: ci-mac-benchmark-user
             build_dir: build/mac-clang-release
 
     steps:
@@ -532,8 +532,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset "${{ matrix.configure_preset }}" \
-            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
+          cmake --preset "${{ matrix.configure_preset }}"
           cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target \
             cnet_io_benchmark cnet_tls_sg_benchmark cnet_tls_provider_parallel_benchmark cnet_tls_public_owner_benchmark \
             cnet_owner_lifecycle_compare cnet_scaling_benchmark cnet_owner_parallel_benchmark cnet_shards_parallel_benchmark \
@@ -549,7 +548,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
+          cmake --preset "${{ matrix.configure_preset }}"
       - name: Build Windows benchmark targets
         if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         shell: cmd
@@ -563,8 +562,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset "${{ matrix.configure_preset }}" \
-            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
+          cmake --preset "${{ matrix.configure_preset }}"
           cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target \
             cnet_io_benchmark cnet_tls_sg_benchmark \
             native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark \

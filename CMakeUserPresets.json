@@ -5,6 +5,28 @@
     ],
     "configurePresets": [
         {
+            "name": "ci-benchmark-options",
+            "hidden": true,
+            "cacheVariables": {
+                "BUILD_BENCHMARKS": true,
+                "BUILD_TESTS": false,
+                "ENABLE_TESTS": false,
+                "BUILD_EXAMPLES": false
+            }
+        },
+        {
+            "name": "ci-linux-benchmark-user",
+            "inherits": ["ci-benchmark-options", "linux-release-user"]
+        },
+        {
+            "name": "ci-win-benchmark-user",
+            "inherits": ["ci-benchmark-options", "win-release-user"]
+        },
+        {
+            "name": "ci-mac-benchmark-user",
+            "inherits": ["ci-benchmark-options", "mac-release-user"]
+        },
+        {
             "name": "ci-cstl-release-user",
             "inherits": "linux-release-user",
             "binaryDir": "${sourceDir}/build/ci-cstl-release",
@@ -324,6 +346,18 @@
         }
     ],
     "buildPresets": [
+        {
+            "name": "ci-linux-benchmark-user",
+            "configurePreset": "ci-linux-benchmark-user"
+        },
+        {
+            "name": "ci-win-benchmark-user",
+            "configurePreset": "ci-win-benchmark-user"
+        },
+        {
+            "name": "ci-mac-benchmark-user",
+            "configurePreset": "ci-mac-benchmark-user"
+        },
         {
             "name": "ci-cstl-release-user",
             "configurePreset": "ci-cstl-release-user",
