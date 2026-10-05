@@ -687,7 +687,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          for /f "tokens=2 delims==" %%T in ('findstr /b /c:"VCPKG_TARGET_TRIPLET:STRING=" "%GITHUB_WORKSPACE%${{ matrix.build_dir }}\CMakeCache.txt"') do set "BASELINE_TARGET_TRIPLET=%%T"
+          for /f "tokens=2 delims==" %%T in ('findstr /b /c:"VCPKG_TARGET_TRIPLET:STRING=" "%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\CMakeCache.txt"') do set "BASELINE_TARGET_TRIPLET=%%T"
           if not defined BASELINE_TARGET_TRIPLET exit /b 1
           set "BASELINE_PKGCONF=%BASELINE_SOURCE%\vcpkg_installed\%QIGAO_VCPKG_WINDOWS_HOST_TRIPLET%\tools\pkgconf\pkgconf.exe"
           cmake -S . -B build\Msvc-Release -G Ninja ^
@@ -712,8 +712,8 @@ jobs:
           if errorlevel 1 exit /b 1
           dir /b "build\Msvc-Release\bin\*.dll"
           echo CNET_COMPARE_BASELINE_DSO=%BASELINE_SOURCE%\build\Msvc-Release\bin\cnet.dll>>"%GITHUB_ENV%"
-          echo CNET_COMPARE_CANDIDATE_DSO=%GITHUB_WORKSPACE%${{ matrix.build_dir }}\bin\cnet.dll>>"%GITHUB_ENV%"
-          echo CNET_COMPARE_EXECUTABLE=%GITHUB_WORKSPACE%${{ matrix.build_dir }}\bin\cnet_owner_lifecycle_compare.exe>>"%GITHUB_ENV%"
+          echo CNET_COMPARE_CANDIDATE_DSO=%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\bin\cnet.dll>>"%GITHUB_ENV%"
+          echo CNET_COMPARE_EXECUTABLE=%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\bin\cnet_owner_lifecycle_compare.exe>>"%GITHUB_ENV%"
 
       - name: Compare PR-base and candidate CNet owner
         if: matrix.family == 'windows' && needs.scope.outputs.cnet_compare == 'true' && github.event_name == 'pull_request'
