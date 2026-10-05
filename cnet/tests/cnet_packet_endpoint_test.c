@@ -699,7 +699,7 @@ static void cnet_packet_test_secure_config(cnet_packet_endpoint_config *config,
   config->kcp.mtu = 576u;
 }
 
-static void cnet_packet_test_secure_round_trip(void) {
+static void cnet_packet_test_secure_round_trip(size_t max_datagram_bytes) {
   static const unsigned char message[] = "authenticated-kcp";
   static const uint64_t tag = UINT64_C(0xabcdef0123456789);
   cnet_packet_endpoint left = {0};
@@ -718,6 +718,10 @@ static void cnet_packet_test_secure_round_trip(void) {
 
   cnet_packet_test_secure_config(&left_config, 0x5au);
   cnet_packet_test_secure_config(&right_config, 0x5au);
+  left_config.datagram.max_datagram_bytes = max_datagram_bytes;
+  left_config.datagram.receive_buffer_bytes = max_datagram_bytes;
+  right_config.datagram.max_datagram_bytes = max_datagram_bytes;
+  right_config.datagram.receive_buffer_bytes = max_datagram_bytes;
   terminal_config.send_capacity = 2u;
   terminal_config.on_send = cnet_packet_test_send_terminal;
   terminal_config.user = &left_probe;
@@ -923,7 +927,57 @@ spec("CNet unified UDP and KCP packet endpoint") {
   }
 
   it("uses the endpoint contract for authenticated KCP after handshake") {
-    cnet_packet_test_secure_round_trip();
+    cnet_packet_test_secure_round_trip(1500u);
+  }
+
+  group("authenticated FEC datagram capacity") {
+    enum {
+      FEC_WIRE_OVERHEAD_BYTES = 2 + 30 + 16,
+      FEC_MAX_WIRE_BYTES = 624 + FEC_WIRE_OVERHEAD_BYTES
+    };
+    static cnet_packet_endpoint endpoint;
+    static cnet_packet_test_probe probe;
+    static cnet_packet_endpoint_config config;
+
+    before_each() {
+      memset(&endpoint, 0, sizeof(endpoint));
+      memset(&probe, 0, sizeof(probe));
+      config = cnet_packet_test_config(CNET_PACKET_KCP, &probe);
+      cnet_packet_test_secure_config(&config, 0x5au);
+      config.datagram.receive_buffer_bytes = FEC_MAX_WIRE_BYTES;
+    }
+
+    after_each() {
+      if (endpoint.impl != NULL) {
+        check_equal(cnet_packet_endpoint_stop(&endpoint, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+        check_equal(cnet_packet_endpoint_destroy(&endpoint), SALTS_OK);
+      }
+    }
+
+    it("rejects a data-only wire budget before publishing an endpoint") {
+      config.datagram.max_datagram_bytes = FEC_MAX_WIRE_BYTES - 2u;
+      check_equal(cnet_packet_endpoint_init(&endpoint, &config), SALTS_EINVAL);
+      check_null(endpoint.impl);
+    }
+
+    it("rejects a wire budget one byte below the parity frame size") {
+      config.datagram.max_datagram_bytes = FEC_MAX_WIRE_BYTES - 1u;
+      check_equal(cnet_packet_endpoint_init(&endpoint, &config), SALTS_EINVAL);
+      check_null(endpoint.impl);
+    }
+
+    it("rejects parity exceeding the maximum supported UDP payload") {
+      config.security.fec.max_payload_bytes =
+          CNET_DATAGRAM_MAX_PAYLOAD_BYTES - FEC_WIRE_OVERHEAD_BYTES + 1u;
+      config.datagram.max_datagram_bytes = CNET_DATAGRAM_MAX_PAYLOAD_BYTES;
+      config.datagram.receive_buffer_bytes = CNET_DATAGRAM_MAX_PAYLOAD_BYTES;
+      check_equal(cnet_packet_endpoint_init(&endpoint, &config), SALTS_EINVAL);
+      check_null(endpoint.impl);
+    }
+
+    it("supports authenticated traffic at the exact parity frame budget") {
+      cnet_packet_test_secure_round_trip(FEC_MAX_WIRE_BYTES);
+    }
   }
 
   it("reports secure handshake readiness before full tagged-operation capacity") {
