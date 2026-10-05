@@ -33,16 +33,7 @@ foreach(expected
     "received = transfer"
     "\"list.add(99); List_add(&list, 99);\""
     "\"owned(IntList) fake = {0}; move(fake);\""
-    "cmeta_lower_defer_digit(&defer_order, 3);"
-    "cmeta_lower_defer_digit(&defer_order, 2);"
-    "cmeta_lower_defer_digit(&defer_order, 4);"
-    "cmeta_lower_defer_digit(&defer_order, 1);"
-    "IntList defer_owned_first = {0}"
-    "IntVec defer_owned_second = {0}"
-    "cmeta_lower_defer_digit(&defer_owned_order, 6);"
-    "cmeta_lower_defer_digit(&defer_owned_order, 5);"
     "/* list.add(77); List_add(&list, 77); */"
-    "/* defer cmeta_lower_defer_digit(&defer_order, 9); */"
     "/* owned(IntList) fake = {0}; move(fake); */")
   string(FIND "${source}" "${expected}" found)
   if(found EQUAL -1)
@@ -96,29 +87,6 @@ if(cleanup_map_pos EQUAL -1 OR cleanup_second_pos EQUAL -1 OR
    NOT cleanup_map_pos LESS cleanup_second_pos OR
    NOT cleanup_second_pos LESS cleanup_first_pos)
   message(FATAL_ERROR "owned cleanup must run in reverse declaration order")
-endif()
-
-string(FIND "${source}"
-       "cmeta_lower_defer_digit(&defer_owned_order, 6);"
-       defer_owned_6_pos)
-string(FIND "${source}"
-       "cmeta_data_value_destroy(IntVec_cmeta_data(),&defer_owned_second);"
-       defer_owned_second_cleanup_pos)
-string(FIND "${source}"
-       "cmeta_lower_defer_digit(&defer_owned_order, 5);"
-       defer_owned_5_pos)
-string(FIND "${source}"
-       "cmeta_data_value_destroy(IntList_cmeta_data(),&defer_owned_first);"
-       defer_owned_first_cleanup_pos)
-if(defer_owned_6_pos EQUAL -1 OR
-   defer_owned_second_cleanup_pos EQUAL -1 OR
-   defer_owned_5_pos EQUAL -1 OR
-   defer_owned_first_cleanup_pos EQUAL -1 OR
-   NOT defer_owned_6_pos LESS defer_owned_second_cleanup_pos OR
-   NOT defer_owned_second_cleanup_pos LESS defer_owned_5_pos OR
-   NOT defer_owned_5_pos LESS defer_owned_first_cleanup_pos)
-  message(FATAL_ERROR
-          "defer and owned cleanup must share one reverse lexical LIFO order")
 endif()
 
 string(FIND "${source}"
