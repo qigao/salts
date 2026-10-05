@@ -119,7 +119,7 @@ const cmeta_type_desc cmeta_type_managed_stream_value_ptr = {
     .identity = NULL
 };
 
-typed(List, ManagedStreamList, managed_stream_value);
+cmeta_type(List, ManagedStreamList, managed_stream_value);
 
 spec("CSTL managed CFlow Stream") {
     it("counts managed values without retaining terminal copies") {
