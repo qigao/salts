@@ -186,9 +186,30 @@
 
 #define TINYMOCk_INTERFACE_BOX_ROW(index, row, ignored) \
   CMETA_PP_CAT(CMETA_FUNCTION_COMMA_, index) TINYMOCk_INTERFACE_BOX(row)
+#define TINYMOCk_INTERFACE_VIEW_CMETA_ABI_SCALAR(value) \
+  { (const void *)&(value), false, NULL }
+#define TINYMOCk_INTERFACE_VIEW_CMETA_ABI_OBJECT_POINTER(value) \
+  { (const void *)&(value), true, (const void *)(value) }
+#define TINYMOCk_INTERFACE_VIEW_CMETA_ABI_AGGREGATE(value) \
+  { (const void *)&(value), false, NULL }
+#define TINYMOCk_INTERFACE_VIEW_CMETA_ABI_FUNCTION_POINTER(value) \
+  { (const void *)&(value), false, NULL }
+#define TINYMOCk_INTERFACE_VIEW_CMETA_ABI_ENUM(value) \
+  { (const void *)&(value), false, NULL }
+#define TINYMOCk_INTERFACE_VIEW_CMETA_ABI_UNSPECIFIED(value) \
+  { (const void *)&(value), false, NULL }
+#define TINYMOCk_INTERFACE_VIEW_CMETA_ABI_OPAQUE(value) \
+  { (const void *)&(value), false, NULL }
+#define TINYMOCk_INTERFACE_VIEW_CMETA_ABI_VOID(value) \
+  { (const void *)&(value), false, NULL }
+#define TINYMOCk_INTERFACE_VIEW_I(abi, value) \
+  TINYMOCk_CAT(TINYMOCk_INTERFACE_VIEW_, abi)(value)
+#define TINYMOCk_INTERFACE_ARG_VIEW(row) \
+  TINYMOCk_INTERFACE_VIEW_I( \
+      TINYMOCk_INTERFACE_PARAM_ABI(row), CMETA_IFACE_PARAM_NAME(row))
 #define TINYMOCk_INTERFACE_TYPED_ROW(index, row, ignored) \
   CMETA_PP_CAT(CMETA_FUNCTION_COMMA_, index) \
-  (const void *)&CMETA_IFACE_PARAM_NAME(row)
+  TINYMOCk_INTERFACE_ARG_VIEW(row)
 
 #define TINYMOCk_INTERFACE_PARAM_ADMIT_I(type,name,flags,descriptor,abi) \
   _Static_assert( \
@@ -215,19 +236,19 @@
   _Static_assert((abi) == CMETA_ABI_VOID, \
       "TinyMock reflected void interface return must use CMETA_ABI_VOID")
 
-#define TINYMOCk_INTERFACE_RECORD(I,N,argc,typed,boxed) \
+#define TINYMOCk_INTERFACE_RECORD(I,N,argc,typed) \
   TINYMOCk_ASSERT( \
       tinymock_cmeta_history_record( \
           &mock->TINYMOCk_INTERFACE_HISTORY_NAME(N), I##_##N##_function(), \
-          (argc), (typed), (boxed)), \
+          (argc), (typed)), \
       "tinymock cannot snapshot reflected interface arguments for %s.%s", \
       #I, #N)
 
-#define TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,argc,boxed) \
+#define TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,argc,typed) \
   TINYMOCk_ASSERT( \
       tinymock_cmeta_actions_apply( \
           &mock->TINYMOCk_INTERFACE_ACTIONS_NAME(N), I##_##N##_function(), \
-          (argc), (boxed)), \
+          (argc), (typed)), \
       "tinymock cannot apply reflected interface output actions for %s.%s", \
       #I, #N)
 
@@ -304,7 +325,7 @@
   TINYMOCk_INTERFACE_VALUE_RETURN_ADMIT(RA); \
   static R TINYMOCk_INTERFACE_CALLBACK(I, N)(void *opaque) { \
     TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
-    TINYMOCk_INTERFACE_RECORD(I,N,0u,NULL,NULL); \
+    TINYMOCk_INTERFACE_RECORD(I,N,0u,NULL); \
     tinymock_value_t result__ = tinymock_mock_dispatch(&mock->N, 0u, NULL); \
     TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,0u,NULL); \
     TINYMOCk_INTERFACE_RETURN_VALUE(RA,I,N,R,result__); \
@@ -317,10 +338,10 @@
       void *opaque, CMETA_IFACE_PARAM_DECL(P1)) { \
     TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
     tinymock_value_t boxed__[] = { TINYMOCk_INTERFACE_BOX(P1) }; \
-    const void *typed__[] = { (const void *)&CMETA_IFACE_PARAM_NAME(P1) }; \
-    TINYMOCk_INTERFACE_RECORD(I,N,1u,typed__,boxed__); \
+    tinymock_cmeta_arg_view typed__[] = { TINYMOCk_INTERFACE_ARG_VIEW(P1) }; \
+    TINYMOCk_INTERFACE_RECORD(I,N,1u,typed__); \
     tinymock_value_t result__ = tinymock_mock_dispatch(&mock->N, 1u, boxed__); \
-    TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,1u,boxed__); \
+    TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,1u,typed__); \
     TINYMOCk_INTERFACE_RETURN_VALUE(RA,I,N,R,result__); \
   }
 
@@ -333,13 +354,13 @@
     tinymock_value_t boxed__[] = { \
       TINYMOCk_INTERFACE_BOX(P1), TINYMOCk_INTERFACE_BOX(P2) \
     }; \
-    const void *typed__[] = { \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P1), \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P2) \
+    tinymock_cmeta_arg_view typed__[] = { \
+      TINYMOCk_INTERFACE_ARG_VIEW(P1), \
+      TINYMOCk_INTERFACE_ARG_VIEW(P2) \
     }; \
-    TINYMOCk_INTERFACE_RECORD(I,N,2u,typed__,boxed__); \
+    TINYMOCk_INTERFACE_RECORD(I,N,2u,typed__); \
     tinymock_value_t result__ = tinymock_mock_dispatch(&mock->N, 2u, boxed__); \
-    TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,2u,boxed__); \
+    TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,2u,typed__); \
     TINYMOCk_INTERFACE_RETURN_VALUE(RA,I,N,R,result__); \
   }
 
@@ -355,14 +376,14 @@
       TINYMOCk_INTERFACE_BOX(P1), TINYMOCk_INTERFACE_BOX(P2), \
       TINYMOCk_INTERFACE_BOX(P3) \
     }; \
-    const void *typed__[] = { \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P1), \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P2), \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P3) \
+    tinymock_cmeta_arg_view typed__[] = { \
+      TINYMOCk_INTERFACE_ARG_VIEW(P1), \
+      TINYMOCk_INTERFACE_ARG_VIEW(P2), \
+      TINYMOCk_INTERFACE_ARG_VIEW(P3) \
     }; \
-    TINYMOCk_INTERFACE_RECORD(I,N,3u,typed__,boxed__); \
+    TINYMOCk_INTERFACE_RECORD(I,N,3u,typed__); \
     tinymock_value_t result__ = tinymock_mock_dispatch(&mock->N, 3u, boxed__); \
-    TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,3u,boxed__); \
+    TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,3u,typed__); \
     TINYMOCk_INTERFACE_RETURN_VALUE(RA,I,N,R,result__); \
   }
 
@@ -378,15 +399,15 @@
       TINYMOCk_INTERFACE_BOX(P1), TINYMOCk_INTERFACE_BOX(P2), \
       TINYMOCk_INTERFACE_BOX(P3), TINYMOCk_INTERFACE_BOX(P4) \
     }; \
-    const void *typed__[] = { \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P1), \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P2), \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P3), \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P4) \
+    tinymock_cmeta_arg_view typed__[] = { \
+      TINYMOCk_INTERFACE_ARG_VIEW(P1), \
+      TINYMOCk_INTERFACE_ARG_VIEW(P2), \
+      TINYMOCk_INTERFACE_ARG_VIEW(P3), \
+      TINYMOCk_INTERFACE_ARG_VIEW(P4) \
     }; \
-    TINYMOCk_INTERFACE_RECORD(I,N,4u,typed__,boxed__); \
+    TINYMOCk_INTERFACE_RECORD(I,N,4u,typed__); \
     tinymock_value_t result__ = tinymock_mock_dispatch(&mock->N, 4u, boxed__); \
-    TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,4u,boxed__); \
+    TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,4u,typed__); \
     TINYMOCk_INTERFACE_RETURN_VALUE(RA,I,N,R,result__); \
   }
 
@@ -394,7 +415,7 @@
   TINYMOCk_INTERFACE_VOID_RETURN_ADMIT(RA); \
   static void TINYMOCk_INTERFACE_CALLBACK(I, N)(void *opaque) { \
     TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
-    TINYMOCk_INTERFACE_RECORD(I,N,0u,NULL,NULL); \
+    TINYMOCk_INTERFACE_RECORD(I,N,0u,NULL); \
     (void)tinymock_mock_dispatch(&mock->N, 0u, NULL); \
     TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,0u,NULL); \
   }
@@ -406,10 +427,10 @@
       void *opaque, CMETA_IFACE_PARAM_DECL(P1)) { \
     TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
     tinymock_value_t boxed__[] = { TINYMOCk_INTERFACE_BOX(P1) }; \
-    const void *typed__[] = { (const void *)&CMETA_IFACE_PARAM_NAME(P1) }; \
-    TINYMOCk_INTERFACE_RECORD(I,N,1u,typed__,boxed__); \
+    tinymock_cmeta_arg_view typed__[] = { TINYMOCk_INTERFACE_ARG_VIEW(P1) }; \
+    TINYMOCk_INTERFACE_RECORD(I,N,1u,typed__); \
     (void)tinymock_mock_dispatch(&mock->N, 1u, boxed__); \
-    TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,1u,boxed__); \
+    TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,1u,typed__); \
   }
 
 #define TINYMOCk_INTERFACE_CALLBACK_FV2(I,R,N,C,RD,RA,P1,P2) \
@@ -421,13 +442,13 @@
     tinymock_value_t boxed__[] = { \
       TINYMOCk_INTERFACE_BOX(P1), TINYMOCk_INTERFACE_BOX(P2) \
     }; \
-    const void *typed__[] = { \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P1), \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P2) \
+    tinymock_cmeta_arg_view typed__[] = { \
+      TINYMOCk_INTERFACE_ARG_VIEW(P1), \
+      TINYMOCk_INTERFACE_ARG_VIEW(P2) \
     }; \
-    TINYMOCk_INTERFACE_RECORD(I,N,2u,typed__,boxed__); \
+    TINYMOCk_INTERFACE_RECORD(I,N,2u,typed__); \
     (void)tinymock_mock_dispatch(&mock->N, 2u, boxed__); \
-    TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,2u,boxed__); \
+    TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,2u,typed__); \
   }
 
 #define TINYMOCk_INTERFACE_CALLBACK_FV3(I,R,N,C,RD,RA,P1,P2,P3) \
@@ -442,14 +463,14 @@
       TINYMOCk_INTERFACE_BOX(P1), TINYMOCk_INTERFACE_BOX(P2), \
       TINYMOCk_INTERFACE_BOX(P3) \
     }; \
-    const void *typed__[] = { \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P1), \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P2), \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P3) \
+    tinymock_cmeta_arg_view typed__[] = { \
+      TINYMOCk_INTERFACE_ARG_VIEW(P1), \
+      TINYMOCk_INTERFACE_ARG_VIEW(P2), \
+      TINYMOCk_INTERFACE_ARG_VIEW(P3) \
     }; \
-    TINYMOCk_INTERFACE_RECORD(I,N,3u,typed__,boxed__); \
+    TINYMOCk_INTERFACE_RECORD(I,N,3u,typed__); \
     (void)tinymock_mock_dispatch(&mock->N, 3u, boxed__); \
-    TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,3u,boxed__); \
+    TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,3u,typed__); \
   }
 
 #define TINYMOCk_INTERFACE_CALLBACK_FV4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
@@ -464,15 +485,15 @@
       TINYMOCk_INTERFACE_BOX(P1), TINYMOCk_INTERFACE_BOX(P2), \
       TINYMOCk_INTERFACE_BOX(P3), TINYMOCk_INTERFACE_BOX(P4) \
     }; \
-    const void *typed__[] = { \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P1), \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P2), \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P3), \
-      (const void *)&CMETA_IFACE_PARAM_NAME(P4) \
+    tinymock_cmeta_arg_view typed__[] = { \
+      TINYMOCk_INTERFACE_ARG_VIEW(P1), \
+      TINYMOCk_INTERFACE_ARG_VIEW(P2), \
+      TINYMOCk_INTERFACE_ARG_VIEW(P3), \
+      TINYMOCk_INTERFACE_ARG_VIEW(P4) \
     }; \
-    TINYMOCk_INTERFACE_RECORD(I,N,4u,typed__,boxed__); \
+    TINYMOCk_INTERFACE_RECORD(I,N,4u,typed__); \
     (void)tinymock_mock_dispatch(&mock->N, 4u, boxed__); \
-    TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,4u,boxed__); \
+    TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,4u,typed__); \
   }
 
 #define TINYMOCk_INTERFACE_CALLBACK_FD0(I,R,N,C,RD,RA) \
