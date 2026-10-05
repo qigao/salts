@@ -114,6 +114,14 @@ static void tls_public_profile_add(
   if (target == NULL || source == NULL) return;
 #define TLS_PUBLIC_PROFILE_ADD(FIELD) \
   target->FIELD = tls_public_add_u64(target->FIELD, source->FIELD)
+  TLS_PUBLIC_PROFILE_ADD(owner_drive_ns);
+  TLS_PUBLIC_PROFILE_ADD(owner_drive_calls);
+  TLS_PUBLIC_PROFILE_ADD(observe_ns);
+  TLS_PUBLIC_PROFILE_ADD(observe_calls);
+  TLS_PUBLIC_PROFILE_ADD(request_completion_ns);
+  TLS_PUBLIC_PROFILE_ADD(request_completion_calls);
+  TLS_PUBLIC_PROFILE_ADD(receive_rearm_stage_ns);
+  TLS_PUBLIC_PROFILE_ADD(receive_rearm_stage_calls);
   TLS_PUBLIC_PROFILE_ADD(tls_pump_ns);
   TLS_PUBLIC_PROFILE_ADD(tls_pump_calls);
   TLS_PUBLIC_PROFILE_ADD(tls_ciphertext_bytes);
@@ -892,6 +900,16 @@ int main(int argc, char **argv) {
         "\"client_tls_read_completion_bytes\":%llu,"
         "\"client_tls_plaintext_receive_calls\":%llu,"
         "\"client_tls_plaintext_receive_bytes\":%llu,"
+        "\"server_owner_drive_ns_per_op\":%.3f,"
+        "\"client_owner_drive_ns_per_op\":%.3f,"
+        "\"server_observe_ns_per_op\":%.3f,"
+        "\"client_observe_ns_per_op\":%.3f,"
+        "\"server_observe_calls\":%llu,"
+        "\"client_observe_calls\":%llu,"
+        "\"server_request_completion_ns_per_op\":%.3f,"
+        "\"client_request_completion_ns_per_op\":%.3f,"
+        "\"server_receive_rearm_ns_per_op\":%.3f,"
+        "\"client_receive_rearm_ns_per_op\":%.3f,"
         "\"p50_ns\":%llu,"
         "\"p95_ns\":%llu,"
         "\"p99_ns\":%llu,"
@@ -916,6 +934,16 @@ int main(int argc, char **argv) {
         (unsigned long long)client_profile.tls_read_completion_bytes,
         (unsigned long long)client_profile.tls_plaintext_receive_calls,
         (unsigned long long)client_profile.tls_plaintext_receive_bytes,
+        total_ops != 0u ? (double)server_profile.owner_drive_ns / (double)total_ops : 0.0,
+        total_ops != 0u ? (double)client_profile.owner_drive_ns / (double)total_ops : 0.0,
+        total_ops != 0u ? (double)server_profile.observe_ns / (double)total_ops : 0.0,
+        total_ops != 0u ? (double)client_profile.observe_ns / (double)total_ops : 0.0,
+        (unsigned long long)server_profile.observe_calls,
+        (unsigned long long)client_profile.observe_calls,
+        total_ops != 0u ? (double)server_profile.request_completion_ns / (double)total_ops : 0.0,
+        total_ops != 0u ? (double)client_profile.request_completion_ns / (double)total_ops : 0.0,
+        total_ops != 0u ? (double)server_profile.receive_rearm_stage_ns / (double)total_ops : 0.0,
+        total_ops != 0u ? (double)client_profile.receive_rearm_stage_ns / (double)total_ops : 0.0,
         (unsigned long long)tls_public_percentile(
             latencies, samples, 50u),
         (unsigned long long)tls_public_percentile(
