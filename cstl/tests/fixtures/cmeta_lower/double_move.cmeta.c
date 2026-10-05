@@ -3,11 +3,11 @@
 typed(List, IntList, int);
 
 int main(void) {
-    owned(IntList) list = {0};
+    cmeta_owned(IntList) list = {0};
     IntList first = {0};
     IntList second = {0};
 
-    first = move(list);
-    second = move(list);
+    first = cmeta_move(list);
+    second = cmeta_move(list);
     return (int)(IntList_size(&first) + IntList_size(&second));
 }
