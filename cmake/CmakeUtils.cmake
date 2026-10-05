@@ -232,5 +232,11 @@ function(cmake_add_benchmark target_name)
   if(ARG_INCLUDES)
     target_include_directories(${target_name} PRIVATE ${ARG_INCLUDES})
   endif()
+
+  # CI executes benchmark programs only through CTest. BUILD_BENCHMARKS is
+  # opt-in, so ordinary test graphs do not discover or run these tests.
+  add_test(NAME benchmark.${target_name} COMMAND ${target_name})
+  set_tests_properties(benchmark.${target_name} PROPERTIES LABELS "benchmark")
+
   cmake_config_target(${target_name} FOLDER "${ARG_FOLDER}")
 endfunction()
