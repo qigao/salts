@@ -252,72 +252,29 @@
       "tinymock cannot apply reflected interface output actions for %s.%s", \
       #I, #N)
 
+#define TINYMOCk_INTERFACE_RETURN_TYPED_ONLY(I,N,R) \
+  do { \
+    R typed_result__; \
+    bool ok__ = tinymock_cmeta_return_write( \
+        &mock->TINYMOCk_INTERFACE_RETURN_NAME(N), \
+        I##_##N##_function(), &typed_result__); \
+    TINYMOCk_ASSERT(ok__, \
+        "tinymock reflected interface return for %s.%s requires a typed return", \
+        #I, #N); \
+    if (ok__) return typed_result__; \
+    return (R){0}; \
+  } while (0)
+
 #define TINYMOCk_INTERFACE_RETURN_CMETA_ABI_SCALAR(I,N,R,result) \
-  do { \
-    R typed_result__; \
-    tinymock_cmeta_return *return__ = \
-        &mock->TINYMOCk_INTERFACE_RETURN_NAME(N); \
-    if (tinymock_cmeta_return_enabled(return__)) { \
-      bool ok__ = tinymock_cmeta_return_write( \
-          return__, I##_##N##_function(), &typed_result__); \
-      TINYMOCk_ASSERT(ok__, \
-          "tinymock cannot materialize reflected interface return for %s.%s", \
-          #I, #N); \
-      if (ok__) return typed_result__; \
-    } \
-    return TINYMOCk_VALUE_AS(R, result); \
-  } while (0)
+  do { (void)(result); TINYMOCk_INTERFACE_RETURN_TYPED_ONLY(I,N,R); } while (0)
 #define TINYMOCk_INTERFACE_RETURN_CMETA_ABI_OBJECT_POINTER(I,N,R,result) \
-  do { \
-    R typed_result__; \
-    tinymock_cmeta_return *return__ = \
-        &mock->TINYMOCk_INTERFACE_RETURN_NAME(N); \
-    if (tinymock_cmeta_return_enabled(return__)) { \
-      bool ok__ = tinymock_cmeta_return_write( \
-          return__, I##_##N##_function(), &typed_result__); \
-      TINYMOCk_ASSERT(ok__, \
-          "tinymock cannot materialize reflected interface return for %s.%s", \
-          #I, #N); \
-      if (ok__) return typed_result__; \
-    } \
-    return (R)tinymock_detail_unbox_ptr(result); \
-  } while (0)
+  do { (void)(result); TINYMOCk_INTERFACE_RETURN_TYPED_ONLY(I,N,R); } while (0)
 #define TINYMOCk_INTERFACE_RETURN_CMETA_ABI_AGGREGATE(I,N,R,result) \
-  do { \
-    R typed_result__ = {0}; \
-    bool ok__ = tinymock_cmeta_return_write( \
-        &mock->TINYMOCk_INTERFACE_RETURN_NAME(N), \
-        I##_##N##_function(), &typed_result__); \
-    (void)(result); \
-    TINYMOCk_ASSERT(ok__, \
-        "tinymock aggregate interface return for %s.%s requires a typed return", \
-        #I, #N); \
-    return typed_result__; \
-  } while (0)
+  do { (void)(result); TINYMOCk_INTERFACE_RETURN_TYPED_ONLY(I,N,R); } while (0)
 #define TINYMOCk_INTERFACE_RETURN_CMETA_ABI_FUNCTION_POINTER(I,N,R,result) \
-  do { \
-    R typed_result__ = (R)0; \
-    bool ok__ = tinymock_cmeta_return_write( \
-        &mock->TINYMOCk_INTERFACE_RETURN_NAME(N), \
-        I##_##N##_function(), &typed_result__); \
-    (void)(result); \
-    TINYMOCk_ASSERT(ok__, \
-        "tinymock function-pointer interface return for %s.%s requires a typed return", \
-        #I, #N); \
-    return typed_result__; \
-  } while (0)
+  do { (void)(result); TINYMOCk_INTERFACE_RETURN_TYPED_ONLY(I,N,R); } while (0)
 #define TINYMOCk_INTERFACE_RETURN_CMETA_ABI_ENUM(I,N,R,result) \
-  do { \
-    R typed_result__ = (R)0; \
-    bool ok__ = tinymock_cmeta_return_write( \
-        &mock->TINYMOCk_INTERFACE_RETURN_NAME(N), \
-        I##_##N##_function(), &typed_result__); \
-    (void)(result); \
-    TINYMOCk_ASSERT(ok__, \
-        "tinymock enum interface return for %s.%s requires a typed return", \
-        #I, #N); \
-    return typed_result__; \
-  } while (0)
+  do { (void)(result); TINYMOCk_INTERFACE_RETURN_TYPED_ONLY(I,N,R); } while (0)
 #define TINYMOCk_INTERFACE_RETURN_VALUE(abi,I,N,R,result) \
   TINYMOCk_CAT(TINYMOCk_INTERFACE_RETURN_, abi)(I,N,R,result)
 
