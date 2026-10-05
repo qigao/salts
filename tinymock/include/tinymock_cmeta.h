@@ -21,6 +21,7 @@
 #include "tinymock_actions.h"
 #include "tinymock_return.h"
 #include <cmeta/interface.h>
+#include <cmeta/data.h>
 
 #ifdef __cplusplus
 #error "tinymock_cmeta.h is the strict-C11 CMeta interface mock bridge"
@@ -46,6 +47,23 @@
 
 #define TINYMOCk_INTERFACE_ANCHOR(I) \
   TINYMOCk_CAT(TINYMOCk_INTERFACE_TYPE(I), _interface_anchor_t)
+
+#define TINYMOCk_INTERFACE_DATA_ACCESSOR(I) \
+  TINYMOCk_CAT(TINYMOCk_INTERFACE_TYPE(I), _cmeta_data)
+#define TINYMOCk_INTERFACE_DATA_DESC(I) \
+  TINYMOCk_CAT(TINYMOCk_INTERFACE_TYPE(I), _cmeta_data_desc)
+#define TINYMOCk_INTERFACE_TYPE_DESC(I) \
+  TINYMOCk_CAT(TINYMOCk_INTERFACE_TYPE(I), _cmeta_type_desc)
+#define TINYMOCk_INTERFACE_DATA_SHAPE(I) \
+  TINYMOCk_CAT(TINYMOCk_INTERFACE_TYPE(I), _cmeta_data_shape)
+#define TINYMOCk_INTERFACE_CONSTRUCT_OPS(I) \
+  TINYMOCk_CAT(TINYMOCk_INTERFACE_TYPE(I), _cmeta_construct_ops)
+#define TINYMOCk_INTERFACE_INIT_ZERO(I) \
+  TINYMOCk_CAT(TINYMOCk_INTERFACE_TYPE(I), _cmeta_init_zero)
+#define TINYMOCk_INTERFACE_RESTORE_ZERO(I) \
+  TINYMOCk_CAT(TINYMOCk_INTERFACE_TYPE(I), _cmeta_restore_zero)
+#define TINYMOCk_INTERFACE_MOVE_VALUE(I) \
+  TINYMOCk_CAT(TINYMOCk_INTERFACE_TYPE(I), _cmeta_move)
 
 #define TINYMOCk_INTERFACE_FIELD_REFLECTED(I, K, R, N, ...) \
   tinymock_cmeta_history TINYMOCk_INTERFACE_HISTORY_NAME(N); \
@@ -398,6 +416,54 @@
   } \
   static inline I TINYMOCk_INTERFACE_AS(I)(TINYMOCk_INTERFACE_TYPE(I) *mock) { \
     return I##_bind(mock, &TINYMOCk_INTERFACE_VTABLE(I)); \
+  } \
+  static cmeta_status TINYMOCk_INTERFACE_INIT_ZERO(I)(void *object) { \
+    TINYMOCk_INTERFACE_TYPE(I) *mock = \
+        (TINYMOCk_INTERFACE_TYPE(I) *)object; \
+    if (!mock) return CMETA_INVALID_ARGUMENT; \
+    *mock = (TINYMOCk_INTERFACE_TYPE(I)){0}; \
+    return CMETA_OK; \
+  } \
+  static void TINYMOCk_INTERFACE_RESTORE_ZERO(I)(void *object) { \
+    TINYMOCk_INTERFACE_DESTROY(I)((TINYMOCk_INTERFACE_TYPE(I) *)object); \
+  } \
+  static void TINYMOCk_INTERFACE_MOVE_VALUE(I)(void *destination, void *source) { \
+    TINYMOCk_INTERFACE_TYPE(I) *dst = \
+        (TINYMOCk_INTERFACE_TYPE(I) *)destination; \
+    TINYMOCk_INTERFACE_TYPE(I) *src = \
+        (TINYMOCk_INTERFACE_TYPE(I) *)source; \
+    if (!dst || !src || dst == src) return; \
+    *dst = *src; \
+    *src = (TINYMOCk_INTERFACE_TYPE(I)){0}; \
+  } \
+  static const cmeta_type_desc TINYMOCk_INTERFACE_TYPE_DESC(I) = { \
+    .name = "tinymock_" #I, \
+    .size = sizeof(TINYMOCk_INTERFACE_TYPE(I)), \
+    .align = _Alignof(TINYMOCk_INTERFACE_TYPE(I)), \
+    .kind = CMETA_T_OBJECT, \
+    .pointee = NULL, .traits = NULL, .identity = NULL \
+  }; \
+  static const unsigned char TINYMOCk_INTERFACE_DATA_SHAPE(I) = 0u; \
+  static const cmeta_data_construct_ops TINYMOCk_INTERFACE_CONSTRUCT_OPS(I) = { \
+    .struct_size = sizeof(cmeta_data_construct_ops), \
+    .abi_version = CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION, \
+    .storage_type = &TINYMOCk_INTERFACE_TYPE_DESC(I), \
+    .init_zero = TINYMOCk_INTERFACE_INIT_ZERO(I), \
+    .restore_zero = TINYMOCk_INTERFACE_RESTORE_ZERO(I), \
+    .move = TINYMOCk_INTERFACE_MOVE_VALUE(I) \
+  }; \
+  static const cmeta_data_desc TINYMOCk_INTERFACE_DATA_DESC(I) = { \
+    .struct_size = sizeof(cmeta_data_desc), \
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION, \
+    .stable_id = "tinymock." #I ".data", \
+    .display_name = "tinymock:" #I, \
+    .kind = CMETA_DATA_CUSTOM, \
+    .storage_type = &TINYMOCk_INTERFACE_TYPE_DESC(I), \
+    .shape = &TINYMOCk_INTERFACE_DATA_SHAPE(I), \
+    .construct_ops = &TINYMOCk_INTERFACE_CONSTRUCT_OPS(I) \
+  }; \
+  static inline const cmeta_data_desc *TINYMOCk_INTERFACE_DATA_ACCESSOR(I)(void) { \
+    return &TINYMOCk_INTERFACE_DATA_DESC(I); \
   } \
   typedef int TINYMOCk_INTERFACE_ANCHOR(I)
 

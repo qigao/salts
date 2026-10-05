@@ -16,6 +16,8 @@ foreach(expected
     "IntVec_push(&list,30)"
     "IntVec_push(&list, 40)"
     "IntList_add(&list,50)"
+    "ExternalList external_cleanup = {0}"
+    "cmeta_data_value_destroy(IntList_cmeta_data(),&external_cleanup);"
     "IntList cleanup_first = {0}"
     "IntVec cleanup_second = {0}"
     "IntMap cleanup_map = {0}"
@@ -38,6 +40,14 @@ foreach(expected
     message(FATAL_ERROR "expected lowered/preserved source fragment missing: ${expected}")
   endif()
 endforeach()
+
+string(REGEX MATCHALL
+       "cmeta_data_value_destroy\\(IntList_cmeta_data\\(\\),&external_cleanup\\);"
+       external_cleanup_matches "${source}")
+list(LENGTH external_cleanup_matches external_cleanup_count)
+if(NOT external_cleanup_count EQUAL 1)
+  message(FATAL_ERROR "external lifecycle binding must clean up exactly once")
+endif()
 
 string(REGEX MATCHALL
        "cmeta_data_value_destroy\\(IntList_cmeta_data\\(\\),&cleanup_first\\);"

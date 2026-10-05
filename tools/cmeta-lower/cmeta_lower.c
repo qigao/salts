@@ -274,6 +274,44 @@ cmeta_lower_find_type(const cmeta_lower_context *context, const char *concrete) 
     return NULL;
 }
 
+static cmeta_lower_type *
+cmeta_lower_find_type_mutable(
+    cmeta_lower_context *context, const char *concrete) {
+    size_t i;
+    for (i = context->type_count; i != 0u; --i)
+        if (strcmp(context->types[i - 1u].concrete, concrete) == 0)
+            return &context->types[i - 1u];
+    return NULL;
+}
+
+static int cmeta_lower_reserve_type(
+    cmeta_lower_context *context, size_t offset,
+    const char *concrete, cmeta_lower_type **out) {
+    cmeta_lower_type *next;
+    size_t capacity;
+
+    if (out != NULL) *out = NULL;
+    if (context->type_count == context->type_capacity) {
+        capacity = context->type_capacity == 0u
+                       ? 16u
+                       : context->type_capacity * 2u;
+        next = (cmeta_lower_type *)realloc(
+            context->types, capacity * sizeof(*next));
+        if (next == NULL) {
+            cmeta_lower_set_error(context, offset, "out of memory");
+            return 0;
+        }
+        context->types = next;
+        context->type_capacity = capacity;
+    }
+
+    next = &context->types[context->type_count++];
+    memset(next, 0, sizeof(*next));
+    (void)snprintf(next->concrete, sizeof(next->concrete), "%s", concrete);
+    if (out != NULL) *out = next;
+    return 1;
+}
+
 static int cmeta_lower_owner_registered(
     const cmeta_lower_context *context, const char *owner_id) {
     size_t i;
@@ -287,43 +325,64 @@ static int cmeta_lower_owner_registered(
 static int cmeta_lower_add_type(
     cmeta_lower_context *context, size_t offset,
     const char *owner_id, const char *concrete) {
-    cmeta_lower_type *next;
-    size_t capacity;
-    const cmeta_lower_type *existing = cmeta_lower_find_type(context, concrete);
-
-    if (existing != NULL) {
-        if (strcmp(existing->owner_id, owner_id) != 0) {
-            cmeta_lower_set_errorf(
-                context, offset, "typed concrete type '", concrete,
-                "' is registered with conflicting owners");
-            return 0;
-        }
-        return 1;
-    }
-
-    if (context->type_count == context->type_capacity) {
-        capacity = context->type_capacity == 0u ? 16u : context->type_capacity * 2u;
-        next = (cmeta_lower_type *)realloc(
-            context->types, capacity * sizeof(*next));
-        if (next == NULL) {
-            cmeta_lower_set_error(context, offset, "out of memory");
-            return 0;
-        }
-        context->types = next;
-        context->type_capacity = capacity;
-    }
+    cmeta_lower_type *entry =
+        cmeta_lower_find_type_mutable(context, concrete);
+    char default_accessor[160];
 
     (void)snprintf(
-        context->types[context->type_count].owner_id,
-        sizeof(context->types[context->type_count].owner_id), "%s", owner_id);
-    (void)snprintf(
-        context->types[context->type_count].concrete,
-        sizeof(context->types[context->type_count].concrete), "%s", concrete);
-    (void)snprintf(
-        context->types[context->type_count].lifecycle_accessor,
-        sizeof(context->types[context->type_count].lifecycle_accessor),
+        default_accessor, sizeof(default_accessor),
         "%s_cmeta_data", concrete);
-    ++context->type_count;
+
+    if (entry == NULL) {
+        if (!cmeta_lower_reserve_type(context, offset, concrete, &entry))
+            return 0;
+    }
+
+    if (entry->owner_id[0] != '\0' &&
+        strcmp(entry->owner_id, owner_id) != 0) {
+        cmeta_lower_set_errorf(
+            context, offset, "typed concrete type '", concrete,
+            "' is registered with conflicting owners");
+        return 0;
+    }
+    if (entry->lifecycle_accessor[0] != '\0' &&
+        strcmp(entry->lifecycle_accessor, default_accessor) != 0) {
+        cmeta_lower_set_errorf(
+            context, offset, "typed concrete type '", concrete,
+            "' conflicts with its canonical lifecycle binding");
+        return 0;
+    }
+
+    (void)snprintf(
+        entry->owner_id, sizeof(entry->owner_id), "%s", owner_id);
+    (void)snprintf(
+        entry->lifecycle_accessor, sizeof(entry->lifecycle_accessor),
+        "%s", default_accessor);
+    return 1;
+}
+
+static int cmeta_lower_bind_lifecycle(
+    cmeta_lower_context *context, size_t offset,
+    const char *concrete, const char *accessor) {
+    cmeta_lower_type *entry =
+        cmeta_lower_find_type_mutable(context, concrete);
+
+    if (entry == NULL) {
+        if (!cmeta_lower_reserve_type(context, offset, concrete, &entry))
+            return 0;
+    }
+
+    if (entry->lifecycle_accessor[0] != '\0' &&
+        strcmp(entry->lifecycle_accessor, accessor) != 0) {
+        cmeta_lower_set_errorf(
+            context, offset, "lifecycle binding for type '", concrete,
+            "' conflicts with an existing canonical accessor");
+        return 0;
+    }
+
+    (void)snprintf(
+        entry->lifecycle_accessor, sizeof(entry->lifecycle_accessor),
+        "%s", accessor);
     return 1;
 }
 
@@ -356,6 +415,56 @@ static int cmeta_lower_parse_typed(
     return cmeta_lower_add_type(context, i, owner_id, concrete);
 }
 
+static int cmeta_lower_parse_lifecycle(
+    cmeta_lower_context *context, size_t marker_end) {
+    const char *source = context->source;
+    size_t size = context->source_size;
+    size_t i = cmeta_lower_skip_space_comments(source, size, marker_end);
+    size_t end;
+    char concrete[128];
+    char accessor[160];
+
+    if (i >= size || source[i] != '(') {
+        cmeta_lower_set_error(
+            context, marker_end,
+            "CMETA_LIFECYCLE requires (Type, accessor)");
+        return 0;
+    }
+    i = cmeta_lower_skip_space_comments(source, size, i + 1u);
+    if (!cmeta_lower_identifier(
+            source, size, i, concrete, sizeof(concrete), &end)) {
+        cmeta_lower_set_error(
+            context, marker_end,
+            "CMETA_LIFECYCLE requires a simple named type");
+        return 0;
+    }
+    i = cmeta_lower_skip_space_comments(source, size, end);
+    if (i >= size || source[i] != ',') {
+        cmeta_lower_set_error(
+            context, marker_end,
+            "CMETA_LIFECYCLE requires an explicit accessor");
+        return 0;
+    }
+    i = cmeta_lower_skip_space_comments(source, size, i + 1u);
+    if (!cmeta_lower_identifier(
+            source, size, i, accessor, sizeof(accessor), &end)) {
+        cmeta_lower_set_error(
+            context, marker_end,
+            "CMETA_LIFECYCLE accessor must be a simple identifier");
+        return 0;
+    }
+    i = cmeta_lower_skip_space_comments(source, size, end);
+    if (i >= size || source[i] != ')') {
+        cmeta_lower_set_error(
+            context, marker_end,
+            "CMETA_LIFECYCLE requires exactly Type and accessor");
+        return 0;
+    }
+
+    return cmeta_lower_bind_lifecycle(
+        context, marker_end, concrete, accessor);
+}
+
 static int cmeta_lower_collect_types(cmeta_lower_context *context) {
     const char *source = context->source;
     size_t size = context->source_size;
@@ -385,6 +494,9 @@ static int cmeta_lower_collect_types(cmeta_lower_context *context) {
             cmeta_lower_identifier(source, size, i, ident, sizeof(ident), &end)) {
             if (strcmp(ident, "typed") == 0 &&
                 !cmeta_lower_parse_typed(context, end))
+                return 0;
+            if (strcmp(ident, "CMETA_LIFECYCLE") == 0 &&
+                !cmeta_lower_parse_lifecycle(context, end))
                 return 0;
             i = end;
             continue;
@@ -676,7 +788,7 @@ static int cmeta_lower_try_owned_declaration(
     if (owned_type == NULL || owned_type->lifecycle_accessor[0] == '\0') {
         cmeta_lower_set_errorf(
             context, ident_start, "owned type '", type_name,
-            "' has no canonical typed lifecycle binding");
+            "' has no canonical lifecycle binding");
         return -1;
     }
 
@@ -870,6 +982,7 @@ static int cmeta_lower_try_receiver_call(
     const char *source = context->source;
     size_t size = context->source_size;
     const cmeta_lower_symbol *symbol = cmeta_lower_find_symbol(context, ident);
+    const cmeta_lower_type *type;
     size_t i;
     size_t method_end;
     size_t after_open;
@@ -878,6 +991,9 @@ static int cmeta_lower_try_receiver_call(
     char replacement[384];
 
     if (symbol == NULL)
+        return 0;
+    type = cmeta_lower_find_type(context, symbol->concrete);
+    if (type == NULL || type->owner_id[0] == '\0')
         return 0;
 
     i = cmeta_lower_skip_space(source, size, ident_end);
@@ -1186,7 +1302,7 @@ done:
 
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
-        puts("cmeta-lower 5");
+        puts("cmeta-lower 6");
         return 0;
     }
     if (argc != 3) {
