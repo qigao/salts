@@ -135,7 +135,7 @@
 
 #ifndef __cplusplus
 
-/* CSTL is a finite CMeta Generic provider. One typed(...) declaration
+/* CSTL is a finite CMeta Generic provider. One cmeta_type(...) declaration
  * emits the concrete wrapper type, typed ABI, metadata, Range views and
  * collector. The declaration/expression initializers above remain erased
  * handle construction forms and do not generate Generic types. */
