@@ -152,4 +152,4 @@ jobs:
         run: cmake --build --preset mac-release-user --parallel 2
       - name: Run tests
         shell: bash
-        run: ctest --preset mac-release-user --no-tests=error --output-on-failure --timeout 90
+        run: ctest --preset test-release-mac --no-tests=error --output-on-failure --timeout 90
