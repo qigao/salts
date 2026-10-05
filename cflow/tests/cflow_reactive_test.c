@@ -436,7 +436,7 @@ static const cmeta_type_traits tracked_long_traits = {
     .destroy = tracked_long_destroy
 };
 
-typed(reduce, associative, long, runtime_sum_long,
+cmeta_function(reduce, associative, long, runtime_sum_long,
       (long left, long right)) {
     return left + right;
 }

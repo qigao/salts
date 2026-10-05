@@ -376,7 +376,7 @@ state, not an inferred payload field.
 schemas. This is where the familiar declarations live:
 
 ```c
-typed(map, value, long, square, (int x)) { ... }
+cmeta_function(map, value, long, square, (int x)) { ... }
 lambda(map, value, long, scale, int, x, int, factor) { ... }
 cmeta_bindable(map, value, long, multiply, int, x, int, factor) { ... }
 ```
@@ -1629,11 +1629,11 @@ free its own Subscription.
 CFlow consumes, but does not own, CMeta Range metadata:
 
 ```c
-typed(filter, value, bool, even, (int value)) {
+cmeta_function(filter, value, bool, even, (int value)) {
     return value % 2 == 0;
 }
 
-typed(map, value, int, square, (int value)) {
+cmeta_function(map, value, int, square, (int value)) {
     return value * value;
 }
 
@@ -1652,7 +1652,7 @@ if (cflow_eval_stream(&s, &result)) {
 }
 ```
 
-`typed(filter, ...)` creates a CMeta callable carrying the predicate's type and
+`cmeta_function(filter, ...)` creates a CMeta callable carrying the predicate's type and
 contract. CFlow validates that callable when the node is added and remains
 responsible for traversal, filtering, and value lifetime during execution.
 

@@ -16,7 +16,7 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
 
 #define CFLOW_OP_CALLABLE_I(op) cflow_##op##_callable
 #define CFLOW_OP_CALLABLE(op) CFLOW_OP_CALLABLE_I(op)
-#define typed_decl(op, name) extern const CFLOW_OP_CALLABLE(op) name
+#define cmeta_function_decl(op, name) extern const CFLOW_OP_CALLABLE(op) name
 
 #ifndef __cplusplus
 
@@ -32,16 +32,16 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
 
 /* Canonical named callable.  The public identifier is a value, not a provider
  * function, so s->map(s, square) passes a true first-class callable. */
-#define typed_raw(op, effect_set, property_set, ret, name, params) \
-    static ret cmeta_typed_##name params; \
+#define cmeta_function_raw(op, effect_set, property_set, ret, name, params) \
+    static ret cmeta_function_impl_##name params; \
     static cmeta_fn cmeta_meta_##name(void) { \
-        cmeta_fn x = CFLOW_WRAP_OP_TYPED(op, cmeta_typed_##name); \
+        cmeta_fn x = CFLOW_WRAP_OP_TYPED(op, cmeta_function_impl_##name); \
         x.effects = (cmeta_effects)(effect_set); \
         x.properties = (cmeta_properties)(property_set); \
         return x; \
     } \
     static bool cmeta_invoke_##name(const cmeta_callable *self, void *out, const void *const *args) { \
-        return CMETA_TYPED_INVOKER_ANY(cmeta_typed_##name)(self, out, args); \
+        return CMETA_TYPED_INVOKER_ANY(cmeta_function_impl_##name)(self, out, args); \
     } \
     static cmeta_gen_status cmeta_generate_##name(const cmeta_callable *self, const void *input, void *out, size_t *cursor) { \
         return self ? cmeta_fn_generate(self->meta, input, out, cursor) : CMETA_GEN_ERROR; \
@@ -49,18 +49,13 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
     const CFLOW_OP_CALLABLE(op) name = { .fn = \
         CMETA_CANONICAL_RAW_CALLABLE_INIT(effect_set, property_set, cmeta_meta_##name, \
                                          cmeta_invoke_##name, cmeta_generate_##name, 0u) }; \
-    static ret cmeta_typed_##name params
+    static ret cmeta_function_impl_##name params
 
-#define CFLOW_TYPED(op, contract, ret, name, params) \
-    typed_raw(op, CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract), ret, name, params)
+#define cmeta_function(op, contract, ret, name, params) \
+    cmeta_function_raw(op, CMETA_CONTRACT_EFFECTS(contract), \
+                       CMETA_CONTRACT_PROPERTIES(contract), ret, name, params)
 
-/* CMeta owns the global typed(kind, ...) router. Uppercase registered generic
- * kinds are handled by CMeta/Salts; lowercase CFlow operator names arrive here
- * through the fallback hook. */
-#undef CMETA_TYPED_FALLBACK
-#define CMETA_TYPED_FALLBACK(op, ...) CFLOW_TYPED(op, __VA_ARGS__)
-
-#define typed_call(name) cmeta_typed_##name
+#define cmeta_function_call(name) cmeta_function_impl_##name
 
 /* Capturing C-meta lambda with one logical callback argument and one by-value
  * capture object.  cap_type may itself be a struct to capture many fields. */
@@ -177,7 +172,7 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
  *
  * cmeta_bindable declares a binary C function whose LAST argument may be
  * partially applied.  The resulting object is the same operator-specific
- * callable value used by typed()/lambda(), so Graph/optimizer/plan need no
+ * callable value used by cmeta_function()/lambda(), so Graph/optimizer/plan need no
  * special bind semantic.
  *
  * Example:

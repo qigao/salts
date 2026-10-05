@@ -12,9 +12,9 @@ Struct(StreamStudent,
 
 #include <string.h>
 
-typed(List, StreamIntList, int);
-typed(List, StreamLongList, long);
-typed(Map, StreamAgeMap, int, int);
+cmeta_type(List, StreamIntList, int);
+cmeta_type(List, StreamLongList, long);
+cmeta_type(Map, StreamAgeMap, int, int);
 
 typedef cmeta_collector (*StreamLongListCollector)(StreamLongList *, size_t);
 typedef cmeta_collector (*StreamAgeMapCollector)(StreamAgeMap *, size_t);
@@ -29,19 +29,19 @@ _Static_assert(
              default: 0),
     "associative collector must require its concrete output wrapper type");
 
-typed(filter, value, bool, stream_keep_even, (int value)) {
+cmeta_function(filter, value, bool, stream_keep_even, (int value)) {
     return value % 2 == 0;
 }
 
-typed(map, value, long, stream_square, (int value)) {
+cmeta_function(map, value, long, stream_square, (int value)) {
     return (long)value * (long)value;
 }
 
-typed(map, value, long, stream_age_as_long, (int age)) {
+cmeta_function(map, value, long, stream_age_as_long, (int age)) {
     return (long)age;
 }
 
-typed(reduce, associative, long, stream_sum_age, (long left, long right)) {
+cmeta_function(reduce, associative, long, stream_sum_age, (long left, long right)) {
     return left + right;
 }
 

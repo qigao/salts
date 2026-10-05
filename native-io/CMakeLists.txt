@@ -73,6 +73,6 @@ if(BUILD_TESTS)
   add_subdirectory(tests)
 endif()
 
-if(BUILD_BENCHMARKS)
+if(BUILD_BENCHMARKS OR NATIVE_IO_BUILD_BENCHMARKS)
   add_subdirectory(benchmarks)
 endif()

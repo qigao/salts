@@ -5,7 +5,7 @@ special-case CSTL storage or infer semantics from erased handles.
 
 ## Invariants
 
-1. Every `typed(...)` CSTL container exposes canonical CMeta type metadata.
+1. Every `cmeta_type(...)` CSTL container exposes canonical CMeta type metadata.
 2. Containers with a well-defined data semantic expose canonical CMeta data
    metadata and provider operations.
 3. Native type identity and semantic data identity remain separate.

@@ -33,11 +33,11 @@ typedef struct cflow_conformance_fixture {
 
 static cflow_conformance_fixture cflow_conformance_state;
 
-typed(map, value, double, cflow_conformance_as_double, (int value)) {
+cmeta_function(map, value, double, cflow_conformance_as_double, (int value)) {
     return (double)value + 0.25;
 }
 
-typed(zip, value, double, cflow_conformance_merge,
+cmeta_function(zip, value, double, cflow_conformance_merge,
       (long left, double right)) {
     return (double)left + right;
 }

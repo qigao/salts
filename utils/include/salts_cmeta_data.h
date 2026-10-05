@@ -57,7 +57,7 @@ SALTS_API extern const cmeta_data_desc salts_tstr_cmeta_data;
  *
  * On Windows, addresses of __declspec(dllimport) data objects are not C static
  * initializer constants. These header-local descriptors preserve the same
- * stable type/data identities and lifecycle semantics while giving typed(...)
+ * stable type/data identities and lifecycle semantics while giving cmeta_type(...)
  * an address-constant reference. The process-wide exported objects above remain
  * the ABI and are semantically equal to these mirrors; descriptor address is
  * never semantic identity.

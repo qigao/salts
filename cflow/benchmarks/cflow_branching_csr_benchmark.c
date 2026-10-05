@@ -79,8 +79,8 @@ static bool benchmark_checked_mul(size_t left, size_t right, size_t *out) {
   return true;
 }
 
-typed_decl(map, cflow_graph_path_identity);
-typed_decl(filter, cflow_graph_path_keep);
+cmeta_function_decl(map, cflow_graph_path_identity);
+cmeta_function_decl(filter, cflow_graph_path_keep);
 
 static bool fixture_add_edge(cflow_branching_fixture *fixture, cflow_node_id from,
                              cflow_node_id to) {

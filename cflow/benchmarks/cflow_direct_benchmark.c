@@ -28,13 +28,13 @@ static bool cflow_direct_bench_fused_erased(const int *input, size_t input_count
                                             const cmeta_callable *square,
                                             const cmeta_callable *half);
 
-typed(filter, value, bool, cflow_direct_bench_even, (int value)) { return value % 2 == 0; }
+cmeta_function(filter, value, bool, cflow_direct_bench_even, (int value)) { return value % 2 == 0; }
 
-typed(map, value, long, cflow_direct_bench_square, (int value)) {
+cmeta_function(map, value, long, cflow_direct_bench_square, (int value)) {
   return (long)value * (long)value;
 }
 
-typed(map, value, double, cflow_direct_bench_half, (long value)) { return (double)value / 2.0; }
+cmeta_function(map, value, double, cflow_direct_bench_half, (long value)) { return (double)value / 2.0; }
 
 #define CFlowDirectBenchSteps(M)                                                                   \
   CFlowDirectSteps(M, (filter, int, int, cflow_direct_bench_even),                                 \
@@ -55,9 +55,9 @@ static bool cflow_direct_bench_fused_typed(const int *input, size_t input_count,
   *output_count = 0u;
   for (index = 0u; index < input_count; ++index) {
     long squared;
-    if (!typed_call(cflow_direct_bench_even)(input[index])) continue;
-    squared = typed_call(cflow_direct_bench_square)(input[index]);
-    output[count++] = typed_call(cflow_direct_bench_half)(squared);
+    if (!cmeta_function_call(cflow_direct_bench_even)(input[index])) continue;
+    squared = cmeta_function_call(cflow_direct_bench_square)(input[index]);
+    output[count++] = cmeta_function_call(cflow_direct_bench_half)(squared);
   }
   *output_count = count;
   return true;
@@ -79,9 +79,9 @@ static bool cflow_direct_bench_fused_typed_owned(const int *input, size_t input_
 
   for (index = 0u; index < input_count; ++index) {
     long squared;
-    if (!typed_call(cflow_direct_bench_even)(input[index])) continue;
-    squared = typed_call(cflow_direct_bench_square)(input[index]);
-    values[count++] = typed_call(cflow_direct_bench_half)(squared);
+    if (!cmeta_function_call(cflow_direct_bench_even)(input[index])) continue;
+    squared = cmeta_function_call(cflow_direct_bench_square)(input[index]);
+    values[count++] = cmeta_function_call(cflow_direct_bench_half)(squared);
   }
 
   *output = values;
@@ -107,7 +107,7 @@ static bool cflow_direct_bench_staged_typed_owned(const int *input, size_t input
   if (input_count) memcpy(filtered, input, input_count * sizeof(*filtered));
 
   for (index = 0u; index < input_count; ++index) {
-    if (!typed_call(cflow_direct_bench_even)(filtered[index])) continue;
+    if (!cmeta_function_call(cflow_direct_bench_even)(filtered[index])) continue;
     filtered[filtered_count++] = filtered[index];
   }
 
@@ -115,7 +115,7 @@ static bool cflow_direct_bench_staged_typed_owned(const int *input, size_t input
   squared = filtered_count ? (long *)malloc(filtered_count * sizeof(*squared)) : NULL;
   if (filtered_count && !squared) goto fail;
   for (index = 0u; index < filtered_count; ++index)
-    squared[index] = typed_call(cflow_direct_bench_square)(filtered[index]);
+    squared[index] = cmeta_function_call(cflow_direct_bench_square)(filtered[index]);
   free(filtered);
   filtered = NULL;
 
@@ -123,7 +123,7 @@ static bool cflow_direct_bench_staged_typed_owned(const int *input, size_t input
   halved = filtered_count ? (double *)malloc(filtered_count * sizeof(*halved)) : NULL;
   if (filtered_count && !halved) goto fail;
   for (index = 0u; index < filtered_count; ++index)
-    halved[index] = typed_call(cflow_direct_bench_half)(squared[index]);
+    halved[index] = cmeta_function_call(cflow_direct_bench_half)(squared[index]);
   free(squared);
 
   *output = halved;

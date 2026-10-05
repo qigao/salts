@@ -23,29 +23,29 @@ typedef struct cflow_direct_fixture {
 
 static cflow_direct_fixture cflow_direct_state;
 
-typed(filter, value, bool, cflow_direct_even, (int value)) { return value % 2 == 0; }
+cmeta_function(filter, value, bool, cflow_direct_even, (int value)) { return value % 2 == 0; }
 
-typed(map, value, long, cflow_direct_square, (int value)) { return (long)value * (long)value; }
+cmeta_function(map, value, long, cflow_direct_square, (int value)) { return (long)value * (long)value; }
 
-typed(map, value, double, cflow_direct_half, (long value)) { return (double)value / 2.0; }
+cmeta_function(map, value, double, cflow_direct_half, (long value)) { return (double)value / 2.0; }
 
-typed(map, stateful, long, cflow_direct_stateful_square, (int value)) {
+cmeta_function(map, stateful, long, cflow_direct_stateful_square, (int value)) {
   return (long)value * (long)value;
 }
 
-typed(map, value, int, cflow_direct_plus_one, (int value)) { return value + 1; }
+cmeta_function(map, value, int, cflow_direct_plus_one, (int value)) { return value + 1; }
 
-typed(map, value, int, cflow_direct_times_two, (int value)) { return value * 2; }
+cmeta_function(map, value, int, cflow_direct_times_two, (int value)) { return value * 2; }
 
-typed(map, idempotent, int, cflow_direct_clamp_nonnegative, (int value)) {
+cmeta_function(map, idempotent, int, cflow_direct_clamp_nonnegative, (int value)) {
   return value < 0 ? 0 : value;
 }
 
-typed(reduce, associative, long, cflow_direct_add_long, (long left, long right)) {
+cmeta_function(reduce, associative, long, cflow_direct_add_long, (long left, long right)) {
   return left + right;
 }
 
-typed(zip, value, double, cflow_direct_merge_long_double, (long left, double right)) {
+cmeta_function(zip, value, double, cflow_direct_merge_long_double, (long left, double right)) {
   return (double)left + right;
 }
 
@@ -56,10 +56,10 @@ static bool cflow_direct_alternate_canonical_invoke(
 
 static size_t cflow_direct_erased_invocations;
 
-static long cmeta_typed_cflow_direct_trap_map(int value) { return (long)value * 3L; }
+static long cmeta_function_impl_cflow_direct_trap_map(int value) { return (long)value * 3L; }
 
 static cmeta_fn cflow_direct_trap_meta(void) {
-  cmeta_fn meta = CFLOW_WRAP_OP_TYPED(map, cmeta_typed_cflow_direct_trap_map);
+  cmeta_fn meta = CFLOW_WRAP_OP_TYPED(map, cmeta_function_impl_cflow_direct_trap_map);
   meta.effects = CMETA_CONTRACT_EFFECTS(value);
   meta.properties = CMETA_CONTRACT_PROPERTIES(value);
   return meta;

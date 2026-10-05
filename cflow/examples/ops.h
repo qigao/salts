@@ -3,22 +3,22 @@
 
 #include <cflow/meta.h>
 
-typed_decl(filter, even);
-typed_decl(map, square);
-typed_decl(map, half);
-typed_decl(flatMap, expand_long);
-typed_decl(flatMap, fail_long);
-typed_decl(reduce, add_long);
-typed_decl(zip, merge_long_double);
-typed_decl(map, as_double);
-typed_decl(map, to_int);
-typed_decl(map, times_ten);
-typed_decl(map, plus_hundred);
-typed_decl(transform, times_two_transform);
-typed_decl(map, io_tagged);
-typed_decl(map, may_fail_tagged);
-typed_decl(map, clamp_nonnegative);
-typed_decl(map, clamp_unproven);
-typed_decl(map, unproven_square);
+cmeta_function_decl(filter, even);
+cmeta_function_decl(map, square);
+cmeta_function_decl(map, half);
+cmeta_function_decl(flatMap, expand_long);
+cmeta_function_decl(flatMap, fail_long);
+cmeta_function_decl(reduce, add_long);
+cmeta_function_decl(zip, merge_long_double);
+cmeta_function_decl(map, as_double);
+cmeta_function_decl(map, to_int);
+cmeta_function_decl(map, times_ten);
+cmeta_function_decl(map, plus_hundred);
+cmeta_function_decl(transform, times_two_transform);
+cmeta_function_decl(map, io_tagged);
+cmeta_function_decl(map, may_fail_tagged);
+cmeta_function_decl(map, clamp_nonnegative);
+cmeta_function_decl(map, clamp_unproven);
+cmeta_function_decl(map, unproven_square);
 
 #endif

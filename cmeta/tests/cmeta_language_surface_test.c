@@ -1,7 +1,7 @@
 #include <cmeta/meta.h>
 
 #ifdef Containers
-#error "Containers(...) is removed; use one typed(...) declaration per type"
+#error "Containers(...) is removed; use one cmeta_type(...) declaration per type"
 #endif
 
 #ifdef CMETA_TRAITS_POSITIONAL
@@ -10,16 +10,27 @@
 
 #define REQUIRE(expr) do { if (!(expr)) return __LINE__; } while (0)
 
-Struct(SurfacePoint,
-    (int, x),
-    (long, y)
+cmeta_struct(SurfacePoint,
+    cmeta_field(int, x)
+    cmeta_field(long, y)
 );
 
-Enum(SurfaceState,
+cmeta_enum(SurfaceState,
     (SURFACE_READY, "ready"),
     (SURFACE_DONE, 20, "done"),
     (SURFACE_AFTER, "after")
 );
+
+typedef struct SurfaceNode {
+    int marker;
+} SurfaceNode;
+
+cmeta_struct(SurfaceOwner,
+    cmeta_field(int, id)
+    cmeta_field(SurfaceNode, node)
+);
+
+cmeta_intrusive(SurfaceOwner, node, SurfaceNode);
 
 typedef struct SurfaceBox {
     int value;
@@ -64,7 +75,7 @@ static void surface_box_destroy(void *value_) {
     if (value != NULL) value->value = 0;
 }
 
-Traits(SurfaceBox,
+cmeta_traits(SurfaceBox,
     (equal, surface_box_equal),
     (hash, surface_box_hash),
     (compare, surface_box_compare),
@@ -73,10 +84,10 @@ Traits(SurfaceBox,
     (destroy, surface_box_destroy)
 );
 
-typed(Option, SurfaceMaybeInt, int);
-typed(Pair, SurfacePair, int, long);
-typed(Tuple, SurfaceTuple3, int, long, double);
-typed(Result, SurfaceResult, int, int);
+cmeta_type(Option, SurfaceMaybeInt, int);
+cmeta_type(Pair, SurfacePair, int, long);
+cmeta_type(Tuple, SurfaceTuple3, int, long, double);
+cmeta_type(Result, SurfaceResult, int, int);
 
 typed_any(value, int, surface_increment, (int value)) {
     return value + 1;
@@ -128,6 +139,8 @@ implements(SurfaceCounter, surface_counter_impl,
 
 int main(void) {
     SurfacePoint point = { .x = 3, .y = 4 };
+    SurfaceOwner owner = { .id = 9, .node = { .marker = 17 } };
+    const SurfaceOwner const_owner = { .id = 10, .node = { .marker = 18 } };
     const cmeta_field_desc *field = FieldFind(SurfacePoint, "y");
     SurfaceState state = SURFACE_READY;
     SurfaceBox left = { 7 };
@@ -159,6 +172,9 @@ int main(void) {
     size_t i;
 
     REQUIRE(point.x == 3 && point.y == 4L);
+    REQUIRE(SurfaceOwner_from_node(&owner.node) == &owner);
+    REQUIRE(SurfaceOwner_from_node_const(&const_owner.node) == &const_owner);
+    REQUIRE(SurfaceOwner_from_node(NULL) == NULL);
     REQUIRE(strcmp(StructMeta(SurfacePoint)->name, "SurfacePoint") == 0);
     REQUIRE(FieldCount(SurfacePoint) == 2u);
     REQUIRE(field != NULL);

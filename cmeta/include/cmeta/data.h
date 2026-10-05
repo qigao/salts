@@ -35,22 +35,6 @@ enum {
 
 enum { CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION = 1u };
 
-/*
- * Source-lowering lifecycle binding.
- *
- * cmeta-lower recognizes CMETA_LIFECYCLE(Type, accessor) before preprocessing
- * and binds owned(Type) to the explicit canonical cmeta_data_desc accessor.
- * After preprocessing the marker remains a valid, zero-runtime-cost typedef;
- * generated cleanup calls the accessor directly, so there is no runtime
- * lifecycle registry or name lookup.
- */
-#define CMETA_LIFECYCLE_NAME_I_(type_) cmeta_lifecycle_binding_##type_
-#define CMETA_LIFECYCLE_NAME_(type_) CMETA_LIFECYCLE_NAME_I_(type_)
-#ifndef CMETA_LIFECYCLE
-#define CMETA_LIFECYCLE(type_, accessor_) \
-    typedef type_ CMETA_LIFECYCLE_NAME_(type_)
-#endif
-
 typedef cmeta_status (*cmeta_data_construct_init_zero_fn)(void *object);
 typedef void (*cmeta_data_construct_restore_zero_fn)(void *object);
 typedef void (*cmeta_data_construct_move_fn)(void *destination, void *source);
@@ -798,6 +782,25 @@ void cmeta_data_trait_destroy(
 bool cmeta_data_value_move_supported(const cmeta_data_desc *desc);
 cmeta_status cmeta_data_value_move(
     const cmeta_data_desc *desc, void *destination, void *source);
+
+/* Ordinary-C move facades.
+ *
+ * cmeta_move_data() is the descriptor-explicit form for arbitrary providers.
+ * cmeta_move(Type, ...) is the typed convenience for concrete types exposing
+ * the canonical Type_cmeta_data() accessor. A successful move must leave the
+ * source in provider-defined semantic zero, so source remains safe to destroy
+ * or reinitialize without compiler-private ownership state.
+ */
+#define CMETA_DATA_ACCESSOR_I_(type_) type_##_cmeta_data
+#define CMETA_DATA_ACCESSOR_(type_) CMETA_DATA_ACCESSOR_I_(type_)
+#ifndef cmeta_move_data
+#define cmeta_move_data(data_, destination_, source_) \
+    cmeta_data_value_move((data_), (destination_), (source_))
+#endif
+#ifndef cmeta_move
+#define cmeta_move(type_, destination_, source_) \
+    cmeta_move_data(CMETA_DATA_ACCESSOR_(type_)(), (destination_), (source_))
+#endif
 
 typedef enum cmeta_data_temp_lifecycle {
     CMETA_DATA_TEMP_NONE = 0,

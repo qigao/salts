@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 
-typed(Map, ImportSafeTstrSmokeMap, tstr, int,
+cmeta_type(Map, ImportSafeTstrSmokeMap, tstr, int,
       SALTS_TSTR_CMETA_TYPE_REF, SALTS_TSTR_CMETA_DATA_REF,
       &cmeta_type_int, &cmeta_data_int);
 

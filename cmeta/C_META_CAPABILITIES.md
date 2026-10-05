@@ -1,16 +1,16 @@
 # CMeta capability catalog — v50
 
-CMeta is a pragmatic modern-C dialect/toolkit over strict C11. It is finite,
+CMeta is a pragmatic ordinary-C metaprogramming/reflection toolkit over strict C11. It is finite,
 schema-driven, and intentionally compositional rather than a universal language.
 
 ## Implemented core
 
 - strict-C11 preprocessor kernel: finite `FOR_EACH`, indexed replay, repeat;
 - unified tuple schema kernel through `Schema(...)` / `Replay(...)`;
-- `Struct(...)` single-declaration struct + field metadata;
-- `Enum(...)` single-declaration enum + immutable metadata;
-- tagged-row `Traits(...)` with duplicate/unknown tag rejection;
-- finite generic routing through the single `typed(kind, ...)` entry point;
+- `cmeta_struct(...)` single-declaration struct + field metadata;
+- `cmeta_enum(...)` single-declaration enum + immutable metadata;
+- tagged-row `cmeta_traits(...)` with duplicate/unknown tag rejection;
+- finite generic type routing through `cmeta_type(kind, ...)`;
 - caller-bounded finite DFA inference through `InferenceRules` and
   `cmeta_infer_dfa_build/eval`;
 - CMeta value kinds: `Pair`, `Tuple`, `Option`, `Result`;
@@ -33,20 +33,20 @@ schema-driven, and intentionally compositional rather than a universal language.
 Canonical application syntax is:
 
 ```text
-Struct(...)
-Enum(...)
-Traits(...)
-typed(...)
+cmeta_struct(...)
+cmeta_enum(...)
+cmeta_traits(...)
+cmeta_type(...)
 typed_any(...)
 FunctionDecl(...)
 interface(...)
 implements(...)
 ```
 
-`Traits(...)` accepts tagged rows only:
+`cmeta_traits(...)` accepts tagged rows only:
 
 ```c
-Traits(User,
+cmeta_traits(User,
     (equal, user_equal),
     (hash, user_hash),
     (compare, user_compare),
@@ -124,10 +124,10 @@ Result          two type arguments; ok + value/error union
 Canonical forms:
 
 ```c
-typed(Pair, Entry, Key, Value);
-typed(Tuple, Coordinate, double, double, double);
-typed(Option, MaybeUser, User);
-typed(Result, LoadResult, User, Error);
+cmeta_type(Pair, Entry, Key, Value);
+cmeta_type(Tuple, Coordinate, double, double, double);
+cmeta_type(Option, MaybeUser, User);
+cmeta_type(Result, LoadResult, User, Error);
 ```
 
 ## Containers and container
@@ -143,7 +143,7 @@ HashMap    Map        MultiMap
 BTree      BPlusTree
 ```
 
-They still use CMeta's common `typed(...)`, descriptor, Range, collector, and
+They still use CMeta's `cmeta_type(...)`, descriptor, Range, collector, and
 traits protocols. CMeta itself does not expose a `Containers(...)` batch DSL or
 a container `implement(...)` generation phase.
 

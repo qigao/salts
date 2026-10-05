@@ -28,7 +28,7 @@ enum {
 
 static volatile long cflow_parallel_bench_sink;
 
-typed(reduce, associative, long, cflow_parallel_bench_add,
+cmeta_function(reduce, associative, long, cflow_parallel_bench_add,
       (long left, long right)) {
   return left + right;
 }

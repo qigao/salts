@@ -134,35 +134,3 @@ tinymock_add_compile_failure_test(
   cmeta_tinymock_static_inline_selection_compile_fail
   compile_fail/tinymock_static_inline_selection.c
   "tinymock_required_FunctionDecl_tinymock_bad_inline")
-
-
-if(NOT CMAKE_CROSSCOMPILING)
-  set(TINYMOCK_RAII_LOWER_DIR
-      "${CMAKE_CURRENT_BINARY_DIR}/cmeta_lower")
-  set(TINYMOCK_RAII_LOWER_INPUT
-      "${CMAKE_CURRENT_SOURCE_DIR}/tinymock_raii_lowering.cmeta.c")
-  set(TINYMOCK_RAII_LOWER_OUTPUT
-      "${TINYMOCK_RAII_LOWER_DIR}/tinymock_raii_lowering.c")
-
-  salts_cmeta_lower_source(
-    INPUT "${TINYMOCK_RAII_LOWER_INPUT}"
-    OUTPUT "${TINYMOCK_RAII_LOWER_OUTPUT}")
-
-  add_executable(cmeta_tinymock_raii_lowering
-    "${TINYMOCK_RAII_LOWER_OUTPUT}")
-  target_link_libraries(cmeta_tinymock_raii_lowering
-    PRIVATE Salts::TinyMock)
-  set_target_properties(cmeta_tinymock_raii_lowering PROPERTIES
-    C_STANDARD 11
-    C_STANDARD_REQUIRED ON
-    C_EXTENSIONS OFF
-    FOLDER "tinymock/tests/cmeta-lower")
-
-  add_test(NAME cmeta_tinymock_raii_lowering
-           COMMAND cmeta_tinymock_raii_lowering)
-  add_test(
-    NAME cmeta_tinymock_raii_lowering_shape
-    COMMAND ${CMAKE_COMMAND}
-            -DGENERATED=${TINYMOCK_RAII_LOWER_OUTPUT}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_tinymock_raii_lowering.cmake")
-endif()
