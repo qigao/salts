@@ -74,6 +74,8 @@ static const cmeta_data_construct_ops ScopeProbe_construct_ops = {
     .restore_zero = ScopeProbe_construct_restore_zero,
     .move = ScopeProbe_move
 };
+static const unsigned char ScopeProbe_shape = 0u;
+
 static const cmeta_data_desc ScopeProbe_data_desc = {
     .struct_size = sizeof(cmeta_data_desc),
     .abi_version = CMETA_DATA_DESC_ABI_VERSION,
@@ -81,6 +83,7 @@ static const cmeta_data_desc ScopeProbe_data_desc = {
     .display_name = "ScopeProbe",
     .kind = CMETA_DATA_CUSTOM,
     .storage_type = &ScopeProbe_type,
+    .shape = &ScopeProbe_shape,
     .construct_ops = &ScopeProbe_construct_ops
 };
 
@@ -228,7 +231,9 @@ spec("CMeta structured scope") {
     it("destroys only successfully initialized values after partial init failure") {
         check_equal(scope_partial_init_failure(), CMETA_CALLBACK_ERROR);
         check_equal(scope_init_count, (size_t)2u);
-        check_equal(scope_restore_count, (size_t)1u);
+        /* construct init failure restores the failed slot once; scope cleanup
+         * then restores only the earlier successfully initialized value. */
+        check_equal(scope_restore_count, (size_t)2u);
         check_equal(scope_destroy_count, (size_t)0u);
     }
 
