@@ -12,6 +12,8 @@ extern "C" {
 
 typedef void (*cflow_task_fn)(void *user);
 
+extern const cmeta_type_desc cflow_type_task_fn;
+
 /**
  * Copied task descriptor for built-in Executor terminal notification.
  *
@@ -76,6 +78,14 @@ typedef struct cflow_executor_stats {
     size_t rejected_closed;
 } cflow_executor_stats;
 
+extern const cmeta_type_desc cflow_type_executor_shutdown_policy;
+extern const cmeta_type_desc cflow_type_executor_post_status;
+extern const cmeta_type_desc cflow_type_executor_wait_status;
+extern const cmeta_type_desc cflow_type_executor_stats;
+extern const cmeta_type_desc cflow_type_executor_stats_ptr;
+extern const cmeta_type_desc cflow_type_executor_protocol_stats;
+extern const cmeta_type_desc cflow_type_executor_protocol_stats_ptr;
+
 enum {
     CMETA_EXEC_CAP_MANUAL     = 1u << 0,
     CMETA_EXEC_CAP_SERIAL     = 1u << 1,
@@ -83,15 +93,34 @@ enum {
 };
 
 #define CMETA_EXECUTOR_METHODS(X,I) \
-    X(I,R2,cflow_admission_status,try_post,cflow_task_fn,fn,void *,user) \
-    X(I,R2,bool,post,cflow_task_fn,fn,void *,user) \
-    X(I,R0,bool,run_one,_) \
-    X(I,R0,size_t,run_ready,_) \
-    X(I,R0,bool,wait_idle,_) \
-    X(I,R0,size_t,pending,_) \
-    X(I,R0,bool,shutdown,_) \
-    X(I,R1,bool,get_stats,cflow_executor_stats *,out) \
-    X(I,D0,void,destroy,_)
+    X(I,FR2,cflow_admission_status,try_post,stateful, \
+      &cflow_type_admission_status,CMETA_ABI_ENUM,CMETA_RESULT_VALUE, \
+      (cflow_task_fn,fn,CMETA_PARAM_IN, \
+       &cflow_type_task_fn,CMETA_ABI_FUNCTION_POINTER), \
+      (void *,user,CMETA_PARAM_IN | CMETA_PARAM_BORROWED | CMETA_PARAM_NULLABLE, \
+       &cmeta_type_void_ptr,CMETA_ABI_OBJECT_POINTER)) \
+    X(I,FR2,bool,post,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
+      (cflow_task_fn,fn,CMETA_PARAM_IN, \
+       &cflow_type_task_fn,CMETA_ABI_FUNCTION_POINTER), \
+      (void *,user,CMETA_PARAM_IN | CMETA_PARAM_BORROWED | CMETA_PARAM_NULLABLE, \
+       &cmeta_type_void_ptr,CMETA_ABI_OBJECT_POINTER)) \
+    X(I,FR0,bool,run_one,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE) \
+    X(I,FR0,size_t,run_ready,stateful, \
+      &cmeta_type_size,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE) \
+    X(I,FR0,bool,wait_idle,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE) \
+    X(I,FR0,size_t,pending,stateful, \
+      &cmeta_type_size,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE) \
+    X(I,FR0,bool,shutdown,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE) \
+    X(I,FR1,bool,get_stats,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
+      (cflow_executor_stats *,out,CMETA_PARAM_OUT | CMETA_PARAM_BORROWED, \
+       &cflow_type_executor_stats_ptr,CMETA_ABI_OBJECT_POINTER)) \
+    X(I,FD0,void,destroy,stateful, \
+      &cmeta_type_void,CMETA_ABI_VOID)
 CMETA_INTERFACE(cflow_executor, CMETA_EXECUTOR_METHODS);
 
 /**
@@ -121,10 +150,23 @@ CMETA_INTERFACE(cflow_executor, CMETA_EXECUTOR_METHODS);
  *   cflow_executor_destroy(&executor);
  */
 #define CMETA_EXECUTOR_CONTROL_METHODS(X,I) \
-    X(I,R2,cflow_executor_post_status,post,cflow_task_fn,fn,void *,user) \
-    X(I,R0,cflow_executor_wait_status,wait_idle,_) \
-    X(I,R1,bool,shutdown,cflow_executor_shutdown_policy,policy) \
-    X(I,R1,bool,get_stats,cflow_executor_protocol_stats *,out)
+    X(I,FR2,cflow_executor_post_status,post,stateful, \
+      &cflow_type_executor_post_status,CMETA_ABI_ENUM,CMETA_RESULT_VALUE, \
+      (cflow_task_fn,fn,CMETA_PARAM_IN, \
+       &cflow_type_task_fn,CMETA_ABI_FUNCTION_POINTER), \
+      (void *,user,CMETA_PARAM_IN | CMETA_PARAM_BORROWED | CMETA_PARAM_NULLABLE, \
+       &cmeta_type_void_ptr,CMETA_ABI_OBJECT_POINTER)) \
+    X(I,FR0,cflow_executor_wait_status,wait_idle,stateful, \
+      &cflow_type_executor_wait_status,CMETA_ABI_ENUM,CMETA_RESULT_VALUE) \
+    X(I,FR1,bool,shutdown,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
+      (cflow_executor_shutdown_policy,policy,CMETA_PARAM_IN, \
+       &cflow_type_executor_shutdown_policy,CMETA_ABI_ENUM)) \
+    X(I,FR1,bool,get_stats,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
+      (cflow_executor_protocol_stats *,out, \
+       CMETA_PARAM_OUT | CMETA_PARAM_BORROWED, \
+       &cflow_type_executor_protocol_stats_ptr,CMETA_ABI_OBJECT_POINTER))
 CMETA_INTERFACE(cflow_executor_control, CMETA_EXECUTOR_CONTROL_METHODS);
 
 /**

@@ -8,8 +8,14 @@ TINYMOCk_INTERFACE(cflow_subscriber, CMETA_SUBSCRIBER_METHODS);
 
 TINYMOCk_INTERFACE(cflow_waitable, CMETA_WAITABLE_METHODS);
 TINYMOCk_INTERFACE(cflow_publisher, CFLOW_PUBLISHER_METHODS);
+TINYMOCk_INTERFACE(cflow_executor, CMETA_EXECUTOR_METHODS);
+TINYMOCk_INTERFACE(cflow_executor_control, CMETA_EXECUTOR_CONTROL_METHODS);
 
 static void cflow_tinymock_test_wake(void *user) {
+    (void)user;
+}
+
+static void cflow_tinymock_test_task(void *user) {
     (void)user;
 }
 
@@ -205,6 +211,113 @@ suite("TinyMock existing CMeta interface") {
     TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, destroy, 1);
 
     tinymock_cflow_publisher_destroy(&mock);
+  }
+
+  it("mocks the fully reflected executor contract") {
+    tinymock_cflow_executor mock;
+    cflow_executor executor;
+    cflow_admission_status try_status = CFLOW_ADMISSION_ACCEPTED;
+    bool yes = true;
+    size_t ready = 2u;
+    size_t pending = 3u;
+    cflow_executor_stats stats = {
+      .capacity = 8u, .pending = 3u, .peak_pending = 4u
+    };
+    cflow_executor_stats observed = {0};
+    int user_value = 17;
+    cflow_task_fn expected_task = cflow_tinymock_test_task;
+
+    tinymock_cflow_executor_init(&mock);
+    executor = tinymock_cflow_executor_as_interface(&mock);
+
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(
+        &mock, try_post, try_status));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, post, yes));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, run_one, yes));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, run_ready, ready));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, wait_idle, yes));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, pending, pending));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, shutdown, yes));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, get_stats, yes));
+    check_true(TINYMOCk_INTERFACE_SET_OUT(
+        &mock, get_stats, "out", stats));
+
+    check_true(cflow_executor_try_post(
+        &executor, cflow_tinymock_test_task, &user_value) ==
+        CFLOW_ADMISSION_ACCEPTED);
+    check_true(cflow_executor_post(
+        &executor, cflow_tinymock_test_task, &user_value));
+    check_true(cflow_executor_run_one(&executor));
+    check_equal(cflow_executor_run_ready(&executor), (size_t)2);
+    check_true(cflow_executor_wait_idle(&executor));
+    check_equal(cflow_executor_pending(&executor), (size_t)3);
+    check_true(cflow_executor_shutdown(&executor));
+    check_true(cflow_executor_get_stats(&executor, &observed));
+    check_equal(observed.capacity, (size_t)8);
+    check_equal(observed.pending, (size_t)3);
+
+    check_true(TINYMOCk_INTERFACE_ARG_EQUAL_TYPED(
+        &mock, try_post, 0u, "fn", expected_task));
+    check_true(tinymock_cmeta_history_arg_pointer_equal_name(
+        TINYMOCk_INTERFACE_METHOD_HISTORY(&mock, try_post),
+        0u, "user", &user_value));
+
+    {
+      const cmeta_interface_desc *meta = cflow_executor_interface();
+      check_true(cmeta_interface_desc_valid(meta));
+      check_equal(meta->method_count, (size_t)9);
+      check_true(cmeta_interface_method_owns_self(&meta->methods[8]));
+      check_equal(
+          cmeta_interface_method_function(&meta->methods[0])->result_flags,
+          (cmeta_result_flags)CMETA_RESULT_VALUE);
+    }
+
+    cflow_executor_destroy(&executor);
+    check_false(cflow_executor_valid(&executor));
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, destroy, 1);
+    tinymock_cflow_executor_destroy(&mock);
+  }
+
+  it("mocks the fully reflected executor control contract") {
+    tinymock_cflow_executor_control mock;
+    cflow_executor_control control;
+    cflow_executor_post_status post_status = CFLOW_EXECUTOR_POST_ACCEPTED;
+    cflow_executor_wait_status wait_status = CFLOW_EXECUTOR_WAIT_IDLE;
+    bool yes = true;
+    cflow_executor_protocol_stats stats = {
+      .capacity = 16u, .accepted = 4u, .completed = 4u
+    };
+    cflow_executor_protocol_stats observed = {0};
+    cflow_executor_shutdown_policy policy = CFLOW_EXECUTOR_SHUTDOWN_DRAIN;
+    int user_value = 23;
+
+    tinymock_cflow_executor_control_init(&mock);
+    control = tinymock_cflow_executor_control_as_interface(&mock);
+
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(
+        &mock, post, post_status));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(
+        &mock, wait_idle, wait_status));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, shutdown, yes));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, get_stats, yes));
+    check_true(TINYMOCk_INTERFACE_SET_OUT(
+        &mock, get_stats, "out", stats));
+
+    check_true(cflow_executor_control_post(
+        &control, cflow_tinymock_test_task, &user_value) ==
+        CFLOW_EXECUTOR_POST_ACCEPTED);
+    check_true(cflow_executor_control_wait_idle(&control) ==
+               CFLOW_EXECUTOR_WAIT_IDLE);
+    check_true(cflow_executor_control_shutdown(&control, policy));
+    check_true(cflow_executor_control_get_stats(&control, &observed));
+    check_equal(observed.capacity, (size_t)16);
+    check_equal(observed.accepted, (size_t)4);
+
+    check_true(tinymock_cmeta_history_arg_pointer_equal_name(
+        TINYMOCk_INTERFACE_METHOD_HISTORY(&mock, post),
+        0u, "user", &user_value));
+
+    tinymock_cflow_executor_control_destroy(&mock);
   }
 
 }

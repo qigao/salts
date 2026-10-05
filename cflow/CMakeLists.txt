@@ -51,6 +51,7 @@ if(CFLOW_STATECHART_ERROR_CAPACITY GREATER 1048576)
 endif()
 
 add_library(${TARGET_NAME}
+  src/admission.c
   src/adapters.c
   src/actor.c
   src/backend.c

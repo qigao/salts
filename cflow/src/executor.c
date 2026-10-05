@@ -9,6 +9,78 @@
 #include <stdlib.h>
 #include <string.h>
 
+static bool cflow_task_fn_equal(const void *left_, const void *right_) {
+    const cflow_task_fn *left = (const cflow_task_fn *)left_;
+    const cflow_task_fn *right = (const cflow_task_fn *)right_;
+    return left != NULL && right != NULL && *left == *right;
+}
+
+static const cmeta_type_traits cflow_task_fn_traits = {
+    .flags = CMETA_TRAIT_EQUAL |
+             CMETA_TRAIT_TRIVIAL_COPY |
+             CMETA_TRAIT_TRIVIAL_DESTROY,
+    .equal = cflow_task_fn_equal
+};
+
+static const cmeta_type_traits cflow_executor_trivial_traits = {
+    .flags = CMETA_TRAIT_TRIVIAL_COPY |
+             CMETA_TRAIT_TRIVIAL_DESTROY
+};
+
+const cmeta_type_desc cflow_type_task_fn = {
+    .name = "cflow_task_fn",
+    .size = sizeof(cflow_task_fn),
+    .align = _Alignof(cflow_task_fn),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &cflow_task_fn_traits,
+    .identity = NULL
+};
+
+#define CFLOW_EXECUTOR_VALUE_DESC(symbol_, type_, kind_) \
+const cmeta_type_desc symbol_ = { \
+    .name = #type_, .size = sizeof(type_), .align = _Alignof(type_), \
+    .kind = (kind_), .pointee = NULL, \
+    .traits = &cflow_executor_trivial_traits, .identity = NULL \
+}
+
+CFLOW_EXECUTOR_VALUE_DESC(
+    cflow_type_executor_shutdown_policy,
+    cflow_executor_shutdown_policy, CMETA_T_INTEGER);
+CFLOW_EXECUTOR_VALUE_DESC(
+    cflow_type_executor_post_status,
+    cflow_executor_post_status, CMETA_T_INTEGER);
+CFLOW_EXECUTOR_VALUE_DESC(
+    cflow_type_executor_wait_status,
+    cflow_executor_wait_status, CMETA_T_INTEGER);
+CFLOW_EXECUTOR_VALUE_DESC(
+    cflow_type_executor_stats,
+    cflow_executor_stats, CMETA_T_OBJECT);
+CFLOW_EXECUTOR_VALUE_DESC(
+    cflow_type_executor_protocol_stats,
+    cflow_executor_protocol_stats, CMETA_T_OBJECT);
+#undef CFLOW_EXECUTOR_VALUE_DESC
+
+const cmeta_type_desc cflow_type_executor_stats_ptr = {
+    .name = "cflow_executor_stats *",
+    .size = sizeof(cflow_executor_stats *),
+    .align = _Alignof(cflow_executor_stats *),
+    .kind = CMETA_T_POINTER,
+    .pointee = &cflow_type_executor_stats,
+    .traits = NULL,
+    .identity = NULL
+};
+
+const cmeta_type_desc cflow_type_executor_protocol_stats_ptr = {
+    .name = "cflow_executor_protocol_stats *",
+    .size = sizeof(cflow_executor_protocol_stats *),
+    .align = _Alignof(cflow_executor_protocol_stats *),
+    .kind = CMETA_T_POINTER,
+    .pointee = &cflow_type_executor_protocol_stats,
+    .traits = NULL,
+    .identity = NULL
+};
+
 typedef struct cflow_manual_executor_state {
     cflow_executor_task *tasks;
     size_t count;
