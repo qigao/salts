@@ -80,7 +80,10 @@ typedef struct cnet_owner_pending_event {
   cnet_event event;
 } cnet_owner_pending_event;
 
-enum { CNET_OWNER_RESOLVER_POLL_INTERVAL_MS = 1u };
+enum {
+  CNET_OWNER_RESOLVER_POLL_INTERVAL_MS = 1u,
+  CNET_OWNER_DEFERRED_CONTINUATION_MAX_PASSES = 8u
+};
 
 struct cnet_owner_impl {
   native_io_backend backend;
@@ -2651,8 +2654,8 @@ int cnet_owner_wake(cnet_owner *owner) {
 
 int cnet_owner_flush_deferred(cnet_owner *owner) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
-  size_t processed = 0u;
-  int status;
+  size_t pass;
+  int status = SALTS_OK;
 #if defined(CNET_INTERNAL_PROFILING)
   uint64_t owner_started;
 #endif
@@ -2661,52 +2664,73 @@ int cnet_owner_flush_deferred(cnet_owner *owner) {
 
 #if defined(CNET_INTERNAL_PROFILING)
   owner_started = cnet_owner_profile_start(impl);
-  {
-    const bool profile_active = impl->profile_active;
-    const uint64_t request_ns_before = impl->profile.request_lifecycle_ns;
-    const uint64_t request_calls_before = impl->profile.request_lifecycle_calls;
-    const uint64_t profile_started = cnet_owner_profile_start(impl);
-    status = cnet_owner_process_commands(impl, &processed);
-    cnet_owner_profile_finish(impl, profile_started, &impl->profile.command_stage_ns,
-                              &impl->profile.command_stage_calls);
-    if (profile_active) {
-      impl->profile.command_request_lifecycle_ns +=
-          impl->profile.request_lifecycle_ns - request_ns_before;
-      impl->profile.command_request_lifecycle_calls +=
-          impl->profile.request_lifecycle_calls - request_calls_before;
-    }
-  }
-#else
-  status = cnet_owner_process_commands(impl, &processed);
 #endif
-  if (status != SALTS_OK) {
+
+  /*
+   * A callback can publish a deferred receive command while session work from
+   * the previous deferred command is being progressed. A single
+   * commands->session-work pass therefore leaves multi-record TLS receive
+   * chains artificially split across outer polls.
+   *
+   * Drive a small bounded fixed point instead: consume deferred commands,
+   * progress the session work they schedule, then repeat only while that pass
+   * actually had owner-local work. This never observes NativeIO and callbacks
+   * are never recursive: each publication returns before the next pass starts.
+   * The hard pass bound preserves fairness even if a callback continuously
+   * republishes work.
+   */
+  for (pass = 0u; pass < CNET_OWNER_DEFERRED_CONTINUATION_MAX_PASSES; ++pass) {
+    size_t processed = 0u;
+    const bool had_session_work = impl->session_work_count != 0u;
+
 #if defined(CNET_INTERNAL_PROFILING)
-    cnet_owner_profile_finish(impl, owner_started, &impl->profile.owner_drive_ns,
-                              &impl->profile.owner_drive_calls);
+    {
+      const bool profile_active = impl->profile_active;
+      const uint64_t request_ns_before = impl->profile.request_lifecycle_ns;
+      const uint64_t request_calls_before = impl->profile.request_lifecycle_calls;
+      const uint64_t profile_started = cnet_owner_profile_start(impl);
+      status = cnet_owner_process_commands(impl, &processed);
+      cnet_owner_profile_finish(impl, profile_started, &impl->profile.command_stage_ns,
+                                &impl->profile.command_stage_calls);
+      if (profile_active) {
+        impl->profile.command_request_lifecycle_ns +=
+            impl->profile.request_lifecycle_ns - request_ns_before;
+        impl->profile.command_request_lifecycle_calls +=
+            impl->profile.request_lifecycle_calls - request_calls_before;
+      }
+    }
+#else
+    status = cnet_owner_process_commands(impl, &processed);
 #endif
-    return status;
+    if (status != SALTS_OK) break;
+
+#if defined(CNET_INTERNAL_PROFILING)
+    {
+      const bool profile_active = impl->profile_active;
+      const uint64_t request_ns_before = impl->profile.request_lifecycle_ns;
+      const uint64_t request_calls_before = impl->profile.request_lifecycle_calls;
+      const uint64_t profile_started = cnet_owner_profile_start(impl);
+      status = cnet_owner_process_session_work(impl);
+      cnet_owner_profile_finish(impl, profile_started, &impl->profile.receive_rearm_stage_ns,
+                                &impl->profile.receive_rearm_stage_calls);
+      if (profile_active) {
+        impl->profile.receive_rearm_request_lifecycle_ns +=
+            impl->profile.request_lifecycle_ns - request_ns_before;
+        impl->profile.receive_rearm_request_lifecycle_calls +=
+            impl->profile.request_lifecycle_calls - request_calls_before;
+      }
+    }
+#else
+    status = cnet_owner_process_session_work(impl);
+#endif
+    if (status != SALTS_OK) break;
+
+    if (processed == 0u && !had_session_work) break;
   }
 
 #if defined(CNET_INTERNAL_PROFILING)
-  {
-    const bool profile_active = impl->profile_active;
-    const uint64_t request_ns_before = impl->profile.request_lifecycle_ns;
-    const uint64_t request_calls_before = impl->profile.request_lifecycle_calls;
-    const uint64_t profile_started = cnet_owner_profile_start(impl);
-    status = cnet_owner_process_session_work(impl);
-    cnet_owner_profile_finish(impl, profile_started, &impl->profile.receive_rearm_stage_ns,
-                              &impl->profile.receive_rearm_stage_calls);
-    if (profile_active) {
-      impl->profile.receive_rearm_request_lifecycle_ns +=
-          impl->profile.request_lifecycle_ns - request_ns_before;
-      impl->profile.receive_rearm_request_lifecycle_calls +=
-          impl->profile.request_lifecycle_calls - request_calls_before;
-    }
-  }
   cnet_owner_profile_finish(impl, owner_started, &impl->profile.owner_drive_ns,
                             &impl->profile.owner_drive_calls);
-#else
-  status = cnet_owner_process_session_work(impl);
 #endif
   return status;
 }
