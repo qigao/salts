@@ -26,9 +26,15 @@ typedef struct cflow_waker {
     void *user;
 } cflow_waker;
 
+extern const cmeta_type_desc cflow_type_waker;
+
 #define CMETA_WAITABLE_METHODS(X,I) \
-    X(I,R1,bool,arm,cflow_waker,waker) \
-    X(I,V0,void,cancel,_)
+    X(I,FR1,bool,arm,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
+      (cflow_waker,waker,CMETA_PARAM_IN, \
+       &cflow_type_waker,CMETA_ABI_AGGREGATE)) \
+    X(I,FV0,void,cancel,stateful, \
+      &cmeta_type_void,CMETA_ABI_VOID)
 CMETA_INTERFACE(cflow_waitable, CMETA_WAITABLE_METHODS);
 
 typedef struct cflow_step {
