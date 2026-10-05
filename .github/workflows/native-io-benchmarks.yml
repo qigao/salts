@@ -344,7 +344,7 @@ jobs:
             @("native_uring", "${{ steps.scope.outputs.native_uring }}"),
             @("forensic", "${{ steps.scope.outputs.forensic }}"),
             @("work", "${{ steps.scope.outputs.work }}"),
-            @("cnet_compare", "${{ steps.scope.outputs.cnet_compare }}"),
+            @("cnet_compare", "${{ steps.scope.outputs.cnet_compare }}")
           )
           Write-Host "Selected benchmark scopes:"
           foreach ($row in $rows) { Write-Host ("  {0}={1}" -f $row[0], $row[1]) }
@@ -359,6 +359,11 @@ jobs:
         shell: pwsh
         run: |
           ./cmake/ci/verify-benchmark-policy.ps1 -ProjectRoot . -WriteSummary
+
+      - name: Validate CNet performance CI contract
+        shell: pwsh
+        run: |
+          cmake -DPROJECT_SOURCE_DIR="$env:GITHUB_WORKSPACE" -P ./cnet/tests/cnet_performance_ci_contract_test.cmake
 
       - name: Validate PR artifact pruning contract
         shell: pwsh
