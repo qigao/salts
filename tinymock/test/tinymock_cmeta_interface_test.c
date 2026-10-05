@@ -8,6 +8,11 @@
     (int,delta,CMETA_PARAM_IN,&cmeta_type_int,CMETA_ABI_SCALAR)) \
   X(I,F0,int,value,value, \
     &cmeta_type_int,CMETA_ABI_SCALAR) \
+  X(I,FR0,int,result_value,value, \
+    &cmeta_type_int,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE) \
+  X(I,FR0,int *,owned_pointer,stateful, \
+    &cmeta_type_int_ptr,CMETA_ABI_OBJECT_POINTER, \
+    CMETA_RESULT_OWNED | CMETA_RESULT_NULLABLE) \
   X(I,FV1,void,reset_to,stateful, \
     &cmeta_type_void,CMETA_ABI_VOID, \
     (int,value,CMETA_PARAM_IN,&cmeta_type_int,CMETA_ABI_SCALAR))
@@ -47,9 +52,39 @@ suite("TinyMock CMeta interface bridge") {
       check_equal(value_fn->name, "tinymock_cmeta_counter.value");
       check_equal(value_abi->return_carrier,
                   (cmeta_abi_carrier)CMETA_ABI_SCALAR);
+
+      {
+        const cmeta_function_desc *result_fn =
+            TINYMOCk_INTERFACE_METHOD_FUNCTION(
+                tinymock_cmeta_counter, result_value);
+        const cmeta_function_desc *owned_fn =
+            TINYMOCk_INTERFACE_METHOD_FUNCTION(
+                tinymock_cmeta_counter, owned_pointer);
+        check_equal(result_fn->result_flags,
+                    (cmeta_result_flags)CMETA_RESULT_VALUE);
+        check_equal(owned_fn->result_flags,
+                    (cmeta_result_flags)(
+                        CMETA_RESULT_OWNED | CMETA_RESULT_NULLABLE));
+      }
+    }
+
+    {
+      int result_return = 31;
+      int owned_value = 7;
+      int *owned_pointer = &owned_value;
+
+      check_true(TINYMOCk_INTERFACE_SET_RETURN(
+          &mock, result_value, result_return));
+      check_equal(tinymock_cmeta_counter_result_value(&counter), 31);
+
+      /* OWNED transfer requires canonical ownership authority; fail closed. */
+      check_false(TINYMOCk_INTERFACE_SET_RETURN(
+          &mock, owned_pointer, owned_pointer));
     }
 
     TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, value, 1);
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, result_value, 1);
+    TINYMOCk_INTERFACE_VERIFY_NEVER(&mock, owned_pointer);
     TINYMOCk_INTERFACE_VERIFY_NEVER(&mock, add);
     TINYMOCk_INTERFACE_VERIFY_NEVER(&mock, reset_to);
     tinymock_tinymock_cmeta_counter_destroy(&mock);
@@ -78,6 +113,8 @@ suite("TinyMock CMeta interface bridge") {
     TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, add, 1);
     TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, value, 1);
     TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, reset_to, 1);
+    TINYMOCk_INTERFACE_VERIFY_NEVER(&mock, result_value);
+    TINYMOCk_INTERFACE_VERIFY_NEVER(&mock, owned_pointer);
     TINYMOCk_INTERFACE_VERIFY_AT_LEAST(&mock, add, 1);
     TINYMOCk_INTERFACE_VERIFY_AT_MOST(&mock, add, 1);
 
