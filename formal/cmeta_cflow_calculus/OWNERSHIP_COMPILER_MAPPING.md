@@ -45,9 +45,9 @@ Its private state maps as follows:
 
 Rules:
 
-- `owned(Type)` enters `LIVE_OWNED` only when one canonical typed
+- `cmeta_owned(Type)` enters `LIVE_OWNED` only when one canonical typed
   `Type_cmeta_data()` lifecycle binding exists;
-- `move(name)` maps `owned -> moved`;
+- `cmeta_move(name)` maps `cmeta_owned -> moved`;
 - use-after-move and double move fail closed;
 - normal straight-line scope exit discharges the live cleanup obligation
   through canonical DataDesc lifecycle;
