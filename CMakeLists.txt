@@ -70,16 +70,6 @@ add_subdirectory(cflow/cnet-adapter)
 add_subdirectory(cserde)
 add_subdirectory(utils)
 
-if(BUILD_BENCHMARKS)
-  get_property(SALTS_BENCHMARK_TARGETS GLOBAL PROPERTY SALTS_BENCHMARK_TARGETS)
-  if(NOT SALTS_BENCHMARK_TARGETS)
-    message(FATAL_ERROR "BUILD_BENCHMARKS=ON but no benchmark targets were registered")
-  endif()
-  add_custom_target(salts_benchmarks)
-  add_dependencies(salts_benchmarks ${SALTS_BENCHMARK_TARGETS})
-  set_target_properties(salts_benchmarks PROPERTIES FOLDER "benchmarks")
-endif()
-
 # Package Configuration
 include(CMakePackageConfigHelpers)
 
