@@ -28,6 +28,8 @@ on:
       - "cflow/CMakeLists.txt"
       - "concurrency/**"
       - "platform/**"
+      - "cmake/ci/benchmark-policy.json"
+      - "cmake/ci/verify-benchmark-policy.ps1"
   workflow_dispatch:
 
 permissions:
@@ -142,9 +144,35 @@ jobs:
       - name: Run CNet contracts
         shell: pwsh
         run: |
-          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cnet_.*_test|concurrency_deadline_queue_test)$' --timeout 60 --output-on-failure
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cnet_.*_test|concurrency_deadline_queue_test)      - name: Run CFlow contracts
+        shell: pwsh
+        run: |
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cflow_seeded_reduce_test|cflow_pipeline_test|cflow_plan_managed_test|cflow_parallel_reduce_test|cflow_io_native_test|cflow_io_native(_sharded)?_adapter_test|cflow_io_cnet_adapter_test|cflow_header_cpp_test|cflow_cnet_header_cpp_test)$' --timeout 60 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ./cnet/tests/cnet_io_trace_test.ps1
+
+      - name: Run coroutine contracts
+        shell: pwsh
+        run: |
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(salts_coro_executor_test)$' --timeout 60 --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+ --timeout 60 --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run CI policy tests through CTest
+        shell: pwsh
+        run: |
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^benchmark_policy_test      - name: Run CFlow contracts
+        shell: pwsh
+        run: |
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cflow_seeded_reduce_test|cflow_pipeline_test|cflow_plan_managed_test|cflow_parallel_reduce_test|cflow_io_native_test|cflow_io_native(_sharded)?_adapter_test|cflow_io_cnet_adapter_test|cflow_header_cpp_test|cflow_cnet_header_cpp_test)$' --timeout 60 --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run coroutine contracts
+        shell: pwsh
+        run: |
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(salts_coro_executor_test)$' --timeout 60 --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+ --timeout 60 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run CFlow contracts
