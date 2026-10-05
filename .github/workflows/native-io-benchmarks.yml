@@ -591,7 +591,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset win-release-user -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_BENCHMARKS=ON -DBUILD_EXAMPLES=OFF
+          cmake --preset win-release-user -DBUILD_TESTS=ON -DENABLE_TESTS=ON -DBUILD_BENCHMARKS=ON -DBUILD_EXAMPLES=OFF
           if errorlevel 1 exit /b 1
           cmake --build --preset win-release-user --parallel 2
           if errorlevel 1 exit /b 1
