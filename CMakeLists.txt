@@ -46,6 +46,18 @@ include(CMakeOptions.cmake)
 include(Sanitizers)
 include(CmakeUtils)
 
+if(BUILD_TESTS)
+  find_program(SALTS_POWERSHELL_EXECUTABLE NAMES pwsh powershell)
+  if(SALTS_POWERSHELL_EXECUTABLE)
+    add_test(
+      NAME benchmark_policy_test
+      COMMAND ${SALTS_POWERSHELL_EXECUTABLE}
+              -NoProfile
+              -File ${PROJECT_SOURCE_DIR}/cmake/ci/verify-benchmark-policy.ps1
+              -ProjectRoot ${PROJECT_SOURCE_DIR})
+  endif()
+endif()
+
 find_package(Threads REQUIRED)
 
 # Additional components
