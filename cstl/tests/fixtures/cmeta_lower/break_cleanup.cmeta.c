@@ -4,7 +4,7 @@ typed(List, IntList, int);
 
 static void probe(void) {
     for (;;) {
-        cmeta_owned(IntList) value;
+        cmeta_cmeta_owned(IntList) value;
         break;
     }
 }
