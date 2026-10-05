@@ -95,6 +95,7 @@ typedef struct cnet_owner_profile {
   uint64_t request_resubmit_ns;
   uint64_t observe_ns;
   uint64_t request_completion_ns;
+  uint64_t tls_pump_ns;
   uint64_t event_publish_ns;
   uint64_t owner_drive_calls;
   uint64_t receive_rearm_stage_calls;
@@ -110,6 +111,13 @@ typedef struct cnet_owner_profile {
   uint64_t vector_submit_bytes;
   uint64_t observe_calls;
   uint64_t request_completion_calls;
+  uint64_t tls_pump_calls;
+  uint64_t tls_ciphertext_bytes;
+  uint64_t tls_write_submit_calls;
+  uint64_t tls_write_submit_bytes;
+  uint64_t tls_write_completion_calls;
+  uint64_t tls_write_completion_bytes;
+  uint64_t tls_plaintext_receive_bytes;
   uint64_t event_publish_calls;
   /** Producer-side command queue timing; payload publish includes payload copy. */
   uint64_t command_queue_publish_ns;
