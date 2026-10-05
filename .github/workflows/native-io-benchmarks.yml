@@ -534,7 +534,7 @@ jobs:
           set -euo pipefail
           cmake --preset "${{ matrix.configure_preset }}" \
             -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
-          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target salts_benchmarks
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
       - name: Configure Windows benchmark targets
         if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         shell: cmd
@@ -550,7 +550,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target salts_benchmarks
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
       - name: Configure and build macOS benchmark targets
         if: needs.scope.outputs.work == 'true' && matrix.family == 'mac'
         shell: bash
@@ -558,13 +558,13 @@ jobs:
           set -euo pipefail
           cmake --preset "${{ matrix.configure_preset }}" \
             -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
-          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target salts_benchmarks
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
       - name: Run CFlow ordered parallel reduce benchmark
         if: needs.scope.outputs.cflow == 'true' && matrix.family == 'linux' && matrix.backend == 'io_uring'
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target salts_benchmarks
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
           mkdir -p native-io-results
           benchmark="$GITHUB_WORKSPACE/${{ matrix.build_dir }}/bin/cflow_parallel_reduce_benchmark"
           test -x "$benchmark"
@@ -632,7 +632,7 @@ jobs:
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target salts_benchmarks
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
           if errorlevel 1 exit /b 1
 
       - name: Run CFlow ordered parallel reduce benchmark / Windows
@@ -683,7 +683,7 @@ jobs:
             -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF ^
             -DPKG_CONFIG_EXECUTABLE="%BASELINE_PKGCONF%"
           if errorlevel 1 exit /b 1
-          cmake --build build\Msvc-Release --target cnet
+          cmake --build build\Msvc-Release
           if errorlevel 1 exit /b 1
           if not exist "build\Msvc-Release\bin\cnet.dll" exit /b 1
           powershell -NoProfile -ExecutionPolicy Bypass -File "%BASELINE_SOURCE%\cmake\ci\stage-windows-cnet-runtime.ps1" -Prefix "%BASELINE_SOURCE%\build\Msvc-Release" -VcpkgInstalledDir "%BASELINE_SOURCE%\vcpkg_installed"
