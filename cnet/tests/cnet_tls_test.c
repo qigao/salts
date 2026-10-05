@@ -1,3 +1,4 @@
+#include "cnet_test_internal.h"
 #include "cnet_tls.h"
 #include "tinytest.h"
 
@@ -1096,6 +1097,18 @@ spec("CNet bounded TLS engine") {
         .client_auth = CNET_TLS_CLIENT_AUTH_NONE};
     check_equal(cnet_tls_server_init(&server, &config), SALTS_OK);
     check_equal(cnet_tls_server_destroy(&server), SALTS_OK);
+  }
+
+  it("rejects trust bundle size arithmetic overflow before allocation") {
+    size_t required = 1u;
+    check_equal(cnet_test_tls_der_bundle_required_size(0u, 1u, &required), SALTS_OK);
+    check_equal(required, (size_t)1u);
+    check_equal(cnet_test_tls_der_bundle_required_size(1u, SIZE_MAX, &required), SALTS_ERANGE);
+    check_equal(required, (size_t)0u);
+    check_equal(cnet_test_tls_der_bundle_required_size(0u, SIZE_MAX, &required), SALTS_ERANGE);
+    check_equal(required, (size_t)0u);
+    check_equal(cnet_test_tls_der_bundle_required_size(SIZE_MAX, 1u, &required), SALTS_ERANGE);
+    check_equal(required, (size_t)0u);
   }
 
   it("verifies an IP literal against subjectAltName iPAddress without SNI") {
