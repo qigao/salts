@@ -206,7 +206,7 @@ owns the typed signature and declared contract; CFlow owns traversal, predicate
 invocation, value lifetime, and Graph execution. For example:
 
 ```c
-typed(filter, value, bool, keep_even, (int value)) {
+cmeta_function(filter, value, bool, keep_even, (int value)) {
     return value % 2 == 0;
 }
 
