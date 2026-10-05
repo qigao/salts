@@ -29,6 +29,7 @@ on:
       - "native-io/include/**"
       - "native-io/CMakeLists.txt"
       - "concurrency/**"
+      - "coroutine/**"
       - "platform/**"
   workflow_dispatch:
 
