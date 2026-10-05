@@ -5,7 +5,7 @@
 
 static size_t slice_expand_calls;
 
-typed(flatMap, value, cmeta_gen_status, slice_expand_four,
+cmeta_function(flatMap, value, cmeta_gen_status, slice_expand_four,
       (int value, long *out, size_t *cursor)) {
     if (*cursor >= 4u) return CMETA_GEN_DONE;
     *out = (long)value * 10L + (long)*cursor;
