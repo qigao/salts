@@ -75,7 +75,7 @@ int main(void) {
   tinymock_raii_destroy_count = 0u;
 
   {
-    owned(tinymock_tinymock_raii_probe) mock;
+    cmeta_owned(tinymock_tinymock_raii_probe) mock;
     tinymock_raii_payload scripted = {42};
 
     tinymock_tinymock_raii_probe_init(&mock);
