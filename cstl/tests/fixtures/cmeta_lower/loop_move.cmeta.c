@@ -3,9 +3,9 @@
 typed(List, IntList, int);
 
 static void probe(int condition) {
-    owned(IntList) value;
+    cmeta_owned(IntList) value;
     while (condition)
-        move(value);
+        cmeta_move(value);
 }
 
 int main(void) {
