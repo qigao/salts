@@ -13,7 +13,7 @@ extern "C" {
 typedef struct tinymock_cmeta_output_action {
   bool enabled;
   size_t param_index;
-  tinymock_cmeta_snapshot value;
+  tinymock_cmeta_value value;
 } tinymock_cmeta_output_action;
 
 typedef struct tinymock_cmeta_actions {
@@ -53,7 +53,7 @@ bool tinymock_cmeta_actions_apply(
     tinymock_cmeta_actions *actions,
     const cmeta_function_desc *function,
     size_t argc,
-    const tinymock_value_t *boxed_args);
+    const tinymock_cmeta_arg_view *args);
 
 #ifdef __cplusplus
 }

@@ -9,6 +9,7 @@
 # changing the public Salts::TinyMock target contract.
 
 add_library(tinymock STATIC
+  src/tinymock_value.c
   src/tinymock_history.c
   src/tinymock_actions.c
   src/tinymock_return.c)
@@ -41,6 +42,7 @@ install(
 install(
   FILES
     include/tinymock_cmeta.h
+    include/tinymock_value.h
     include/tinymock_function.h
     include/tinymock_history.h
     include/tinymock_actions.h

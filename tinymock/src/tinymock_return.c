@@ -14,6 +14,19 @@ static bool tinymock_cmeta_return_function_ok(
           tinymock_cmeta_function_equal(state->function, function));
 }
 
+static bool tinymock_cmeta_return_semantics_supported(
+    const cmeta_function_desc *function) {
+  cmeta_result_flags result_class;
+
+  if (!function)
+    return false;
+
+  result_class = function->result_flags & CMETA_RESULT_CLASS_MASK;
+  return result_class == CMETA_RESULT_UNKNOWN ||
+         result_class == CMETA_RESULT_VALUE ||
+         result_class == CMETA_RESULT_BORROWED;
+}
+
 void tinymock_cmeta_return_init(
     tinymock_cmeta_return *state,
     const cmeta_function_desc *function) {
@@ -24,7 +37,7 @@ void tinymock_cmeta_return_init(
 
 void tinymock_cmeta_return_destroy(tinymock_cmeta_return *state) {
   if (!state) return;
-  tinymock_cmeta_snapshot_reset(&state->value);
+  tinymock_cmeta_value_reset(&state->value);
   memset(state, 0, sizeof(*state));
 }
 
@@ -40,12 +53,13 @@ bool tinymock_cmeta_return_set(
     tinymock_cmeta_return *state,
     const cmeta_function_desc *function,
     const void *value) {
-  if (!value || !tinymock_cmeta_return_function_ok(state, function))
+  if (!value || !tinymock_cmeta_return_function_ok(state, function) ||
+      !tinymock_cmeta_return_semantics_supported(function))
     return false;
 
-  tinymock_cmeta_snapshot_reset(&state->value);
-  if (!tinymock_cmeta_snapshot_copy(
-          &state->value, function->return_type, value, NULL))
+  tinymock_cmeta_value_reset(&state->value);
+  if (!tinymock_cmeta_value_copy(
+          &state->value, function->return_type, value))
     return false;
 
   state->function = function;
@@ -55,7 +69,7 @@ bool tinymock_cmeta_return_set(
 
 void tinymock_cmeta_return_clear(tinymock_cmeta_return *state) {
   if (!state) return;
-  tinymock_cmeta_snapshot_reset(&state->value);
+  tinymock_cmeta_value_reset(&state->value);
   state->enabled = false;
 }
 
@@ -72,6 +86,6 @@ bool tinymock_cmeta_return_write(
       !cmeta_type_equal(state->value.type, function->return_type))
     return false;
 
-  return tinymock_cmeta_snapshot_write(
+  return tinymock_cmeta_value_write(
       &state->value, destination, false);
 }

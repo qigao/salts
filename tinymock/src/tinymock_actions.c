@@ -28,7 +28,7 @@ static bool tinymock_cmeta_output_param_valid(
 static void tinymock_cmeta_output_action_reset(
     tinymock_cmeta_output_action *action) {
   if (!action) return;
-  tinymock_cmeta_snapshot_reset(&action->value);
+  tinymock_cmeta_value_reset(&action->value);
   memset(action, 0, sizeof(*action));
 }
 
@@ -77,8 +77,8 @@ bool tinymock_cmeta_actions_set_output(
   action = &actions->outputs[param_index];
   tinymock_cmeta_output_action_reset(action);
 
-  if (!tinymock_cmeta_snapshot_copy(
-          &action->value, param->type->pointee, value, NULL))
+  if (!tinymock_cmeta_value_copy(
+          &action->value, param->type->pointee, value))
     return false;
 
   action->enabled = true;
@@ -129,13 +129,13 @@ bool tinymock_cmeta_actions_clear_output_name(
 static bool tinymock_cmeta_output_destination(
     const tinymock_cmeta_output_action *action,
     const cmeta_param_desc *param,
-    tinymock_value_t boxed,
+    const tinymock_cmeta_arg_view *arg,
     void **out_destination) {
-  if (!action || !action->enabled || !param || !out_destination ||
-      boxed.kind != TINYMOCk_VALUE_POINTER)
+  if (!action || !action->enabled || !param || !arg || !out_destination ||
+      !arg->has_object_pointer_identity)
     return false;
 
-  *out_destination = (void *)boxed.as.pointer_value;
+  *out_destination = (void *)arg->object_pointer_identity;
   if (*out_destination != NULL)
     return true;
 
@@ -146,14 +146,14 @@ bool tinymock_cmeta_actions_apply(
     tinymock_cmeta_actions *actions,
     const cmeta_function_desc *function,
     size_t argc,
-    const tinymock_value_t *boxed_args) {
+    const tinymock_cmeta_arg_view *args) {
   void *destinations[TINYMOCk_MAX_ARGS] = {0};
   size_t index;
 
   if (!tinymock_cmeta_actions_function_ok(actions, function) ||
       argc != function->param_count ||
       argc > TINYMOCk_MAX_ARGS ||
-      (argc != 0u && !boxed_args))
+      (argc != 0u && !args))
     return false;
 
   /* Admission pass: validate every enabled output before mutating any target. */
@@ -166,7 +166,7 @@ bool tinymock_cmeta_actions_apply(
     if (!tinymock_cmeta_output_param_valid(param) ||
         !cmeta_type_equal(action->value.type, param->type->pointee) ||
         !tinymock_cmeta_output_destination(
-            action, param, boxed_args[index], &destinations[index]))
+            action, param, &args[index], &destinations[index]))
       return false;
   }
 
@@ -184,7 +184,7 @@ bool tinymock_cmeta_actions_apply(
     }
 
     replace_existing = (param->flags & CMETA_PARAM_IN) != 0u;
-    if (!tinymock_cmeta_snapshot_write(
+    if (!tinymock_cmeta_value_write(
             &action->value, destinations[index], replace_existing))
       return false;
   }

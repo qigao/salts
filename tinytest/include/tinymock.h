@@ -177,6 +177,7 @@ void tinymock_mock_script_error(tinymock_mock_t *mock, const char *message);
 tinymock_value_t tinymock_mock_dispatch(tinymock_mock_t *mock, size_t argc,
                                         const tinymock_value_t *actual_args);
 
+
 size_t tinymock_mock_call_count(const tinymock_mock_t *mock);
 const tinymock_recorded_call_t *tinymock_mock_call_at(
     const tinymock_mock_t *mock, size_t index);

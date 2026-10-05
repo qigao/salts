@@ -11,7 +11,7 @@ extern "C" {
 
 typedef struct tinymock_cmeta_return {
   const cmeta_function_desc *function;
-  tinymock_cmeta_snapshot value;
+  tinymock_cmeta_value value;
   bool enabled;
 } tinymock_cmeta_return;
 

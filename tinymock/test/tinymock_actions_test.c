@@ -96,7 +96,10 @@ suite("TinyMock reflected output actions") {
     tinymock_cmeta_actions actions;
     tinymock_action_managed scripted = {17};
     tinymock_action_managed output = {0};
-    tinymock_value_t args[] = {TINYMOCk_VALUE(&output)};
+    tinymock_action_managed *output_ptr = &output;
+    tinymock_cmeta_arg_view args[] = {
+      {&output_ptr, true, (const void *)output_ptr}
+    };
 
     action_copy_count = 0u;
     action_destroy_count = 0u;
@@ -123,7 +126,10 @@ suite("TinyMock reflected output actions") {
     tinymock_cmeta_actions actions;
     tinymock_action_managed scripted = {44};
     tinymock_action_managed value = {3};
-    tinymock_value_t args[] = {TINYMOCk_VALUE(&value)};
+    tinymock_action_managed *value_ptr = &value;
+    tinymock_cmeta_arg_view args[] = {
+      {&value_ptr, true, (const void *)value_ptr}
+    };
 
     action_copy_count = 0u;
     action_destroy_count = 0u;
@@ -170,7 +176,10 @@ suite("TinyMock reflected output actions") {
     tinymock_cmeta_actions actions;
     tinymock_action_managed first = {1};
     tinymock_action_managed second = {2};
-    tinymock_value_t null_args[] = {TINYMOCk_VALUE((tinymock_action_managed *)NULL)};
+    tinymock_action_managed *null_output = NULL;
+    tinymock_cmeta_arg_view null_args[] = {
+      {&null_output, true, NULL}
+    };
 
     action_copy_count = 0u;
     action_destroy_count = 0u;
