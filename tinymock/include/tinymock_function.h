@@ -187,9 +187,39 @@
   CMETA_PP_CAT(CMETA_FUNCTION_COMMA_, index) \
   TINYMOCk_FUNCTION_ACTUAL_APPLY(row)
 
+#define TINYMOCk_FUNCTION_VIEW_CMETA_ABI_SCALAR(value) \
+  { (const void *)&(value), false, NULL }
+#define TINYMOCk_FUNCTION_VIEW_CMETA_ABI_OBJECT_POINTER(value) \
+  { (const void *)&(value), true, (const void *)(value) }
+#define TINYMOCk_FUNCTION_VIEW_CMETA_ABI_AGGREGATE(value) \
+  { (const void *)&(value), false, NULL }
+#define TINYMOCk_FUNCTION_VIEW_CMETA_ABI_FUNCTION_POINTER(value) \
+  { (const void *)&(value), false, NULL }
+#define TINYMOCk_FUNCTION_VIEW_CMETA_ABI_ENUM(value) \
+  { (const void *)&(value), false, NULL }
+#define TINYMOCk_FUNCTION_VIEW_CMETA_ABI_UNSPECIFIED(value) \
+  { (const void *)&(value), false, NULL }
+#define TINYMOCk_FUNCTION_VIEW_CMETA_ABI_OPAQUE(value) \
+  { (const void *)&(value), false, NULL }
+#define TINYMOCk_FUNCTION_VIEW_CMETA_ABI_VOID(value) \
+  { (const void *)&(value), false, NULL }
+#define TINYMOCk_FUNCTION_VIEW_(carrier, value) \
+  CMETA_PP_CAT(TINYMOCk_FUNCTION_VIEW_, carrier)(value)
+
+#define TINYMOCk_FUNCTION_ARG_VIEW_3(type, name, flags) \
+  TINYMOCk_FUNCTION_VIEW_(CMETA_ABI_SCALAR, name)
+#define TINYMOCk_FUNCTION_ARG_VIEW_4(type, name, flags, descriptor) \
+  TINYMOCk_FUNCTION_VIEW_(CMETA_ABI_UNSPECIFIED, name)
+#define TINYMOCk_FUNCTION_ARG_VIEW_5(type, name, flags, descriptor, abi_carrier) \
+  TINYMOCk_FUNCTION_VIEW_(abi_carrier, name)
+#define TINYMOCk_FUNCTION_ARG_VIEW_APPLY_I(...) \
+  CMETA_PP_CAT(TINYMOCk_FUNCTION_ARG_VIEW_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+#define TINYMOCk_FUNCTION_ARG_VIEW_APPLY(row) \
+  TINYMOCk_FUNCTION_ARG_VIEW_APPLY_I row
+
 #define TINYMOCk_FUNCTION_TYPED_ARG_ROW(index, row, ignored) \
   CMETA_PP_CAT(CMETA_FUNCTION_COMMA_, index) \
-  (const void *)&TINYMOCk_FUNCTION_PARAM_NAME_APPLY(row)
+  TINYMOCk_FUNCTION_ARG_VIEW_APPLY(row)
 
 #define TINYMOCk_FUNCTION_PARAM_ADMIT_3(function_name, type, name, flags) \
   _Static_assert(1, "TinyMock scalar ABI admission")
@@ -359,20 +389,20 @@
     tinymock_value_t args__[] = { \
       CMETA_PP_FOR_EACH_I(TINYMOCk_FUNCTION_ACTUAL_ROW, ~, __VA_ARGS__) \
     }; \
-    const void *typed_args__[] = { \
+    tinymock_cmeta_arg_view typed_args__[] = { \
       CMETA_PP_FOR_EACH_I(TINYMOCk_FUNCTION_TYPED_ARG_ROW, ~, __VA_ARGS__) \
     }; \
     TINYMOCk_ASSERT( \
         tinymock_cmeta_history_record( \
             &TINYMOCk_FUNCTION_HISTORY_NAME(name), FunctionMeta(name), \
-            CMETA_PP_NARG(__VA_ARGS__), typed_args__, args__), \
+            CMETA_PP_NARG(__VA_ARGS__), typed_args__), \
         "tinymock cannot snapshot reflected arguments for %s", #name); \
     tinymock_value_t result__ = tinymock_mock_dispatch( \
         &TINYMOCk_FUNCTION_STATE_NAME(name), CMETA_PP_NARG(__VA_ARGS__), args__); \
     TINYMOCk_ASSERT( \
         tinymock_cmeta_actions_apply( \
             &TINYMOCk_FUNCTION_ACTIONS_NAME(name), FunctionMeta(name), \
-            CMETA_PP_NARG(__VA_ARGS__), args__), \
+            CMETA_PP_NARG(__VA_ARGS__), typed_args__), \
         "tinymock cannot apply reflected output actions for %s", #name); \
     TINYMOCk_FUNCTION_RETURN_VALUE( \
         return_abi_carrier, name, return_type, result__); \
@@ -388,20 +418,20 @@
     tinymock_value_t args__[] = { \
       CMETA_PP_FOR_EACH_I(TINYMOCk_FUNCTION_ACTUAL_ROW, ~, __VA_ARGS__) \
     }; \
-    const void *typed_args__[] = { \
+    tinymock_cmeta_arg_view typed_args__[] = { \
       CMETA_PP_FOR_EACH_I(TINYMOCk_FUNCTION_TYPED_ARG_ROW, ~, __VA_ARGS__) \
     }; \
     TINYMOCk_ASSERT( \
         tinymock_cmeta_history_record( \
             &TINYMOCk_FUNCTION_HISTORY_NAME(name), FunctionMeta(name), \
-            CMETA_PP_NARG(__VA_ARGS__), typed_args__, args__), \
+            CMETA_PP_NARG(__VA_ARGS__), typed_args__), \
         "tinymock cannot snapshot reflected arguments for %s", #name); \
     (void)tinymock_mock_dispatch( \
         &TINYMOCk_FUNCTION_STATE_NAME(name), CMETA_PP_NARG(__VA_ARGS__), args__); \
     TINYMOCk_ASSERT( \
         tinymock_cmeta_actions_apply( \
             &TINYMOCk_FUNCTION_ACTIONS_NAME(name), FunctionMeta(name), \
-            CMETA_PP_NARG(__VA_ARGS__), args__), \
+            CMETA_PP_NARG(__VA_ARGS__), typed_args__), \
         "tinymock cannot apply reflected output actions for %s", #name); \
     return; \
   }
@@ -428,7 +458,7 @@
     TINYMOCk_ASSERT( \
         tinymock_cmeta_history_record( \
             &TINYMOCk_FUNCTION_HISTORY_NAME(name), FunctionMeta(name), \
-            0u, NULL, NULL), \
+            0u, NULL), \
         "tinymock cannot snapshot reflected arguments for %s", #name); \
     tinymock_value_t result__ = tinymock_mock_dispatch( \
         &TINYMOCk_FUNCTION_STATE_NAME(name), 0u, NULL); \
@@ -449,7 +479,7 @@
     TINYMOCk_ASSERT( \
         tinymock_cmeta_history_record( \
             &TINYMOCk_FUNCTION_HISTORY_NAME(name), FunctionMeta(name), \
-            0u, NULL, NULL), \
+            0u, NULL), \
         "tinymock cannot snapshot reflected arguments for %s", #name); \
     (void)tinymock_mock_dispatch( \
         &TINYMOCk_FUNCTION_STATE_NAME(name), 0u, NULL); \
