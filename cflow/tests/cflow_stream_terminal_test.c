@@ -44,15 +44,15 @@ static cmeta_range terminal_range(terminal_range_owner *owner) {
     };
 }
 
-typed(filter, value, bool, terminal_even, (int value)) {
+cmeta_function(filter, value, bool, terminal_even, (int value)) {
     return value % 2 == 0;
 }
 
-typed(filter, value, bool, terminal_greater_than_five, (int value)) {
+cmeta_function(filter, value, bool, terminal_greater_than_five, (int value)) {
     return value > 5;
 }
 
-typed(map, value, long, terminal_to_long, (int value)) {
+cmeta_function(map, value, long, terminal_to_long, (int value)) {
     return (long)value;
 }
 
