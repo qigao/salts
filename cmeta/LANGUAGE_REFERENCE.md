@@ -115,9 +115,9 @@ same rows. Duplicate, unknown, or malformed rows are compile-time errors.
 `TRIVIAL_COPY` and `TRIVIAL_DESTROY` are descriptor properties, not inferred
 callable traits.
 
-### `typed(...)`
+### `cmeta_type(...)`
 
-The single generic-instantiation entry point.
+The ordinary-C finite generic type declaration entry point.
 
 ```c
 #include <cmeta/meta.h>
@@ -128,35 +128,33 @@ typedef struct User {
     int id;
 } User;
 
-typed(Option, MaybeUser, User);
-typed(Pair, Entry, Key, Value);
-typed(Tuple, Point3, double, double, double);
+cmeta_type(Option, MaybeUser, User);
+cmeta_type(Pair, Entry, Key, Value);
+cmeta_type(Tuple, Point3, double, double, double);
 ```
 
 General form:
 
 ```text
-typed(kind, generated_name, type_arguments...)
+cmeta_type(kind, generated_name, type_arguments...)
 ```
 
-CMeta implements **finite generic routing**, not unrestricted templates. The
-CMeta aggregate header registers the value kinds `Pair`, `Tuple`, `Option`, and
-`Result`. A library may register additional kinds, and `typed(...)` routes each
-registered kind to that kind's concrete C11 generator.
+CMeta implements **finite generic routing**, not unrestricted templates.
+`cmeta_type(...)` accepts only registered generic kinds and fails compilation
+for an unregistered kind.
 
 Algorithmic container kinds such as `List`, `Vec`, and `HashMap` belong to
-CSTL. Container users include `<cstl/typed.h>` and link
-`Salts::CSTL`:
+CSTL:
 
 ```c
 #include <cstl/typed.h>
 
-typed(List, IntList, int);
-typed(Vec, IntVec, int);
-typed(HashMap, IntValuesById, int, int);
+cmeta_type(List, IntList, int);
+cmeta_type(Vec, IntVec, int);
+cmeta_type(HashMap, IntValuesById, int, int);
 ```
 
-The declared container type prefixes its generated operations:
+The declared type exposes ordinary concrete C operations:
 
 ```c
 IntList values = {0};
@@ -166,19 +164,13 @@ IntList_push_back(&values, 7);
 IntList_destroy(&values);
 ```
 
-For containers, one `typed(...)` declaration is a complete instantiation. It may
-generate the wrapper type, static-inline typed forwarding functions, metadata,
-container descriptors, Range factories, and relevant traits. Allocation and
-container algorithms remain ordinary compiled C in the underlying library. A
-complete facade does not implicitly register its element, key, or value types;
-those types must satisfy the finite type-universe rules described below.
+One declaration may generate the wrapper type, static-inline typed forwarding
+functions, canonical metadata, Range factories, and relevant traits. Allocation
+and container algorithms remain ordinary compiled C in the provider library.
 
-Declare each concrete container with its own `typed(...)` statement, as shown
-above. There is no batch syntax inside the CMeta Generic grammar. CSTL also
-retains self-describing raw-handle initializers such as `Vec(int, variable)`
-and `VecOf(int)` (plus their associative forms). Those initializers produce
-erased CSTL handles; they do not declare a generated Generic type and do
-not change the meaning of `typed(...)`.
+The historical `typed(...)` mixed router is not the canonical generic type
+surface. It remains temporarily for existing callable/operator DSL users such as
+CFlow lower-case operators.
 
 ### `typed_any(...)`
 
@@ -924,8 +916,8 @@ Current style:
 ```c
 #include <cstl/typed.h>
 
-typed(List, IntList, int);
-typed(Vec, IntVec, int);
+cmeta_type(List, IntList, int);
+cmeta_type(Vec, IntVec, int);
 ```
 
 The explicit form keeps one generic entry point and avoids a second batch DSL
