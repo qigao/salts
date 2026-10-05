@@ -45,7 +45,6 @@ enable_testing()
 include(CMakeOptions.cmake)
 include(Sanitizers)
 include(CmakeUtils)
-include(SaltsCMetaLower)
 
 find_package(Threads REQUIRED)
 
