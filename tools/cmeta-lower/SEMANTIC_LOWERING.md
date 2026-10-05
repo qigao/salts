@@ -25,13 +25,17 @@ C
  ordinary C11
 ```
 
+## Public naming rule
+
+New source-level CMeta extensions use the `cmeta_` prefix. The minimal public vocabulary is `cmeta_type(...)`, `cmeta_owned(T)`, `cmeta_move(x)`, `cmeta_value_ref`, and `cmeta_value_view`. No unprefixed compatibility aliases are kept on this branch.
+
 ## Core surface
 
 The branch is limited to:
 
 - `cmeta_type(...)` — canonical concrete type + Reflection/lifecycle binding;
-- `owned(T)` — lexical ownership;
-- `move(x)` — explicit ownership transfer;
+- `cmeta_owned(T)` — lexical ownership;
+- `cmeta_move(x)` — explicit ownership transfer;
 - deterministic automatic cleanup for LIVE owned values;
 - compile/build-time use of TypeDesc/DataDesc/FunctionDesc and related canonical
   Reflection descriptors;
@@ -59,8 +63,8 @@ CMeta must not replace those constructs with another control-flow language.
 
 ## RAII rule
 
-`owned(T)` is accepted only when canonical lifecycle authority is known.
-`move(x)` is the only source-level ownership transfer marker in this scope.
+`cmeta_owned(T)` is accepted only when canonical lifecycle authority is known.
+`cmeta_move(x)` is the only source-level ownership transfer marker in this scope.
 
 The compiler decides **when** cleanup is required.
 Canonical DataDesc/provider semantics decide **how** cleanup occurs.
@@ -106,6 +110,6 @@ design.
 
 ## Merge policy
 
-PR #906 stays Draft until the minimal `cmeta_type + owned + move + Reflection`
+PR #906 stays Draft until the minimal `cmeta_type + cmeta_owned + cmeta_move + Reflection`
 contract is complete, cross-platform qualified, documented, and produces
 ordinary portable C11 without fallback paths.
