@@ -21,8 +21,8 @@ Lean Ownership calculus
           +-------------------------+
           |                         |
           v                         v
-Salts cmeta-lower             SaltsUtils IDL/DataBind
-narrow source proof           generated Service compiler
+ordinary CMeta C API          SaltsUtils IDL/DataBind
+macro/inline lifecycle        generated Service compiler
           |                         |
           v                         v
 portable C                    FunctionDesc/FunctionAbi
@@ -31,31 +31,28 @@ portable C                    FunctionDesc/FunctionAbi
 
 Storage allocation remains outside this model.
 
-## Salts `tools/cmeta-lower`
+## Ordinary CMeta lifecycle mapping
 
-`cmeta-lower` is deliberately not a general C ownership compiler.
+Ordinary CMeta no longer carries compiler-private LIVE/MOVED state.
 
-Its private state maps as follows:
+Canonical mapping:
 
-| cmeta-lower state | Lean state |
-| --- | --- |
-| no ownership fact | outside automatic ownership proof |
-| `LIVE_OWNED` | `Ownership.owned` |
-| `MOVED` | `Ownership.moved` |
+```text
+cmeta_type(...)            -> finite ordinary-C type/metadata generation
+cmeta_move(Type,&dst,&src) -> canonical DataDesc move
+successful move            -> source semantic-zero
+cmeta_auto/cmeta_guard     -> lexical resource helper when backend is available
+```
 
-Rules:
+Memory/lifecycle correctness comes from canonical DataDesc contracts. A moved
+source remains a valid semantic-zero C object and may be destroyed or
+reinitialized.
 
-- `owned(Type)` enters `LIVE_OWNED` only when one canonical typed
-  `Type_cmeta_data()` lifecycle binding exists;
-- `move(name)` maps `owned -> moved`;
-- use-after-move and double move fail closed;
-- normal straight-line scope exit discharges the live cleanup obligation
-  through canonical DataDesc lifecycle;
-- ownership-sensitive branch/loop/early-return/goto paths that require a join
-  remain rejected by this tool.
+Optional analyzers may diagnose double-move/use-after-move, but ordinary CMeta
+compilation and lifecycle safety do not depend on an analyzer.
 
-This matches `joinOwnership`: an `owned/moved` branch mismatch is not joined
-by silently recreating ownership.
+Full branch/loop ownership proofs remain appropriate in real compilers such as
+TurboScript and in structured generators that already own AST/IR/CFG state.
 
 ## SaltsUtils generated Service compiler
 
@@ -137,10 +134,9 @@ Do not:
 - put CFG/block state in Reflection descriptors;
 - create a second Plugin registry or descriptor-owned lease;
 - treat RAII as allocator policy;
-- expand `cmeta-lower` into a general C parser merely to satisfy ownership
-  lowering.
+- reintroduce a mandatory CMeta source translator merely to enforce ownership.
 
 Current delivery owners:
 
-- Salts #755/#752: semantic/formal rules and narrow proof lowerer;
+- Salts #905/#920: ordinary-C lifecycle/Reflection surface;
 - SaltsUtils #452: generated Service/BindingPlan/Plugin/CFlow lifetime plans.
