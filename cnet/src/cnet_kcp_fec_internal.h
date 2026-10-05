@@ -3,6 +3,14 @@
 
 #include <cnet/cnet.h>
 
+enum {
+  CNET_KCP_FEC_DATA_LENGTH_BYTES = 2,
+  CNET_KCP_FEC_HEADER_BYTES = 30,
+  CNET_KCP_FEC_MAC_BYTES = 16,
+  CNET_KCP_FEC_MAX_WIRE_OVERHEAD_BYTES =
+      CNET_KCP_FEC_HEADER_BYTES + CNET_KCP_FEC_DATA_LENGTH_BYTES + CNET_KCP_FEC_MAC_BYTES
+};
+
 typedef struct cnet_kcp_fec_state cnet_kcp_fec_state;
 typedef int (*cnet_kcp_fec_output_fn)(void *user, const void *data, size_t size);
 typedef int (*cnet_kcp_fec_deliver_fn)(void *user, const void *data, size_t size);

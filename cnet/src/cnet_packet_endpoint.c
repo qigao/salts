@@ -1,5 +1,6 @@
 #include <cnet/cnet.h>
 
+#include "cnet_kcp_fec_internal.h"
 #include "cnet_kcp_internal.h"
 #include "cnet_kcp_secure_internal.h"
 #include "cnet_secure_kcp_internal.h"
@@ -23,8 +24,7 @@ enum {
   CNET_PACKET_KCP_COMMAND_PUSH = 81,
   CNET_PACKET_KCP_COMMAND_ACK = 82,
   CNET_PACKET_KCP_COMMAND_WINDOW_PROBE = 83,
-  CNET_PACKET_KCP_COMMAND_WINDOW_REPORT = 84,
-  CNET_PACKET_SECURE_FEC_WIRE_OVERHEAD_BYTES = 46
+  CNET_PACKET_KCP_COMMAND_WINDOW_REPORT = 84
 };
 
 typedef struct cnet_packet_key {
@@ -785,7 +785,7 @@ static bool cnet_packet_config_valid(const cnet_packet_endpoint_config *config) 
     return false;
   if (config->security.mode == CNET_KCP_SECURITY_PSK_V1) {
     const size_t fec_datagram_bytes = (size_t)config->security.fec.max_payload_bytes +
-                                      CNET_PACKET_SECURE_FEC_WIRE_OVERHEAD_BYTES;
+                                      CNET_KCP_FEC_MAX_WIRE_OVERHEAD_BYTES;
     return cnet_secure_kcp_transport_config_valid(&config->kcp, &config->security) &&
            fec_datagram_bytes <= config->datagram.max_datagram_bytes &&
            fec_datagram_bytes <= config->datagram.receive_buffer_bytes;

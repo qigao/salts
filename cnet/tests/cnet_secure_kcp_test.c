@@ -1,6 +1,8 @@
 #include "tinytest.h"
 #include <cnet/cnet.h>
 
+#include "cnet_kcp_fec_internal.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -126,7 +128,92 @@ static int cnet_secure_test_deliver(cnet_secure_test_queue *queue, cnet_secure_k
   return status;
 }
 
+typedef struct cnet_fec_test_output_probe {
+  size_t count;
+  size_t last_size;
+} cnet_fec_test_output_probe;
+
+static int cnet_fec_test_output(void *user, const void *data, size_t size) {
+  cnet_fec_test_output_probe *probe = (cnet_fec_test_output_probe *)user;
+  if (data == NULL || size == 0u) return SALTS_EINVAL;
+  ++probe->count;
+  probe->last_size = size;
+  return SALTS_OK;
+}
+
 spec("CNet secure KCP v1") {
+  group("FEC parity length bounds") {
+    enum { FEC_LENGTH_BYTES = 2, FEC_HEADER_BYTES = 30, FEC_MAC_BYTES = 16 };
+    static cnet_kcp_fec_state *fec;
+    static cnet_fec_test_output_probe probe;
+    static cnet_kcp_fec_config config;
+    static cnet_secure_kcp session;
+    static cnet_secure_test_peer peer;
+
+    before_each() {
+      fec = NULL;
+      memset(&probe, 0, sizeof(probe));
+      memset(&session, 0, sizeof(session));
+      memset(&peer, 0, sizeof(peer));
+      config = (cnet_kcp_fec_config){CNET_KCP_FEC_REED_SOLOMON, 2u, 1u, 624u, 1u};
+    }
+
+    after_each() {
+      cnet_kcp_fec_destroy(fec);
+      check_equal(cnet_secure_kcp_destroy(&session), SALTS_OK);
+    }
+
+    it("rejects a parity shard exceeding the wire length field by one byte") {
+      config.max_payload_bytes = UINT16_MAX - FEC_LENGTH_BYTES + 1u;
+      check_equal(cnet_kcp_fec_init(&config, cnet_fec_test_output, &probe, &fec), SALTS_ERANGE);
+      check_null(fec);
+    }
+
+    it("rejects the full-width data payload when parity cannot be encoded") {
+      config.max_payload_bytes = UINT16_MAX;
+      check_equal(cnet_kcp_fec_init(&config, cnet_fec_test_output, &probe, &fec), SALTS_ERANGE);
+      check_null(fec);
+    }
+
+    it("rejects unencodable parity through public secure-session initialization") {
+      static const uint16_t payload_limits[] = {UINT16_MAX - FEC_LENGTH_BYTES + 1u, UINT16_MAX};
+      cnet_secure_kcp_config secure_config =
+          cnet_secure_test_config(CNET_SECURE_KCP_CLIENT, &peer);
+      for (size_t index = 0u; index < sizeof(payload_limits) / sizeof(payload_limits[0]); ++index) {
+        secure_config.security.fec.max_payload_bytes = payload_limits[index];
+        check_equal(cnet_secure_kcp_init(&session, &secure_config), SALTS_EINVAL);
+        check_null(session.impl);
+      }
+    }
+
+    it("accepts the maximum encodable parity through public secure-session initialization") {
+      cnet_secure_kcp_config secure_config =
+          cnet_secure_test_config(CNET_SECURE_KCP_CLIENT, &peer);
+      secure_config.security.fec.max_payload_bytes = UINT16_MAX - FEC_LENGTH_BYTES;
+      check_equal(cnet_secure_kcp_init(&session, &secure_config), SALTS_OK);
+      check_not_null(session.impl);
+    }
+
+    it("emits complete parity frames at normal and maximum encodable payload limits") {
+      static const uint16_t payload_limits[] = {624u, UINT16_MAX - FEC_LENGTH_BYTES};
+      static const unsigned char payload[] = "fec";
+      for (size_t index = 0u; index < sizeof(payload_limits) / sizeof(payload_limits[0]); ++index) {
+        config.max_payload_bytes = payload_limits[index];
+        memset(&probe, 0, sizeof(probe));
+        check_equal(cnet_kcp_fec_init(&config, cnet_fec_test_output, &probe, &fec), SALTS_OK);
+        check_equal(cnet_kcp_fec_set_session(fec, UINT64_C(1), CNET_SECURE_TEST_PSK), SALTS_OK);
+        check_equal(cnet_kcp_fec_send(fec, payload, sizeof(payload)), SALTS_OK);
+        check_equal(cnet_kcp_fec_send(fec, payload, sizeof(payload)), SALTS_OK);
+        check_equal(probe.count, (size_t)3u);
+        check_equal(probe.last_size,
+                    (size_t)config.max_payload_bytes + FEC_LENGTH_BYTES + FEC_HEADER_BYTES +
+                        FEC_MAC_BYTES);
+        cnet_kcp_fec_destroy(fec);
+        fec = NULL;
+      }
+    }
+  }
+
   it("rejects an absent PSK without publishing a session") {
     cnet_secure_kcp session = {0};
     cnet_secure_test_queue output = {0};

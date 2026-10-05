@@ -610,11 +610,16 @@ typedef struct cnet_kcp_fec_config {
   cnet_kcp_fec_backend backend;
   uint16_t data_shards;
   uint16_t parity_shards;
+  /** At most UINT16_MAX - 2; parity also encodes the two-byte data length. */
   uint16_t max_payload_bytes;
   uint16_t receive_group_count;
 } cnet_kcp_fec_config;
 
-/** Copied PSK v1 policy. A zero key, NONE FEC, or partial FEC config is rejected. */
+/**
+ * Copied PSK v1 policy. A zero key, NONE FEC, or partial FEC config is rejected.
+ * Packet endpoint datagram send/receive capacities must cover fec.max_payload_bytes + 48
+ * bytes, including parity length metadata, the wire header, and the MAC.
+ */
 typedef struct cnet_kcp_security_config {
   size_t size;
   cnet_kcp_security_mode mode;

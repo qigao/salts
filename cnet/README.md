@@ -343,6 +343,12 @@ records, replay rejection, and Reed-Solomon FEC. There is no plaintext fallback
 or wire sniffing. Unknown peers reach `on_admit` only after their client hello
 passes a stateless PSK MAC check.
 
+FEC `max_payload_bytes` must not exceed 65533: parity shards include the
+two-byte data length and must fit the 16-bit wire length field. Packet endpoint
+datagram send/receive limits must cover `max_payload_bytes + 48` bytes (30-byte
+header, two-byte parity length metadata, and 16-byte MAC); undersized limits
+are rejected during initialization.
+
 ## WebSocket session engine
 
 `<cnet/websocket.h>` provides a transport-independent RFC 6455 session after a

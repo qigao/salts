@@ -10,8 +10,6 @@ enum {
   CNET_KCP_FEC_MAX_RECEIVE_GROUPS = 64,
   CNET_KCP_FEC_MAX_TOTAL_SHARDS = 255,
   CNET_KCP_FEC_MAX_STATE_BYTES = 64 * 1024 * 1024,
-  CNET_KCP_FEC_HEADER_BYTES = 30,
-  CNET_KCP_FEC_MAC_BYTES = 16,
   CNET_KCP_FEC_VERSION = 1,
   CNET_KCP_FEC_DATA_FRAME = 1,
   CNET_KCP_FEC_PARITY_FRAME = 2
@@ -107,7 +105,10 @@ int cnet_kcp_fec_config_validate(const cnet_kcp_fec_config *config) {
     return SALTS_EINVAL;
   total_shards = (size_t)config->data_shards + config->parity_shards;
   if (total_shards > CNET_KCP_FEC_MAX_TOTAL_SHARDS) return SALTS_EINVAL;
-  shard_size = (size_t)config->max_payload_bytes + 2u;
+  /* Parity covers the stored data length too, and must fit the wire length field. */
+  if (config->max_payload_bytes > UINT16_MAX - CNET_KCP_FEC_DATA_LENGTH_BYTES)
+    return SALTS_ERANGE;
+  shard_size = (size_t)config->max_payload_bytes + CNET_KCP_FEC_DATA_LENGTH_BYTES;
   if (total_shards > SIZE_MAX / shard_size) return SALTS_ERANGE;
   group_bytes = total_shards * shard_size;
   if ((size_t)config->receive_group_count > SIZE_MAX / group_bytes ||
@@ -151,8 +152,9 @@ int cnet_kcp_fec_init(const cnet_kcp_fec_config *config, cnet_kcp_fec_output_fn 
   state->output = output;
   state->output_user = output_user;
   state->next_group_id = 1u;
-  state->shard_size = (size_t)config->max_payload_bytes + 2u;
-  state->frame_capacity = CNET_KCP_FEC_HEADER_BYTES + state->shard_size + CNET_KCP_FEC_MAC_BYTES;
+  state->shard_size = (size_t)config->max_payload_bytes + CNET_KCP_FEC_DATA_LENGTH_BYTES;
+  state->frame_capacity =
+      (size_t)config->max_payload_bytes + CNET_KCP_FEC_MAX_WIRE_OVERHEAD_BYTES;
   status = cnet_kcp_fec_map_codec_status(
       miniblas_gf256_rs_init(&state->codec, config->data_shards, config->parity_shards));
   if (status != SALTS_OK) {
@@ -267,7 +269,7 @@ int cnet_kcp_fec_send(cnet_kcp_fec_state *state, const void *data, size_t size) 
   block = state->encode_shards[shard_id];
   memset(block, 0, state->shard_size);
   cnet_kcp_fec_write_u16(block, (uint16_t)size);
-  memcpy(block + 2u, data, size);
+  memcpy(block + CNET_KCP_FEC_DATA_LENGTH_BYTES, data, size);
   status = cnet_kcp_fec_emit(state, CNET_KCP_FEC_DATA_FRAME, group_id, shard_id, data, size);
   if (status != SALTS_OK) return status;
   ++state->next_shard_id;
@@ -327,7 +329,7 @@ static int cnet_kcp_fec_store(cnet_kcp_fec_state *state,
   memset(block, 0, state->shard_size);
   if (data_frame) {
     cnet_kcp_fec_write_u16(block, (uint16_t)payload_size);
-    memcpy(block + 2u, payload, payload_size);
+    memcpy(block + CNET_KCP_FEC_DATA_LENGTH_BYTES, payload, payload_size);
   } else {
     memcpy(block, payload, payload_size);
   }
@@ -375,7 +377,8 @@ int cnet_kcp_fec_input(cnet_kcp_fec_state *state, const void *data, size_t size,
           status = SALTS_EPROTO;
           break;
         }
-        status = deliver(deliver_user, group->shards[index] + 2u, recovered_size);
+        status = deliver(deliver_user, group->shards[index] + CNET_KCP_FEC_DATA_LENGTH_BYTES,
+                         recovered_size);
         if (status != SALTS_OK) break;
       }
     }
