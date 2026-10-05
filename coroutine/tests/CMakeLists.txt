@@ -16,6 +16,11 @@ cmake_add_test(cmeta_coroutine_facade_test
   LIBS Salts::Coroutine Salts::Platform Salts::TinyTest
   FOLDER "coroutine/tests")
 
+cmake_add_test(cmeta_coroutine_header_cpp_test
+  SOURCES cmeta_coroutine_header_cpp_test.cpp
+  LIBS Salts::Coroutine
+  FOLDER "coroutine/tests")
+
 
 add_test(
   NAME coroutine_executor_private_batch_contract_test
