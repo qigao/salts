@@ -81,31 +81,51 @@ for nodelay in (0, 1):
     for mode in ("push", "echo"):
         for temp in ("fresh", "warm"):
             print(f"### public CNet {mode} / {temp} / nodelay={nodelay}")
-        print()
-        print(
-            "| payload | owners | ops/s | speedup | p50 us | p95 us | p99 us | "
-            "owner CPU ns/op | CPU ratio |"
-        )
-        print(
-            "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
-        )
+            print()
+            print(
+                "| payload | owners | ops/s | speedup | p50 us | p95 us | p99 us | "
+                "owner CPU ns/op | CPU ratio |"
+            )
+            print(
+                "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+            )
             for payload in (16384, 32768, 65536):
                 base = groups[(nodelay, mode, temp, payload, 1)]
                 base_rate = median(base, "ops_per_second")
                 base_cpu = median(base, "owner_cpu_ns_per_op")
                 for owners in (1, 2, 4):
                     points = groups[(nodelay, mode, temp, payload, owners)]
-                rate = median(points, "ops_per_second")
-                cpu = median(points, "owner_cpu_ns_per_op")
-                print(
-                    f"| {payload} | {owners} | {rate:.1f} | "
-                    f"{rate/base_rate:.3f}x | "
-                    f"{median(points, 'p50_ns')/1000.0:.1f} | "
-                    f"{median(points, 'p95_ns')/1000.0:.1f} | "
-                    f"{median(points, 'p99_ns')/1000.0:.1f} | "
-                    f"{cpu:.1f} | {cpu/base_cpu:.3f}x |"
-                )
-        print()
+                    rate = median(points, "ops_per_second")
+                    cpu = median(points, "owner_cpu_ns_per_op")
+                    print(
+                        f"| {payload} | {owners} | {rate:.1f} | "
+                        f"{rate/base_rate:.3f}x | "
+                        f"{median(points, 'p50_ns')/1000.0:.1f} | "
+                        f"{median(points, 'p95_ns')/1000.0:.1f} | "
+                        f"{median(points, 'p99_ns')/1000.0:.1f} | "
+                        f"{cpu:.1f} | {cpu/base_cpu:.3f}x |"
+                    )
+            print()
+
+print("### NODELAY echo p50 delta")
+print()
+print("| temp | payload | owners | nodelay=0 us | nodelay=1 us | ratio |")
+print("| --- | ---: | ---: | ---: | ---: | ---: |")
+for temp in ("fresh", "warm"):
+    for payload in (16384, 32768, 65536):
+        for owners in (1, 2, 4):
+            disabled = median(
+                groups[(0, "echo", temp, payload, owners)], "p50_ns"
+            )
+            enabled = median(
+                groups[(1, "echo", temp, payload, owners)], "p50_ns"
+            )
+            print(
+                f"| {temp} | {payload} | {owners} | "
+                f"{disabled/1000.0:.1f} | {enabled/1000.0:.1f} | "
+                f"{enabled/disabled:.3f}x |"
+            )
+print()
 
 print(
     "Public-path gate: real CNet listener/connect/TLS/NativeIO/send/receive APIs, "
