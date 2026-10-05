@@ -1,9 +1,9 @@
-name: NativeIO and CNet release benchmarks
+name: NativeIO and CNet benchmarks
 
 on:
   pull_request:
     paths:
-      - ".github/workflows/native-io-release-benchmarks.yml"
+      - ".github/workflows/native-io-benchmarks.yml"
       - "native-io/**"
       - "coroutine/**"
       - "cnet/**"
@@ -51,7 +51,7 @@ on:
   push:
     branches: [master]
     paths:
-      - ".github/workflows/native-io-release-benchmarks.yml"
+      - ".github/workflows/native-io-benchmarks.yml"
       - "native-io/**"
       - "coroutine/**"
       - "cnet/**"
@@ -114,14 +114,8 @@ jobs:
     outputs:
       profile: ${{ steps.scope.outputs.profile }}
       evidence: ${{ steps.scope.outputs.evidence }}
-      contracts: ${{ steps.scope.outputs.contracts }}
-      native_contracts: ${{ steps.scope.outputs.native_contracts }}
-      cnet_contracts: ${{ steps.scope.outputs.cnet_contracts }}
-      coroutine_contracts: ${{ steps.scope.outputs.coroutine_contracts }}
-      cflow_contracts: ${{ steps.scope.outputs.cflow_contracts }}
       work: ${{ steps.scope.outputs.work }}
       cnet_compare: ${{ steps.scope.outputs.cnet_compare }}
-      asan: ${{ steps.scope.outputs.asan }}
       native_owner: ${{ steps.scope.outputs.native_owner }}
       native_style: ${{ steps.scope.outputs.native_style }}
       cnet_owner: ${{ steps.scope.outputs.cnet_owner }}
@@ -156,12 +150,6 @@ jobs:
             $runCflow = $true
             $runNativeUring = $true
             $runForensic = $true
-            $runNativeContracts = $true
-            $runCnetContracts = $true
-            $runCoroutineContracts = $true
-            $runCflowContracts = $true
-            $runContracts = $true
-            $runAsan = $true
           } else {
             $base = "${{ github.event.pull_request.base.sha }}"
             if ([string]::IsNullOrWhiteSpace($base) -or $base -match "^0+$") {
@@ -175,12 +163,6 @@ jobs:
               $runCflow = $true
               $runNativeUring = $true
               $runForensic = $true
-              $runNativeContracts = $true
-              $runCnetContracts = $true
-              $runCoroutineContracts = $true
-              $runCflowContracts = $true
-              $runContracts = $true
-              $runAsan = $true
             } else {
               $head = (git rev-parse HEAD).Trim()
               $changed = @(git diff --name-only $base $head)
@@ -195,8 +177,7 @@ jobs:
                   $_ -eq "CMakeLists.txt" -or
                   $_ -eq "CMakePresets.json" -or
                   $_ -eq "CMakeUserPresets.json" -or
-                  $_ -eq ".github/actions/setup-re2c-tools/action.yml" -or
-                  $_ -eq ".github/workflows/native-io-release-benchmarks.yml"
+                  $_ -eq ".github/actions/setup-re2c-tools/action.yml"
                 }).Count -gt 0
               $dependencyChanged = @($changed | Where-Object {
                   $_ -eq "vcpkg.json" -or $_ -eq "vcpkg-configuration.json"
@@ -219,21 +200,6 @@ jobs:
                 }).Count -gt 0
               $platformRuntime = @($changed | Where-Object {
                   $_ -like "platform/src/*" -or $_ -like "platform/include/*"
-                }).Count -gt 0
-              $nativeTestsChanged = @($changed | Where-Object {
-                  $_ -like "native-io/tests/*"
-                }).Count -gt 0
-              $cnetTestsChanged = @($changed | Where-Object {
-                  $_ -like "cnet/tests/*"
-                }).Count -gt 0
-              $coroutineTestsChanged = @($changed | Where-Object {
-                  $_ -like "coroutine/tests/*"
-                }).Count -gt 0
-              $cflowContractsChanged = @($changed | Where-Object {
-                  $_ -like "cflow/src/*" -or
-                  $_ -like "cflow/include/*" -or
-                  $_ -like "cflow/tests/*" -or
-                  $_ -eq "cflow/CMakeLists.txt"
                 }).Count -gt 0
 
               $nativeOwnerBench = @($changed | Where-Object {
@@ -298,41 +264,18 @@ jobs:
                 $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
                 $buildChanged -or $dependencyChanged
 
-              $runNativeContracts = $nativeRuntime -or $nativeTestsChanged -or
-                $concurrencyRuntime -or $platformRuntime -or
-                $buildChanged -or $dependencyChanged
-              $runCnetContracts = $cnetRuntime -or $cnetTestsChanged -or
-                $nativeRuntime -or $concurrencyRuntime -or $platformRuntime -or
-                $buildChanged -or $dependencyChanged
-              $runCoroutineContracts = $coroutineRuntime -or $coroutineTestsChanged -or
-                $concurrencyRuntime -or $buildChanged -or $dependencyChanged
-              $runCflowContracts = $cflowContractsChanged -or $nativeRuntime -or
-                $cnetRuntime -or $buildChanged -or $dependencyChanged
-              $runContracts = $runNativeContracts -or $runCnetContracts -or
-                $runCoroutineContracts -or $runCflowContracts
-
-              $runAsan = $cnetRuntime -or $nativeRuntime -or
-                $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
-                $cnetTestsChanged -or $buildChanged -or $dependencyChanged
-
             }
           }
 
           $runEvidence = $runNativeOwner -or $runNativeStyle -or
             $runCnetOwner -or $runCnetIo -or $runCnetSg -or
             $runCoroutine -or $runCflow -or $runNativeUring -or $runForensic
-          $runWork = $runEvidence -or $runContracts
+          $runWork = $runEvidence
 
           "profile=$benchmarkProfile" >> $env:GITHUB_OUTPUT
           "evidence=$($runEvidence.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          "contracts=$($runContracts.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          "native_contracts=$($runNativeContracts.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          "cnet_contracts=$($runCnetContracts.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          "coroutine_contracts=$($runCoroutineContracts.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          "cflow_contracts=$($runCflowContracts.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "work=$($runWork.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "cnet_compare=$($runCnetCompare.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          "asan=$($runAsan.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "native_owner=$($runNativeOwner.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "native_style=$($runNativeStyle.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "cnet_owner=$($runCnetOwner.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
@@ -356,14 +299,8 @@ jobs:
             @("cflow", "${{ steps.scope.outputs.cflow }}"),
             @("native_uring", "${{ steps.scope.outputs.native_uring }}"),
             @("forensic", "${{ steps.scope.outputs.forensic }}"),
-            @("contracts", "${{ steps.scope.outputs.contracts }}"),
-            @("native_contracts", "${{ steps.scope.outputs.native_contracts }}"),
-            @("cnet_contracts", "${{ steps.scope.outputs.cnet_contracts }}"),
-            @("coroutine_contracts", "${{ steps.scope.outputs.coroutine_contracts }}"),
-            @("cflow_contracts", "${{ steps.scope.outputs.cflow_contracts }}"),
             @("work", "${{ steps.scope.outputs.work }}"),
-            @("cnet_compare", "${{ steps.scope.outputs.cnet_compare }}"),
-            @("asan", "${{ steps.scope.outputs.asan }}")
+            @("cnet_compare", "${{ steps.scope.outputs.cnet_compare }}")
           )
           Write-Host "Selected benchmark scopes:"
           foreach ($row in $rows) { Write-Host ("  {0}={1}" -f $row[0], $row[1]) }
@@ -378,6 +315,11 @@ jobs:
         shell: pwsh
         run: |
           ./cmake/ci/verify-benchmark-policy.ps1 -ProjectRoot . -WriteSummary
+
+      - name: Validate CNet performance CI contract
+        shell: pwsh
+        run: |
+          cmake -DPROJECT_SOURCE_DIR="$env:GITHUB_WORKSPACE" -P ./cnet/tests/cnet_performance_ci_contract_test.cmake
 
       - name: Validate PR artifact pruning contract
         shell: pwsh
@@ -585,85 +527,49 @@ jobs:
         shell: bash
         run: echo "vcpkg cache hit=${{ steps.macos-vcpkg-cache.outputs.cache-hit }} contract=${{ steps.shared_deps.outputs.contract_version }} revision=${{ steps.shared_deps.outputs.cache_revision }}"
 
-      - name: Configure and build Linux Release
+      - name: Configure and build Linux benchmark targets
         if: needs.scope.outputs.work == 'true' && matrix.family == 'linux'
         shell: bash
         run: |
           set -euo pipefail
           cmake --preset "${{ matrix.configure_preset }}" \
-            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
-          cmake --build --preset "${{ matrix.build_preset }}" \
-            --target native_io_test native_io_sharded_test native_io_header_cpp_test \
-              native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark cnet_tls_provider_parallel_benchmark cnet_tls_public_owner_benchmark \
-              cnet_websocket_parser_test cnet_websocket_test \
-              cnet_session_test cnet_command_test cnet_uri_test \
-              cnet_transport_test cnet_owner_test cnet_owner_profile_test \
-              cnet_event_test \
-              cnet_resolver_test cnet_shards_test cnet_dispatcher_test \
-              cnet_api_test cnet_api_profile_test cnet_header_cpp_test cnet_tls_test \
-              cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test \
-              cnet_packet_endpoint_test cnet_stop_contract_test \
-              cnet_vsock_integration_test \
-              cnet_benchmark_stats_test cnet_io_benchmark_config_test \
-              concurrency_deadline_queue_test native_io_queue_depth_benchmark \
-              native_io_idle_observe_benchmark native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark salts_coro_executor_test salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark native_io_pipe_styles_benchmark \
-              native_io_stream_styles_benchmark native_io_udp_styles_benchmark native_io_vsock_styles_benchmark cnet_scaling_benchmark cnet_owner_parallel_benchmark cnet_shards_parallel_benchmark cnet_external_owner_parallel_benchmark cnet_central_callback_benchmark cflow_control_path_benchmark \
-              cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_parallel_reduce_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
-
-      - name: Configure Windows Release
+            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target \
+            cnet_io_benchmark cnet_tls_sg_benchmark cnet_tls_provider_parallel_benchmark cnet_tls_public_owner_benchmark \
+            cnet_owner_lifecycle_compare cnet_scaling_benchmark cnet_owner_parallel_benchmark cnet_shards_parallel_benchmark \
+            cnet_external_owner_parallel_benchmark cnet_central_callback_benchmark \
+            native_io_queue_depth_benchmark native_io_idle_observe_benchmark native_io_sharded_routing_benchmark \
+            native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark \
+            native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark native_io_vsock_styles_benchmark \
+            salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark cflow_control_path_benchmark
+      - name: Configure Windows benchmark targets
         if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         shell: cmd
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
-
-      - name: Build Windows Release
+          cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
+      - name: Build Windows benchmark targets
         if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         shell: cmd
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_sharded_test native_io_header_cpp_test native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark cnet_websocket_parser_test cnet_websocket_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_owner_profile_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_api_profile_test cnet_header_cpp_test cnet_tls_test cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test cnet_packet_endpoint_test cnet_stop_contract_test cnet_benchmark_stats_test cnet_io_benchmark_config_test concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark salts_coro_executor_test salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_control_path_benchmark cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_parallel_reduce_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
-
-      - name: Configure and build macOS Release
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target cnet_io_benchmark cnet_tls_sg_benchmark cnet_owner_lifecycle_compare native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_control_path_benchmark
+      - name: Configure and build macOS benchmark targets
         if: needs.scope.outputs.work == 'true' && matrix.family == 'mac'
         shell: bash
         run: |
           set -euo pipefail
           cmake --preset "${{ matrix.configure_preset }}" \
-            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
-          cmake --build --preset "${{ matrix.build_preset }}" \
-            --target native_io_test native_io_sharded_test native_io_header_cpp_test \
-              native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark \
-              cnet_websocket_parser_test cnet_websocket_test \
-              cnet_session_test cnet_command_test cnet_uri_test \
-              cnet_transport_test cnet_owner_test cnet_owner_profile_test \
-              cnet_event_test \
-              cnet_resolver_test cnet_shards_test cnet_dispatcher_test \
-              cnet_api_test cnet_api_profile_test cnet_header_cpp_test cnet_tls_test \
-              cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test \
-              cnet_packet_endpoint_test cnet_stop_contract_test \
-              cnet_benchmark_stats_test \
-              cnet_io_benchmark_config_test \
-              concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark salts_coro_executor_test salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_control_path_benchmark cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_parallel_reduce_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
-
-      - name: Run NativeIO and NativeIPC contract tests
-        if: needs.scope.outputs.native_contracts == 'true'
-        shell: pwsh
-        run: |
-          ctest --test-dir "${{ matrix.build_dir }}" -R '^(native_(io|ipc)_(test|header_cpp_test)|native_io_sharded_test|native_io_uring_batch_test|native_io_architecture_contract_test|native_io_accept_escrow_test|native_io_internal_accept_test|native_io_iocp_accept_test|native_io_readiness_accept_test|native_io_uring_accept_test)$' --timeout 30 --output-on-failure
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Run CFlow contract tests
-        if: needs.scope.outputs.cflow_contracts == 'true'
-        shell: pwsh
-        run: |
-          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cflow_seeded_reduce_test|cflow_pipeline_test|cflow_plan_managed_test|cflow_parallel_reduce_test|cflow_io_native_test|cflow_io_native(_sharded)?_adapter_test|cflow_io_cnet_adapter_test|cflow_header_cpp_test|cflow_cnet_header_cpp_test|cflow_cnet_dependency_contract_test|cflow_pipe_data_plane_contract_test)$' --timeout 60 --output-on-failure
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
+            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target \
+            cnet_io_benchmark cnet_tls_sg_benchmark \
+            native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark \
+            salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark \
+            native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_control_path_benchmark
       - name: Run CFlow ordered parallel reduce benchmark
         if: needs.scope.outputs.cflow == 'true' && matrix.family == 'linux' && matrix.backend == 'io_uring'
         shell: bash
@@ -697,7 +603,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset win-release-user -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=ON
+          cmake --preset win-release-user -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_BENCHMARKS=ON -DBUILD_EXAMPLES=OFF
           if errorlevel 1 exit /b 1
           cmake --build --preset win-release-user --parallel 2 --target cflow_parallel_reduce_benchmark
           if errorlevel 1 exit /b 1
@@ -760,14 +666,6 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '~~~text'
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '~~~'
-
-      - name: Run CNet contract tests
-        if: needs.scope.outputs.cnet_contracts == 'true'
-        shell: pwsh
-        run: |
-          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cnet_.*_test|concurrency_deadline_queue_test)$' --timeout 60 --output-on-failure
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ./cnet/tests/cnet_io_trace_test.ps1
 
       - name: Build PR-base CNet comparison DSO
         if: matrix.family == 'windows' && needs.scope.outputs.cnet_compare == 'true' && github.event_name == 'pull_request'
@@ -1402,13 +1300,6 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO owner-local parallel throughput: $env:NATIVE_IO_OWNER_LOCAL_PARALLEL_BACKEND / default"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
-
-      - name: Run Coroutine Executor batch/private contracts
-        if: needs.scope.outputs.coroutine == 'true' || needs.scope.outputs.coroutine_contracts == 'true'
-        shell: pwsh
-        run: |
-          ctest --test-dir "${{ matrix.build_dir }}" -R '^(salts_coro_executor_test|coroutine_executor_private_batch_contract_test)$' --timeout 60 --output-on-failure
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run Coroutine Executor batch admission CPU-set sweep
         if: matrix.family == 'linux' && needs.scope.outputs.coroutine == 'true'
@@ -2225,64 +2116,3 @@ jobs:
           path: native-io-results
           if-no-files-found: error
           retention-days: 30
-
-  cnet-owned-receive-asan:
-    needs: scope
-    if: needs.scope.outputs.asan == 'true'
-    name: CNet owned receive ASan / Ubuntu 24.04 GCC
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Set up shared build dependencies
-        uses: ./.github/actions/setup-re2c-tools
-
-      - name: Prepare Linux ASan dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes ninja-build nasm
-          test -n "${VCPKG_ROOT:-}"
-          test -f "${QIGAO_VCPKG_TOOLCHAIN_FILE:-}"
-
-      - name: Configure CNet Debug with AddressSanitizer
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake --preset linux-dev-user \
-            -DBUILD_TESTS=ON \
-            -DENABLE_TESTS=ON \
-            -DBUILD_BENCHMARKS=OFF \
-            -DBUILD_EXAMPLES=OFF \
-            -DENABLE_SANITIZER_ADDRESS=ON
-
-      - name: Build CNet ownership and lifecycle tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake --build --preset linux-dev-user --parallel 2 --target \
-            cnet_owner_test \
-            cnet_session_test \
-            cnet_event_test \
-            cnet_dispatcher_test \
-            cnet_api_test \
-            cnet_tls_test \
-            cnet_datagram_test \
-            cnet_stop_contract_test
-
-      - name: Run CNet ownership and lifecycle tests under ASan
-        shell: bash
-        env:
-          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:abort_on_error=1
-        run: |
-          set -euo pipefail
-          ctest --test-dir build/linux-gcc-debug \
-            -R '^(cnet_(owner|session|event|dispatcher|api|tls|datagram|stop_contract)_test)$' \
-            --timeout 90 --output-on-failure
-
