@@ -30,6 +30,51 @@ const cmeta_type_desc cflow_type_waker = {
     .identity = NULL
 };
 
+static const cmeta_type_traits cflow_trivial_value_traits = {
+    .flags = CMETA_TRAIT_TRIVIAL_COPY |
+             CMETA_TRAIT_TRIVIAL_DESTROY
+};
+
+const cmeta_type_desc cflow_type_step = {
+    .name = "cflow_step",
+    .size = sizeof(cflow_step),
+    .align = _Alignof(cflow_step),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &cflow_trivial_value_traits,
+    .identity = NULL
+};
+
+const cmeta_type_desc cflow_type_publish_context = {
+    .name = "cflow_publish_context",
+    .size = sizeof(cflow_publish_context),
+    .align = _Alignof(cflow_publish_context),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &cflow_trivial_value_traits,
+    .identity = NULL
+};
+
+const cmeta_type_desc cflow_type_publish_context_ptr = {
+    .name = "cflow_publish_context *",
+    .size = sizeof(cflow_publish_context *),
+    .align = _Alignof(cflow_publish_context *),
+    .kind = CMETA_T_POINTER,
+    .pointee = &cflow_type_publish_context,
+    .traits = NULL,
+    .identity = NULL
+};
+
+const cmeta_type_desc cflow_type_publisher_terminal = {
+    .name = "cflow_publisher_terminal",
+    .size = sizeof(cflow_publisher_terminal),
+    .align = _Alignof(cflow_publisher_terminal),
+    .kind = CMETA_T_INTEGER,
+    .pointee = NULL,
+    .traits = &cflow_trivial_value_traits,
+    .identity = NULL
+};
+
 static bool callback_sink_value(void *self,
                                 const cmeta_type_desc *type,
                                 const void *value) {
