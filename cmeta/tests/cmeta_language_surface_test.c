@@ -1,7 +1,7 @@
 #include <cmeta/meta.h>
 
 #ifdef Containers
-#error "Containers(...) is removed; use one typed(...) declaration per type"
+#error "Containers(...) is removed; use one cmeta_type(...) declaration per type"
 #endif
 
 #ifdef CMETA_TRAITS_POSITIONAL
