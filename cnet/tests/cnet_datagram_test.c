@@ -31,6 +31,10 @@ typedef struct cnet_datagram_test_probe {
   int send_status;
   int receive_count;
   int send_count;
+  int nested_receive_status;
+  bool receive_in_callback;
+  bool receive_in_send_callback;
+  bool receive_view_stable;
 } cnet_datagram_test_probe;
 
 static native_io_backend_kind cnet_datagram_test_backend(void) {
@@ -78,7 +82,6 @@ static void cnet_datagram_test_receive(void *user, cnet_datagram *datagram,
                                        const cnet_datagram_peer *peer,
                                        const cnet_receive_view *view) {
   cnet_datagram_test_probe *probe = (cnet_datagram_test_probe *)user;
-  (void)datagram;
   if (peer == NULL || view == NULL || view->kind != CNET_MESSAGE_DATAGRAM ||
       view->size > sizeof(probe->received))
     return;
@@ -86,18 +89,26 @@ static void cnet_datagram_test_receive(void *user, cnet_datagram *datagram,
   memcpy(probe->received, view->data, view->size);
   probe->received_size = view->size;
   ++probe->receive_count;
+  if (probe->receive_in_callback) {
+    probe->receive_in_callback = false;
+    probe->nested_receive_status = cnet_datagram_receive(datagram, 1u);
+    probe->receive_view_stable = memcmp(view->data, probe->received, view->size) == 0;
+  }
 }
 
 static void cnet_datagram_test_send(void *user, cnet_datagram *datagram,
                                     const cnet_datagram_peer *peer, size_t size, int status,
                                     uint64_t tag) {
   cnet_datagram_test_probe *probe = (cnet_datagram_test_probe *)user;
-  (void)datagram;
   (void)peer;
   probe->send_size = size;
   probe->send_status = status;
   probe->send_tag = tag;
   ++probe->send_count;
+  if (probe->receive_in_send_callback) {
+    probe->receive_in_send_callback = false;
+    probe->nested_receive_status = cnet_datagram_receive(datagram, 1u);
+  }
 }
 
 static cnet_datagram_config cnet_datagram_test_config(cnet_datagram_test_probe *probe) {
@@ -117,6 +128,115 @@ static cnet_datagram_config cnet_datagram_test_config(cnet_datagram_test_probe *
 }
 
 spec("CNet bound UDP datagram") {
+  group("callback receive admission") {
+    static cnet_datagram datagram;
+    static cnet_datagram_test_probe probe;
+    static cnet_datagram_test_socket peer_socket;
+    static struct sockaddr_in peer_address;
+    static struct sockaddr_in server_address;
+
+    before_each() {
+      cnet_datagram_config config;
+      uint16_t port = 0u;
+      memset(&datagram, 0, sizeof(datagram));
+      memset(&probe, 0, sizeof(probe));
+      memset(&server_address, 0, sizeof(server_address));
+      peer_socket = CNET_DATAGRAM_TEST_INVALID_SOCKET;
+      config = cnet_datagram_test_config(&probe);
+      config.max_datagram_bytes = sizeof(probe.received);
+      config.receive_buffer_bytes = sizeof(probe.received);
+      check_equal(cnet_datagram_init(&datagram, &config), SALTS_OK);
+      check_equal(cnet_datagram_port(&datagram, &port), SALTS_OK);
+      peer_socket = cnet_datagram_test_peer(&peer_address);
+      check_true(peer_socket != CNET_DATAGRAM_TEST_INVALID_SOCKET);
+      server_address.sin_family = AF_INET;
+      server_address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+      server_address.sin_port = htons(port);
+    }
+
+    after_each() {
+      cnet_datagram_test_close(peer_socket);
+      peer_socket = CNET_DATAGRAM_TEST_INVALID_SOCKET;
+      if (datagram.impl != NULL) {
+        check_equal(cnet_datagram_stop(&datagram, CNET_DATAGRAM_TEST_TIMEOUT_MS), SALTS_OK);
+        check_equal(cnet_datagram_destroy(&datagram), SALTS_OK);
+      }
+    }
+
+    it("keeps the receive view stable when its callback requests the next queued packet") {
+      static const unsigned char first[] = {1u, 3u, 5u, 7u};
+      static const unsigned char second[] = {2u, 4u, 6u, 8u};
+      size_t events = 0u;
+      probe.receive_in_callback = true;
+      check_equal(sendto(peer_socket, (const char *)first, (int)sizeof(first), 0,
+                         (const struct sockaddr *)&server_address, (int)sizeof(server_address)),
+                  (int)sizeof(first));
+      check_equal(sendto(peer_socket, (const char *)second, (int)sizeof(second), 0,
+                         (const struct sockaddr *)&server_address, (int)sizeof(server_address)),
+                  (int)sizeof(second));
+      check_equal(cnet_datagram_receive(&datagram, 1u), SALTS_OK);
+      check_equal(cnet_datagram_poll(&datagram, CNET_DATAGRAM_TEST_TIMEOUT_MS, &events), SALTS_OK);
+      check_equal(probe.receive_count, 1);
+      check_equal(probe.received_size, sizeof(first));
+      check_equal(probe.received, first, sizeof(first));
+      check_equal(probe.nested_receive_status, SALTS_OK);
+      check_true(probe.receive_view_stable);
+      check_equal(cnet_datagram_poll(&datagram, CNET_DATAGRAM_TEST_TIMEOUT_MS, &events), SALTS_OK);
+      check_equal(probe.receive_count, 2);
+      check_equal(probe.received_size, sizeof(second));
+      check_equal(probe.received, second, sizeof(second));
+    }
+
+    it("starts receive demand admitted by a send callback after the callback returns") {
+      static const unsigned char payload[] = {9u, 8u, 7u};
+      size_t events = 0u;
+      probe.receive_in_send_callback = true;
+      probe.peer.family = CNET_DATAGRAM_ADDRESS_IPV4;
+      probe.peer.port = ntohs(peer_address.sin_port);
+      memcpy(probe.peer.address, &peer_address.sin_addr, sizeof(peer_address.sin_addr));
+      check_equal(sendto(peer_socket, (const char *)payload, (int)sizeof(payload), 0,
+                         (const struct sockaddr *)&server_address, (int)sizeof(server_address)),
+                  (int)sizeof(payload));
+      check_equal(cnet_datagram_send(&datagram, &probe.peer, payload, sizeof(payload), 1u), SALTS_OK);
+      check_equal(cnet_datagram_poll(&datagram, CNET_DATAGRAM_TEST_TIMEOUT_MS, &events), SALTS_OK);
+      check_equal(probe.send_count, 1);
+      check_equal(probe.send_status, SALTS_OK);
+      check_equal(probe.nested_receive_status, SALTS_OK);
+      check_equal(cnet_datagram_poll(&datagram, CNET_DATAGRAM_TEST_TIMEOUT_MS, &events), SALTS_OK);
+      check_equal(probe.receive_count, 1);
+      check_equal(probe.received, payload, sizeof(payload));
+    }
+
+    it("does not retry a failed receive merely because a send callback completed") {
+      unsigned char oversized[sizeof(probe.received) + 1u] = {0};
+      static const unsigned char payload[] = {9u, 8u, 7u};
+      size_t events = 0u;
+      check_equal(cnet_datagram_receive(&datagram, 1u), SALTS_OK);
+      check_equal(sendto(peer_socket, (const char *)oversized, (int)sizeof(oversized), 0,
+                         (const struct sockaddr *)&server_address, (int)sizeof(server_address)),
+                  (int)sizeof(oversized));
+      check_not_equal(cnet_datagram_poll(&datagram, CNET_DATAGRAM_TEST_TIMEOUT_MS, &events), SALTS_OK);
+      check_equal(probe.receive_count, 0);
+
+      probe.peer.family = CNET_DATAGRAM_ADDRESS_IPV4;
+      probe.peer.port = ntohs(peer_address.sin_port);
+      memcpy(probe.peer.address, &peer_address.sin_addr, sizeof(peer_address.sin_addr));
+      check_equal(sendto(peer_socket, (const char *)payload, (int)sizeof(payload), 0,
+                         (const struct sockaddr *)&server_address, (int)sizeof(server_address)),
+                  (int)sizeof(payload));
+      check_equal(cnet_datagram_send(&datagram, &probe.peer, payload, sizeof(payload), 1u), SALTS_OK);
+      check_equal(cnet_datagram_poll(&datagram, CNET_DATAGRAM_TEST_TIMEOUT_MS, &events), SALTS_OK);
+      check_equal(probe.send_count, 1);
+      check_equal(cnet_datagram_poll(&datagram, 0u, &events), SALTS_OK);
+      check_equal(probe.receive_count, 0);
+
+      check_equal(cnet_datagram_receive(&datagram, 1u), SALTS_OK);
+      check_equal(cnet_datagram_poll(&datagram, CNET_DATAGRAM_TEST_TIMEOUT_MS, &events), SALTS_OK);
+      check_equal(probe.receive_count, 1);
+      check_equal(probe.received, payload, sizeof(payload));
+    }
+  }
+
   it("rejects malformed hard bounds without publishing an object") {
     cnet_datagram datagram = {0};
     cnet_datagram_test_probe probe = {0};

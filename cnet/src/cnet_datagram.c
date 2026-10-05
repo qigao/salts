@@ -188,7 +188,9 @@ static int cnet_datagram_peer_to_native(const cnet_datagram_peer *peer,
 static int cnet_datagram_arm_receive(cnet_datagram_impl *impl) {
   native_io_operation operation;
   int status;
-  if (impl->receive_active || impl->receive_demand == 0u || impl->stopping) return SALTS_OK;
+  /* A callback still borrows receive_buffer; reentrant demand must wait for its return. */
+  if (impl->receive_active || impl->callback_active || impl->receive_demand == 0u || impl->stopping)
+    return SALTS_OK;
   memset(&impl->receive_peer, 0, sizeof(impl->receive_peer));
   operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_UDP_RECV_FROM,
                                     .endpoint = impl->endpoint,
@@ -252,6 +254,7 @@ static int cnet_datagram_complete(cnet_datagram_impl *impl,
     const size_t index = (size_t)completion->user_data - 1u;
     cnet_datagram_peer peer;
     size_t size;
+    size_t prior_receive_demand;
     uint64_t tag;
     int status;
     if (index >= impl->send_capacity || !impl->send_slots[index].active ||
@@ -264,11 +267,12 @@ static int cnet_datagram_complete(cnet_datagram_impl *impl,
     status = cnet_datagram_completion_status(completion);
     if (status == SALTS_OK && completion->bytes != size) status = SALTS_EIO;
     cnet_datagram_send_slot_release(impl, index);
+    prior_receive_demand = impl->receive_demand;
     impl->callback_active = true;
     impl->observer.on_send(impl->observer.user, impl->public_datagram, &peer, size, status, tag);
     impl->callback_active = false;
     ++*callback_count;
-    return SALTS_OK;
+    return impl->receive_demand > prior_receive_demand ? cnet_datagram_arm_receive(impl) : SALTS_OK;
   }
 }
 
