@@ -1242,6 +1242,9 @@ static int cnet_owner_tls_pump_impl(cnet_owner_impl *impl, cnet_owner_session *s
     if (plaintext_size != 0u) {
       cnet_event event;
 #if defined(CNET_INTERNAL_PROFILING)
+      if (impl->profile_active &&
+          impl->profile.tls_plaintext_receive_calls != UINT64_MAX)
+        ++impl->profile.tls_plaintext_receive_calls;
       cnet_owner_profile_add(
           impl, &impl->profile.tls_plaintext_receive_bytes,
           (uint64_t)plaintext_size);
@@ -1816,6 +1819,14 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
     if (completion->kind == NATIVE_IO_COMPLETION_OK) {
       if (completion->bytes == 0u || completion->bytes > cnet_tls_state_io_buffer_bytes(&session->tls))
         return cnet_owner_fail_session(impl, session, SALTS_EIO, request_stage);
+#if defined(CNET_INTERNAL_PROFILING)
+      if (impl->profile_active &&
+          impl->profile.tls_read_completion_calls != UINT64_MAX)
+        ++impl->profile.tls_read_completion_calls;
+      cnet_owner_profile_add(
+          impl, &impl->profile.tls_read_completion_bytes,
+          (uint64_t)completion->bytes);
+#endif
       status = cnet_tls_feed_cipher(&session->tls, cnet_tls_state_read_buffer(&session->tls), completion->bytes);
       if (status == SALTS_OK) status = cnet_owner_tls_pump(impl, session);
       if (status == SALTS_OK && session->occupied && !session->close_requested &&
