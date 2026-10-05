@@ -11,6 +11,9 @@ on:
       - "vcpkg-configuration.json"
       - "cmake/**"
       - "cmeta/**"
+      - "utils/include/salts_cmeta_fixed_width.h"
+      - "utils/tests/test_salts_cmeta_data.c"
+      - "utils/tests/test_salts_cmeta_data_cpp.cpp"
       - "cnet/src/**"
       - "cnet/include/**"
       - "cnet/CMakeLists.txt"
@@ -60,10 +63,11 @@ jobs:
           cmake --build --preset ${{ matrix.profile }} --parallel 2 --target
           cmeta_data_test cmeta_header_cpp_test cmeta_core_test
           cmeta_type_identity_test cmeta_container_type_test cmeta_collector_test
+          test_salts_cmeta_data test_salts_cmeta_data_cpp
       - name: Run CMeta lifecycle tests
         run: >-
           ctest --preset ${{ matrix.profile }} --no-tests=error --output-on-failure
-          -R '^(cmeta_data_test|cmeta_header_cpp_test|cmeta_core_test|cmeta_type_identity_test|cmeta_container_type_test|cmeta_collector_test)$'
+          -R '^(cmeta_data_test|cmeta_header_cpp_test|cmeta_core_test|cmeta_type_identity_test|cmeta_container_type_test|cmeta_collector_test|test_salts_cmeta_data|test_salts_cmeta_data_cpp)$'
   cnet-owned-receive-asan:
     name: CNet owned receive ASan / Ubuntu 24.04 GCC
     runs-on: ubuntu-24.04
@@ -121,5 +125,3 @@ jobs:
           ctest --test-dir build/linux-gcc-debug \
             -R '^(cnet_(owner|session|event|dispatcher|api|tls|datagram|stop_contract)_test)$' \
             --timeout 90 --output-on-failure
-
-
