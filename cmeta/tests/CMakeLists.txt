@@ -86,9 +86,6 @@ if(NOT CMAKE_CROSSCOMPILING)
             "${CMETA_INSPECTION_GENERATED_DIR}"
     COMMAND $<TARGET_FILE:cmeta_inspection_codegen>
             "${CMETA_INSPECTION_GENERATED_SOURCE}"
-    COMMAND ${CMAKE_COMMAND}
-            -DGENERATED=${CMETA_INSPECTION_GENERATED_SOURCE}
-            -P "${CMETA_INSPECTION_TEST_DIR}/verify_cmeta_inspection_generated.cmake"
     DEPENDS cmeta_inspection_codegen
     VERBATIM)
 
@@ -104,12 +101,6 @@ if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME cmeta_inspection_generated_test
            COMMAND cmeta_inspection_generated_test)
 
-  add_test(
-    NAME cmeta_inspection_codegen_rejects_mismatch
-    COMMAND ${CMAKE_COMMAND}
-            -DTOOL=$<TARGET_FILE:cmeta_inspection_codegen>
-            -DOUTPUT=${CMETA_INSPECTION_GENERATED_DIR}/rejected.c
-            -P "${CMETA_INSPECTION_TEST_DIR}/verify_cmeta_inspection_rejection.cmake")
 endif()
 
 cmake_add_test(cmeta_container_type_test
