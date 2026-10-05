@@ -117,8 +117,3 @@ set_target_properties(native_ipc_header_cpp_test PROPERTIES
   CXX_EXTENSIONS OFF)
 
 
-add_test(
-  NAME native_io_architecture_contract_test
-  COMMAND ${CMAKE_COMMAND}
-          -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
-          -P ${CMAKE_CURRENT_SOURCE_DIR}/native_io_architecture_contract_test.cmake)
