@@ -212,7 +212,7 @@ endfunction()
 function(cmake_add_benchmark target_name)
   set(options)
   set(oneValueArgs FOLDER)
-  set(multiValueArgs SOURCES LIBS DEFS INCLUDES)
+  set(multiValueArgs SOURCES LIBS DEFS INCLUDES TEST_ARGS)
   cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
   if(TARGET ${target_name})
@@ -235,7 +235,7 @@ function(cmake_add_benchmark target_name)
 
   # CI executes benchmark programs only through CTest. BUILD_BENCHMARKS is
   # opt-in, so ordinary test graphs do not discover or run these tests.
-  add_test(NAME benchmark.${target_name} COMMAND ${target_name})
+  add_test(NAME benchmark.${target_name} COMMAND ${target_name} ${ARG_TEST_ARGS})
   set_tests_properties(benchmark.${target_name} PROPERTIES LABELS "benchmark")
 
   cmake_config_target(${target_name} FOLDER "${ARG_FOLDER}")
