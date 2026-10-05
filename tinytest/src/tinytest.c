@@ -13,8 +13,8 @@
 #endif
 #endif
 
-#include "tinymeta/internal.h"
-#include "tinymeta/pp.h"
+#include "tinytest/detail/runtime.h"
+#include "tinytest/detail/pp.h"
 
 #include <stdio.h>
 #include <stdlib.h>

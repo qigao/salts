@@ -2,7 +2,7 @@
 #define TINYTEST_EQUALITY_H
 
 #if !defined(TINYTEST_H) || !defined(TINYTEST_TRAITS_H)
-#error "equality.h is included by tinytest.h and is not a standalone header"
+#error "TinyTest equality detail is included by tinytest.h and is not a standalone header"
 #endif
 
 #ifdef __cplusplus

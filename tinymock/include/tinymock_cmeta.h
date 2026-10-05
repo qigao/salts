@@ -16,7 +16,7 @@
  * semantic path.
  */
 
-#include "tinymock.h"
+#include "tinymock_support.h"
 #include "tinymock_history.h"
 #include "tinymock_actions.h"
 #include "tinymock_return.h"

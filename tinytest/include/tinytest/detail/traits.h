@@ -2,7 +2,7 @@
 #define TINYTEST_TRAITS_H
 
 #ifdef __cplusplus
-#error "tinymeta/traits.h is the strict-C11 trait layer; use tinytest.hpp from C++"
+#error "TinyTest C11 assertion traits are not available from C++; use tinytest.hpp"
 #endif
 
 #if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 201112L

@@ -1,7 +1,7 @@
 #ifndef TINYMOCK_HISTORY_H
 #define TINYMOCK_HISTORY_H
 
-#include "tinymock.h"
+#include "tinymock_support.h"
 #include "tinymock_value.h"
 
 #include <cmeta/function.h>
