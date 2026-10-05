@@ -16,14 +16,16 @@ bool tinymock_cmeta_function_equal(
 static bool tinymock_cmeta_history_copy_arg(
     tinymock_cmeta_value *value,
     const cmeta_type_desc *type,
-    const void *source,
-    const tinymock_value_t *boxed) {
-  if (type && type->kind == CMETA_T_POINTER &&
-      boxed && boxed->kind == TINYMOCk_VALUE_POINTER)
-    return tinymock_cmeta_value_copy_pointer(
-        value, type, source, boxed->as.pointer_value);
+    const tinymock_cmeta_arg_view *arg) {
+  if (!arg || !arg->address)
+    return false;
 
-  return tinymock_cmeta_value_copy(value, type, source);
+  if (type && type->kind == CMETA_T_POINTER &&
+      arg->has_object_pointer_identity)
+    return tinymock_cmeta_value_copy_pointer(
+        value, type, arg->address, arg->object_pointer_identity);
+
+  return tinymock_cmeta_value_copy(value, type, arg->address);
 }
 
 static void tinymock_cmeta_call_clear(tinymock_cmeta_recorded_call *call) {
@@ -63,8 +65,7 @@ bool tinymock_cmeta_history_record(
     tinymock_cmeta_history *history,
     const cmeta_function_desc *function,
     size_t argc,
-    const void *const *args,
-    const tinymock_value_t *boxed_args) {
+    const tinymock_cmeta_arg_view *args) {
   tinymock_cmeta_recorded_call *call;
   size_t index;
 
@@ -88,10 +89,9 @@ bool tinymock_cmeta_history_record(
   call->argc = argc;
 
   for (index = 0; index < argc; ++index) {
-    const tinymock_value_t *boxed = boxed_args ? &boxed_args[index] : NULL;
     if (!tinymock_cmeta_history_copy_arg(
             &call->args[index], function->params[index].type,
-            args[index], boxed)) {
+            &args[index])) {
       tinymock_cmeta_call_clear(call);
       return false;
     }
