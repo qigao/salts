@@ -338,10 +338,6 @@ tinymock_value_t tinymock_mock_dispatch(tinymock_mock_t *mock, size_t argc,
   return tinymock_mock_invoke(mock, argc, actual_args);
 }
 
-void tinymock_mock_note_call(tinymock_mock_t *mock) {
-  if (!mock) return;
-  ++mock->call_count;
-}
 
 size_t tinymock_mock_call_count(const tinymock_mock_t *mock) {
   return mock ? mock->call_count : 0u;
