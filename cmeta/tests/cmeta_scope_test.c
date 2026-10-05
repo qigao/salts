@@ -41,27 +41,40 @@ static const cmeta_type_desc ScopeProbe_type = {
     .traits = NULL,
     .identity = &ScopeProbe_identity
 };
-static const cmeta_data_buffer_shape ScopeProbe_shape = {
-    .ownership = CMETA_DATA_BUFFER_OWNED
-};
-static const cmeta_data_fixed_ops ScopeProbe_fixed_ops = {
-    .struct_size = sizeof(cmeta_data_fixed_ops),
-    .abi_version = CMETA_DATA_FIXED_OPS_ABI_VERSION,
+static cmeta_status ScopeProbe_init_zero(void *object) {
+    if (object == NULL) return CMETA_INVALID_ARGUMENT;
+    memset(object, 0, sizeof(ScopeProbe));
+    return CMETA_OK;
+}
+
+static void ScopeProbe_construct_restore_zero(void *object) {
+    ScopeProbe_restore_zero(object);
+}
+
+static void ScopeProbe_move(void *destination, void *source) {
+    ScopeProbe *dst = (ScopeProbe *)destination;
+    ScopeProbe *src = (ScopeProbe *)source;
+    if (dst == NULL || src == NULL) return;
+    *dst = *src;
+    memset(src, 0, sizeof(*src));
+}
+
+static const cmeta_data_construct_ops ScopeProbe_construct_ops = {
+    .struct_size = sizeof(cmeta_data_construct_ops),
+    .abi_version = CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,
     .storage_type = &ScopeProbe_type,
-    .extent = sizeof(ScopeProbe),
-    .is_zero = ScopeProbe_is_zero,
-    .copy = ScopeProbe_copy,
-    .restore_zero = ScopeProbe_restore_zero
+    .init_zero = ScopeProbe_init_zero,
+    .restore_zero = ScopeProbe_construct_restore_zero,
+    .move = ScopeProbe_move
 };
 static const cmeta_data_desc ScopeProbe_data_desc = {
     .struct_size = sizeof(cmeta_data_desc),
     .abi_version = CMETA_DATA_DESC_ABI_VERSION,
     .stable_id = "test.ScopeProbe.data",
     .display_name = "ScopeProbe",
-    .kind = CMETA_DATA_BYTES,
+    .kind = CMETA_DATA_CUSTOM,
     .storage_type = &ScopeProbe_type,
-    .shape = &ScopeProbe_shape,
-    .fixed_ops = &ScopeProbe_fixed_ops
+    .construct_ops = &ScopeProbe_construct_ops
 };
 
 static const cmeta_data_desc *ScopeProbe_cmeta_data(void) {
