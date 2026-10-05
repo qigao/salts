@@ -117,6 +117,9 @@ typedef struct cnet_owner_profile {
   uint64_t tls_write_submit_bytes;
   uint64_t tls_write_completion_calls;
   uint64_t tls_write_completion_bytes;
+  uint64_t tls_read_completion_calls;
+  uint64_t tls_read_completion_bytes;
+  uint64_t tls_plaintext_receive_calls;
   uint64_t tls_plaintext_receive_bytes;
   uint64_t event_publish_calls;
   /** Producer-side command queue timing; payload publish includes payload copy. */
