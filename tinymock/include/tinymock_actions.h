@@ -53,7 +53,7 @@ bool tinymock_cmeta_actions_apply(
     tinymock_cmeta_actions *actions,
     const cmeta_function_desc *function,
     size_t argc,
-    const tinymock_value_t *boxed_args);
+    const tinymock_cmeta_arg_view *args);
 
 #ifdef __cplusplus
 }
