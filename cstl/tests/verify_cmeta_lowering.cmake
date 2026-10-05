@@ -32,9 +32,9 @@ foreach(expected
     "IntList_add(&transfer,61)"
     "received = transfer"
     "\"list.add(99); List_add(&list, 99);\""
-    "\"owned(IntList) fake = {0}; move(fake);\""
+    "\"cmeta_owned(IntList) fake = {0}; cmeta_move(fake);\""
     "/* list.add(77); List_add(&list, 77); */"
-    "/* owned(IntList) fake = {0}; move(fake); */")
+    "/* cmeta_owned(IntList) fake = {0}; cmeta_move(fake); */")
   string(FIND "${source}" "${expected}" found)
   if(found EQUAL -1)
     message(FATAL_ERROR "expected lowered/preserved source fragment missing: ${expected}")
