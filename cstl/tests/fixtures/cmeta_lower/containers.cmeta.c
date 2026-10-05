@@ -12,7 +12,7 @@ CMETA_LIFECYCLE(ExternalList, IntList_cmeta_data);
 int main(void) {
     const char *literal = "list.add(99); List_add(&list, 99);";
     const char *ownership_literal =
-        "cmeta_owned(IntList) fake = {0}; cmeta_move(fake);";
+        "cmeta_cmeta_owned(IntList) fake = {0}; cmeta_cmeta_move(fake);";
     IntList list = {0};
     IntVec vec = {0};
     IntSet set = {0};
@@ -20,12 +20,12 @@ int main(void) {
     const int *value;
 
     /* list.add(77); List_add(&list, 77); */
-    /* cmeta_owned(IntList) fake = {0}; cmeta_move(fake); */
+    /* cmeta_cmeta_owned(IntList) fake = {0}; cmeta_cmeta_move(fake); */
 
     if (strcmp(literal, "list.add(99); List_add(&list, 99);") != 0)
         return 1;
     if (strcmp(ownership_literal,
-               "cmeta_owned(IntList) fake = {0}; cmeta_move(fake);") != 0)
+               "cmeta_cmeta_owned(IntList) fake = {0}; cmeta_cmeta_move(fake);") != 0)
         return 90;
 
     if (IntList_init(&list, 8u) != STL_OK ||
@@ -58,15 +58,15 @@ int main(void) {
     if (list.add(50) != STL_OK) return 15;
 
     {
-        cmeta_owned(ExternalList) external_cleanup;
+        cmeta_cmeta_owned(ExternalList) external_cleanup;
         (void)IntList_init(&external_cleanup, 2u);
         (void)IntList_add(&external_cleanup, 52);
     }
 
     {
-        cmeta_owned(IntList) cleanup_first;
-        cmeta_owned(IntVec) cleanup_second = {0};
-        cmeta_owned(IntMap) cleanup_map;
+        cmeta_cmeta_owned(IntList) cleanup_first;
+        cmeta_cmeta_owned(IntVec) cleanup_second = {0};
+        cmeta_cmeta_owned(IntMap) cleanup_map;
         int cleanup_first_size;
         int cleanup_second_size;
         size_t cleanup_map_size;
@@ -86,18 +86,18 @@ int main(void) {
     }
 
     {
-        cmeta_owned(IntList) moved_source;
+        cmeta_cmeta_owned(IntList) moved_source;
         IntList moved_sink = {0};
 
         (void)IntList_init(&moved_source, 2u);
         (void)moved_source.add(56);
-        moved_sink = cmeta_move(moved_source);
+        moved_sink = cmeta_cmeta_move(moved_source);
         if (IntList_size(&moved_sink) != 1u) return 98;
         IntList_destroy(&moved_sink);
     }
 
     {
-        cmeta_owned(IntList) transfer;
+        cmeta_cmeta_owned(IntList) transfer;
         IntList received = {0};
         int inner_size;
 
@@ -105,18 +105,18 @@ int main(void) {
         (void)transfer.add(60);
 
         {
-            cmeta_owned(IntList) inner_transfer;
+            cmeta_cmeta_owned(IntList) inner_transfer;
             IntList inner_received = {0};
 
             (void)IntList_init(&inner_transfer, 2u);
             (void)inner_transfer.add(70);
-            inner_received = cmeta_move(inner_transfer);
+            inner_received = cmeta_cmeta_move(inner_transfer);
             inner_size = (int)IntList_size(&inner_received);
             IntList_destroy(&inner_received);
         }
 
         (void)transfer.add(61);
-        received = cmeta_move(transfer);
+        received = cmeta_cmeta_move(transfer);
 
         if (inner_size != 1) return 99;
         if (IntList_size(&received) != 2u) return 100;
