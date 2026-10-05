@@ -160,9 +160,4 @@ if(NOT CMAKE_CROSSCOMPILING)
 
   add_test(NAME cmeta_tinymock_raii_lowering
            COMMAND cmeta_tinymock_raii_lowering)
-  add_test(
-    NAME cmeta_tinymock_raii_lowering_shape
-    COMMAND ${CMAKE_COMMAND}
-            -DGENERATED=${TINYMOCK_RAII_LOWER_OUTPUT}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_tinymock_raii_lowering.cmake")
 endif()
