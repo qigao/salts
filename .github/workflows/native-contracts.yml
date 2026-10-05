@@ -157,5 +157,7 @@ jobs:
       - name: Run coroutine contracts
         shell: pwsh
         run: |
-          ctest --test-dir "${{ matrix.build_dir }}" -R '^(salts_coro_executor_test|cmeta_coroutine_facade_test|cmeta_coroutine_header_cpp_test|coroutine_executor_private_batch_contract_test) --timeout 60 --output-on-failure
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(salts_coro_executor_test|cmeta_coroutine_facade_test|cmeta_coroutine_header_cpp_test|coroutine_executor_private_batch_contract_test)
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+ --timeout 60 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
