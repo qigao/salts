@@ -146,6 +146,10 @@ const cmeta_type_traits cmeta_traits_double = { CMETA_TRIVIAL_TRAIT_FLAGS,
 
 static const cmeta_type_identity cmeta_id_void =
     CMETA_TYPE_ID_ATOM_INIT("cmeta.void");
+static const cmeta_type_identity cmeta_id_char =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.char");
+static const cmeta_type_identity cmeta_id_descriptor =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.type_desc");
 static const cmeta_type_identity cmeta_id_bool =
     CMETA_TYPE_ID_ATOM_INIT("cmeta.bool");
 static const cmeta_type_identity cmeta_id_int =
@@ -161,6 +165,12 @@ static const cmeta_type_identity cmeta_id_size =
 static const cmeta_type_identity cmeta_id_gen_status =
     CMETA_TYPE_ID_ATOM_INIT("cmeta.gen_status");
 
+static const cmeta_type_identity cmeta_id_void_ptr =
+    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_void);
+static const cmeta_type_identity cmeta_id_char_ptr =
+    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_char);
+static const cmeta_type_identity cmeta_id_descriptor_ptr =
+    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_descriptor);
 static const cmeta_type_identity cmeta_id_bool_ptr =
     CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_bool);
 static const cmeta_type_identity cmeta_id_int_ptr =
@@ -232,9 +242,35 @@ CMETA_EXACT_INTEGER_TYPE(cmeta_type_int64, int64_t, cmeta_id_int64, cmeta_traits
 CMETA_EXACT_INTEGER_TYPE(cmeta_type_uint64, uint64_t, cmeta_id_uint64, cmeta_traits_uint64);
 #undef CMETA_EXACT_INTEGER_TYPE
 
+const cmeta_type_desc cmeta_type_char = {
+    .name = "char", .size = sizeof(char), .align = _Alignof(char),
+    .kind = CMETA_T_INTEGER, .pointee = NULL, .traits = NULL,
+    .identity = &cmeta_id_char
+};
+const cmeta_type_desc cmeta_type_char_ptr = {
+    .name = "char *", .size = sizeof(char *), .align = _Alignof(char *),
+    .kind = CMETA_T_POINTER, .pointee = &cmeta_type_char,
+    .traits = NULL, .identity = &cmeta_id_char_ptr
+};
 const cmeta_type_desc cmeta_type_void = {
     .name = "void", .size = 0, .align = 1, .kind = CMETA_T_VOID,
     .pointee = NULL, .traits = NULL, .identity = &cmeta_id_void
+};
+const cmeta_type_desc cmeta_type_void_ptr = {
+    .name = "void *", .size = sizeof(void *), .align = _Alignof(void *),
+    .kind = CMETA_T_POINTER, .pointee = &cmeta_type_void,
+    .traits = NULL, .identity = &cmeta_id_void_ptr
+};
+const cmeta_type_desc cmeta_type_descriptor = {
+    .name = "cmeta_type_desc", .size = sizeof(cmeta_type_desc),
+    .align = _Alignof(cmeta_type_desc), .kind = CMETA_T_OBJECT,
+    .pointee = NULL, .traits = NULL, .identity = &cmeta_id_descriptor
+};
+const cmeta_type_desc cmeta_type_descriptor_ptr = {
+    .name = "cmeta_type_desc *", .size = sizeof(cmeta_type_desc *),
+    .align = _Alignof(cmeta_type_desc *), .kind = CMETA_T_POINTER,
+    .pointee = &cmeta_type_descriptor,
+    .traits = NULL, .identity = &cmeta_id_descriptor_ptr
 };
 const cmeta_type_desc cmeta_type_size = {
     .name = "size_t", .size = sizeof(size_t), .align = _Alignof(size_t),
