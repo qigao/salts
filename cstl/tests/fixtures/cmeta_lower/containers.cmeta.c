@@ -9,6 +9,10 @@ typed(Map, IntMap, int, int);
 typedef IntList ExternalList;
 CMETA_LIFECYCLE(ExternalList, IntList_cmeta_data);
 
+static void cmeta_lower_defer_digit(int *value, int digit) {
+    *value = (*value * 10) + digit;
+}
+
 int main(void) {
     const char *literal = "list.add(99); List_add(&list, 99);";
     const char *ownership_literal =
@@ -18,8 +22,11 @@ int main(void) {
     IntSet set = {0};
     IntMap map = {0};
     const int *value;
+    int defer_order = 0;
+    int defer_owned_order = 0;
 
     /* list.add(77); List_add(&list, 77); */
+    /* defer cmeta_lower_defer_digit(&defer_order, 9); */
     /* owned(IntList) fake = {0}; move(fake); */
 
     if (strcmp(literal, "list.add(99); List_add(&list, 99);") != 0)
@@ -27,6 +34,29 @@ int main(void) {
     if (strcmp(ownership_literal,
                "owned(IntList) fake = {0}; move(fake);") != 0)
         return 90;
+
+    {
+        defer cmeta_lower_defer_digit(&defer_order, 1);
+        {
+            defer cmeta_lower_defer_digit(&defer_order, 2);
+            defer cmeta_lower_defer_digit(&defer_order, 3);
+        }
+        defer cmeta_lower_defer_digit(&defer_order, 4);
+    }
+    if (defer_order != 3241)
+        return 91;
+
+    {
+        owned(IntList) defer_owned_first;
+        defer cmeta_lower_defer_digit(&defer_owned_order, 5);
+        owned(IntVec) defer_owned_second;
+        defer cmeta_lower_defer_digit(&defer_owned_order, 6);
+
+        (void)IntList_init(&defer_owned_first, 2u);
+        (void)IntVec_init(&defer_owned_second, 2u);
+    }
+    if (defer_owned_order != 65)
+        return 92;
 
     if (IntList_init(&list, 8u) != STL_OK ||
         IntVec_init(&vec, 8u) != STL_OK ||
