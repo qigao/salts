@@ -1888,14 +1888,17 @@ jobs:
           concurrency_jsonl="$result_dir/cnet-tls-public-concurrency-shape.jsonl"
           : > "$concurrency_jsonl"
           for repeat in 1 2 3; do
-            for owners in 1 8; do
-              for payload in 32768 65536; do
-                echo "concurrency-shape repeat=$repeat owners=$owners payload=$payload"
-                CNET_TLS_PUBLIC_OWNER_OPS=48 \
-                CNET_TLS_PUBLIC_NODELAY=1 \
-                CNET_TLS_PUBLIC_RECEIVE_DEMAND=single \
-                  "$benchmark" echo "$payload" "$owners" warm \
-                  | tee -a "$concurrency_jsonl"
+            for poll_ms in 0 1; do
+              for owners in 1 8; do
+                for payload in 32768 65536; do
+                  echo "concurrency-shape repeat=$repeat poll_ms=$poll_ms owners=$owners payload=$payload"
+                  CNET_TLS_PUBLIC_OWNER_OPS=48 \
+                  CNET_TLS_PUBLIC_NODELAY=1 \
+                  CNET_TLS_PUBLIC_RECEIVE_DEMAND=single \
+                  CNET_TLS_PUBLIC_POLL_MS="$poll_ms" \
+                    "$benchmark" echo "$payload" "$owners" warm \
+                    | tee -a "$concurrency_jsonl"
+                done
               done
             done
           done

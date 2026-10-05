@@ -40,6 +40,7 @@ typedef enum tls_public_mode {
 } tls_public_mode;
 
 static bool tls_public_single_receive_demand = false;
+static uint32_t tls_public_poll_timeout_ms = 0u;
 
 typedef struct tls_public_probe {
   cnet_client *client;
@@ -537,13 +538,13 @@ static int tls_public_one_way(
               mem_buffer_used(pair->payload) ||
           source_probe->sent_count < sent_before + 1u) &&
          salts_monotonic_ms() < deadline) {
-    status = tls_public_drive(pair, 0u);
+    status = tls_public_drive(pair, tls_public_poll_timeout_ms);
     if (status != SALTS_OK) return status;
     if (pair->client_probe.failed)
       return pair->client_probe.failure_status;
     if (pair->server_probe.failed)
       return pair->server_probe.failure_status;
-    salts_thread_yield();
+    if (tls_public_poll_timeout_ms == 0u) salts_thread_yield();
   }
 
   if (target_probe->received_size !=
@@ -700,6 +701,7 @@ int main(int argc, char **argv) {
   const char *temperature;
   const char *nodelay_text;
   const char *receive_demand_text;
+  const char *poll_timeout_text;
   int nodelay = 0;
   int status = SALTS_OK;
 
@@ -756,6 +758,16 @@ int main(int argc, char **argv) {
       tls_public_single_receive_demand = false;
     else if (strcmp(receive_demand_text, "single") == 0)
       tls_public_single_receive_demand = true;
+    else
+      return 2;
+  }
+
+  poll_timeout_text = getenv("CNET_TLS_PUBLIC_POLL_MS");
+  if (poll_timeout_text != NULL && poll_timeout_text[0] != '\0') {
+    if (strcmp(poll_timeout_text, "0") == 0)
+      tls_public_poll_timeout_ms = 0u;
+    else if (strcmp(poll_timeout_text, "1") == 0)
+      tls_public_poll_timeout_ms = 1u;
     else
       return 2;
   }
@@ -883,6 +895,7 @@ int main(int argc, char **argv) {
         "\"temperature\":\"%s\","
         "\"nodelay\":%d,"
         "\"receive_demand\":\"%s\","
+        "\"poll_ms\":%u,"
         "\"payload_bytes\":%zu,"
         "\"owners\":%zu,"
         "\"pairs\":%u,"
@@ -917,6 +930,7 @@ int main(int argc, char **argv) {
         tls_public_mode_name(mode), temperature,
         nodelay,
         tls_public_single_receive_demand ? "single" : "prearm",
+        tls_public_poll_timeout_ms,
         payload_size, owner_count, TLS_PUBLIC_PAIRS,
         total_ops, samples, operations_per_second,
         cpu_ns_per_op,
