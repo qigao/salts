@@ -18,12 +18,14 @@ suite("TinyMock selective reflected overrides") {
     TINYMOCk_FUNCTION_RESET(tinymock_selective_void);
     TINYMOCk_FUNCTION_RESET(tinymock_selective_extra);
 
-    tinymock_mock_set_default_return(
-        TINYMOCk_FUNCTION(tinymock_selective_mocked),
-        TINYMOCk_RETURN(55));
-    tinymock_mock_set_default_return(
-        TINYMOCk_FUNCTION(tinymock_selective_extra),
-        TINYMOCk_RETURN(66));
+    {
+      int mocked_return = 55;
+      int extra_return = 66;
+      check_true(TINYMOCk_FUNCTION_SET_RETURN(
+          tinymock_selective_mocked, mocked_return));
+      check_true(TINYMOCk_FUNCTION_SET_RETURN(
+          tinymock_selective_extra, extra_return));
+    }
 
     check_equal(tinymock_selective_consume_mocked(7), 55);
     check_equal(tinymock_selective_consume_real(7), 107);
@@ -36,7 +38,7 @@ suite("TinyMock selective reflected overrides") {
         TINYMOCk_FUNCTION(tinymock_selective_void), 1);
     tinymock_mock_verify_times(
         TINYMOCk_FUNCTION(tinymock_selective_extra), 1);
-    check_true(TINYMOCk_FUNCTION_ARG_EQUAL(
+    check_true(TINYMOCk_FUNCTION_ARG_EQUAL_TYPED(
         tinymock_selective_mocked, 0, "value", expected));
 
     TINYMOCk_FUNCTION_DESTROY(tinymock_selective_mocked);
