@@ -148,7 +148,7 @@ if(NOT CMAKE_CROSSCOMPILING)
   cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_unknown_owned
     unknown_owned.cmeta.c
-    "owned type 'MissingResource' has no canonical typed lifecycle binding")
+    "owned type 'MissingResource' has no canonical lifecycle binding")
   cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_early_return_cleanup
     early_return_cleanup.cmeta.c
