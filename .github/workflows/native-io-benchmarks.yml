@@ -160,8 +160,6 @@ jobs:
             $changed = @(git diff --name-only $base $head)
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-            # Workflow-only edits validate policy/scope without pretending every
-            # runtime or benchmark family changed.
             $workflowOnly = @($changed | Where-Object {
                 $_ -eq ".github/workflows/native-io-benchmarks.yml"
               }).Count -eq $changed.Count
@@ -276,9 +274,6 @@ jobs:
             $runNativeUring = $nativeRuntime -or $nativeUringBench -or
               $buildChanged -or $dependencyChanged -or $policyChanged
             $runForensic = $forensicChanged
-
-            # Baseline DSO comparison is for runtime/build changes, never for
-            # benchmark harness or workflow-only edits.
             $runCnetCompare = $cnetRuntime -or $nativeRuntime -or
               $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
               $buildChanged -or $dependencyChanged
@@ -300,11 +295,10 @@ jobs:
           $runEvidence = $runNativeOwner -or $runNativeStyle -or
             $runCnetOwner -or $runCnetIo -or $runCnetSg -or
             $runCoroutine -or $runCflow -or $runNativeUring -or $runForensic
-          $runWork = $runEvidence
 
           "profile=$benchmarkProfile" >> $env:GITHUB_OUTPUT
           "evidence=$($runEvidence.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          "work=$($runWork.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "work=$($runEvidence.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "cnet_compare=$($runCnetCompare.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "native_owner=$($runNativeOwner.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "native_style=$($runNativeStyle.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
@@ -570,30 +564,6 @@ jobs:
             cnet_scaling_benchmark cnet_owner_parallel_benchmark \
             cnet_shards_parallel_benchmark cnet_external_owner_parallel_benchmark \
             cnet_central_callback_benchmark cflow_control_path_benchmark
-
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake --preset "${{ matrix.configure_preset }}" \
-            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
-          cmake --build --preset "${{ matrix.build_preset }}" \
-            --target native_io_test native_io_sharded_test native_io_header_cpp_test \
-              native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark cnet_tls_provider_parallel_benchmark cnet_tls_public_owner_benchmark \
-              cnet_websocket_parser_test cnet_websocket_test \
-              cnet_session_test cnet_command_test cnet_uri_test \
-              cnet_transport_test cnet_owner_test cnet_owner_profile_test \
-              cnet_event_test \
-              cnet_resolver_test cnet_shards_test cnet_dispatcher_test \
-              cnet_api_test cnet_api_profile_test cnet_header_cpp_test cnet_tls_test \
-              cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test \
-              cnet_packet_endpoint_test cnet_stop_contract_test \
-              cnet_vsock_integration_test \
-              cnet_benchmark_stats_test cnet_io_benchmark_config_test \
-              concurrency_deadline_queue_test native_io_queue_depth_benchmark \
-              native_io_idle_observe_benchmark native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark salts_coro_executor_test salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark native_io_pipe_styles_benchmark \
-              native_io_stream_styles_benchmark native_io_udp_styles_benchmark native_io_vsock_styles_benchmark cnet_scaling_benchmark cnet_owner_parallel_benchmark cnet_shards_parallel_benchmark cnet_external_owner_parallel_benchmark cnet_central_callback_benchmark cflow_control_path_benchmark \
-              cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_parallel_reduce_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
-
       - name: Configure Windows benchmarks
         if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         shell: cmd
@@ -602,14 +572,6 @@ jobs:
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
           cmake --preset "\${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF
-
-        shell: cmd
-        run: |
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
-
       - name: Build Windows benchmarks
         if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         shell: cmd
@@ -624,14 +586,6 @@ jobs:
             salts_coro_executor_dequeue_batch_benchmark native_io_pipe_styles_benchmark ^
             native_io_stream_styles_benchmark native_io_udp_styles_benchmark ^
             cflow_control_path_benchmark
-
-        shell: cmd
-        run: |
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_sharded_test native_io_header_cpp_test native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark cnet_websocket_parser_test cnet_websocket_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_owner_profile_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_api_profile_test cnet_header_cpp_test cnet_tls_test cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test cnet_packet_endpoint_test cnet_stop_contract_test cnet_benchmark_stats_test cnet_io_benchmark_config_test concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark salts_coro_executor_test salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_control_path_benchmark cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_parallel_reduce_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
-
       - name: Configure and build macOS benchmarks
         if: needs.scope.outputs.work == 'true' && matrix.family == 'mac'
         shell: bash
@@ -646,37 +600,6 @@ jobs:
             salts_coro_executor_dequeue_batch_benchmark native_io_pipe_styles_benchmark \
             native_io_stream_styles_benchmark native_io_udp_styles_benchmark \
             cflow_control_path_benchmark
-
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake --preset "${{ matrix.configure_preset }}" \
-            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
-          cmake --build --preset "${{ matrix.build_preset }}" \
-            --target native_io_test native_io_sharded_test native_io_header_cpp_test \
-              native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_tls_sg_benchmark \
-              cnet_websocket_parser_test cnet_websocket_test \
-              cnet_session_test cnet_command_test cnet_uri_test \
-              cnet_transport_test cnet_owner_test cnet_owner_profile_test \
-              cnet_event_test \
-              cnet_resolver_test cnet_shards_test cnet_dispatcher_test \
-              cnet_api_test cnet_api_profile_test cnet_header_cpp_test cnet_tls_test \
-              cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test \
-              cnet_packet_endpoint_test cnet_stop_contract_test \
-              cnet_benchmark_stats_test \
-              cnet_io_benchmark_config_test \
-              concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark salts_coro_executor_test salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_control_path_benchmark cflow_seeded_reduce_test cflow_pipeline_test cflow_plan_managed_test cflow_parallel_reduce_test cflow_io_native_test cflow_io_native_adapter_test cflow_io_native_sharded_adapter_test cflow_header_cpp_test cflow_io_cnet_adapter_test cflow_cnet_header_cpp_test
-
-        shell: pwsh
-        run: |
-          ctest --test-dir "${{ matrix.build_dir }}" -R '^(native_(io|ipc)_(test|header_cpp_test)|native_io_sharded_test|native_io_uring_batch_test|native_io_architecture_contract_test|native_io_accept_escrow_test|native_io_internal_accept_test|native_io_iocp_accept_test|native_io_readiness_accept_test|native_io_uring_accept_test)$' --timeout 30 --output-on-failure
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-        shell: pwsh
-        run: |
-          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cflow_seeded_reduce_test|cflow_pipeline_test|cflow_plan_managed_test|cflow_parallel_reduce_test|cflow_io_native_test|cflow_io_native(_sharded)?_adapter_test|cflow_io_cnet_adapter_test|cflow_header_cpp_test|cflow_cnet_header_cpp_test|cflow_cnet_dependency_contract_test|cflow_pipe_data_plane_contract_test)$' --timeout 60 --output-on-failure
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
       - name: Run CFlow ordered parallel reduce benchmark
         if: needs.scope.outputs.cflow == 'true' && matrix.family == 'linux' && matrix.backend == 'io_uring'
         shell: bash
@@ -774,11 +697,6 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '~~~'
 
-        shell: pwsh
-        run: |
-          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cnet_.*_test|concurrency_deadline_queue_test)$' --timeout 60 --output-on-failure
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ./cnet/tests/cnet_io_trace_test.ps1
 
       - name: Build PR-base CNet comparison DSO
         if: matrix.family == 'windows' && needs.scope.outputs.cnet_compare == 'true' && github.event_name == 'pull_request'
@@ -1414,10 +1332,6 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
-        shell: pwsh
-        run: |
-          ctest --test-dir "${{ matrix.build_dir }}" -R '^(salts_coro_executor_test|coroutine_executor_private_batch_contract_test)$' --timeout 60 --output-on-failure
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run Coroutine Executor batch admission CPU-set sweep
         if: matrix.family == 'linux' && needs.scope.outputs.coroutine == 'true'
