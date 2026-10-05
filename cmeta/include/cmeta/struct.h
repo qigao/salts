@@ -162,6 +162,50 @@ cmeta_struct_find_field(const cmeta_struct_desc *desc, const char *name) {
 #define StructMeta(type) (&type##__struct_meta)
 #endif
 
+/* Linux-style intrusive owner projection with ordinary C11 type checking.
+ *
+ *   cmeta_intrusive(Task, ready_node, ListNode);
+ *
+ * generates:
+ *   Task *Task_from_ready_node(ListNode *);
+ *   const Task *Task_from_ready_node_const(const ListNode *);
+ *
+ * The member type is explicit so strict C11 can validate it with _Generic
+ * without relying on GNU typeof/statement expressions.
+ */
+#define CMETA_INTRUSIVE_FROM_NAME_I_(owner_, member_) owner_##_from_##member_
+#define CMETA_INTRUSIVE_FROM_NAME_(owner_, member_) \
+    CMETA_INTRUSIVE_FROM_NAME_I_(owner_, member_)
+#define CMETA_INTRUSIVE_FROM_CONST_NAME_I_(owner_, member_) \
+    owner_##_from_##member_##_const
+#define CMETA_INTRUSIVE_FROM_CONST_NAME_(owner_, member_) \
+    CMETA_INTRUSIVE_FROM_CONST_NAME_I_(owner_, member_)
+
+#define CMETA_INTRUSIVE(owner_, member_, member_type_)                         \
+    _Static_assert(                                                           \
+        _Generic(&((owner_ *)0)->member_, member_type_ *: 1, default: 0),     \
+        "CMeta intrusive member type mismatch");                             \
+    CMETA_INLINE owner_ *CMETA_INTRUSIVE_FROM_NAME_(owner_, member_)(         \
+        member_type_ *member_ptr_) {                                          \
+        return member_ptr_ == NULL                                            \
+                   ? NULL                                                     \
+                   : (owner_ *)((unsigned char *)member_ptr_ -                 \
+                                offsetof(owner_, member_));                    \
+    }                                                                         \
+    CMETA_INLINE const owner_ *                                               \
+    CMETA_INTRUSIVE_FROM_CONST_NAME_(owner_, member_)(                        \
+        const member_type_ *member_ptr_) {                                    \
+        return member_ptr_ == NULL                                            \
+                   ? NULL                                                     \
+                   : (const owner_ *)((const unsigned char *)member_ptr_ -     \
+                                      offsetof(owner_, member_));              \
+    }
+
+#ifndef cmeta_intrusive
+#define cmeta_intrusive(owner_, member_, member_type_) \
+    CMETA_INTRUSIVE(owner_, member_, member_type_)
+#endif
+
 #ifndef FieldCount
 #define FieldCount(type) (StructMeta(type)->field_count)
 #endif
