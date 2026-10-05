@@ -99,6 +99,7 @@ extern const cmeta_type_desc cmeta_type_uint64;
  * function parameter/result flags. */
 extern const cmeta_type_desc cmeta_type_char;
 extern const cmeta_type_desc cmeta_type_char_ptr;
+extern const cmeta_type_desc cmeta_type_char_ptr_ptr;
 extern const cmeta_type_desc cmeta_type_void;
 extern const cmeta_type_desc cmeta_type_void_ptr;
 extern const cmeta_type_desc cmeta_type_descriptor;
