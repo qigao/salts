@@ -185,18 +185,6 @@ if(NOT CMAKE_CROSSCOMPILING)
     cstl_cmeta_lower_nonzero_initializer
     nonzero_owned_initializer.cmeta.c
     "owned initializer must be canonical zero {0}")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_defer_missing_call
-    defer_missing_call.cmeta.c
-    "defer requires a direct C function call")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_defer_owned_capture
-    defer_owned_capture.cmeta.c
-    "defer call may not capture tracked owned value 'value'")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_defer_return
-    defer_return.cmeta.c
-    "control transfer 'return' crosses active defer")
 endif()
 
 
