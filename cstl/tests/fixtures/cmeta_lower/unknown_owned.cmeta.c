@@ -1,7 +1,7 @@
 #include <cstl/typed.h>
 
 int main(void) {
-    owned(MissingResource) value = {0};
+    cmeta_owned(MissingResource) value = {0};
     (void)value;
     return 0;
 }
