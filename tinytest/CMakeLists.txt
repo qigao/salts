@@ -7,30 +7,27 @@ set(tinytest_source_dir "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 set(tinytest_public_headers
   "${tinytest_include_dir}/tinytest.h"
-  "${tinytest_include_dir}/tinytest.hpp"
-  "${tinytest_include_dir}/tinymock.h"
-  "${tinytest_include_dir}/tinymock.hpp")
+  "${tinytest_include_dir}/tinytest.hpp")
 
-set(tinytest_meta_headers
-  "${tinytest_include_dir}/tinymeta/traits.h"
-  "${tinytest_include_dir}/tinymeta/pp.h"
-  "${tinytest_include_dir}/tinymeta/equality.h"
-  "${tinytest_include_dir}/tinymeta/internal.h")
+set(tinytest_detail_headers
+  "${tinytest_include_dir}/tinytest/detail/runtime.h"
+  "${tinytest_include_dir}/tinytest/detail/pp.h"
+  "${tinytest_include_dir}/tinytest/detail/traits.h"
+  "${tinytest_include_dir}/tinytest/detail/equality.h")
 
 set(tinytest_sources
-  "${tinytest_source_dir}/tinytest.c"
-  "${tinytest_source_dir}/tinymock.c")
+  "${tinytest_source_dir}/tinytest.c")
 
 add_library(tinytest STATIC)
 target_sources(tinytest PRIVATE
   ${tinytest_sources}
   ${tinytest_public_headers}
-  ${tinytest_meta_headers})
+  ${tinytest_detail_headers})
 
 source_group(TREE "${tinytest_source_dir}" PREFIX "Source Files"
   FILES ${tinytest_sources})
 source_group(TREE "${tinytest_include_dir}" PREFIX "Header Files"
-  FILES ${tinytest_public_headers} ${tinytest_meta_headers})
+  FILES ${tinytest_public_headers} ${tinytest_detail_headers})
 
 cmake_config_target(tinytest
   ALIAS Salts::TinyTest
@@ -48,8 +45,8 @@ install(TARGETS tinytest
 install(FILES ${tinytest_public_headers}
   DESTINATION include
   COMPONENT TinyTest)
-install(FILES ${tinytest_meta_headers}
-  DESTINATION include/tinymeta
+install(FILES ${tinytest_detail_headers}
+  DESTINATION include/tinytest/detail
   COMPONENT TinyTest)
 
 # Respect the repository-wide build switches. Consumers configuring Salts as a

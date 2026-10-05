@@ -91,18 +91,6 @@ add_test(
     "-DTINYTEST_HEADER=${CMAKE_SOURCE_DIR}/tinytest/include/tinytest.h"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/public_header_structure.cmake")
 
-add_test(
-  NAME tinymock_public_header_structure
-  COMMAND ${CMAKE_COMMAND}
-    "-DTINYMOCK_HEADER=${CMAKE_SOURCE_DIR}/tinytest/include/tinymock.h"
-    "-DTRAITS_HEADER=${CMAKE_SOURCE_DIR}/tinytest/include/tinymeta/traits.h"
-    -P "${CMAKE_CURRENT_SOURCE_DIR}/tinymock_header_structure.cmake")
-
-cmake_add_test(tinymock_test
-  SOURCES tinymock_test.c
-  LIBS Salts::TinyTest
-  FOLDER "tinytest/tests")
-
 cmake_add_executable(tinytest_focus_output
   SOURCES focus_output_cases.c
   LIBS Salts::TinyTest
@@ -185,11 +173,4 @@ if(CMAKE_CXX_COMPILER OR CMAKE_CXX_COMPILER_ID)
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON)
 
-  cmake_add_test(tinymock_cpp_test
-    SOURCES tinymock_cpp_test.cpp
-    LIBS Salts::TinyTest
-    FOLDER "tinytest/tests")
-  set_target_properties(tinymock_cpp_test PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED ON)
 endif()

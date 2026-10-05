@@ -1,12 +1,9 @@
-# TinyMock usage boundary.
-#
-# Phase 1 keeps the existing runtime objects in Salts::TinyTest for
-# source/binary compatibility while exposing the final consumer dependency:
+# TinyMock is the CMeta-aware mocking component.
 #
 #   Salts::TinyMock -> Salts::TinyTest + Salts::CMeta
 #
-# A later migration may move tinymock.c into a dedicated archive without
-# changing the public Salts::TinyMock target contract.
+# TinyTest owns no mock runtime or reflection schema. TinyMock owns only
+# reflected history/actions/returns and consumes canonical CMeta metadata.
 
 add_library(tinymock STATIC
   src/tinymock_value.c
@@ -41,6 +38,7 @@ install(
 
 install(
   FILES
+    include/tinymock_support.h
     include/tinymock_cmeta.h
     include/tinymock_value.h
     include/tinymock_function.h

@@ -18,7 +18,7 @@
  * preprocessing time. Variadic declarations remain outside this backend.
  */
 
-#include "tinymock.h"
+#include "tinymock_support.h"
 
 #ifdef __cplusplus
 #error "tinymock_function.h is the strict-C11 free-function mock bridge"

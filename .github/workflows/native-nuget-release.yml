@@ -19,7 +19,6 @@ on:
       - "concurrency/**"
       - "utils/**"
       - "tinytest/**"
-      - "tinymeta/**"
       - "tinymock/**"
       - "packaging/nuget/**"
   push:
@@ -171,7 +170,7 @@ jobs:
           grep -F "cmeta_interface_desc_valid" "$prefix/include/cmeta/interface.h"
           grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
           grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
-          test -f "$prefix/include/tinymeta/equality.h"
+          test -f "$prefix/include/tinytest/detail/equality.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           test -f "$prefix/include/tinymock_function.h"
           test -f "$prefix/include/tinymock_history.h"
@@ -257,7 +256,7 @@ jobs:
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/cflow/function_projection.h"
           test -f "$prefix/include/cmeta/interface.h"
-          test -f "$prefix/include/tinymeta/equality.h"
+          test -f "$prefix/include/tinytest/detail/equality.h"
           grep -F "Salts::CMeta" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
@@ -334,7 +333,7 @@ jobs:
           grep -F "cmeta_interface_desc_valid" "$prefix/include/cmeta/interface.h"
           grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
           grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
-          test -f "$prefix/include/tinymeta/equality.h"
+          test -f "$prefix/include/tinytest/detail/equality.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           test -f "$prefix/include/tinymock_function.h"
           test -f "$prefix/include/tinymock_history.h"
@@ -420,7 +419,7 @@ jobs:
           $functionHeader = Join-Path $prefix "include\cmeta\function.h"
           $projectionHeader = Join-Path $prefix "include\cflow\function_projection.h"
           $interfaceHeader = Join-Path $prefix "include\cmeta\interface.h"
-          $tinyEqualityHeader = Join-Path $prefix "include\tinymeta\equality.h"
+          $tinyEqualityHeader = Join-Path $prefix "include\tinytest\detail\equality.h"
           $tinymockHeader = Join-Path $prefix "include\tinymock_cmeta.h"
           $tinymockFunctionHeader = Join-Path $prefix "include\tinymock_function.h"
           $tinymockHistoryHeader = Join-Path $prefix "include\tinymock_history.h"
@@ -528,7 +527,7 @@ jobs:
           grep -F "cmeta_interface_desc_valid" "$prefix/include/cmeta/interface.h"
           grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
           grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
-          test -f "$prefix/include/tinymeta/equality.h"
+          test -f "$prefix/include/tinytest/detail/equality.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           test -f "$prefix/include/tinymock_function.h"
           test -f "$prefix/include/tinymock_history.h"
@@ -629,7 +628,7 @@ jobs:
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/cflow/function_projection.h"
           test -f "$prefix/include/cmeta/interface.h"
-          test -f "$prefix/include/tinymeta/equality.h"
+          test -f "$prefix/include/tinytest/detail/equality.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
@@ -676,13 +675,13 @@ jobs:
           test -f package/sdk/linux-x64/include/cflow/function_projection.h
           grep -F "Salts::CFlow" package/sdk/linux-x64/lib/cmake/Salts/SaltsTargets.cmake
           test -f package/sdk/linux-x64/include/cmeta/interface.h
-          test -f package/sdk/linux-x64/include/tinymeta/equality.h
+          test -f package/sdk/linux-x64/include/tinytest/detail/equality.h
           test -f package/sdk/linux-arm64/lib/cmake/Salts/SaltsConfig.cmake
           test -f package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
           test -f package/sdk/linux-arm64/include/cmeta/function.h
           test -f package/sdk/linux-arm64/include/cflow/function_projection.h
           test -f package/sdk/linux-arm64/include/cmeta/interface.h
-          test -f package/sdk/linux-arm64/include/tinymeta/equality.h
+          test -f package/sdk/linux-arm64/include/tinytest/detail/equality.h
           grep -F "Salts::CMeta" package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
           grep -F "Salts::CFlow" package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
           grep -F "Salts::CNet" package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake

@@ -1,5 +1,5 @@
-#ifndef TINYTEST_INTERNAL_H
-#define TINYTEST_INTERNAL_H
+#ifndef TINYTEST_DETAIL_RUNTIME_H
+#define TINYTEST_DETAIL_RUNTIME_H
 
 #include <stdarg.h>
 #include <stddef.h>
@@ -240,4 +240,4 @@ __attribute__((format(printf, 1, 2)))
 #endif
 char *ttest_format__(const char *format, ...);
 
-#endif /* TINYTEST_INTERNAL_H */
+#endif /* TINYTEST_DETAIL_RUNTIME_H */

@@ -104,8 +104,7 @@ The two-argument form compares values. The three-argument form compares exactly
 ### Custom C value types
 
 Strict C11 tests can register value equality without depending on CMeta.
-`tinytest.h` automatically includes the internal equality adapter
-`tinymeta/equality.h`; applications do not include it directly:
+`tinytest.h` owns the strict-C11 equality machinery internally; applications do not include its detail headers directly:
 
 ```c
 #include <stdbool.h>
@@ -125,9 +124,7 @@ check_equal((Point){1, 2}, (Point){1, 2});
 Each row is `(TOKEN, C_TYPE, COMPARATOR)`. The comparator borrows two
 `const C_TYPE *` values. Unregistered structures are rejected at compile time.
 Complex values are unsupported and rejected at compile time.
-`tinymeta/equality.h` and the other `tinymeta/*` headers are transitive
-implementation headers; applications include only `tinytest.h` (or
-`tinytest.hpp` for C++).
+The `tinytest/detail/*` headers are transitive implementation details; applications include only `tinytest.h` (or `tinytest.hpp` for C++).
 Language-neutral runner, reporting, benchmark, temporary-file, and tree-management
 implementations live in `tinytest.c`. The public header retains only the macros
 that must expand in the test translation unit and the C++ assertion-unwind adapter.
@@ -227,178 +224,12 @@ Variables shared between setup and tests must be `static`.
 
 ## Mocking
 
-C mocks use the same strict-C11 builtin trait map as generic assertions. Use the
-single variadic entry for one to six parameters; zero-parameter mocks have a
-separate form because portable C11 has no empty-variadic facility.
+TinyTest no longer ships a standalone mocking API. Reflected mocking is the
+separate `Salts::TinyMock` component and consumes canonical CMeta metadata.
+Tests that need mocking link `Salts::TinyMock` explicitly and use
+`tinymock_cmeta.h` or `tinymock_function.h`.
 
-```c
-#include "tinymock.h"
-
-TINYMOCk_MOCK(int, add, int, int)
-TINYMOCk_MOCK_VOID(log_value, int)
-TINYMOCk_MOCK0(int, read_status)
-
-spec("mocked add") {
-    it("returns the scripted value") {
-        mock_add_reset();
-        mock_add_expect(TINYMOCk_ARG(2), TINYMOCk_ARG(3), TINYMOCk_RETURN(5));
-        check_equal(add(2, 3), 5);
-        mock_add_verify();
-    }
-}
-```
-
-The numbered `TINYMOCk_MOCK1/2/3` and `TINYMOCk_MOCK_DEFINE1/2` forms are not
-provided. C++ tests include `tinymock.hpp` and use `tinymock::function_mock` or
-the `TINYMOCK_CPP_MOCK_METHOD*` method generators.
-
-`TINYMOCk_VALUE(value)` boxes a supported builtin value and
-`TINYMOCk_VALUE_AS(type, value)` unboxes it. Both are strict-C11 `_Generic`
-interfaces; the ABI-specific conversion handlers are implementation details.
-
-### CMeta interface auto-mocking
-
-Use the explicit TinyMock usage target for CMeta-aware mocking:
-
-```cmake
-target_link_libraries(my_test PRIVATE Salts::TinyMock)
-```
-
-`Salts::TinyMock` propagates `Salts::TinyTest + Salts::CMeta`. The reflected
-history/action/return runtime is owned by TinyMock; TinyTest remains usable on
-its own and keeps the standalone legacy `TINYMOCk_MOCK(...)` API without a
-CMeta dependency.
-
-Strict-C11 tests can replay an existing `CMETA_INTERFACE` method schema into a
-mock vtable without hand-writing a second implementation:
-
-```c
-#include <cmeta/interface.h>
-#include "tinytest.h"
-#include "tinymock_cmeta.h"
-
-#define COUNTER_METHODS(X, I) \
-    X(I,FR1,int,add,value, \
-      &cmeta_type_int,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
-      (int,delta,CMETA_PARAM_IN,&cmeta_type_int,CMETA_ABI_SCALAR)) \
-    X(I,FR0,int,value,value, \
-      &cmeta_type_int,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE) \
-    X(I,FV0,void,reset,stateful, \
-      &cmeta_type_void,CMETA_ABI_VOID)
-
-CMETA_INTERFACE(counter, COUNTER_METHODS);
-TINYMOCk_INTERFACE(counter, COUNTER_METHODS);
-
-spec("counter consumer") {
-    it("uses the same reflected contract for stubbing and verification") {
-        tinymock_counter mock;
-        counter dependency;
-        int scripted = 7;
-        int expected_delta = 3;
-
-        tinymock_counter_init(&mock);
-        dependency = tinymock_counter_as_interface(&mock);
-
-        check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, add, scripted));
-
-        check_equal(counter_add(&dependency, expected_delta), 7);
-        TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, add, 1);
-        check_true(TINYMOCk_INTERFACE_ARG_EQUAL_TYPED(
-            &mock, add, 0u, "delta", expected_delta));
-
-        tinymock_counter_destroy(&mock);
-    }
-}
-```
-
-Generated reflected interface mocks are typed-only. Non-void methods require
-an explicit typed return; missing or ownership-unsupported return behavior fails
-closed instead of falling back to boxed zero/null semantics. Invocation history,
-matching, capture, OUT/INOUT actions, and call-count verification all consume
-the canonical CMeta descriptors. Existing standalone `TINYMOCk_MOCK(...)`
-usage keeps its TinyTest expectation/script API.
-
-The bridge deliberately reuses the interface X-list rather than defining a
-second reflection schema. TinyMock accepts full-reflection F/FR/FV/FD rows;
-legacy R/V/D rows remain available to CMeta itself but are not a TinyMock
-interface path. CMeta-aware free-function mocking uses the same type/trait truth
-through `FunctionDecl(...)`, `FunctionMeta(...)`, and `FunctionAbi(...)`.
-
-When an interface uses fully reflected CMeta `F/FR/FV/FD` rows, TinyMock
-consumes the interface method's canonical `cmeta_function_desc` /
-`cmeta_function_abi_desc`; it does not reconstruct a second method signature
-from the method name or arity. Legacy `R/V/D` rows remain available to CMeta
-for source compatibility, but TinyMock no longer implements a boxed interface
-mock path for them.
-
-For CMeta-lowered source, each generated reflected interface mock also exposes
-one canonical DataDesc accessor:
-
-```c
-TINYMOCk_INTERFACE(counter, COUNTER_METHODS);
-CMETA_LIFECYCLE(tinymock_counter, tinymock_counter_cmeta_data);
-
-{
-    owned(tinymock_counter) mock;
-    tinymock_counter_init(&mock);
-    /* stub / invoke / verify */
-} /* cmeta-lower emits exactly one canonical DataDesc cleanup */
-```
-
-The generated DataDesc uses the same `tinymock_counter_destroy()` authority as
-manual C. No compiler cleanup attribute or TinyMock-specific lifetime registry
-is required. Unsupported ownership-sensitive control flow remains fail-closed
-in `cmeta-lower`; plain C callers can continue to call the generated destroy
-function explicitly.
-
-### Reflected free-function auto-mocking
-
-A test target can generate exact-ABI replacement definitions from production
-headers without repeating any C signature:
-
-```cmake
-salts_tinymock_override_functions(my_test
-  HEADERS my_api.h
-  FUNCTIONS send_packet close_session)
-```
-
-`FUNCTIONS` is optional. When omitted, every supported reflected
-`FunctionDecl` in each header is generated. When present, only the selected
-names are generated and all selected headers are replayed in one test-only
-translation unit. Each selected name must actually be declared through
-`FunctionDecl`/`Function0Decl`; an ordinary prototype, variadic function,
-direct array declarator, static-inline helper, or missing name fails the Test
-Build selection witness instead of silently producing no mock.
-
-The current reflected ABI carriers include builtin scalar, object pointer,
-aggregate-by-value, function-pointer, enum, and literal void. Exact-ABI wrappers
-project arguments into CMeta typed argument views; object-pointer identity,
-aggregate values, function pointers, and enums are recorded through typed
-history/return state. These reflected categories do not depend on the legacy
-`TINYMOCk_VALUE` generic carrier. Explicit descriptors with
-`CMETA_ABI_UNSPECIFIED` and `CMETA_ABI_OPAQUE` remain rejected until a
-consumer-specific lowering is defined.
-
-Void auto-mocking deliberately recognizes literal `void` in the declaration
-grammar. A typedef alias to void is rejected with a direct TinyMock diagnostic;
-use literal `void` in the reflected declaration or an adapter.
-
-For replacement-definition instrumentation, the real selected implementation
-object must not also be linked into that test target. Selective `FUNCTIONS`
-allows other reflected functions from the same header to keep their normal real
-implementations.
-
-Invocation history can be queried independently of strict expectation
-verification:
-
-```c
-tinymock_mock_verify_times(mock, 2);
-tinymock_mock_verify_never(other);
-tinymock_mock_verify_at_least(mock, 1);
-tinymock_mock_verify_at_most(mock, 3);
-
-const tinymock_recorded_call_t *call = tinymock_mock_call_at(mock, 0);
-```
+This keeps `Salts::TinyTest` independent of both TinyMock and CMeta.
 
 ## Benchmarking
 
