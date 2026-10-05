@@ -96,9 +96,19 @@ typedef void (*cflow_error_fn)(void *user, const char *message);
 typedef void (*cflow_done_fn)(void *user);
 
 #define CMETA_SUBSCRIBER_METHODS(X,I) \
-    X(I,R2,bool,value,const cmeta_type_desc *,type,const void *,value) \
-    X(I,V1,void,error,const char *,message) \
-    X(I,V0,void,done,_)
+    X(I,FR2,bool,value,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
+      (const cmeta_type_desc *,type, \
+       CMETA_PARAM_IN | CMETA_PARAM_BORROWED, \
+       &cmeta_type_descriptor_ptr,CMETA_ABI_OBJECT_POINTER), \
+      (const void *,value,CMETA_PARAM_IN | CMETA_PARAM_BORROWED, \
+       &cmeta_type_void_ptr,CMETA_ABI_OBJECT_POINTER)) \
+    X(I,FV1,void,error,stateful, \
+      &cmeta_type_void,CMETA_ABI_VOID, \
+      (const char *,message,CMETA_PARAM_IN | CMETA_PARAM_BORROWED, \
+       &cmeta_type_char_ptr,CMETA_ABI_OBJECT_POINTER)) \
+    X(I,FV0,void,done,stateful, \
+      &cmeta_type_void,CMETA_ABI_VOID)
 CMETA_INTERFACE(cflow_subscriber, CMETA_SUBSCRIBER_METHODS);
 
 typedef struct cflow_subscriber_callbacks {
