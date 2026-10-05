@@ -2,6 +2,7 @@
 #define CFLOW_ADMISSION_H
 
 #include <stdint.h>
+#include <cmeta/cmeta.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,6 +27,10 @@ typedef struct cflow_schedule_result {
     cflow_admission_status status;
     cflow_task_id task_id;
 } cflow_schedule_result;
+
+extern const cmeta_type_desc cflow_type_admission_status;
+extern const cmeta_type_desc cflow_type_task_id;
+extern const cmeta_type_desc cflow_type_schedule_result;
 
 #ifdef __cplusplus
 }
