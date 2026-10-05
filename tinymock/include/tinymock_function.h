@@ -85,6 +85,17 @@
       TINYMOCk_FUNCTION_HISTORY(name), (call_index), (param_name), \
       &(expected_lvalue))
 
+#define TINYMOCk_FUNCTION_COUNT_EQUAL_TYPED( \
+    name, param_name, expected_lvalue) \
+  tinymock_cmeta_history_count_equal_typed_name( \
+      TINYMOCk_FUNCTION_HISTORY(name), (param_name), &(expected_lvalue))
+
+#define TINYMOCk_FUNCTION_ARG_POINTER_EQUAL( \
+    name, call_index, param_name, expected_pointer) \
+  tinymock_cmeta_history_arg_pointer_equal_name( \
+      TINYMOCk_FUNCTION_HISTORY(name), (call_index), (param_name), \
+      (const void *)(expected_pointer))
+
 #define TINYMOCk_FUNCTION_CAPTURE(name, call_index, param_name, captor) \
   tinymock_cmeta_captor_capture_name( \
       (captor), TINYMOCk_FUNCTION_HISTORY(name), (call_index), (param_name))
