@@ -1,12 +1,12 @@
 # CMeta Language Reference
 
-CMeta is a pragmatic modern-C dialect/toolkit implemented on top of strict C11.
-It combines a small declaration DSL, finite generic routing, compile-time schema
-replay, metadata descriptors, and ordinary C runtime protocols.
+CMeta is a pragmatic ordinary-C metaprogramming and Reflection layer built on
+strict C11. It combines finite declaration macros, compile-time schema replay,
+metadata descriptors, lifecycle helpers, and ordinary C runtime protocols.
 
-CMeta is deliberately **not** a replacement for C++, Rust, or a general-purpose
-macro language. New syntax should be added only when it has a concrete C11
-implementation and composes cleanly with existing CMeta patterns.
+CMeta is deliberately **not** a replacement for C++, Rust, or a separate source
+language. Public application forms must remain valid ordinary C macros,
+declarations, inline helpers, or functions.
 
 This document is the authoritative language vocabulary. The public surface is
 split into four categories so application syntax does not get mixed with
