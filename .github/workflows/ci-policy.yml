@@ -1,0 +1,28 @@
+name: CI workflow policy
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - ".github/ci/verify-workflow-purposes.ps1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: salts-ci-policy-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  purpose-contract:
+    name: Workflow purpose contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Verify workflow purpose boundaries
+        shell: pwsh
+        run: ./.github/ci/verify-workflow-purposes.ps1
