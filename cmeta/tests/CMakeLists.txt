@@ -119,6 +119,7 @@ cmake_add_test(cmeta_container_type_test
 
 cmake_add_test(cmeta_data_test
   SOURCES cmeta_data_test.c cmeta_fixed_bytes_peer.c
+          cmeta_fixed_array_test.c cmeta_fixed_array_peer.c
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
