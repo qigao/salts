@@ -39,6 +39,8 @@ typedef enum tls_public_mode {
   TLS_PUBLIC_ECHO = 1
 } tls_public_mode;
 
+static bool tls_public_single_receive_demand = false;
+
 typedef struct tls_public_probe {
   cnet_client *client;
   cnet_connection connection;
@@ -239,6 +241,15 @@ static void tls_public_on_receive(
   memcpy(probe->received + probe->received_size,
          view->data, view->size);
   probe->received_size += view->size;
+  if (tls_public_single_receive_demand &&
+      probe->received_size < probe->capacity) {
+    const int status =
+        cnet_receive(probe->client, connection, 1u);
+    if (status != SALTS_OK) {
+      probe->failed = 1;
+      probe->failure_status = status;
+    }
+  }
 }
 
 static void tls_public_on_send(
@@ -499,8 +510,10 @@ static int tls_public_one_way(
       server_to_client ? &pair->client_probe : &pair->server_probe;
 
   target_probe->received_size = 0u;
-  demand = tls_public_receive_demand(
-      mem_buffer_used(pair->payload));
+  demand = tls_public_single_receive_demand
+               ? 1u
+               : tls_public_receive_demand(
+                     mem_buffer_used(pair->payload));
   if (demand == 0u) return SALTS_ERANGE;
   status = cnet_receive(
       target, target_probe->connection, demand);
@@ -678,6 +691,7 @@ int main(int argc, char **argv) {
   tls_public_mode mode;
   const char *temperature;
   const char *nodelay_text;
+  const char *receive_demand_text;
   int nodelay = 0;
   int status = SALTS_OK;
 
@@ -722,6 +736,18 @@ int main(int argc, char **argv) {
       nodelay = 0;
     else if (strcmp(nodelay_text, "1") == 0)
       nodelay = 1;
+    else
+      return 2;
+  }
+
+  receive_demand_text =
+      getenv("CNET_TLS_PUBLIC_RECEIVE_DEMAND");
+  if (receive_demand_text != NULL &&
+      receive_demand_text[0] != '\0') {
+    if (strcmp(receive_demand_text, "prearm") == 0)
+      tls_public_single_receive_demand = false;
+    else if (strcmp(receive_demand_text, "single") == 0)
+      tls_public_single_receive_demand = true;
     else
       return 2;
   }
@@ -848,6 +874,7 @@ int main(int argc, char **argv) {
         "\"mode\":\"%s\","
         "\"temperature\":\"%s\","
         "\"nodelay\":%d,"
+        "\"receive_demand\":\"%s\","
         "\"payload_bytes\":%zu,"
         "\"owners\":%zu,"
         "\"pairs\":%u,"
@@ -870,7 +897,9 @@ int main(int argc, char **argv) {
         "\"p99_ns\":%llu,"
         "\"errors\":0}\n",
         tls_public_mode_name(mode), temperature,
-        nodelay, payload_size, owner_count, TLS_PUBLIC_PAIRS,
+        nodelay,
+        tls_public_single_receive_demand ? "single" : "prearm",
+        payload_size, owner_count, TLS_PUBLIC_PAIRS,
         total_ops, samples, operations_per_second,
         cpu_ns_per_op,
         total_ops != 0u
