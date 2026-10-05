@@ -402,6 +402,9 @@
 - 优先运行最贴近改动范围的测试；能小跑，不必先全跑
 - 若无法运行测试，必须明言原因、影响与剩余风险
 - CI、远程流水线与人工复核皆可作为补充；不可将其视为禁物
+- CI 的 CMake configure 决定完整 build graph；`cmake --build` 必须构建该 graph，禁止在 workflow 中使用 `--target` 或点名具体构建 target
+- CI 不得直接运行 CMake 生成的测试/benchmark executable；验证与 benchmark 执行统一通过 CTest（`ctest`，可用 label/regex 选择）
+- test / benchmark / release/debug graph 必须通过 configure 选项分离，不得靠 build 阶段点 target 实现用途隔离
 - 不得以“理论正确”代替实际验证
 
 ## 审查规则
