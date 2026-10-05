@@ -312,16 +312,6 @@ static int cmeta_lower_reserve_type(
     return 1;
 }
 
-static int cmeta_lower_owner_registered(
-    const cmeta_lower_context *context, const char *owner_id) {
-    size_t i;
-    if (owner_id == NULL) return 0;
-    for (i = 0u; i < context->type_count; ++i)
-        if (strcmp(context->types[i].owner_id, owner_id) == 0)
-            return 1;
-    return 0;
-}
-
 static int cmeta_lower_add_type(
     cmeta_lower_context *context, size_t offset,
     const char *owner_id, const char *concrete) {
