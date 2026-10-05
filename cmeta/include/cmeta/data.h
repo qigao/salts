@@ -39,7 +39,7 @@ enum { CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION = 1u };
  * Source-lowering lifecycle binding.
  *
  * cmeta-lower recognizes CMETA_LIFECYCLE(Type, accessor) before preprocessing
- * and binds owned(Type) to the explicit canonical cmeta_data_desc accessor.
+ * and binds cmeta_owned(Type) to the explicit canonical cmeta_data_desc accessor.
  * After preprocessing the marker remains a valid, zero-runtime-cost typedef;
  * generated cleanup calls the accessor directly, so there is no runtime
  * lifecycle registry or name lookup.
