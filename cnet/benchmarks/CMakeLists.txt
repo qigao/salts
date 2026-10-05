@@ -47,7 +47,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   cmake_add_benchmark(cnet_tls_provider_parallel_benchmark
     SOURCES cnet_tls_provider_parallel_benchmark.c
     LIBS cnet_profile Salts::Platform
-    TEST_ARGS echo 32768 1 warm
     FOLDER "cnet/benchmarks")
   target_compile_definitions(cnet_tls_provider_parallel_benchmark PRIVATE
     "CNET_TLS_BENCH_CA=\"${CNET_TLS_BENCH_CA}\""
@@ -62,7 +61,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   cmake_add_benchmark(cnet_tls_public_owner_benchmark
     SOURCES cnet_tls_public_owner_benchmark.c
     LIBS cnet_profile Salts::Platform Salts::Core
-    TEST_ARGS echo 32768 1 warm
     FOLDER "cnet/benchmarks")
   target_compile_definitions(cnet_tls_public_owner_benchmark PRIVATE
     "CNET_TLS_BENCH_CA=\"${CNET_TLS_BENCH_CA}\""
@@ -82,7 +80,6 @@ unset(CNET_TLS_BENCH_KEY)
 cmake_add_benchmark(cnet_owner_lifecycle_compare
   SOURCES cnet_owner_lifecycle_compare.c cnet_benchmark_stats.c
   LIBS Salts::Platform Salts::Core Salts::NativeIO
-  TEST_ARGS --self-test
   FOLDER "cnet/benchmarks")
 target_include_directories(cnet_owner_lifecycle_compare PRIVATE ../include ../src)
 if(UNIX AND NOT APPLE)
