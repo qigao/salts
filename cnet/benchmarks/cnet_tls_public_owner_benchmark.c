@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 enum {
   TLS_PUBLIC_PAIRS = 8,
@@ -702,6 +703,7 @@ int main(int argc, char **argv) {
   const char *nodelay_text;
   const char *receive_demand_text;
   const char *poll_timeout_text;
+  long logical_cpus = sysconf(_SC_NPROCESSORS_ONLN);
   int nodelay = 0;
   int status = SALTS_OK;
 
@@ -896,6 +898,7 @@ int main(int argc, char **argv) {
         "\"nodelay\":%d,"
         "\"receive_demand\":\"%s\","
         "\"poll_ms\":%u,"
+        "\"logical_cpus\":%ld,"
         "\"payload_bytes\":%zu,"
         "\"owners\":%zu,"
         "\"pairs\":%u,"
@@ -931,6 +934,7 @@ int main(int argc, char **argv) {
         nodelay,
         tls_public_single_receive_demand ? "single" : "prearm",
         tls_public_poll_timeout_ms,
+        logical_cpus,
         payload_size, owner_count, TLS_PUBLIC_PAIRS,
         total_ops, samples, operations_per_second,
         cpu_ns_per_op,
