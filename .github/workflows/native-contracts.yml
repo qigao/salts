@@ -21,7 +21,6 @@ on:
       - "cnet/src/**"
       - "cnet/include/**"
       - "cnet/tests/**"
-      - "!cnet/tests/cnet_performance_ci_contract_test.cmake"
       - "cnet/CMakeLists.txt"
       - "cflow/src/**"
       - "cflow/include/**"
@@ -143,7 +142,7 @@ jobs:
       - name: Run CNet contracts
         shell: pwsh
         run: |
-          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cnet_.*_test|concurrency_deadline_queue_test)$' -E '^cnet_performance_ci_contract_test$' --timeout 60 --output-on-failure
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cnet_.*_test|concurrency_deadline_queue_test)$' --timeout 60 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./cnet/tests/cnet_io_trace_test.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
