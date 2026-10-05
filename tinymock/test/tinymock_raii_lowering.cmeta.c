@@ -82,8 +82,14 @@ int main(void) {
         &mock, read, scripted);
   }
 
-  if (!set_ok) return 1;
-  if (tinymock_raii_copy_count != 1u) return 2;
-  if (tinymock_raii_destroy_count != 1u) return 3;
+  if (!cmeta_data_desc_valid(
+          tinymock_tinymock_raii_probe_cmeta_data()))
+    return 1;
+  if (cmeta_data_construct_ops_of(
+          tinymock_tinymock_raii_probe_cmeta_data()) == NULL)
+    return 2;
+  if (!set_ok) return 3;
+  if (tinymock_raii_copy_count != 1u) return 4;
+  if (tinymock_raii_destroy_count != 1u) return 5;
   return 0;
 }
