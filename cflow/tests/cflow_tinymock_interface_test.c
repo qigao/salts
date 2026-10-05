@@ -6,6 +6,12 @@
 
 TINYMOCk_INTERFACE(cflow_subscriber, CMETA_SUBSCRIBER_METHODS);
 
+TINYMOCk_INTERFACE(cflow_waitable, CMETA_WAITABLE_METHODS);
+
+static void cflow_tinymock_test_wake(void *user) {
+    (void)user;
+}
+
 suite("TinyMock existing CMeta interface") {
   it("mocks the fully reflected cflow_subscriber contract") {
     tinymock_cflow_subscriber mock;
@@ -72,5 +78,26 @@ suite("TinyMock existing CMeta interface") {
         0u, "message", (const void *)message));
 
     tinymock_cflow_subscriber_destroy(&mock);
+  }
+
+  it("mocks the fully reflected waitable contract") {
+    tinymock_cflow_waitable mock;
+    cflow_waitable waitable;
+    cflow_waker expected = {cflow_tinymock_test_wake, &mock};
+    bool armed = true;
+
+    tinymock_cflow_waitable_init(&mock);
+    waitable = tinymock_cflow_waitable_as_interface(&mock);
+
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, arm, armed));
+    check_true(cflow_waitable_arm(&waitable, expected));
+    cflow_waitable_cancel(&waitable);
+
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, arm, 1);
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, cancel, 1);
+    check_true(TINYMOCk_INTERFACE_ARG_EQUAL_TYPED(
+        &mock, arm, 0u, "waker", expected));
+
+    tinymock_cflow_waitable_destroy(&mock);
   }
 }

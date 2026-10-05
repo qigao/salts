@@ -3,6 +3,33 @@
 #include <stdlib.h>
 #include <string.h>
 
+static bool cflow_waker_equal(
+    const void *left_, const void *right_) {
+    const cflow_waker *left = (const cflow_waker *)left_;
+    const cflow_waker *right = (const cflow_waker *)right_;
+
+    return left != NULL && right != NULL &&
+           left->wake == right->wake &&
+           left->user == right->user;
+}
+
+static const cmeta_type_traits cflow_waker_traits = {
+    .flags = CMETA_TRAIT_EQUAL |
+             CMETA_TRAIT_TRIVIAL_COPY |
+             CMETA_TRAIT_TRIVIAL_DESTROY,
+    .equal = cflow_waker_equal
+};
+
+const cmeta_type_desc cflow_type_waker = {
+    .name = "cflow_waker",
+    .size = sizeof(cflow_waker),
+    .align = _Alignof(cflow_waker),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &cflow_waker_traits,
+    .identity = NULL
+};
+
 static bool callback_sink_value(void *self,
                                 const cmeta_type_desc *type,
                                 const void *value) {
