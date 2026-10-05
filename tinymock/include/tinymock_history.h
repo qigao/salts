@@ -2,6 +2,7 @@
 #define TINYMOCK_HISTORY_H
 
 #include "tinymock.h"
+#include "tinymock_value.h"
 
 #include <cmeta/function.h>
 
@@ -12,18 +13,9 @@
 extern "C" {
 #endif
 
-typedef struct tinymock_cmeta_snapshot {
-  const cmeta_type_desc *type;
-  void *allocation;
-  void *data;
-  bool constructed;
-  bool has_pointer_identity;
-  const void *pointer_identity;
-} tinymock_cmeta_snapshot;
-
 typedef struct tinymock_cmeta_recorded_call {
   size_t argc;
-  tinymock_cmeta_snapshot args[TINYMOCk_MAX_ARGS];
+  tinymock_cmeta_value args[TINYMOCk_MAX_ARGS];
 } tinymock_cmeta_recorded_call;
 
 typedef struct tinymock_cmeta_history {
@@ -33,19 +25,19 @@ typedef struct tinymock_cmeta_history {
 } tinymock_cmeta_history;
 
 typedef struct tinymock_cmeta_captor {
-  tinymock_cmeta_snapshot value;
+  tinymock_cmeta_value value;
   size_t capture_count;
 } tinymock_cmeta_captor;
 
-void tinymock_cmeta_snapshot_init(tinymock_cmeta_snapshot *snapshot);
-void tinymock_cmeta_snapshot_reset(tinymock_cmeta_snapshot *snapshot);
-bool tinymock_cmeta_snapshot_copy(
-    tinymock_cmeta_snapshot *snapshot,
+void tinymock_cmeta_value_init(tinymock_cmeta_value *snapshot);
+void tinymock_cmeta_value_reset(tinymock_cmeta_value *snapshot);
+bool tinymock_cmeta_value_copy(
+    tinymock_cmeta_value *snapshot,
     const cmeta_type_desc *type,
     const void *source,
     const tinymock_value_t *boxed);
-bool tinymock_cmeta_snapshot_write(
-    const tinymock_cmeta_snapshot *snapshot,
+bool tinymock_cmeta_value_write(
+    const tinymock_cmeta_value *snapshot,
     void *destination,
     bool replace_existing);
 
