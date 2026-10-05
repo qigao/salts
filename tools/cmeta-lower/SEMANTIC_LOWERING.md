@@ -1,94 +1,111 @@
-# CMeta semantic lowering branch contract
+# Minimal CMeta semantic lowering contract
 
 Tracking Epic: #905
 
 Branch: `feat/cmeta-semantic-lowering`
 
-This branch is intentionally long-lived and maturity-gated. It collects the
-complete admitted finite source-lowering surface before any merge to `master`.
+## Principle
 
-## Compiler boundary
+CMeta remains C.
+
+The project keeps native C control flow, native C functions, native C ABI and
+ordinary status/error handling. The lowerer exists only to attach or enforce
+semantic information that plain C cannot conveniently express.
 
 ```text
-C + finite CMeta syntax
+C
++ canonical type metadata
++ canonical lifecycle metadata
++ explicit ownership state
         |
         v
    cmeta-lower
         |
         v
- ordinary portable C11
+ ordinary C11
 ```
 
-The lowerer owns only compile-time lexical/source state needed to prove and
-rewrite admitted forms. Canonical CMeta Reflection/DataDesc/FunctionDesc/
-InterfaceDesc remain semantic authorities. No runtime lookup is added by this
-branch.
+## Core surface
 
-## Admitted syntax roadmap
+The branch is limited to:
 
-1. structured scope exits / `defer` (first direct-call slice implemented);
-2. explicit error propagation with deterministic cleanup;
-3. canonical `cmeta_type(...)` declarations binding native type + Reflection + lifecycle;
-4. finite enum/variant `match`;
-5. finite collection/range iteration lowered to ordinary C functions;
-6. reflected function parameter/result ownership contracts.
+- `cmeta_type(...)` — canonical concrete type + Reflection/lifecycle binding;
+- `owned(T)` — lexical ownership;
+- `move(x)` — explicit ownership transfer;
+- deterministic automatic cleanup for LIVE owned values;
+- compile/build-time use of TypeDesc/DataDesc/FunctionDesc and related canonical
+  Reflection descriptors;
+- generated ordinary C helpers where Reflection can remove boilerplate.
 
-## Hard exclusions
+No other language surface is assumed.
 
-The branch must not turn cmeta-lower into a full C compiler. In particular it
-does not own:
+## C stays in charge
 
-- general CFG ownership joins;
-- universal borrow checking;
-- closure escape analysis;
-- async/await state-machine compilation;
-- C++ overload/conversion semantics or template spelling;
-- Interface/vtable/object execution syntax;
-- receiver-method/object syntax expansion;
-- runtime RTTI or method-name invocation.
+Application code continues to use:
 
-Those belong in a real AST/IR/CFG compiler or a domain runtime.
+```c
+if (...) { ... }
+switch (...) { ... }
+for (...) { ... }
+while (...) { ... }
+goto cleanup;
+return status;
 
-## Exit/cleanup ordering
+IntList_init(&list, 16);
+IntList_add(&list, 10);
+```
 
-All admitted lexical exit actions participate in one deterministic LIFO stack.
-An owned value contributes its canonical DataDesc cleanup action. A `defer`
-contributes an explicit source cleanup action. The lowerer decides *when* an
-action runs; the provider/source call decides *how* it runs.
+CMeta must not replace those constructs with another control-flow language.
 
-Unsupported transfers of control fail closed rather than silently skipping or
-duplicating cleanup.
+## RAII rule
+
+`owned(T)` is accepted only when canonical lifecycle authority is known.
+`move(x)` is the only source-level ownership transfer marker in this scope.
+
+The compiler decides **when** cleanup is required.
+Canonical DataDesc/provider semantics decide **how** cleanup occurs.
+
+No guessed destructor names, allocator policy, runtime lifecycle registry or
+hidden fallback is permitted.
+
+## Reflection rule
+
+Reflection is descriptive semantic authority, not an object system and not a
+hot-path dispatcher.
+
+Use canonical metadata for:
+
+- type identity and layout;
+- value lifecycle/data semantics;
+- function parameter/result ownership and effects;
+- finite declared generic identity;
+- code generation, validation and diagnostics.
+
+Execution remains ordinary exact C functions.
+
+## Explicit exclusions
+
+This branch does not add:
+
+- defer;
+- try / ? / exception-like propagation;
+- match/pattern syntax;
+- for-in or new loop syntax;
+- with/scope-success/failure syntax;
+- interfaces, virtual dispatch, objects or OO syntax;
+- receiver-method syntax expansion;
+- C++ template spelling;
+- overload/conversion systems;
+- lambdas/closures;
+- async/await;
+- runtime generic dispatch or RTTI;
+- a full C parser/compiler.
+
+Existing receiver shorthand is not expanded and is not a dependency of the new
+design.
 
 ## Merge policy
 
-The implementation PR remains Draft until every admitted phase is either
-complete and qualified or explicitly removed from #905 with rationale.
-
-Required before Ready-for-review:
-
-- positive runtime coverage;
-- generated C shape checks;
-- negative/fail-closed diagnostics;
-- existing ownership/move invariants;
-- sanitizer qualification;
-- Linux/Windows/macOS native qualification;
-- host-tool/cross-build qualification;
-- synchronized README/inspection docs;
-- no production TODO/fallback path.
-
-## Current experimental slice
-
-`defer direct_c_call(...);` is implemented with one cleanup stack shared with
-`owned(T)`. It is intentionally stricter than the eventual surface: tracked
-owned captures and non-local control transfers remain rejected until a sound
-finite rule is proven.
-
-## Function-oriented rule
-
-This branch does not introduce an OO surface. New lowering must remain based on
-ordinary C types and ordinary C functions. Reflection describes type/data/
-function semantics; it does not create objects, virtual dispatch, method
-namespaces, interfaces, or capability casts.
-
-Existing receiver shorthand is not expanded by this Epic and no new feature may
-depend on it. New collection/range lowering targets concrete C functions.
+PR #906 stays Draft until the minimal `cmeta_type + owned + move + Reflection`
+contract is complete, cross-platform qualified, documented, and produces
+ordinary portable C11 without fallback paths.
