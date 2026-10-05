@@ -290,19 +290,19 @@ static inline bool cflow_direct_stage_eligible(cmeta_callable callable,
   #define CFLOW_DIRECT_EVAL_filter(index, input_type, output_type, callable)                       \
     _Static_assert(_Generic(&(CFLOW_DIRECT_INPUT(index)), input_type *: 1, default: 0),            \
                    "Direct filter input does not match the preceding stage");                      \
-    _Static_assert(_Generic(&(typed_call(callable)), bool (*)(input_type): 1, default: 0),         \
+    _Static_assert(_Generic(&(cmeta_function_call(callable)), bool (*)(input_type): 1, default: 0),         \
                    "Direct filter callable does not match its declared input type");               \
     _Static_assert(_Generic((input_type *)0, output_type *: 1, default: 0),                        \
                    "Direct filter must preserve its input type");                                  \
-    if (!typed_call(callable)(CFLOW_DIRECT_INPUT(index))) continue;                                \
+    if (!cmeta_function_call(callable)(CFLOW_DIRECT_INPUT(index))) continue;                                \
     output_type CFLOW_DIRECT_VALUE(index) = CFLOW_DIRECT_INPUT(index);
 
   #define CFLOW_DIRECT_EVAL_map(index, input_type, output_type, callable)                          \
     _Static_assert(_Generic(&(CFLOW_DIRECT_INPUT(index)), input_type *: 1, default: 0),            \
                    "Direct map input does not match the preceding stage");                         \
-    _Static_assert(_Generic(&(typed_call(callable)), output_type (*)(input_type): 1, default: 0),  \
+    _Static_assert(_Generic(&(cmeta_function_call(callable)), output_type (*)(input_type): 1, default: 0),  \
                    "Direct map callable does not match its declared stage types");                 \
-    output_type CFLOW_DIRECT_VALUE(index) = typed_call(callable)(CFLOW_DIRECT_INPUT(index));
+    output_type CFLOW_DIRECT_VALUE(index) = cmeta_function_call(callable)(CFLOW_DIRECT_INPUT(index));
 
   #define CFLOW_DIRECT_EVAL_INDEXED(index, row, count)                                             \
     CFLOW_DIRECT_ROW_APPLY(CFLOW_DIRECT_EVAL_ROW, index, row, count)
