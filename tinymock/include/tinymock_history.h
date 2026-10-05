@@ -84,6 +84,28 @@ bool tinymock_cmeta_history_arg_equal_typed_name(
     const char *param_name,
     const void *expected);
 
+bool tinymock_cmeta_history_arg_pointer_equal(
+    const tinymock_cmeta_history *history,
+    size_t call_index,
+    size_t param_index,
+    const void *expected_identity);
+
+bool tinymock_cmeta_history_arg_pointer_equal_name(
+    const tinymock_cmeta_history *history,
+    size_t call_index,
+    const char *param_name,
+    const void *expected_identity);
+
+size_t tinymock_cmeta_history_count_equal_typed(
+    const tinymock_cmeta_history *history,
+    size_t param_index,
+    const void *expected);
+
+size_t tinymock_cmeta_history_count_equal_typed_name(
+    const tinymock_cmeta_history *history,
+    const char *param_name,
+    const void *expected);
+
 size_t tinymock_cmeta_history_count_equal(
     const tinymock_cmeta_history *history,
     size_t param_index,
