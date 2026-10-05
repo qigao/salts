@@ -23,6 +23,11 @@ suite("TinyMock CMeta interface bridge") {
     tinymock_tinymock_cmeta_counter_init(&mock);
     counter = tinymock_tinymock_cmeta_counter_as_interface(&mock);
 
+    {
+      int zero = 0;
+      check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, value, zero));
+    }
+
     check_true(tinymock_cmeta_counter_valid(&counter));
     check_equal(tinymock_cmeta_counter_implementation(&counter),
                 "tinymock:tinymock_cmeta_counter");
@@ -58,10 +63,14 @@ suite("TinyMock CMeta interface bridge") {
     tinymock_tinymock_cmeta_counter_init(&mock);
     counter = tinymock_tinymock_cmeta_counter_as_interface(&mock);
 
-    tinymock_mock_set_default_return(
-        TINYMOCk_INTERFACE_METHOD(&mock, add), TINYMOCk_RETURN(17));
-    tinymock_mock_set_default_return(
-        TINYMOCk_INTERFACE_METHOD(&mock, value), TINYMOCk_RETURN(23));
+    {
+      int add_return = 17;
+      int value_return = 23;
+      check_true(TINYMOCk_INTERFACE_SET_RETURN(
+          &mock, add, add_return));
+      check_true(TINYMOCk_INTERFACE_SET_RETURN(
+          &mock, value, value_return));
+    }
 
     check_equal(tinymock_cmeta_counter_add(&counter, 5), 17);
     check_equal(tinymock_cmeta_counter_value(&counter), 23);
