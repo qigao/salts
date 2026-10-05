@@ -946,6 +946,12 @@ static int cmeta_lower_try_defer(
     unsigned paren_depth = 0u;
     char function_name[128];
 
+    if (depth == 0u) {
+        cmeta_lower_set_error(
+            context, ident_start, "defer requires lexical block scope");
+        return -1;
+    }
+
     call_start = cmeta_lower_skip_space_comments(source, size, ident_end);
     if (!cmeta_lower_identifier(
             source, size, call_start,
