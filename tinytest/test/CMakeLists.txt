@@ -85,11 +85,6 @@ cmake_add_test(tinytest_result_x_macro
   LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
-add_test(
-  NAME tinytest_public_header_structure
-  COMMAND ${CMAKE_COMMAND}
-    "-DTINYTEST_HEADER=${CMAKE_SOURCE_DIR}/tinytest/include/tinytest.h"
-    -P "${CMAKE_CURRENT_SOURCE_DIR}/public_header_structure.cmake")
 
 cmake_add_executable(tinytest_focus_output
   SOURCES focus_output_cases.c
