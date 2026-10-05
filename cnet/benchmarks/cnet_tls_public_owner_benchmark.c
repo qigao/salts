@@ -18,7 +18,7 @@
 
 enum {
   TLS_PUBLIC_PAIRS = 8,
-  TLS_PUBLIC_MAX_OWNERS = 4,
+  TLS_PUBLIC_MAX_OWNERS = 8,
   TLS_PUBLIC_TIMEOUT_MS = 10000,
   TLS_PUBLIC_DEFAULT_OPS = 48,
   TLS_PUBLIC_WARMUP_ROUNDS_PER_PAIR = 2
@@ -715,7 +715,7 @@ int main(int argc, char **argv) {
           argv[3], 1u, TLS_PUBLIC_MAX_OWNERS,
           &owner_count) != SALTS_OK ||
       (owner_count != 1u && owner_count != 2u &&
-       owner_count != 4u) ||
+       owner_count != 4u && owner_count != 8u) ||
       TLS_PUBLIC_PAIRS % owner_count != 0u)
     return 2;
 
