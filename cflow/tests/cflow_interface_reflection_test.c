@@ -1,4 +1,5 @@
 #include <cflow/clock.h>
+#include <cflow/reactive.h>
 
 #include "tinytest.h"
 
@@ -66,5 +67,39 @@ suite("CFlow clock interface reflection") {
     check_false(cmeta_type_equal(&cflow_type_duration, &cflow_type_instant));
     check_equal(cflow_type_duration.kind, CMETA_T_OBJECT);
     check_equal(cflow_type_instant.kind, CMETA_T_OBJECT);
+  }
+
+  it("publishes complete waitable semantics") {
+    const cmeta_interface_desc *meta = cflow_waitable_interface();
+    const cmeta_function_desc *arm_fn;
+    const cmeta_function_abi_desc *arm_abi;
+    const cmeta_param_desc *waker;
+
+    check_true(cmeta_type_desc_valid(&cflow_type_waker));
+    check_true(cmeta_interface_desc_valid(meta));
+    check_equal(meta->method_count, (size_t)2);
+    check_true(cmeta_interface_method_reflection_valid(&meta->methods[0]));
+    check_true(cmeta_interface_method_reflection_valid(&meta->methods[1]));
+
+    arm_fn = cmeta_interface_method_function(&meta->methods[0]);
+    arm_abi = cmeta_interface_method_abi(&meta->methods[0]);
+    check_equal(arm_fn->name, "cflow_waitable.arm");
+    check_equal(arm_fn->effects, (cmeta_effects)CMETA_EFFECT_STATEFUL);
+    check_equal(arm_fn->result_flags,
+                (cmeta_result_flags)CMETA_RESULT_VALUE);
+    check_true(cmeta_type_equal(arm_fn->return_type, &cmeta_type_bool));
+    check_equal(arm_abi->return_carrier,
+                (cmeta_abi_carrier)CMETA_ABI_SCALAR);
+
+    waker = cmeta_function_param(arm_fn, 0u);
+    check_not_null(waker);
+    check_equal(waker->name, "waker");
+    check_equal(waker->flags, (cmeta_param_flags)CMETA_PARAM_IN);
+    check_true(cmeta_type_equal(waker->type, &cflow_type_waker));
+    check_equal(cmeta_function_param_abi(arm_abi, 0u),
+                (cmeta_abi_carrier)CMETA_ABI_AGGREGATE);
+
+    check_equal(cmeta_interface_method_function(&meta->methods[1])->name,
+                "cflow_waitable.cancel");
   }
 }
