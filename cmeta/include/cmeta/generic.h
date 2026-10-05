@@ -39,18 +39,28 @@
  *
  * cmeta_type(List, IntList, int);
  *
- * Providers register a finite kind and emit one concrete C type plus its
- * ordinary Type_* API and canonical metadata. This is a macro declaration,
- * not source syntax and requires no CMeta lowerer.
+ * Unlike the historical typed(...) router, cmeta_type(...) accepts only a
+ * registered finite generic kind. It never falls through to a callable/operator
+ * DSL. An unregistered kind deliberately expands to an unknown provider symbol
+ * and fails compilation.
  */
+#define CMETA_TYPE_UNREGISTERED_I_(kind, ...) \
+    CMETA_PP_CAT(CMETA_TYPE_UNREGISTERED_, kind)(__VA_ARGS__)
+#define CMETA_TYPE_ROUTE_1(kind, ...) CMETA_TYPED_GENERIC(kind, __VA_ARGS__)
+#define CMETA_TYPE_ROUTE_0(kind, ...) CMETA_TYPE_UNREGISTERED_I_(kind, __VA_ARGS__)
+#define CMETA_TYPE_ROUTE_I_(is_kind, kind, ...) \
+    CMETA_PP_CAT(CMETA_TYPE_ROUTE_, is_kind)(kind, __VA_ARGS__)
+#define CMETA_TYPE_ROUTE_(kind, ...) \
+    CMETA_TYPE_ROUTE_I_(CMETA_GENERIC_IS_KIND(kind), kind, __VA_ARGS__)
+
 #ifndef cmeta_type
-#define cmeta_type(kind, ...) CMETA_TYPED_ROUTE(kind, __VA_ARGS__)
+#define cmeta_type(kind, ...) CMETA_TYPE_ROUTE_(kind, __VA_ARGS__)
 #endif
 
-/* Legacy spelling retained temporarily while in-tree users migrate to
- * cmeta_type(...). Do not introduce new users of typed(...). */
+/* Historical mixed router retained temporarily for existing generic and
+ * CFlow-callable users. New concrete generic declarations use cmeta_type(...). */
 #ifndef typed
-#define typed(kind, ...) cmeta_type(kind, __VA_ARGS__)
+#define typed(kind, ...) CMETA_TYPED_ROUTE(kind, __VA_ARGS__)
 #endif
 
 /* Compose a generated Type_method symbol behind a semantic public facade. */
