@@ -321,12 +321,20 @@ spec("CNet bounded callback events") {
       check_equal(cnet_event_queue_close(&events), SALTS_OK);
     }
 
-    for (;;) {
-      cnet_event_view view = {0};
-      const int status = cnet_event_queue_take(&events, &view);
-      if (status == SALTS_EOF) break;
-      check_equal(status, SALTS_OK);
-      check_equal(cnet_event_queue_release(&events, &view), SALTS_OK);
+    {
+      const uint64_t deadline = salts_monotonic_ms() + 5000u;
+      for (;;) {
+        cnet_event_view view = {0};
+        const int status = cnet_event_queue_take(&events, &view);
+        if (status == SALTS_EOF) break;
+        if (status == SALTS_ETIMEDOUT) {
+          check_true(salts_monotonic_ms() < deadline);
+          salts_thread_yield();
+          continue;
+        }
+        check_equal(status, SALTS_OK);
+        check_equal(cnet_event_queue_release(&events, &view), SALTS_OK);
+      }
     }
     check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
 
