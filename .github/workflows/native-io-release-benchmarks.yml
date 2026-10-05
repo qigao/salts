@@ -10,6 +10,9 @@ on:
       - "cflow/include/cflow/io_cnet_adapter.h"
       - "cflow/cnet-adapter/**"
       - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "CMakeUserPresets.json"
+      - ".github/actions/setup-re2c-tools/action.yml"
       - "cmake/ci/benchmark-policy.json"
       - "cmake/ci/verify-benchmark-policy.ps1"
       - "cmake/ci/render-benchmark-verdicts.ps1"
@@ -55,6 +58,9 @@ on:
       - "cflow/include/cflow/io_cnet_adapter.h"
       - "cflow/cnet-adapter/**"
       - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "CMakeUserPresets.json"
+      - ".github/actions/setup-re2c-tools/action.yml"
       - "cmake/ci/benchmark-policy.json"
       - "cmake/ci/verify-benchmark-policy.ps1"
       - "cmake/ci/render-benchmark-verdicts.ps1"
@@ -188,6 +194,8 @@ jobs:
                     $_ -notlike "cmake/ci/*") -or
                   $_ -eq "CMakeLists.txt" -or
                   $_ -eq "CMakePresets.json" -or
+                  $_ -eq "CMakeUserPresets.json" -or
+                  $_ -eq ".github/actions/setup-re2c-tools/action.yml" -or
                   $_ -eq ".github/workflows/native-io-release-benchmarks.yml"
                 }).Count -gt 0
               $dependencyChanged = @($changed | Where-Object {
@@ -434,8 +442,8 @@ jobs:
             family: mac
             backend: kqueue
             artifact: macos-kqueue
-            configure_preset: release-mac-ninja
-            build_preset: build-default-mac
+            configure_preset: mac-release-user
+            build_preset: mac-release-user
             build_dir: build/mac-clang-release
 
     steps:
@@ -776,10 +784,20 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
+          for /f "tokens=2 delims==" %%T in ('findstr /b /c:"VCPKG_TARGET_TRIPLET:STRING=" "%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\CMakeCache.txt"') do set "BASELINE_TARGET_TRIPLET=%%T"
+          if not defined BASELINE_TARGET_TRIPLET exit /b 1
           set "BASELINE_PKGCONF=%BASELINE_SOURCE%\vcpkg_installed\%QIGAO_VCPKG_WINDOWS_HOST_TRIPLET%\tools\pkgconf\pkgconf.exe"
-          cmake --preset win-release-user -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DPKG_CONFIG_EXECUTABLE="%BASELINE_PKGCONF%"
+          cmake -S . -B build\Msvc-Release -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_TOOLCHAIN_FILE="%QIGAO_VCPKG_TOOLCHAIN_FILE%" ^
+            -DVCPKG_TARGET_TRIPLET=%BASELINE_TARGET_TRIPLET% ^
+            -DVCPKG_HOST_TRIPLET=%QIGAO_VCPKG_WINDOWS_HOST_TRIPLET% ^
+            -DVCPKG_MANIFEST_MODE=ON ^
+            -DVCPKG_INSTALLED_DIR="%BASELINE_SOURCE%\vcpkg_installed" ^
+            -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF ^
+            -DPKG_CONFIG_EXECUTABLE="%BASELINE_PKGCONF%"
           if errorlevel 1 exit /b 1
-          cmake --build --preset win-release-user --target cnet
+          cmake --build build\Msvc-Release --target cnet
           if errorlevel 1 exit /b 1
           if not exist "build\Msvc-Release\bin\cnet.dll" exit /b 1
           powershell -NoProfile -ExecutionPolicy Bypass -File "%BASELINE_SOURCE%\cmake\ci\stage-windows-cnet-runtime.ps1" -Prefix "%BASELINE_SOURCE%\build\Msvc-Release" -VcpkgInstalledDir "%BASELINE_SOURCE%\vcpkg_installed"

@@ -21,8 +21,7 @@
                 "PROJECT_ROOT": "$penv{PROJECT_ROOT}",
                 "PKG_ROOT": "$env{PROJECT_ROOT}/external/pkgs",
                 "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
-                "VCPKG_ROOT": "$penv{VCPKG_ROOT}",
-                "VCPKG_CACHE_REPOSITORY_ROOT": "$penv{LOCALAPPDATA}/qigao/vcpkg-cache"
+                "VCPKG_ROOT": "$penv{VCPKG_ROOT}"
             }
         },
         {
@@ -138,6 +137,24 @@
             ]
         },
         {
+            "name": "mac-release-user",
+            "cacheVariables": {
+                "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
+                "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}"
+            },
+            "environment": {
+                "PROJECT_ROOT": "$penv{PROJECT_ROOT}",
+                "PKG_ROOT": "$env{PROJECT_ROOT}/external/pkgs",
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
+                "VCPKG_ROOT": "$penv{VCPKG_ROOT}",
+                "SALTS_ROOT": "$env{PKG_ROOT}/salts/release"
+            },
+            "inherits": [
+                "release-mac-ninja",
+                "vcpkg-cache"
+            ]
+        },
+        {
             "name": "linux-release-user",
             "cacheVariables": {
                 "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
@@ -173,6 +190,20 @@
             "inherits": [
                 "release-linux-ninja",
                 "linux-paths"
+            ]
+        },
+        {
+            "name": "android-arm64-v8a-release-user",
+            "cacheVariables": {
+                "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}"
+            },
+            "environment": {
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
+                "VCPKG_ROOT": "$penv{VCPKG_ROOT}"
+            },
+            "inherits": [
+                "android-arm64-v8a-release",
+                "vcpkg-cache"
             ]
         },
         {
@@ -299,6 +330,10 @@
             "configurePreset": "linux-release-user"
         },
         {
+            "name": "mac-release-user",
+            "configurePreset": "mac-release-user"
+        },
+        {
             "name": "linux-sdk-package",
             "configurePreset": "linux-sdk-package"
         },
@@ -336,6 +371,10 @@
             "targets": [
                 "install"
             ]
+        },
+        {
+            "name": "android-arm64-v8a-release-user",
+            "configurePreset": "android-arm64-v8a-release-user"
         },
         {
             "name": "android-arm64-v8a-debug-win",

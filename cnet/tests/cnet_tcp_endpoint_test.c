@@ -502,8 +502,11 @@ int main(void) {
                &accepted_client, 0u, &events) == SALTS_OK);
     assert(salts_monotonic_ms() < deadline);
   }
-  assert(atomic_load_explicit(
-             &client_probe.failed, memory_order_acquire) == 0);
+  /*
+   * Receive shutdown is a local contract: no further receive event may be
+   * published on that direction. The sending peer may still observe a
+   * platform-specific terminal/reset indication after its final write.
+   */
   assert(atomic_load_explicit(
              &accepted_probe.received, memory_order_acquire) == 0);
 

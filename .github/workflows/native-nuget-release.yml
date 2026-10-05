@@ -171,15 +171,15 @@ jobs:
           grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
           grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinytest/detail/equality.h"
+          test -f "$prefix/include/tinymock_support.h"
           test -f "$prefix/include/tinymock_cmeta.h"
+          test -f "$prefix/include/tinymock_value.h"
           test -f "$prefix/include/tinymock_function.h"
           test -f "$prefix/include/tinymock_history.h"
           test -f "$prefix/include/tinymock_actions.h"
           test -f "$prefix/include/tinymock_return.h"
-          test -f "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ needs.metadata.outputs.version }}
           commit=${{ needs.metadata.outputs.release_sha }}
@@ -310,9 +310,9 @@ jobs:
           restore-keys: |
             vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
       - name: Configure minimal Release SDK
-        run: cmake --preset release-mac-ninja -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+        run: cmake --preset mac-release-user -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build
-        run: cmake --build --preset build-default-mac --parallel 2
+        run: cmake --build --preset mac-release-user --parallel 2
       - name: Install SDK
         shell: bash
         run: |
@@ -334,15 +334,15 @@ jobs:
           grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
           grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinytest/detail/equality.h"
+          test -f "$prefix/include/tinymock_support.h"
           test -f "$prefix/include/tinymock_cmeta.h"
+          test -f "$prefix/include/tinymock_value.h"
           test -f "$prefix/include/tinymock_function.h"
           test -f "$prefix/include/tinymock_history.h"
           test -f "$prefix/include/tinymock_actions.h"
           test -f "$prefix/include/tinymock_return.h"
-          test -f "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ needs.metadata.outputs.version }}
           commit=${{ needs.metadata.outputs.release_sha }}
@@ -420,12 +420,13 @@ jobs:
           $projectionHeader = Join-Path $prefix "include\cflow\function_projection.h"
           $interfaceHeader = Join-Path $prefix "include\cmeta\interface.h"
           $tinyEqualityHeader = Join-Path $prefix "include\tinytest\detail\equality.h"
+          $tinymockSupportHeader = Join-Path $prefix "include\tinymock_support.h"
           $tinymockHeader = Join-Path $prefix "include\tinymock_cmeta.h"
+          $tinymockValueHeader = Join-Path $prefix "include\tinymock_value.h"
           $tinymockFunctionHeader = Join-Path $prefix "include\tinymock_function.h"
           $tinymockHistoryHeader = Join-Path $prefix "include\tinymock_history.h"
           $tinymockActionsHeader = Join-Path $prefix "include\tinymock_actions.h"
           $tinymockReturnHeader = Join-Path $prefix "include\tinymock_return.h"
-          $tinymockCMake = Join-Path $prefix "lib\cmake\Salts\SaltsTinyMock.cmake"
           if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "missing $config" }
           if (-not (Test-Path -LiteralPath $functionHeader -PathType Leaf)) { throw "missing $functionHeader" }
           if (-not (Test-Path -LiteralPath $projectionHeader -PathType Leaf)) { throw "missing $projectionHeader" }
@@ -437,20 +438,18 @@ jobs:
           if (-not (Select-String -LiteralPath $functionHeader -SimpleMatch "cmeta_function_abi_desc" -Quiet)) { throw "missing cmeta_function_abi_desc in $functionHeader" }
           if (-not (Select-String -LiteralPath $functionHeader -SimpleMatch "FunctionAbi" -Quiet)) { throw "missing FunctionAbi in $functionHeader" }
           if (-not (Test-Path -LiteralPath $tinyEqualityHeader -PathType Leaf)) { throw "missing $tinyEqualityHeader" }
+          if (-not (Test-Path -LiteralPath $tinymockSupportHeader -PathType Leaf)) { throw "missing $tinymockSupportHeader" }
           if (-not (Test-Path -LiteralPath $tinymockHeader -PathType Leaf)) { throw "missing $tinymockHeader" }
+          if (-not (Test-Path -LiteralPath $tinymockValueHeader -PathType Leaf)) { throw "missing $tinymockValueHeader" }
           if (-not (Test-Path -LiteralPath $tinymockFunctionHeader -PathType Leaf)) { throw "missing $tinymockFunctionHeader" }
           if (-not (Test-Path -LiteralPath $tinymockHistoryHeader -PathType Leaf)) { throw "missing $tinymockHistoryHeader" }
           if (-not (Test-Path -LiteralPath $tinymockActionsHeader -PathType Leaf)) { throw "missing $tinymockActionsHeader" }
           if (-not (Test-Path -LiteralPath $tinymockReturnHeader -PathType Leaf)) { throw "missing $tinymockReturnHeader" }
-          if (-not (Test-Path -LiteralPath $tinymockCMake -PathType Leaf)) { throw "missing $tinymockCMake" }
           if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::TinyMock" -Quiet)) {
             throw "missing Salts::TinyMock export in $targets"
           }
           if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::CFlow" -Quiet)) {
             throw "missing Salts::CFlow export in $targets"
-          }
-          if (-not (Select-String -LiteralPath $tinymockCMake -SimpleMatch "salts_tinymock_override_functions" -Quiet)) {
-            throw "missing TinyMock CMake helper in $tinymockCMake"
           }
           $manifest = @(
             "version=${{ needs.metadata.outputs.version }}"
@@ -509,9 +508,9 @@ jobs:
           restore-keys: |
             vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
       - name: Configure minimal Android Release SDK
-        run: cmake --preset android-arm64-v8a-release -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+        run: cmake --preset android-arm64-v8a-release-user -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build
-        run: cmake --build --preset build-android-arm64-v8a-release --parallel 2
+        run: cmake --build --preset android-arm64-v8a-release-user --parallel 2
       - name: Install SDK
         shell: bash
         run: |
@@ -528,15 +527,15 @@ jobs:
           grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
           grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinytest/detail/equality.h"
+          test -f "$prefix/include/tinymock_support.h"
           test -f "$prefix/include/tinymock_cmeta.h"
+          test -f "$prefix/include/tinymock_value.h"
           test -f "$prefix/include/tinymock_function.h"
           test -f "$prefix/include/tinymock_history.h"
           test -f "$prefix/include/tinymock_actions.h"
           test -f "$prefix/include/tinymock_return.h"
-          test -f "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ needs.metadata.outputs.version }}
           commit=${{ needs.metadata.outputs.release_sha }}

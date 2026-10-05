@@ -30,7 +30,14 @@ runs:
     - name: Prepare Windows vcpkg host dependencies
       if: runner.os == 'Windows'
       shell: pwsh
-      run: choco install nasm ninja -y --no-progress
+      run: |
+        $ErrorActionPreference = "Stop"
+        choco install nasm ninja -y --no-progress
+        if ($LASTEXITCODE -ne 0) {
+          exit $LASTEXITCODE
+        }
+        $ninja = Get-Command ninja -ErrorAction Stop
+        Write-Host "ninja=$($ninja.Source)"
 
     - name: Prepare macOS vcpkg host dependencies
       if: runner.os == 'macOS'
