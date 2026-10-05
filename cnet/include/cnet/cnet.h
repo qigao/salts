@@ -412,6 +412,8 @@ typedef struct cnet_start_tls_options {
  * Optional OS policy for future TCP-backed connections owned by one client.
  * Zero buffer sizes preserve platform defaults. Millisecond durations are
  * rounded up when a platform exposes only whole-second socket options.
+ * Windows linger durations cannot exceed 65,535,000 ms; larger values
+ * return `SALTS_ERANGE` before any socket option is applied.
  * Keepalive detail requires `keepalive == 1`; `linger_ms == 0` with
  * `linger == 1` requests abortive close. `nodelay == 1` requests
  * `TCP_NODELAY` for latency-sensitive TCP/TLS streams; zero preserves the
@@ -703,7 +705,7 @@ int cnet_client_init_external(cnet_client *client,
                               const cnet_client_config *config,
                               native_io_backend *borrowed_backend);
 
-/** Validates bounds and option dependencies without touching a socket. */
+/** Validates platform bounds and option dependencies without touching a socket. */
 int cnet_stream_socket_options_validate(const cnet_stream_socket_options *options);
 
 /**

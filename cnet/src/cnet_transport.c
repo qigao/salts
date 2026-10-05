@@ -31,6 +31,8 @@ typedef int cnet_native_socket;
 
 static int cnet_transport_native_error(void);
 
+enum { CNET_STREAM_SOCKET_MILLISECONDS_PER_SECOND = 1000 };
+
 int cnet_stream_socket_options_validate(const cnet_stream_socket_options *options) {
   if (options == NULL || options->size != sizeof(*options) ||
       (options->keepalive != 0 && options->keepalive != 1) ||
@@ -45,6 +47,11 @@ int cnet_stream_socket_options_validate(const cnet_stream_socket_options *option
                               options->keepalive_count != 0u))
     return SALTS_EINVAL;
   if (!options->linger && options->linger_ms != 0u) return SALTS_EINVAL;
+#if defined(_WIN32)
+  /* Winsock stores whole seconds in u_short; truncation can turn linger into abortive close. */
+  if (options->linger_ms > (uint32_t)USHRT_MAX * CNET_STREAM_SOCKET_MILLISECONDS_PER_SECOND)
+    return SALTS_ERANGE;
+#endif
   return SALTS_OK;
 }
 
@@ -123,7 +130,8 @@ static int cnet_transport_ms_to_seconds(uint64_t milliseconds, int *out_seconds)
 }
 
 static int cnet_transport_duration_seconds(uint32_t milliseconds) {
-  return (int)(((uint64_t)milliseconds + UINT64_C(999)) / UINT64_C(1000));
+  return (int)(((uint64_t)milliseconds + CNET_STREAM_SOCKET_MILLISECONDS_PER_SECOND - 1u) /
+               CNET_STREAM_SOCKET_MILLISECONDS_PER_SECOND);
 }
 
 int cnet_transport_apply_stream_socket_options(
