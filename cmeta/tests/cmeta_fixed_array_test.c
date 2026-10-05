@@ -14,6 +14,7 @@ typedef struct array_owner {
     unsigned tag;
 } array_owner;
 
+static const unsigned char ARRAY_OWNER_PAYLOAD[] = {'a', 'b', 'c'};
 static size_t array_owner_live;
 static size_t array_owner_assign_calls;
 static size_t array_owner_fail_call;
@@ -172,7 +173,7 @@ spec("CMeta fixed array lifecycle") {
     size_t i;
     for (i = 0u; i < CMETA_FIXED_ARRAY_TEST_COUNT; ++i)
         check_equal(cmeta_data_buffer_assign(&array_owner_data, &source[i],
-            (const unsigned char *)"abc", 3u, ARRAY_OWNER_MAX_BYTES), CMETA_OK);
+            ARRAY_OWNER_PAYLOAD, sizeof(ARRAY_OWNER_PAYLOAD), ARRAY_OWNER_MAX_BYTES), CMETA_OK);
     check_equal(cmeta_data_value_copy(data, destination, source), CMETA_OK);
     check_equal(array_owner_live, 2u * CMETA_FIXED_ARRAY_TEST_COUNT);
     for (i = 0u; i < CMETA_FIXED_ARRAY_TEST_COUNT; ++i) {
@@ -182,7 +183,7 @@ spec("CMeta fixed array lifecycle") {
     check_equal(cmeta_data_value_move(data, moved, destination), CMETA_OK);
     check_true(array_owner_triple_value_is_zero(destination));
     check_equal(cmeta_data_value_restore_zero(data, source), CMETA_OK);
-    check_equal(moved[1].data, "abc", 3u);
+    check_equal(moved[1].data, ARRAY_OWNER_PAYLOAD, sizeof(ARRAY_OWNER_PAYLOAD));
     check_equal(cmeta_data_value_restore_zero(data, moved), CMETA_OK);
     check_equal(cmeta_data_value_restore_zero(data, moved), CMETA_OK);
   }
@@ -191,7 +192,7 @@ spec("CMeta fixed array lifecycle") {
     size_t i;
     for (i = 0u; i < CMETA_FIXED_ARRAY_TEST_COUNT; ++i)
         check_equal(cmeta_data_buffer_assign(&array_owner_data, &source[i],
-            (const unsigned char *)"abc", 3u, ARRAY_OWNER_MAX_BYTES), CMETA_OK);
+            ARRAY_OWNER_PAYLOAD, sizeof(ARRAY_OWNER_PAYLOAD), ARRAY_OWNER_MAX_BYTES), CMETA_OK);
     array_owner_fail_call = array_owner_assign_calls + 2u;
     check_equal(cmeta_data_value_copy(data, destination, source), CMETA_CALLBACK_ERROR);
     check_true(array_owner_triple_value_is_zero(destination));
@@ -204,7 +205,7 @@ spec("CMeta fixed array lifecycle") {
     cmeta_collector collector = {0};
     size_t i;
     check_equal(cmeta_data_buffer_assign(&array_owner_data, &source[0],
-        (const unsigned char *)"abc", 3u, ARRAY_OWNER_MAX_BYTES), CMETA_OK);
+        ARRAY_OWNER_PAYLOAD, sizeof(ARRAY_OWNER_PAYLOAD), ARRAY_OWNER_MAX_BYTES), CMETA_OK);
     check_equal(cmeta_data_collection_collector(data, destination, SIZE_MAX,
                                                &collector), CMETA_OK);
     check_equal(cmeta_collector_begin(&collector), CMETA_OK);
@@ -233,11 +234,11 @@ spec("CMeta fixed array lifecycle") {
     check_equal(cmeta_collector_begin(&collector), CMETA_CAPACITY_EXCEEDED);
     check_true(array_owner_triple_value_is_zero(destination));
     check_equal(cmeta_data_buffer_assign(&array_owner_data, &destination[0],
-        (const unsigned char *)"abc", 3u, ARRAY_OWNER_MAX_BYTES), CMETA_OK);
+        ARRAY_OWNER_PAYLOAD, sizeof(ARRAY_OWNER_PAYLOAD), ARRAY_OWNER_MAX_BYTES), CMETA_OK);
     check_equal(cmeta_data_collection_collector(data, destination, SIZE_MAX,
                                                &collector), CMETA_OK);
     check_equal(cmeta_collector_begin(&collector), CMETA_INVALID_ARGUMENT);
-    check_equal(destination[0].data, "abc", 3u);
+    check_equal(destination[0].data, ARRAY_OWNER_PAYLOAD, sizeof(ARRAY_OWNER_PAYLOAD));
     check_equal(array_owner_live, 1u);
   }
 
@@ -245,7 +246,7 @@ spec("CMeta fixed array lifecycle") {
     cmeta_collector collector = {0};
     size_t i;
     check_equal(cmeta_data_buffer_assign(&array_owner_data, &source[0],
-        (const unsigned char *)"abc", 3u, ARRAY_OWNER_MAX_BYTES), CMETA_OK);
+        ARRAY_OWNER_PAYLOAD, sizeof(ARRAY_OWNER_PAYLOAD), ARRAY_OWNER_MAX_BYTES), CMETA_OK);
     check_equal(cmeta_data_collection_collector(data, destination,
         CMETA_FIXED_ARRAY_TEST_COUNT, &collector), CMETA_OK);
     check_equal(cmeta_collector_begin(&collector), CMETA_OK);
@@ -256,7 +257,7 @@ spec("CMeta fixed array lifecycle") {
     cmeta_collector_abort(&collector);
     check_equal(collector.state, CMETA_COLLECTOR_COMMITTED);
     check_equal(array_owner_live, 1u + CMETA_FIXED_ARRAY_TEST_COUNT);
-    check_equal(destination[1].data, "abc", 3u);
+    check_equal(destination[1].data, ARRAY_OWNER_PAYLOAD, sizeof(ARRAY_OWNER_PAYLOAD));
   }
 
   it("aborts explicit cancellation once and keeps type mismatch distinct") {
@@ -272,7 +273,7 @@ spec("CMeta fixed array lifecycle") {
     check_true(array_owner_triple_value_is_zero(destination));
     check_equal(array_owner_live, 0u);
     check_equal(cmeta_data_buffer_assign(&array_owner_data, &source[0],
-        (const unsigned char *)"abc", 3u, ARRAY_OWNER_MAX_BYTES), CMETA_OK);
+        ARRAY_OWNER_PAYLOAD, sizeof(ARRAY_OWNER_PAYLOAD), ARRAY_OWNER_MAX_BYTES), CMETA_OK);
     check_equal(cmeta_data_collection_collector(data, destination, SIZE_MAX,
                                                &collector), CMETA_OK);
     check_equal(cmeta_collector_begin(&collector), CMETA_OK);
