@@ -17,7 +17,8 @@ for raw in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
         rows.append(item)
 
 expected = {
-    (mode, temp, payload, owners)
+    (nodelay, mode, temp, payload, owners)
+    for nodelay in (0, 1)
     for mode in ("push", "echo")
     for temp in ("fresh", "warm")
     for payload in (16384, 32768, 65536)
@@ -26,6 +27,7 @@ expected = {
 groups = {}
 for row in rows:
     key = (
+        int(row.get("nodelay", -1)),
         row["mode"],
         row["temperature"],
         int(row["payload_bytes"]),
@@ -75,9 +77,10 @@ print("fixed public TLS loopback pairs per point: 8")
 print("TLS version: 1.3 required on both public CNet endpoints")
 print()
 
-for mode in ("push", "echo"):
-    for temp in ("fresh", "warm"):
-        print(f"### public CNet {mode} / {temp}")
+for nodelay in (0, 1):
+    for mode in ("push", "echo"):
+        for temp in ("fresh", "warm"):
+            print(f"### public CNet {mode} / {temp} / nodelay={nodelay}")
         print()
         print(
             "| payload | owners | ops/s | speedup | p50 us | p95 us | p99 us | "
@@ -86,12 +89,12 @@ for mode in ("push", "echo"):
         print(
             "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
         )
-        for payload in (16384, 32768, 65536):
-            base = groups[(mode, temp, payload, 1)]
-            base_rate = median(base, "ops_per_second")
-            base_cpu = median(base, "owner_cpu_ns_per_op")
-            for owners in (1, 2, 4):
-                points = groups[(mode, temp, payload, owners)]
+            for payload in (16384, 32768, 65536):
+                base = groups[(nodelay, mode, temp, payload, 1)]
+                base_rate = median(base, "ops_per_second")
+                base_cpu = median(base, "owner_cpu_ns_per_op")
+                for owners in (1, 2, 4):
+                    points = groups[(nodelay, mode, temp, payload, owners)]
                 rate = median(points, "ops_per_second")
                 cpu = median(points, "owner_cpu_ns_per_op")
                 print(
