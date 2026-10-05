@@ -26,6 +26,12 @@ typedef struct tinymock_cmeta_value {
   const void *pointer_identity;
 } tinymock_cmeta_value;
 
+typedef struct tinymock_cmeta_arg_view {
+  const void *address;
+  bool has_object_pointer_identity;
+  const void *object_pointer_identity;
+} tinymock_cmeta_arg_view;
+
 void tinymock_cmeta_value_init(tinymock_cmeta_value *value);
 void tinymock_cmeta_value_reset(tinymock_cmeta_value *value);
 
