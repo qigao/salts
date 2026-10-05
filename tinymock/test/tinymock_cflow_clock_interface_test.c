@@ -29,8 +29,8 @@ suite("TinyMock reflected CFlow clock interface") {
     check_equal(now.ns, UINT64_C(1234));
     check_true(cflow_clock_advance(&clock, delta));
 
-    tinymock_mock_verify_times(TINYMOCk_INTERFACE_METHOD(&mock, now), 1);
-    tinymock_mock_verify_times(TINYMOCk_INTERFACE_METHOD(&mock, advance), 1);
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, now, 1);
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, advance, 1);
 
     check_true(TINYMOCk_INTERFACE_ARG_EQUAL_TYPED(
         &mock, advance, 0u, "delta", expected));
