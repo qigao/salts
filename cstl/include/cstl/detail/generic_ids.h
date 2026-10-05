@@ -4,9 +4,10 @@
 /*
  * Canonical CSTL generic constructor stable IDs.
  *
- * Keep this header dependency-free: both CSTL runtime descriptor publication
- * and the standalone cmeta-lower host tool consume it. Source-language tokens
- * are spelling only; semantic generic-owner equality is the stable ID.
+ * Keep this header dependency-free so CSTL runtime descriptor publication can
+ * share one stable constructor identity across translation units. Public
+ * cmeta_type(...) spelling is declaration syntax only; semantic generic-owner
+ * equality is the stable ID.
  */
 #define CSTL_GENERIC_STABLE_ID_Vec       "cstl.Vec"
 #define CSTL_GENERIC_STABLE_ID_Deque     "cstl.Deque"

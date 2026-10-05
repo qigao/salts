@@ -20,13 +20,13 @@ static const cmeta_type_desc generic_only_key_type = {
     .identity = &generic_only_key_identity
 };
 
-typed(Vec, NamedIntVec, int);
-typed(Set, NamedIntSet, int);
-typed(Map, NamedIntLongMap, int, long);
+cmeta_type(Vec, NamedIntVec, int);
+cmeta_type(Set, NamedIntSet, int);
+cmeta_type(Map, NamedIntLongMap, int, long);
 
-typed(Vec, ExplicitIntVec, int, &cmeta_type_int, &cmeta_data_int);
-typed(Set, ExplicitIntSet, int, &cmeta_type_int, &cmeta_data_int);
-typed(Map, ExplicitIntLongMap, int, long,
+cmeta_type(Vec, ExplicitIntVec, int, &cmeta_type_int, &cmeta_data_int);
+cmeta_type(Set, ExplicitIntSet, int, &cmeta_type_int, &cmeta_data_int);
+cmeta_type(Map, ExplicitIntLongMap, int, long,
       &cmeta_type_int, &cmeta_data_int,
       &cmeta_type_long, &cmeta_data_long);
 

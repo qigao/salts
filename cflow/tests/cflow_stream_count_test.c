@@ -4,11 +4,11 @@
 
 #include <stdint.h>
 
-typed(filter, value, bool, cflow_count_even, (int value)) {
+cmeta_function(filter, value, bool, cflow_count_even, (int value)) {
     return value % 2 == 0;
 }
 
-typed(map, value, long, cflow_count_widen, (int value)) {
+cmeta_function(map, value, long, cflow_count_widen, (int value)) {
     return (long)value;
 }
 

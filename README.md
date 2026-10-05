@@ -92,8 +92,8 @@ Struct(User,
     (double, score)
 );
 
-typed(Vec, UserVec, User);
-typed(Option, MaybeUser, User);
+cmeta_type(Vec, UserVec, User);
+cmeta_type(Option, MaybeUser, User);
 ```
 
 Typed containers remain thin generated facades over compiled C algorithms, and CMeta descriptors describe semantics without changing the native object representation.

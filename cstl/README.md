@@ -28,18 +28,18 @@ target_link_libraries(my_target PRIVATE Salts::CSTL)
 For a single typed container:
 
 ```c
-typed(List, IntList, int);
+cmeta_type(List, IntList, int);
 ```
 
 For several:
 
 ```c
-typed(Vec, IntVec, int);
-typed(List, IntList, int);
-typed(HashSet, IntSet, int);
-typed(HashMap, IntLongHashMap, int, long);
-typed(Map, IntLongMap, int, long);
-typed(BTree, IntTree, int, long);
+cmeta_type(Vec, IntVec, int);
+cmeta_type(List, IntList, int);
+cmeta_type(HashSet, IntSet, int);
+cmeta_type(HashMap, IntLongHashMap, int, long);
+cmeta_type(Map, IntLongMap, int, long);
+cmeta_type(BTree, IntTree, int, long);
 ```
 
 No `implement(...)`, `DeclareContainers(...)`, or `ImplementContainers(...)` call is required or exposed for typed containers.
@@ -118,81 +118,36 @@ independent node-based doubly-linked list with stable iterators across insertion
 
 ## Typed operations
 
-A `typed(...)` declaration creates a concrete static type, but the concrete
-type is not the semantic operation namespace:
+A `cmeta_type(...)` declaration creates one concrete C type and its ordinary
+`Type_*` API:
 
 ```c
-typed(List, IntList, int);
+cmeta_type(List, IntList, int);
 
-IntList list = {0};
-```
-
-The CMeta lowering layer treats these source spellings as the same operation:
-
-```c
-list.add(10);         /* receiver / C++-style spelling */
-List_add(&list, 10);  /* generic / STL-style spelling */
-```
-
-Both normalize to `List_add(&list, 10)`: `List` owns the operation,
-`IntList` supplies the receiver's static element type. The native C backend
-then materializes that canonical operation as the existing direct static-inline
-typed helper, for example `IntList_add(&list, 10)`. No runtime lookup or
-dispatch remains in generated C.
-
-### CMeta source frontend
-
-`cmeta-lower` is the host source-to-source frontend for these enhanced C
-spellings. It reads a translation unit containing ordinary C plus `typed(...)`
-container declarations and emits ordinary C:
-
-```sh
-cmeta-lower app.cmeta.c app.c
-```
-
-`cmeta-lower` is a source-tree host development tool, not part of the
-published Salts native SDK. `Salts.Native` contains target headers, libraries,
-and package metadata only; it does not install `cmeta-lower` or expose a
-lowering helper through `SaltsConfig.cmake`. Repository builds and tests may
-use the internal source-tree lowering integration before ordinary C compilation.
-
-The first frontend slice deliberately recognizes direct typed object variables,
-receiver calls such as `list.add(...)`, and generic calls such as
-`List_add(&list, ...)`. Comments, strings, preprocessor directives, and
-unrelated C are passed through unchanged. Member receiver expressions
-(`obj.field.add(...)`) and pointer receiver syntax (`ptr->add(...)`) remain
-outside this slice.
-
-The same split applies to other kinds:
-
-```text
-vec.push(10)       == Vec_push(&vec, 10)
-set.add(10)        == Set_add(&set, 10)
-map.put(1, 20)     == Map_put(&map, 1, 20)
-```
-
-Concrete `Type_method` names remain the native typed ABI and are still valid
-ordinary C calls:
-
-```c
 IntList values = {0};
-IntLongMap index = {0};
 
 IntList_init(&values, 100u);
-IntList_push_back(&values, 10);
+IntList_add(&values, 10);
 IntList_push_back(&values, 20);
-
-IntLongMap_init(&index, 100u);
-IntLongMap_put(&index, 7, 70L);
-
-IntLongMap_destroy(&index);
 IntList_destroy(&values);
 ```
 
-Raw names such as `map_init(&scores, 100u)`,
-`map_put(&scores, &key, &value)`, and `map_destroy(&scores)` remain ordinary
-functions; typed declarations never intercept or reinterpret their C
-expressions.
+The same API is used from every ordinary `.c` translation unit. CSTL does not
+provide receiver syntax or a generic operation namespace. Operations stay
+direct, static-inline typed C calls over the compiled CSTL algorithms.
+
+Canonical ownership transfer is available through CMeta DataDesc:
+
+```c
+IntList destination = {0};
+
+if (cmeta_move(IntList, &destination, &values) != CMETA_OK)
+    return 1;
+```
+
+A successful move leaves `values` in canonical semantic-zero, so it remains
+safe to destroy or reinitialize. No source translator or compiler-private
+LIVE/MOVED state is required for lifecycle correctness.
 
 ## TinyTest equality bridge
 
@@ -204,7 +159,7 @@ CSTL handle. Define a comparator for each test type, then pass its type name to
 ```c
 #include <cstl/typed.h>
 
-typed(Vec, IntVec, int);
+cmeta_type(Vec, IntVec, int);
 
 #include <cstl/tinytest.h>
 
@@ -220,7 +175,7 @@ keys and values as ordered pairs, so it supports `Map`, `MultiMap`, `BTree`,
 and `BPlusTree` when their key and value types provide `EQUAL`; duplicate keys
 remain significant by traversal order. `HashMap` is unordered and is rejected
 by these comparators. The type arguments must be the same types used in the
-`typed(...)` declaration; the bridge validates CMeta type identity when it is
+`cmeta_type(...)` declaration; the bridge validates CMeta type identity when it is
 available and always validates destination size and alignment before reading a
 Range value.
 
@@ -251,7 +206,7 @@ owns the typed signature and declared contract; CFlow owns traversal, predicate
 invocation, value lifetime, and Graph execution. For example:
 
 ```c
-typed(filter, value, bool, keep_even, (int value)) {
+cmeta_function(filter, value, bool, keep_even, (int value)) {
     return value % 2 == 0;
 }
 
@@ -415,7 +370,7 @@ container.
 ```c
 #include <cstl/stream.h>
 
-typed(List, AsyncIntList, int);
+cmeta_type(List, AsyncIntList, int);
 
 int main(void) {
     AsyncIntList input = {0};

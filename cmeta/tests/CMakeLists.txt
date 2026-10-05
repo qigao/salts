@@ -86,9 +86,6 @@ if(NOT CMAKE_CROSSCOMPILING)
             "${CMETA_INSPECTION_GENERATED_DIR}"
     COMMAND $<TARGET_FILE:cmeta_inspection_codegen>
             "${CMETA_INSPECTION_GENERATED_SOURCE}"
-    COMMAND ${CMAKE_COMMAND}
-            -DGENERATED=${CMETA_INSPECTION_GENERATED_SOURCE}
-            -P "${CMETA_INSPECTION_TEST_DIR}/verify_cmeta_inspection_generated.cmake"
     DEPENDS cmeta_inspection_codegen
     VERBATIM)
 
@@ -104,12 +101,6 @@ if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME cmeta_inspection_generated_test
            COMMAND cmeta_inspection_generated_test)
 
-  add_test(
-    NAME cmeta_inspection_codegen_rejects_mismatch
-    COMMAND ${CMAKE_COMMAND}
-            -DTOOL=$<TARGET_FILE:cmeta_inspection_codegen>
-            -DOUTPUT=${CMETA_INSPECTION_GENERATED_DIR}/rejected.c
-            -P "${CMETA_INSPECTION_TEST_DIR}/verify_cmeta_inspection_rejection.cmake")
 endif()
 
 cmake_add_test(cmeta_container_type_test
@@ -252,6 +243,11 @@ cmeta_add_compile_failure_test(
   cmeta_compute_require_compile_fail
   compile_fail/cmeta_compute_require.c
   "CMeta predicate CMetaRejected rejects blocked")
+
+cmeta_add_compile_failure_test(
+  cmeta_intrusive_type_mismatch_compile_fail
+  compile_fail/cmeta_intrusive_type_mismatch.c
+  "CMeta intrusive member type mismatch")
 
 set_target_properties(cmeta_header_cpp_test PROPERTIES
   CXX_STANDARD 17

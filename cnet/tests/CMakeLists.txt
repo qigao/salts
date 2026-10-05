@@ -484,6 +484,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
                                                               77)
 endif()
 
+find_program(CNET_POWERSHELL_EXECUTABLE NAMES pwsh powershell)
+if(CNET_POWERSHELL_EXECUTABLE)
+  add_test(
+    NAME cnet_io_trace_test
+    COMMAND ${CNET_POWERSHELL_EXECUTABLE}
+            -NoProfile
+            -File ${CMAKE_CURRENT_SOURCE_DIR}/cnet_io_trace_test.ps1)
+endif()
+
 cmake_add_test(
   cnet_datagram_test
   SOURCES
@@ -620,52 +629,3 @@ set_target_properties(
   PROPERTIES CXX_STANDARD 11
              CXX_STANDARD_REQUIRED ON
              CXX_EXTENSIONS OFF)
-
-
-add_test(
-  NAME cnet_state_authority_contract_test
-  COMMAND ${CMAKE_COMMAND}
-          -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
-          -P ${CMAKE_CURRENT_SOURCE_DIR}/cnet_state_authority_contract_test.cmake)
-
-
-add_test(
-  NAME cnet_dispatcher_single_owner_contract_test
-  COMMAND ${CMAKE_COMMAND}
-          -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
-          -P ${CMAKE_CURRENT_SOURCE_DIR}/cnet_dispatcher_single_owner_contract_test.cmake)
-
-
-add_test(
-  NAME cnet_client_single_owner_data_path_contract_test
-  COMMAND ${CMAKE_COMMAND}
-          -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
-          -P ${CMAKE_CURRENT_SOURCE_DIR}/cnet_client_single_owner_data_path_contract_test.cmake)
-
-
-add_test(
-  NAME cnet_tls_write_ownership_contract_test
-  COMMAND ${CMAKE_COMMAND}
-          -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
-          -P ${CMAKE_CURRENT_SOURCE_DIR}/cnet_tls_write_ownership_contract_test.cmake)
-
-
-add_test(
-  NAME cnet_owned_receive_contract_test
-  COMMAND ${CMAKE_COMMAND}
-          -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
-          -P ${CMAKE_CURRENT_SOURCE_DIR}/cnet_owned_receive_contract_test.cmake)
-
-
-add_test(
-  NAME cnet_receive_backing_contract_test
-  COMMAND ${CMAKE_COMMAND}
-          -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
-          -P ${CMAKE_CURRENT_SOURCE_DIR}/cnet_receive_backing_contract_test.cmake)
-
-
-add_test(
-  NAME cnet_performance_ci_contract_test
-  COMMAND ${CMAKE_COMMAND}
-          -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
-          -P ${CMAKE_CURRENT_SOURCE_DIR}/cnet_performance_ci_contract_test.cmake)

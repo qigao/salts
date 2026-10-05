@@ -32,11 +32,11 @@ static bool cflow_test_build_pipeline(cflow_stream *stream) {
            stream->map(stream, cflow_test_half);
 }
 
-typed(map, stateful, long, cflow_test_stateful_add_ten, (int value)) {
+cmeta_function(map, stateful, long, cflow_test_stateful_add_ten, (int value)) {
     return (long)value + 10L;
 }
 
-typed(map, value, int, cflow_test_increment_int, (int value)) {
+cmeta_function(map, value, int, cflow_test_increment_int, (int value)) {
     return value + 1;
 }
 

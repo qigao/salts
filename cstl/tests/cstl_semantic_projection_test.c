@@ -36,48 +36,48 @@ static cmeta_status cstl_semantic_collect_map(
   return CMETA_OK;
 }
 
-typed(Vec, cstl_struct_vec, int);
-typed(Vec, reflected_ints, int);
-typed(Deque, reflected_deque, int);
-typed(List, reflected_list, int);
-typed(Set, reflected_set, int);
-typed(HashSet, reflected_hash_set, int);
-typed(Map, reflected_map, int, long);
-typed(HashMap, reflected_hash_map, int, long);
-typed(BTree, reflected_btree, int, long);
-typed(BPlusTree, reflected_bplus, int, long);
-typed(Map, capability_map, int, long);
-typed(HashMap, capability_hash_map, int, long);
-typed(BTree, capability_btree, int, long);
-typed(BPlusTree, capability_bplus, int, long);
-typed(MultiMap, capability_multimap, int, long);
-typed(Vec, transactional_vec, int);
-typed(Stack, reflected_stack, int);
-typed(Queue, reflected_queue, int);
-typed(Vec, meta_vec, int);
-typed(Deque, meta_deque, int);
-typed(List, meta_list, int);
-typed(Stack, meta_stack, int);
-typed(Queue, meta_queue, int);
-typed(Heap, meta_heap, int);
-typed(Set, meta_set, int);
-typed(HashSet, meta_hash_set, int);
-typed(HashMap, meta_hash_map, int, long);
-typed(Map, meta_map, int, long);
-typed(MultiMap, meta_multimap, int, long);
-typed(BTree, meta_btree, int, long);
-typed(BPlusTree, meta_bplus, int, long);
-typed(Vec, borrow_vec, int);
-typed(List, borrow_list, int);
-typed(HashSet, borrow_hash_set, int);
-typed(HashMap, borrow_hash_map, int, long);
-typed(Map, borrow_map, int, long);
-typed(MultiMap, borrow_multimap, int, long);
-typed(BTree, borrow_btree, int, long);
-typed(BPlusTree, borrow_bplus, int, long);
-typed(Vec, exact_i32_vec, int32_t,
+cmeta_type(Vec, cstl_struct_vec, int);
+cmeta_type(Vec, reflected_ints, int);
+cmeta_type(Deque, reflected_deque, int);
+cmeta_type(List, reflected_list, int);
+cmeta_type(Set, reflected_set, int);
+cmeta_type(HashSet, reflected_hash_set, int);
+cmeta_type(Map, reflected_map, int, long);
+cmeta_type(HashMap, reflected_hash_map, int, long);
+cmeta_type(BTree, reflected_btree, int, long);
+cmeta_type(BPlusTree, reflected_bplus, int, long);
+cmeta_type(Map, capability_map, int, long);
+cmeta_type(HashMap, capability_hash_map, int, long);
+cmeta_type(BTree, capability_btree, int, long);
+cmeta_type(BPlusTree, capability_bplus, int, long);
+cmeta_type(MultiMap, capability_multimap, int, long);
+cmeta_type(Vec, transactional_vec, int);
+cmeta_type(Stack, reflected_stack, int);
+cmeta_type(Queue, reflected_queue, int);
+cmeta_type(Vec, meta_vec, int);
+cmeta_type(Deque, meta_deque, int);
+cmeta_type(List, meta_list, int);
+cmeta_type(Stack, meta_stack, int);
+cmeta_type(Queue, meta_queue, int);
+cmeta_type(Heap, meta_heap, int);
+cmeta_type(Set, meta_set, int);
+cmeta_type(HashSet, meta_hash_set, int);
+cmeta_type(HashMap, meta_hash_map, int, long);
+cmeta_type(Map, meta_map, int, long);
+cmeta_type(MultiMap, meta_multimap, int, long);
+cmeta_type(BTree, meta_btree, int, long);
+cmeta_type(BPlusTree, meta_bplus, int, long);
+cmeta_type(Vec, borrow_vec, int);
+cmeta_type(List, borrow_list, int);
+cmeta_type(HashSet, borrow_hash_set, int);
+cmeta_type(HashMap, borrow_hash_map, int, long);
+cmeta_type(Map, borrow_map, int, long);
+cmeta_type(MultiMap, borrow_multimap, int, long);
+cmeta_type(BTree, borrow_btree, int, long);
+cmeta_type(BPlusTree, borrow_bplus, int, long);
+cmeta_type(Vec, exact_i32_vec, int32_t,
       &cmeta_type_int32, &cmeta_data_int32);
-typed(Set, exact_i32_set, int32_t,
+cmeta_type(Set, exact_i32_set, int32_t,
       &cmeta_type_int32, &cmeta_data_int32);
 
 typedef struct explicit_owned_buffer {
@@ -210,9 +210,9 @@ static const cmeta_data_desc explicit_owned_record_data = {
     .storage_type = &explicit_owned_record_type,
     .shape = &explicit_owned_record_shape};
 
-typed(Vec, explicit_owned_vec, explicit_owned_record,
+cmeta_type(Vec, explicit_owned_vec, explicit_owned_record,
       &explicit_owned_record_type, &explicit_owned_record_data);
-typed(Map, explicit_owned_map, int, explicit_owned_record,
+cmeta_type(Map, explicit_owned_map, int, explicit_owned_record,
       &cmeta_type_int, &cmeta_data_int,
       &explicit_owned_record_type, &explicit_owned_record_data);
 

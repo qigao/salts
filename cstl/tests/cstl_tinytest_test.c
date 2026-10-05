@@ -1,14 +1,14 @@
 #include <cstl/typed.h>
 
-typed(Vec, TinyTestIntVec, int);
-typed(Deque, TinyTestIntDeque, int);
-typed(List, TinyTestIntList, int);
-typed(Map, TinyTestIntMap, int, int);
-typed(MultiMap, TinyTestIntMultiMap, int, int);
-typed(BTree, TinyTestIntBTree, int, int);
-typed(BPlusTree, TinyTestIntBPlusTree, int, int);
-typed(Vec, TinyTestIntVecWrongType, int);
-typed(Map, TinyTestIntMapWrongKeyType, int, int);
+cmeta_type(Vec, TinyTestIntVec, int);
+cmeta_type(Deque, TinyTestIntDeque, int);
+cmeta_type(List, TinyTestIntList, int);
+cmeta_type(Map, TinyTestIntMap, int, int);
+cmeta_type(MultiMap, TinyTestIntMultiMap, int, int);
+cmeta_type(BTree, TinyTestIntBTree, int, int);
+cmeta_type(BPlusTree, TinyTestIntBPlusTree, int, int);
+cmeta_type(Vec, TinyTestIntVecWrongType, int);
+cmeta_type(Map, TinyTestIntMapWrongKeyType, int, int);
 
 #include <cstl/tinytest.h>
 

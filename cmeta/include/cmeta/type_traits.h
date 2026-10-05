@@ -104,7 +104,7 @@ extern const cmeta_type_traits cmeta_traits_double;
 /* Public heterogeneous trait schema. Flags and function slots are derived from
  * the same tagged rows, so capability presence is declared exactly once.
  * Owner-qualified enum markers make duplicate tags an immediate compile error. */
-#define Traits(name, ...) \
+#define CMETA_TRAITS(name, ...) \
     enum { \
         CMETA_SCHEMA_ROWS(CMETA_TRAIT_SEEN_ROW, name, __VA_ARGS__) \
         CMETA_PP_CAT(name, __cmeta_traits_end) \
@@ -113,5 +113,12 @@ extern const cmeta_type_traits cmeta_traits_double;
         .flags = (cmeta_trait_flags)(0u Schema(CMETA_TRAIT_FLAG_ROW, __VA_ARGS__)), \
         Schema(CMETA_TRAIT_INIT_ROW, __VA_ARGS__) \
     }
+
+#ifndef cmeta_traits
+#define cmeta_traits(name, ...) CMETA_TRAITS(name, __VA_ARGS__)
+#endif
+#ifndef Traits
+#define Traits(name, ...) cmeta_traits(name, __VA_ARGS__)
+#endif
 
 #endif

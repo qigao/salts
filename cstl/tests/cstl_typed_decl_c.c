@@ -1,11 +1,11 @@
 #include <cstl/typed.h>
 #include <stddef.h>
 
-typed(Vec, DeclIntVec, int);
-typed(List, DeclIntList, int);
-typed(Set, DeclIntSet, int);
-typed(Map, DeclIntLongMap, int, long);
-typed(HashMap, DeclIntLongHashMap, int, long);
+cmeta_type(Vec, DeclIntVec, int);
+cmeta_type(List, DeclIntList, int);
+cmeta_type(Set, DeclIntSet, int);
+cmeta_type(Map, DeclIntLongMap, int, long);
+cmeta_type(HashMap, DeclIntLongHashMap, int, long);
 
 #define DECL_UNARY_ABI(NAME) \
   size_t NAME##_c_size(void) { return sizeof(NAME); } \

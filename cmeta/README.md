@@ -40,15 +40,15 @@ Traits(User,
     (copy, user_copy)
 );
 
-typed(Option, MaybeUser, User);
-typed(Pair, UserScore, User, double);
+cmeta_type(Option, MaybeUser, User);
+cmeta_type(Pair, UserScore, User, double);
 ```
 
 Trait rows are the only supported public Traits declaration form. CMeta derives
 both capability flags and function slots from those tagged rows. Positional
 `Traits(name, flags, ...)` compatibility has been removed.
 
-`typed(...)` is the single finite-generic entry point. CMeta owns value kinds
+`cmeta_type(...)` is the finite-generic type declaration entry point. CMeta owns value kinds
 such as `Pair`, `Tuple`, `Option`, and `Result`. Container kinds such as `List`,
 `Vec`, and `HashMap` are provided by `container`, not by the CMeta aggregate
 header.
@@ -150,7 +150,7 @@ mapper. `Enum`, `Struct`, `Traits`, and CFlow's structured operator metadata
 reuse this kernel internally.
 
 Application code does not need a separate schema or batch declaration to
-instantiate several generic types; write one `typed(...)` declaration per
+instantiate several generic types; write one `cmeta_type(...)` declaration per
 concrete type.
 
 ## Finite compile-time computation
@@ -234,15 +234,18 @@ the relation borrows its static rows and the DFA borrows caller workspace.
 
 ## Finite generic routing
 
-Libraries register a finite generic kind. The common entry point:
+Libraries register a finite generic kind. Concrete type declarations use:
 
 ```c
-typed(kind, ...)
+cmeta_type(kind, generated_name, type_arguments...);
 ```
 
-routes a registered kind to its matching `CMETA_TYPED_` registration macro.
-Unregistered kinds can fall through to a framework-provided typed fallback;
-CFlow uses that path for lowercase operator callables such as `typed(map, ...)`.
+`cmeta_type(...)` accepts only registered generic kinds and routes directly to
+their finite `CMETA_TYPED_` provider. It does not fall through to callable or
+operator DSLs.
+
+Callable/function DSLs use their own explicit entry points such as CFlow's
+`cmeta_function(...)`; generic type routing never falls through to them.
 
 There is no `Containers(...)` batch DSL and no container `implement(...)`
 generation phase.

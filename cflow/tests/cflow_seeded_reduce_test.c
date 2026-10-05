@@ -3,12 +3,12 @@
 #include <cflow/opt.h>
 #include "tinytest.h"
 
-typed(reduce, value, long, cflow_seeded_subtract,
+cmeta_function(reduce, value, long, cflow_seeded_subtract,
       (long accumulator, long value)) {
     return accumulator - value;
 }
 
-typed(reduce, associative, long, cflow_seeded_add,
+cmeta_function(reduce, associative, long, cflow_seeded_add,
       (long accumulator, long value)) {
     return accumulator + value;
 }

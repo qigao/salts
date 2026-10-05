@@ -66,8 +66,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build --preset linux-release-user --parallel 2 --target \
-            cflow_function_projection_test
+          cmake --build --preset linux-release-user --parallel 2
           ctest --test-dir build/linux-gcc-release \
             --output-on-failure \
             -R '^cflow_function_projection_test$'

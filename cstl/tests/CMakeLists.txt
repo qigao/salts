@@ -87,107 +87,6 @@ cmake_add_test(cstl_typed_test
   LIBS Salts::CSTL Salts::TinyTest
   FOLDER "cstl/tests")
 
-# Production CMeta source-lowering frontend integration.
-# cmeta-lower is a host tool; target cross-builds never execute it.
-if(NOT CMAKE_CROSSCOMPILING)
-  set(CSTL_CMETA_LOWER_DIR "${CMAKE_CURRENT_BINARY_DIR}/cmeta_lower")
-  set(CSTL_CMETA_LOWER_INPUT
-      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cmeta_lower/containers.cmeta.c")
-  set(CSTL_CMETA_LOWER_OUTPUT
-      "${CSTL_CMETA_LOWER_DIR}/cstl_cmeta_lower_runtime.c")
-
-  salts_cmeta_lower_source(
-    INPUT "${CSTL_CMETA_LOWER_INPUT}"
-    OUTPUT "${CSTL_CMETA_LOWER_OUTPUT}")
-
-  add_executable(cstl_cmeta_lower_runtime "${CSTL_CMETA_LOWER_OUTPUT}")
-  target_link_libraries(cstl_cmeta_lower_runtime PRIVATE Salts::CSTL)
-  set_target_properties(cstl_cmeta_lower_runtime PROPERTIES
-    C_STANDARD 11
-    C_STANDARD_REQUIRED ON
-    C_EXTENSIONS OFF
-    FOLDER "cstl/tests/cmeta-lower")
-
-  add_test(NAME cstl_cmeta_lower_runtime COMMAND cstl_cmeta_lower_runtime)
-  add_test(
-    NAME cstl_cmeta_lower_shape
-    COMMAND ${CMAKE_COMMAND}
-            -DGENERATED=${CSTL_CMETA_LOWER_OUTPUT}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_cmeta_lowering.cmake")
-  add_test(
-    NAME cmeta_lower_version
-    COMMAND $<TARGET_FILE:cmeta_lower> --version)
-
-  function(cstl_add_cmeta_lower_rejection_test name fixture diagnostic)
-    add_test(
-      NAME ${name}
-      COMMAND ${CMAKE_COMMAND}
-              -DTOOL=$<TARGET_FILE:cmeta_lower>
-              -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cmeta_lower/${fixture}
-              -DOUTPUT=${CSTL_CMETA_LOWER_DIR}/${name}.c
-              "-DEXPECTED=${diagnostic}"
-              -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_cmeta_lower_rejection.cmake")
-  endfunction()
-
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_wrong_owner
-    wrong_owner.cmeta.c
-    "generic owner identity 'cstl.Vec' does not match IntList owner identity 'cstl.List'")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_unknown_receiver
-    unknown_receiver.cmeta.c
-    "unknown typed receiver 'missing'")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_use_after_move
-    use_after_move.cmeta.c
-    "use of moved owned value 'list'")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_double_move
-    double_move.cmeta.c
-    "owned value 'list' moved more than once")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_unknown_owned
-    unknown_owned.cmeta.c
-    "owned type 'MissingResource' has no canonical lifecycle binding")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_conflicting_lifecycle
-    conflicting_lifecycle.cmeta.c
-    "lifecycle binding for type 'IntList' conflicts with an existing canonical accessor")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_early_return_cleanup
-    early_return_cleanup.cmeta.c
-    "early return exits live owned value 'value'")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_conditional_move
-    conditional_move.cmeta.c
-    "owned value 'value' crosses unsupported control flow 'if'")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_loop_move
-    loop_move.cmeta.c
-    "owned value 'value' crosses unsupported control flow 'while'")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_break_cleanup
-    break_cleanup.cmeta.c
-    "break exits or crosses live owned value 'value'")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_continue_cleanup
-    continue_cleanup.cmeta.c
-    "continue exits or crosses live owned value 'value'")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_goto_cleanup
-    goto_cleanup.cmeta.c
-    "goto exits or crosses live owned value 'value'")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_short_circuit_move
-    short_circuit_move.cmeta.c
-    "live owned value crosses unsupported conditional expression")
-  cstl_add_cmeta_lower_rejection_test(
-    cstl_cmeta_lower_nonzero_initializer
-    nonzero_owned_initializer.cmeta.c
-    "owned initializer must be canonical zero {0}")
-endif()
-
-
 cmake_add_test(cstl_tree_test
   SOURCES cstl_tree_test.c
   LIBS Salts::CSTL Salts::TinyTest
@@ -284,6 +183,13 @@ set_target_properties(
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
     CXX_EXTENSIONS OFF)
+
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  foreach(target IN ITEMS cstl_header_typed_test cstl_header_typed_cpp_test
+                          cstl_typed_decl_cpp_test)
+    target_compile_options(${target} PRIVATE -Werror=missing-field-initializers)
+  endforeach()
+endif()
 
 set_target_properties(
   cstl_stack_type_collision_test

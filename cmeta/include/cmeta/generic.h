@@ -4,11 +4,9 @@
 #include <cmeta/pp.h>
 
 /* Small kind-probe layer -------------------------------------------------
- * A library registers a generic kind with CMETA_GENERIC_REGISTER(Kind).
- * Registered kinds route to the corresponding CMETA_TYPED_ registration
- * macro; unregistered kinds route to CMETA_TYPED_FALLBACK. CFlow uses that
- * fallback for lowercase operator callables, so typed(List, ...) and
- * typed(map, ...) can coexist.
+ * A library registers one finite generic kind and publishes the matching
+ * CMETA_TYPED_<Kind> provider macro. cmeta_type(...) accepts only registered
+ * kinds; callable/function DSLs use their own explicit entry points.
  */
 #define CMETA_GENERIC_PROBE() ~, 1
 #define CMETA_GENERIC_SECOND(a, b, ...) b
@@ -23,20 +21,26 @@
 #define CMETA_TYPED_GENERIC_I(kind, ...) CMETA_PP_CAT(CMETA_TYPED_, kind)(__VA_ARGS__)
 #define CMETA_TYPED_GENERIC(kind, ...) CMETA_TYPED_GENERIC_I(kind, __VA_ARGS__)
 
-#ifndef CMETA_TYPED_FALLBACK
-#define CMETA_TYPED_FALLBACK(kind, ...) CMETA_PP_CAT(CMETA_TYPED_UNREGISTERED_, kind)(__VA_ARGS__)
-#endif
+/* Canonical ordinary-C finite generic declaration.
+ *
+ * cmeta_type(List, IntList, int);
+ *
+ * Unlike the historical typed(...) router, cmeta_type(...) accepts only a
+ * registered finite generic kind. It never falls through to a callable/operator
+ * DSL. An unregistered kind deliberately expands to an unknown provider symbol
+ * and fails compilation.
+ */
+#define CMETA_TYPE_UNREGISTERED_I_(kind, ...) \
+    CMETA_PP_CAT(CMETA_TYPE_UNREGISTERED_, kind)(__VA_ARGS__)
+#define CMETA_TYPE_ROUTE_1(kind, ...) CMETA_TYPED_GENERIC(kind, __VA_ARGS__)
+#define CMETA_TYPE_ROUTE_0(kind, ...) CMETA_TYPE_UNREGISTERED_I_(kind, __VA_ARGS__)
+#define CMETA_TYPE_ROUTE_I_(is_kind, kind, ...) \
+    CMETA_PP_CAT(CMETA_TYPE_ROUTE_, is_kind)(kind, __VA_ARGS__)
+#define CMETA_TYPE_ROUTE_(kind, ...) \
+    CMETA_TYPE_ROUTE_I_(CMETA_GENERIC_IS_KIND(kind), kind, __VA_ARGS__)
 
-#define CMETA_TYPED_ROUTE_1(kind, ...) CMETA_TYPED_GENERIC(kind, __VA_ARGS__)
-#define CMETA_TYPED_ROUTE_0(kind, ...) CMETA_TYPED_FALLBACK(kind, __VA_ARGS__)
-#define CMETA_TYPED_ROUTE_I(is_kind, kind, ...) \
-    CMETA_PP_CAT(CMETA_TYPED_ROUTE_, is_kind)(kind, __VA_ARGS__)
-#define CMETA_TYPED_ROUTE(kind, ...) \
-    CMETA_TYPED_ROUTE_I(CMETA_GENERIC_IS_KIND(kind), kind, __VA_ARGS__)
-
-
-#ifndef typed
-#define typed(kind, ...) CMETA_TYPED_ROUTE(kind, __VA_ARGS__)
+#ifndef cmeta_type
+#define cmeta_type(kind, ...) CMETA_TYPE_ROUTE_(kind, __VA_ARGS__)
 #endif
 
 /* Compose a generated Type_method symbol behind a semantic public facade. */

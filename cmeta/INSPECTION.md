@@ -265,12 +265,14 @@ The following do **not** belong in reflection descriptors:
 
 - lexical scope;
 - CFG/control-flow state;
-- move state;
+- analyzer move state;
 - cleanup insertion points;
 - borrow regions;
 - generated temporary ownership state.
 
-Those remain compiler-private proof/lowering state.
+Ordinary CMeta correctness does not require such state. Real compilers,
+generators, or optional analyzers may keep it privately when they perform
+stronger path-sensitive proofs.
 
 ## Negative rules
 
@@ -291,7 +293,7 @@ Do not introduce:
 The same inspection authority is intended for:
 
 ```text
-cmeta-lower
+ordinary CMeta macro/inline consumers
 SaltsUtils IDL/DataBind compiler
 TurboScript lowering
 CHttp/OpenAPI generation

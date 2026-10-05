@@ -216,13 +216,13 @@ static void cflow_parallel_managed_destroy_inputs(
     cflow_parallel_managed_destroy(&values[index]);
 }
 
-typed(reduce, associative, long, cflow_parallel_left,
+cmeta_function(reduce, associative, long, cflow_parallel_left,
       (long left, long right)) {
   (void)right;
   return left;
 }
 
-typed(map, value, long, cflow_parallel_widen, (int value)) {
+cmeta_function(map, value, long, cflow_parallel_widen, (int value)) {
   atomic_fetch_add(&cflow_parallel_prefix_calls, 1u);
   return (long)value * 2L;
 }
