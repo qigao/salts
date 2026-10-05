@@ -112,7 +112,8 @@ static cmeta_status scope_move_then_cleanup(void) {
         cmeta_body(
             source.active = 1;
             source.id = 31;
-            check_equal(cmeta_move(ScopeProbe, &destination, &source), CMETA_OK);
+            if (cmeta_move(ScopeProbe, &destination, &source) != CMETA_OK)
+                cmeta_scope_exit(moved, status, CMETA_CALLBACK_ERROR);
         )
     );
 
