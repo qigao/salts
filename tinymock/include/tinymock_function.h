@@ -70,16 +70,6 @@
 #define TINYMOCk_FUNCTION_META(name) TINYMOCk_FUNCTION_META_NAME(name)()
 #define TINYMOCk_FUNCTION_ABI(name) TINYMOCk_FUNCTION_ABI_META_NAME(name)()
 
-#define TINYMOCk_FUNCTION_ARG_EQUAL(name, call_index, param_name, expected_lvalue) \
-  tinymock_cmeta_history_arg_equal_name( \
-      TINYMOCk_FUNCTION_HISTORY(name), (call_index), (param_name), \
-      &(expected_lvalue), TINYMOCk_VALUE(expected_lvalue))
-
-#define TINYMOCk_FUNCTION_COUNT_EQUAL(name, param_name, expected_lvalue) \
-  tinymock_cmeta_history_count_equal_name( \
-      TINYMOCk_FUNCTION_HISTORY(name), (param_name), \
-      &(expected_lvalue), TINYMOCk_VALUE(expected_lvalue))
-
 #define TINYMOCk_FUNCTION_ARG_EQUAL_TYPED( \
     name, call_index, param_name, expected_lvalue) \
   tinymock_cmeta_history_arg_equal_typed_name( \
