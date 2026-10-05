@@ -9,6 +9,7 @@
 #include <string.h>
 
 static cnet_event_queue events;
+enum { CNET_EVENT_TEST_PUBLISHERS = 4 };
 
 typedef struct cnet_event_release_probe {
   cnet_event_queue *queue;
@@ -24,6 +25,23 @@ typedef struct cnet_event_wait_probe {
   atomic_bool entered;
   int status;
 } cnet_event_wait_probe;
+
+typedef struct cnet_event_publish_probe {
+  cnet_event_queue *queue;
+  atomic_bool *start;
+  atomic_size_t *attempts;
+  atomic_size_t *finished;
+  int status;
+} cnet_event_publish_probe;
+
+static struct {
+  atomic_bool start;
+  atomic_size_t attempts;
+  atomic_size_t finished;
+  cnet_event_publish_probe probes[CNET_EVENT_TEST_PUBLISHERS];
+  salts_thread_t threads[CNET_EVENT_TEST_PUBLISHERS];
+  size_t started;
+} publishing;
 
 static void cnet_event_release_worker(void *context) {
   cnet_event_release_probe *probe = (cnet_event_release_probe *)context;
@@ -44,10 +62,45 @@ static void cnet_event_wait_worker(void *context) {
       cnet_event_queue_take_wait(probe->queue, &probe->view, cnet_event_wait_keep_running, probe);
 }
 
+static void cnet_event_publish_worker(void *context) {
+  cnet_event_publish_probe *probe = (cnet_event_publish_probe *)context;
+  const cnet_event event = {CNET_EVENT_STATE,
+                            {1u, 1u},
+                            CNET_EVENT_STATE_CONNECTED,
+                            SALTS_OK,
+                            CNET_SESSION_STAGE_NONE,
+                            NULL,
+                            0u};
+  while (!atomic_load_explicit(probe->start, memory_order_acquire))
+    salts_thread_yield();
+  for (;;) {
+    const int status = cnet_event_queue_publish(probe->queue, &event);
+    atomic_fetch_add_explicit(probe->attempts, 1u, memory_order_release);
+    if (status == SALTS_OK || status == SALTS_ENOBUFS) continue;
+    probe->status = status == SALTS_ESHUTDOWN || status == SALTS_EINVAL ? SALTS_OK : status;
+    atomic_fetch_add_explicit(probe->finished, 1u, memory_order_release);
+    return;
+  }
+}
+
+static void cnet_event_join_publishers(void) {
+  while (publishing.started != 0u) {
+    const size_t index = publishing.started - 1u;
+    check_equal(salts_thread_join(&publishing.threads[index]), SALTS_OK);
+    salts_thread_destroy(&publishing.threads[index]);
+    --publishing.started;
+  }
+}
+
 spec("CNet bounded callback events") {
   before_each() { memset(&events, 0, sizeof(events)); }
 
   after_each() {
+    if (publishing.started != 0u) {
+      atomic_store_explicit(&publishing.start, true, memory_order_release);
+      if (events.impl != NULL) (void)cnet_event_queue_close(&events);
+      cnet_event_join_publishers();
+    }
     if (events.impl != NULL) {
       int status = cnet_event_queue_close(&events);
       check_true(status == SALTS_OK || status == SALTS_EALREADY);
@@ -237,6 +290,49 @@ spec("CNet bounded callback events") {
     salts_thread_destroy(&threads[0]);
     check_equal(probes[0].status, SALTS_OK);
     check_equal(probes[1].status, SALTS_OK);
+  }
+
+  it("keeps late MPSC publishers away from destroyed queue storage") {
+    enum { MINIMUM_ATTEMPTS = 256 };
+    const cnet_event_queue_config config = {1024u, 1u, 1u};
+    int close_status;
+    size_t index;
+
+    atomic_store_explicit(&publishing.start, false, memory_order_relaxed);
+    atomic_store_explicit(&publishing.attempts, 0u, memory_order_relaxed);
+    atomic_store_explicit(&publishing.finished, 0u, memory_order_relaxed);
+    check_equal(cnet_event_queue_init(&events, &config), SALTS_OK);
+    for (index = 0u; index < CNET_EVENT_TEST_PUBLISHERS; ++index) {
+      publishing.probes[index] = (cnet_event_publish_probe){
+          &events, &publishing.start, &publishing.attempts, &publishing.finished, SALTS_EIO};
+      check_equal(salts_thread_create(&publishing.threads[index], cnet_event_publish_worker,
+                                      &publishing.probes[index]), SALTS_OK);
+      ++publishing.started;
+    }
+    atomic_store_explicit(&publishing.start, true, memory_order_release);
+    while (atomic_load_explicit(&publishing.attempts, memory_order_acquire) < MINIMUM_ATTEMPTS &&
+           atomic_load_explicit(&publishing.finished, memory_order_acquire) == 0u)
+      salts_thread_yield();
+
+    close_status = cnet_event_queue_close(&events);
+    check_true(close_status == SALTS_OK || close_status == SALTS_EBUSY);
+    if (close_status == SALTS_EBUSY) {
+      cnet_event_join_publishers();
+      check_equal(cnet_event_queue_close(&events), SALTS_OK);
+    }
+
+    for (;;) {
+      cnet_event_view view = {0};
+      const int status = cnet_event_queue_take(&events, &view);
+      if (status == SALTS_EOF) break;
+      check_equal(status, SALTS_OK);
+      check_equal(cnet_event_queue_release(&events, &view), SALTS_OK);
+    }
+    check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
+
+    if (close_status == SALTS_OK) cnet_event_join_publishers();
+    for (index = 0u; index < CNET_EVENT_TEST_PUBLISHERS; ++index)
+      check_equal(publishing.probes[index].status, SALTS_OK);
   }
 
   it("blocks without polling and supports an explicit stop wake") {
