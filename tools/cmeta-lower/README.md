@@ -8,6 +8,11 @@ interpreter. The accepted source surface is finite and fail-closed.
 
 ## Current lowering
 
+Version 6 generalizes ownership lifecycle discovery with explicit
+`CMETA_LIFECYCLE(Type, accessor)` bindings. Lifecycle-only types do not gain
+typed receiver syntax or a generic-container owner; the binding supplies
+cleanup authority only.
+
 ### Typed receiver calls
 
 Given a CMeta typed declaration and a concrete local:
