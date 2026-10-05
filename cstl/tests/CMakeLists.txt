@@ -140,15 +140,15 @@ if(NOT CMAKE_CROSSCOMPILING)
   cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_use_after_move
     use_after_move.cmeta.c
-    "use of moved owned value 'list'")
+    "use of moved cmeta_owned value 'list'")
   cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_double_move
     double_move.cmeta.c
-    "owned value 'list' moved more than once")
+    "cmeta_owned value 'list' moved more than once")
   cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_unknown_owned
     unknown_owned.cmeta.c
-    "owned type 'MissingResource' has no canonical lifecycle binding")
+    "cmeta_owned type 'MissingResource' has no canonical lifecycle binding")
   cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_conflicting_lifecycle
     conflicting_lifecycle.cmeta.c
@@ -156,35 +156,35 @@ if(NOT CMAKE_CROSSCOMPILING)
   cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_early_return_cleanup
     early_return_cleanup.cmeta.c
-    "early return exits live owned value 'value'")
+    "early return exits live cmeta_owned value 'value'")
   cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_conditional_move
     conditional_move.cmeta.c
-    "owned value 'value' crosses unsupported control flow 'if'")
+    "cmeta_owned value 'value' crosses unsupported control flow 'if'")
   cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_loop_move
     loop_move.cmeta.c
-    "owned value 'value' crosses unsupported control flow 'while'")
+    "cmeta_owned value 'value' crosses unsupported control flow 'while'")
   cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_break_cleanup
     break_cleanup.cmeta.c
-    "break exits or crosses live owned value 'value'")
+    "break exits or crosses live cmeta_owned value 'value'")
   cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_continue_cleanup
     continue_cleanup.cmeta.c
-    "continue exits or crosses live owned value 'value'")
+    "continue exits or crosses live cmeta_owned value 'value'")
   cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_goto_cleanup
     goto_cleanup.cmeta.c
-    "goto exits or crosses live owned value 'value'")
+    "goto exits or crosses live cmeta_owned value 'value'")
   cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_short_circuit_move
     short_circuit_move.cmeta.c
-    "live owned value crosses unsupported conditional expression")
+    "live cmeta_owned value crosses unsupported conditional expression")
   cstl_add_cmeta_lower_rejection_test(
     cstl_cmeta_lower_nonzero_initializer
     nonzero_owned_initializer.cmeta.c
-    "owned initializer must be canonical zero {0}")
+    "cmeta_owned initializer must be canonical zero {0}")
 endif()
 
 
