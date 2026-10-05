@@ -137,6 +137,24 @@
             ]
         },
         {
+            "name": "mac-release-user",
+            "cacheVariables": {
+                "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
+                "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}"
+            },
+            "environment": {
+                "PROJECT_ROOT": "$penv{PROJECT_ROOT}",
+                "PKG_ROOT": "$env{PROJECT_ROOT}/external/pkgs",
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
+                "VCPKG_ROOT": "$penv{VCPKG_ROOT}",
+                "SALTS_ROOT": "$env{PKG_ROOT}/salts/release"
+            },
+            "inherits": [
+                "release-mac-ninja",
+                "vcpkg-cache"
+            ]
+        },
+        {
             "name": "linux-release-user",
             "cacheVariables": {
                 "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
@@ -296,6 +314,10 @@
         {
             "name": "linux-release-user",
             "configurePreset": "linux-release-user"
+        },
+        {
+            "name": "mac-release-user",
+            "configurePreset": "mac-release-user"
         },
         {
             "name": "linux-sdk-package",
