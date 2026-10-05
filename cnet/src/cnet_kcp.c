@@ -170,12 +170,25 @@ int cnet_kcp_send_validate(const cnet_kcp *session, const void *data, size_t siz
   size_t fragments;
   size_t retained;
   size_t mss;
+  size_t unmerged_size;
   if (impl == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
   if (marked && impl->stream_mode) return SALTS_ENOTSUP;
   if (size > impl->max_message_bytes || size > (size_t)INT_MAX) return SALTS_EMSGSIZE;
   mss = (size_t)impl->mtu - CNET_KCP_PROTOCOL_OVERHEAD;
+  unmerged_size = size;
+  if (impl->stream_mode && !iqueue_is_empty(&impl->protocol->snd_queue)) {
+    const struct IKCPSEG *tail =
+        iqueue_entry(impl->protocol->snd_queue.prev, struct IKCPSEG, node);
+    if ((size_t)tail->len < mss) {
+      const size_t available = mss - (size_t)tail->len;
+      unmerged_size = size > available ? size - available : 0u;
+    }
+  }
+  /* KCP checks this after mutating a stream tail; reject before it retains input. */
+  if (unmerged_size != 0u &&
+      1u + ((unmerged_size - 1u) / mss) > CNET_KCP_FRAGMENT_LIMIT)
+    return SALTS_EMSGSIZE;
   fragments = 1u + ((size - 1u) / mss);
-  if (!impl->stream_mode && fragments > CNET_KCP_FRAGMENT_LIMIT) return SALTS_EMSGSIZE;
   retained = (size_t)ikcp_waitsnd(impl->protocol);
   if (retained > impl->send_segment_capacity ||
       fragments > impl->send_segment_capacity - retained)

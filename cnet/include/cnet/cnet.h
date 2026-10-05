@@ -1510,6 +1510,8 @@ int cnet_kcp_init(cnet_kcp *session, const cnet_kcp_config *config);
 /**
  * Copies one ordered message into KCP after conservative segment-capacity admission.
  * Returns SALTS_ENOBUFS without retaining input when the hard bound would be exceeded.
+ * At most 127 new segments may be added per call, after any stream-tail merge.
+ * Exceeding this limit or max_message_bytes returns SALTS_EMSGSIZE without retaining input.
  */
 int cnet_kcp_send(cnet_kcp *session, const void *data, size_t size);
 
