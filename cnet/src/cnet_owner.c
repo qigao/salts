@@ -2649,6 +2649,68 @@ int cnet_owner_wake(cnet_owner *owner) {
   return native_io_backend_wake(&impl->backend);
 }
 
+int cnet_owner_flush_deferred(cnet_owner *owner) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  size_t processed = 0u;
+  int status;
+#if defined(CNET_INTERNAL_PROFILING)
+  uint64_t owner_started;
+#endif
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->closed) return SALTS_ESHUTDOWN;
+
+#if defined(CNET_INTERNAL_PROFILING)
+  owner_started = cnet_owner_profile_start(impl);
+  {
+    const bool profile_active = impl->profile_active;
+    const uint64_t request_ns_before = impl->profile.request_lifecycle_ns;
+    const uint64_t request_calls_before = impl->profile.request_lifecycle_calls;
+    const uint64_t profile_started = cnet_owner_profile_start(impl);
+    status = cnet_owner_process_commands(impl, &processed);
+    cnet_owner_profile_finish(impl, profile_started, &impl->profile.command_stage_ns,
+                              &impl->profile.command_stage_calls);
+    if (profile_active) {
+      impl->profile.command_request_lifecycle_ns +=
+          impl->profile.request_lifecycle_ns - request_ns_before;
+      impl->profile.command_request_lifecycle_calls +=
+          impl->profile.request_lifecycle_calls - request_calls_before;
+    }
+  }
+#else
+  status = cnet_owner_process_commands(impl, &processed);
+#endif
+  if (status != SALTS_OK) {
+#if defined(CNET_INTERNAL_PROFILING)
+    cnet_owner_profile_finish(impl, owner_started, &impl->profile.owner_drive_ns,
+                              &impl->profile.owner_drive_calls);
+#endif
+    return status;
+  }
+
+#if defined(CNET_INTERNAL_PROFILING)
+  {
+    const bool profile_active = impl->profile_active;
+    const uint64_t request_ns_before = impl->profile.request_lifecycle_ns;
+    const uint64_t request_calls_before = impl->profile.request_lifecycle_calls;
+    const uint64_t profile_started = cnet_owner_profile_start(impl);
+    status = cnet_owner_process_session_work(impl);
+    cnet_owner_profile_finish(impl, profile_started, &impl->profile.receive_rearm_stage_ns,
+                              &impl->profile.receive_rearm_stage_calls);
+    if (profile_active) {
+      impl->profile.receive_rearm_request_lifecycle_ns +=
+          impl->profile.request_lifecycle_ns - request_ns_before;
+      impl->profile.receive_rearm_request_lifecycle_calls +=
+          impl->profile.request_lifecycle_calls - request_calls_before;
+    }
+  }
+  cnet_owner_profile_finish(impl, owner_started, &impl->profile.owner_drive_ns,
+                            &impl->profile.owner_drive_calls);
+#else
+  status = cnet_owner_process_session_work(impl);
+#endif
+  return status;
+}
+
 int cnet_owner_advance_external(cnet_owner *owner) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
   if (impl == NULL) return SALTS_EINVAL;

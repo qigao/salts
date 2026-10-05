@@ -61,6 +61,9 @@ bool cnet_shards_get_layout(const cnet_shards *shards, cnet_shards_layout *out_l
 /** Advances the production single owner on the calling thread. */
 int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms);
 
+/** Internal non-observing post-callback command/session progression. */
+int cnet_shards_flush_deferred(cnet_shards *shards);
+
 /** Non-observing progress for a single owner using a borrowed NativeIO backend. */
 int cnet_shards_advance_external(cnet_shards *shards);
 int cnet_shards_route_external_completion(cnet_shards *shards,

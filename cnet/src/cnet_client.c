@@ -1820,6 +1820,8 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
     status = cnet_shards_poll(&impl->shards, remaining_ms);
     if (status == SALTS_OK)
       status = atomic_load_explicit(&impl->callback_error, memory_order_acquire);
+    if (status == SALTS_OK && impl->poll_callback_count != 0u)
+      status = cnet_shards_flush_deferred(&impl->shards);
     /* A callback may publish a wake after the backend selected its callback
        event. Preserve that edge for the next poll so native wake coalescing
        cannot hide later external work. */
