@@ -32,19 +32,6 @@ typedef struct cmeta_lower_symbol {
     cmeta_lower_ownership_state ownership;
 } cmeta_lower_symbol;
 
-typedef enum cmeta_lower_cleanup_kind {
-    CMETA_LOWER_CLEANUP_OWNED = 1,
-    CMETA_LOWER_CLEANUP_DEFER
-} cmeta_lower_cleanup_kind;
-
-typedef struct cmeta_lower_cleanup {
-    cmeta_lower_cleanup_kind kind;
-    unsigned depth;
-    size_t symbol_index;
-    size_t source_start;
-    size_t source_end;
-} cmeta_lower_cleanup;
-
 typedef struct cmeta_lower_context {
     const char *source;
     size_t source_size;
@@ -55,9 +42,6 @@ typedef struct cmeta_lower_context {
     cmeta_lower_symbol *symbols;
     size_t symbol_count;
     size_t symbol_capacity;
-    cmeta_lower_cleanup *cleanups;
-    size_t cleanup_count;
-    size_t cleanup_capacity;
     char error[256];
     size_t error_offset;
 } cmeta_lower_context;
@@ -573,58 +557,11 @@ static int cmeta_lower_add_symbol(
     return 1;
 }
 
-static int cmeta_lower_add_cleanup(
-    cmeta_lower_context *context, size_t offset,
-    cmeta_lower_cleanup_kind kind, unsigned depth,
-    size_t symbol_index, size_t source_start, size_t source_end) {
-    cmeta_lower_cleanup *next;
-    size_t capacity;
-
-    if (context->cleanup_count == context->cleanup_capacity) {
-        capacity = context->cleanup_capacity == 0u
-                       ? 32u
-                       : context->cleanup_capacity * 2u;
-        next = (cmeta_lower_cleanup *)realloc(
-            context->cleanups, capacity * sizeof(*next));
-        if (next == NULL) {
-            cmeta_lower_set_error(context, offset, "out of memory");
-            return 0;
-        }
-        context->cleanups = next;
-        context->cleanup_capacity = capacity;
-    }
-
-    next = &context->cleanups[context->cleanup_count++];
-    next->kind = kind;
-    next->depth = depth;
-    next->symbol_index = symbol_index;
-    next->source_start = source_start;
-    next->source_end = source_end;
-    return 1;
-}
-
 static void cmeta_lower_leave_scope(
     cmeta_lower_context *context, unsigned depth) {
-    while (context->cleanup_count != 0u &&
-           context->cleanups[context->cleanup_count - 1u].depth >= depth)
-        --context->cleanup_count;
     while (context->symbol_count != 0u &&
            context->symbols[context->symbol_count - 1u].depth >= depth)
         --context->symbol_count;
-}
-
-static const cmeta_lower_cleanup *
-cmeta_lower_find_defer_from_depth(
-    const cmeta_lower_context *context, unsigned minimum_depth) {
-    size_t i;
-    for (i = context->cleanup_count; i != 0u; --i) {
-        const cmeta_lower_cleanup *cleanup = &context->cleanups[i - 1u];
-        if (cleanup->depth < minimum_depth)
-            break;
-        if (cleanup->kind == CMETA_LOWER_CLEANUP_DEFER)
-            return cleanup;
-    }
-    return NULL;
 }
 
 static const cmeta_lower_symbol *
@@ -670,42 +607,15 @@ static int cmeta_lower_emit_symbol_cleanup(
 static int cmeta_lower_emit_cleanup_from_depth(
     cmeta_lower_context *context, cmeta_lower_buffer *output,
     unsigned minimum_depth, size_t offset) {
-    size_t i = context->cleanup_count;
+    size_t i = context->symbol_count;
 
     while (i != 0u) {
-        const cmeta_lower_cleanup *cleanup = &context->cleanups[i - 1u];
-        if (cleanup->depth < minimum_depth)
+        const cmeta_lower_symbol *symbol = &context->symbols[i - 1u];
+        if (symbol->depth < minimum_depth)
             break;
-
-        if (cleanup->kind == CMETA_LOWER_CLEANUP_OWNED) {
-            const cmeta_lower_symbol *symbol;
-            if (cleanup->symbol_index >= context->symbol_count) {
-                cmeta_lower_set_error(
-                    context, offset, "internal cleanup symbol binding error");
-                return 0;
-            }
-            symbol = &context->symbols[cleanup->symbol_index];
-            if (!cmeta_lower_emit_symbol_cleanup(
-                    context, output, symbol, offset))
-                return 0;
-        } else if (cleanup->kind == CMETA_LOWER_CLEANUP_DEFER) {
-            if (cleanup->source_start >= cleanup->source_end ||
-                cleanup->source_end > context->source_size) {
-                cmeta_lower_set_error(
-                    context, offset, "internal defer source binding error");
-                return 0;
-            }
-            if (!cmeta_lower_buffer_append(
-                    output,
-                    context->source + cleanup->source_start,
-                    cleanup->source_end - cleanup->source_start)) {
-                cmeta_lower_set_error(context, offset, "out of memory");
-                return 0;
-            }
-        } else {
-            cmeta_lower_set_error(context, offset, "unknown cleanup action");
+        if (!cmeta_lower_emit_symbol_cleanup(
+                context, output, symbol, offset))
             return 0;
-        }
         --i;
     }
     return 1;
@@ -732,26 +642,8 @@ static int cmeta_lower_reject_live_owned_control(
         cmeta_lower_find_live_owned_from_depth(context, 1u);
     char message[256];
 
-    const cmeta_lower_cleanup *defer =
-        cmeta_lower_find_defer_from_depth(context, 1u);
-
-    if (!cmeta_lower_control_keyword(ident))
+    if (owned == NULL || !cmeta_lower_control_keyword(ident))
         return 1;
-
-    if (owned == NULL) {
-        if (defer != NULL &&
-            (strcmp(ident, "return") == 0 ||
-             strcmp(ident, "break") == 0 ||
-             strcmp(ident, "continue") == 0 ||
-             strcmp(ident, "goto") == 0)) {
-            (void)snprintf(
-                message, sizeof(message),
-                "control transfer '%s' crosses active defer", ident);
-            cmeta_lower_set_error(context, offset, message);
-            return 0;
-        }
-        return 1;
-    }
 
     if (strcmp(ident, "return") == 0) {
         (void)snprintf(
@@ -814,7 +706,6 @@ static int cmeta_lower_try_owned_declaration(
     char declaration[320];
     const cmeta_lower_type *owned_type;
     cmeta_lower_symbol *owned_symbol;
-    size_t owned_symbol_index;
 
     if (ident_end - ident_start != strlen("owned") ||
         strncmp(source + ident_start, "owned", strlen("owned")) != 0)
@@ -916,11 +807,6 @@ static int cmeta_lower_try_owned_declaration(
         owned_symbol->lifecycle_accessor,
         sizeof(owned_symbol->lifecycle_accessor), "%s",
         owned_type->lifecycle_accessor);
-    owned_symbol_index = (size_t)(owned_symbol - context->symbols);
-    if (!cmeta_lower_add_cleanup(
-            context, ident_start, CMETA_LOWER_CLEANUP_OWNED, depth,
-            owned_symbol_index, 0u, 0u))
-        return -1;
 
     (void)snprintf(
         declaration, sizeof(declaration),
@@ -931,115 +817,6 @@ static int cmeta_lower_try_owned_declaration(
     }
 
     *next_offset = semicolon;
-    return 1;
-}
-
-static int cmeta_lower_try_defer(
-    cmeta_lower_context *context, size_t ident_start, size_t ident_end,
-    unsigned depth, size_t *next_offset) {
-    const char *source = context->source;
-    size_t size = context->source_size;
-    size_t call_start;
-    size_t function_end;
-    size_t open;
-    size_t i;
-    unsigned paren_depth = 0u;
-    char function_name[128];
-
-    if (depth == 0u) {
-        cmeta_lower_set_error(
-            context, ident_start, "defer requires lexical block scope");
-        return -1;
-    }
-
-    call_start = cmeta_lower_skip_space_comments(source, size, ident_end);
-    if (!cmeta_lower_identifier(
-            source, size, call_start,
-            function_name, sizeof(function_name), &function_end)) {
-        cmeta_lower_set_error(
-            context, ident_start, "defer requires a direct C function call");
-        return -1;
-    }
-
-    open = cmeta_lower_skip_space_comments(source, size, function_end);
-    if (open >= size || source[open] != '(') {
-        cmeta_lower_set_error(
-            context, ident_start, "defer requires a direct C function call");
-        return -1;
-    }
-
-    i = open;
-    while (i < size) {
-        size_t end;
-        char name[128];
-
-        if (i + 1u < size && source[i] == '/' && source[i + 1u] == '/') {
-            i = cmeta_lower_skip_line_comment(source, size, i);
-            continue;
-        }
-        if (i + 1u < size && source[i] == '/' && source[i + 1u] == '*') {
-            i = cmeta_lower_skip_block_comment(source, size, i);
-            continue;
-        }
-        if (source[i] == '"' || source[i] == '\'') {
-            i = cmeta_lower_skip_quoted(source, size, i, source[i]);
-            continue;
-        }
-        if (source[i] == '(') {
-            ++paren_depth;
-            ++i;
-            continue;
-        }
-        if (source[i] == ')') {
-            if (paren_depth == 0u) {
-                cmeta_lower_set_error(
-                    context, ident_start, "malformed defer call");
-                return -1;
-            }
-            --paren_depth;
-            ++i;
-            if (paren_depth == 0u)
-                break;
-            continue;
-        }
-        if (cmeta_lower_ident_start(source[i]) &&
-            cmeta_lower_identifier(
-                source, size, i, name, sizeof(name), &end)) {
-            const cmeta_lower_symbol *symbol =
-                cmeta_lower_find_symbol(context, name);
-            if (symbol != NULL &&
-                symbol->ownership != CMETA_LOWER_OWNERSHIP_NONE) {
-                cmeta_lower_set_errorf(
-                    context, i,
-                    "defer call may not capture tracked owned value '",
-                    name, "'");
-                return -1;
-            }
-            i = end;
-            continue;
-        }
-        ++i;
-    }
-
-    if (paren_depth != 0u) {
-        cmeta_lower_set_error(context, ident_start, "unterminated defer call");
-        return -1;
-    }
-
-    i = cmeta_lower_skip_space_comments(source, size, i);
-    if (i >= size || source[i] != ';') {
-        cmeta_lower_set_error(
-            context, ident_start,
-            "defer call must end with a semicolon");
-        return -1;
-    }
-
-    if (!cmeta_lower_add_cleanup(
-            context, ident_start, CMETA_LOWER_CLEANUP_DEFER, depth,
-            0u, call_start, i + 1u))
-        return -1;
-
-    *next_offset = i + 1u;
     return 1;
 }
 
@@ -1310,18 +1087,6 @@ static int cmeta_lower_transform(
                 }
             }
 
-            if (statement_start && strcmp(ident, "defer") == 0) {
-                rewrite = cmeta_lower_try_defer(
-                    context, i, end, depth, &next);
-                if (rewrite < 0)
-                    return 0;
-                if (rewrite > 0) {
-                    statement_start = 1;
-                    i = next;
-                    continue;
-                }
-            }
-
             if (!cmeta_lower_reject_live_owned_control(context, i, ident))
                 return 0;
 
@@ -1531,7 +1296,6 @@ done:
     free(output.data);
     free(context.types);
     free(context.symbols);
-    free(context.cleanups);
     free(source);
     return ok;
 }
