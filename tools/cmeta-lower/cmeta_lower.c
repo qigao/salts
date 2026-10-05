@@ -666,29 +666,6 @@ static int cmeta_lower_reject_live_owned_control(
     return 0;
 }
 
-static int cmeta_lower_register_declaration(
-    cmeta_lower_context *context, size_t type_end,
-    const char *concrete, unsigned depth) {
-    const char *source = context->source;
-    size_t size = context->source_size;
-    size_t i = cmeta_lower_skip_space_comments(source, size, type_end);
-    size_t end;
-    char name[128];
-
-    if (!cmeta_lower_identifier(source, size, i, name, sizeof(name), &end))
-        return 1;
-    return cmeta_lower_add_symbol(
-        context, i, name, concrete, depth, CMETA_LOWER_OWNERSHIP_NONE);
-}
-
-static int cmeta_lower_qualifier(const char *ident) {
-    return strcmp(ident, "const") == 0 ||
-           strcmp(ident, "volatile") == 0 ||
-           strcmp(ident, "static") == 0 ||
-           strcmp(ident, "register") == 0 ||
-           strcmp(ident, "auto") == 0;
-}
-
 static int cmeta_lower_try_owned_declaration(
     cmeta_lower_context *context, cmeta_lower_buffer *output,
     size_t ident_start, size_t ident_end, unsigned depth,
@@ -887,146 +864,6 @@ static int cmeta_lower_validate_symbol_use(
     return 0;
 }
 
-static int cmeta_lower_split_operation(
-    const char *ident, char *owner, size_t owner_capacity,
-    char *method, size_t method_capacity) {
-    const char *separator = strchr(ident, '_');
-    size_t owner_length;
-    size_t method_length;
-
-    if (separator == NULL || separator == ident || separator[1] == '\0')
-        return 0;
-    owner_length = (size_t)(separator - ident);
-    method_length = strlen(separator + 1u);
-    if (owner_length + 1u > owner_capacity ||
-        method_length + 1u > method_capacity)
-        return 0;
-    memcpy(owner, ident, owner_length);
-    owner[owner_length] = '\0';
-    memcpy(method, separator + 1u, method_length + 1u);
-    return 1;
-}
-
-static int cmeta_lower_try_generic_call(
-    cmeta_lower_context *context, cmeta_lower_buffer *output,
-    size_t ident_start, size_t ident_end, const char *ident,
-    size_t *next_offset) {
-    const char *source = context->source;
-    size_t size = context->source_size;
-    size_t i;
-    size_t receiver_end;
-    char owner[64];
-    char method[128];
-    char receiver[128];
-    char replacement[320];
-    const cmeta_lower_symbol *symbol;
-    const cmeta_lower_type *type;
-    const char *owner_id;
-
-    (void)next_offset;
-    if (!cmeta_lower_split_operation(
-            ident, owner, sizeof(owner), method, sizeof(method)))
-        return 0;
-    owner_id = cmeta_lower_container_owner_id(owner);
-    if (owner_id == NULL || !cmeta_lower_owner_registered(context, owner_id))
-        return 0;
-
-    i = cmeta_lower_skip_space(source, size, ident_end);
-    if (i >= size || source[i] != '(')
-        return 0;
-    i = cmeta_lower_skip_space(source, size, i + 1u);
-    if (i >= size || source[i] != '&')
-        return 0;
-    i = cmeta_lower_skip_space(source, size, i + 1u);
-    if (!cmeta_lower_identifier(
-            source, size, i, receiver, sizeof(receiver), &receiver_end))
-        return 0;
-
-    symbol = cmeta_lower_find_symbol(context, receiver);
-    if (symbol == NULL) {
-        cmeta_lower_set_errorf(
-            context, ident_start, "unknown typed receiver '", receiver, "'");
-        return -1;
-    }
-    type = cmeta_lower_find_type(context, symbol->concrete);
-    if (type == NULL) {
-        cmeta_lower_set_errorf(
-            context, ident_start, "receiver type '", symbol->concrete,
-            "' has no typed owner");
-        return -1;
-    }
-    if (strcmp(type->owner_id, owner_id) != 0) {
-        char message[256];
-        (void)snprintf(
-            message, sizeof(message),
-            "generic owner identity '%s' does not match %s owner identity '%s'",
-            owner_id, symbol->concrete, type->owner_id);
-        cmeta_lower_set_error(context, ident_start, message);
-        return -1;
-    }
-
-    (void)snprintf(
-        replacement, sizeof(replacement), "%s_%s",
-        symbol->concrete, method);
-    if (!cmeta_lower_buffer_puts(output, replacement)) {
-        cmeta_lower_set_error(context, ident_start, "out of memory");
-        return -1;
-    }
-    return 1;
-}
-
-static int cmeta_lower_try_receiver_call(
-    cmeta_lower_context *context, cmeta_lower_buffer *output,
-    size_t ident_start, size_t ident_end, const char *ident,
-    size_t *next_offset) {
-    const char *source = context->source;
-    size_t size = context->source_size;
-    const cmeta_lower_symbol *symbol = cmeta_lower_find_symbol(context, ident);
-    const cmeta_lower_type *type;
-    size_t i;
-    size_t method_end;
-    size_t after_open;
-    size_t after_space;
-    char method[128];
-    char replacement[384];
-
-    if (symbol == NULL)
-        return 0;
-    type = cmeta_lower_find_type(context, symbol->concrete);
-    if (type == NULL || type->owner_id[0] == '\0')
-        return 0;
-
-    i = cmeta_lower_skip_space(source, size, ident_end);
-    if (i >= size || source[i] != '.')
-        return 0;
-    i = cmeta_lower_skip_space(source, size, i + 1u);
-    if (!cmeta_lower_identifier(
-            source, size, i, method, sizeof(method), &method_end))
-        return 0;
-    i = cmeta_lower_skip_space(source, size, method_end);
-    if (i >= size || source[i] != '(')
-        return 0;
-
-    after_open = i + 1u;
-    after_space = cmeta_lower_skip_space(source, size, after_open);
-    if (after_space < size && source[after_space] == ')') {
-        (void)snprintf(
-            replacement, sizeof(replacement), "%s_%s(&%s",
-            symbol->concrete, method, ident);
-    } else {
-        (void)snprintf(
-            replacement, sizeof(replacement), "%s_%s(&%s,",
-            symbol->concrete, method, ident);
-    }
-
-    if (!cmeta_lower_buffer_puts(output, replacement)) {
-        cmeta_lower_set_error(context, ident_start, "out of memory");
-        return -1;
-    }
-    *next_offset = after_open;
-    return 1;
-}
-
 static int cmeta_lower_transform(
     cmeta_lower_context *context, cmeta_lower_buffer *output) {
     const char *source = context->source;
@@ -1071,7 +908,6 @@ static int cmeta_lower_transform(
 
         if (cmeta_lower_ident_start(source[i]) &&
             cmeta_lower_identifier(source, size, i, ident, sizeof(ident), &end)) {
-            const cmeta_lower_type *known_type;
             size_t next = end;
             int rewrite;
 
@@ -1090,17 +926,8 @@ static int cmeta_lower_transform(
             if (!cmeta_lower_reject_live_owned_control(context, i, ident))
                 return 0;
 
-            if (statement_start) {
-                known_type = cmeta_lower_find_type(context, ident);
-                if (known_type != NULL) {
-                    if (!cmeta_lower_register_declaration(
-                            context, end, ident, depth))
-                        return 0;
-                    statement_start = 0;
-                } else if (!cmeta_lower_qualifier(ident)) {
-                    statement_start = 0;
-                }
-            }
+            if (statement_start)
+                statement_start = 0;
 
             rewrite = cmeta_lower_try_move(
                 context, output, i, end, ident, &next);
@@ -1113,24 +940,6 @@ static int cmeta_lower_transform(
 
             if (!cmeta_lower_validate_symbol_use(context, i, ident))
                 return 0;
-
-            rewrite = cmeta_lower_try_receiver_call(
-                context, output, i, end, ident, &next);
-            if (rewrite < 0)
-                return 0;
-            if (rewrite > 0) {
-                i = next;
-                continue;
-            }
-
-            rewrite = cmeta_lower_try_generic_call(
-                context, output, i, end, ident, &next);
-            if (rewrite < 0)
-                return 0;
-            if (rewrite > 0) {
-                i = end;
-                continue;
-            }
 
             if (!cmeta_lower_buffer_append(output, source + i, end - i))
                 goto oom;
