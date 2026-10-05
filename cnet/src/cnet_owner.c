@@ -377,6 +377,7 @@ static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *s
 static int cnet_owner_start_queued_write(cnet_owner_impl *impl, cnet_owner_session *session);
 static int cnet_owner_arm_receive(cnet_owner_impl *impl, cnet_owner_session *session);
 static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *session);
+static int cnet_owner_tls_pump_impl(cnet_owner_impl *impl, cnet_owner_session *session);
 static int cnet_owner_tls_start_read(cnet_owner_impl *impl, cnet_owner_session *session);
 static int cnet_owner_tls_background_progress(cnet_owner_impl *impl,
                                               cnet_owner_session *session);
