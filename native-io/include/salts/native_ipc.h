@@ -147,6 +147,8 @@ SALTS_NATIVE_IO_C_API int salts_ipc_pipe_server_destroy(salts_ipc_pipe_server *s
  * Performs one Windows CreateFile attempt and never waits or retries. Success
  * transfers one overlapped endpoint to out_endpoint. Missing/busy instances
  * return SALTS_ENOENT/SALTS_EBUSY; non-Windows hosts return SALTS_ENOTSUP.
+ * An opened non-pipe handle is closed and rejected with SALTS_ENOTSUP; failure
+ * leaves out_endpoint invalid and unowned.
  * out_endpoint must first be initialized to its invalid state.
  */
 SALTS_NATIVE_IO_C_API int salts_ipc_named_pipe_connect(const char *name,
