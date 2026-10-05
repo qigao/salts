@@ -3,7 +3,7 @@
 typed(List, IntList, int);
 
 static void probe(void) {
-    owned(IntList) value;
+    cmeta_owned(IntList) value;
     goto done;
 done:
     (void)0;
