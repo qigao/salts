@@ -314,6 +314,42 @@ static int cnet_tls_test_reset_client(cnet_tls_test_pair *pair,
   return status;
 }
 
+static int cnet_tls_test_mtls_pair_init(cnet_tls_test_pair *pair,
+                                       cnet_tls_client_auth client_auth,
+                                       bool client_identity) {
+  cnet_tls_server_config server_config;
+  cnet_tls_client_config client_config;
+  cnet_tls_context *server_context;
+  int status = cnet_tls_test_pair_init(pair);
+  if (status != SALTS_OK) return status;
+  cnet_tls_state_destroy(&pair->client);
+  cnet_tls_state_destroy(&pair->server);
+  status = cnet_tls_server_destroy(&pair->server_context);
+  if (status != SALTS_OK) goto cleanup;
+  server_config = (cnet_tls_server_config){.size = sizeof(server_config),
+                                         .cert_file = pair->cert_path,
+                                         .key_file = pair->key_path,
+                                         .ca_file = pair->ca_path,
+                                         .client_auth = client_auth};
+  status = cnet_tls_server_init(&pair->server_context, &server_config);
+  if (status != SALTS_OK) goto cleanup;
+  client_config = (cnet_tls_client_config){.size = sizeof(client_config),
+                                         .ca_file = pair->ca_path,
+                                         .cert_file = client_identity ? pair->cert_path : NULL,
+                                         .key_file = client_identity ? pair->key_path : NULL};
+  status = cnet_tls_test_reset_client(pair, &client_config, "localhost");
+  if (status != SALTS_OK) goto cleanup;
+  server_context = cnet_tls_server_context(&pair->server_context);
+  cnet_tls_context_retain(server_context);
+  status = cnet_tls_state_init(&pair->server, server_context, true, NULL,
+                              CNET_TLS_MIN_IO_BUFFER_BYTES);
+  if (status == SALTS_OK) return SALTS_OK;
+  cnet_tls_context_release(server_context);
+cleanup:
+  cnet_tls_test_pair_destroy(pair);
+  return status;
+}
+
 typedef struct cnet_tls_network_probe {
   cnet_client *client;
   cnet_connection connection;
@@ -1464,34 +1500,20 @@ spec("CNet bounded TLS engine") {
     cnet_tls_test_pair_destroy(&pair);
   }
 
-  it("requires and verifies a configured client certificate") {
-    cnet_tls_test_pair pair;
-    cnet_tls_server_config server_config;
-    cnet_tls_client_config client_config;
-    cnet_tls_context *server_context;
+  group("mutual certificate authentication") {
+    static cnet_tls_test_pair pair;
+    before_each() { memset(&pair, 0, sizeof(pair)); }
+    after_each() { cnet_tls_test_pair_destroy(&pair); }
 
-    check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
-    cnet_tls_state_destroy(&pair.client);
-    cnet_tls_state_destroy(&pair.server);
-    check_equal(cnet_tls_server_destroy(&pair.server_context), SALTS_OK);
-    server_config = (cnet_tls_server_config){.size = sizeof(server_config),
-                                             .cert_file = pair.cert_path,
-                                             .key_file = pair.key_path,
-                                             .ca_file = pair.ca_path,
-                                             .client_auth = CNET_TLS_CLIENT_AUTH_REQUIRED};
-    check_equal(cnet_tls_server_init(&pair.server_context, &server_config), SALTS_OK);
-    client_config = (cnet_tls_client_config){.size = sizeof(client_config),
-                                             .ca_file = pair.ca_path,
-                                             .cert_file = pair.cert_path,
-                                             .key_file = pair.key_path};
-    check_equal(cnet_tls_test_reset_client(&pair, &client_config, "localhost"), SALTS_OK);
-    server_context = cnet_tls_server_context(&pair.server_context);
-    cnet_tls_context_retain(server_context);
-    check_equal(
-        cnet_tls_state_init(&pair.server, server_context, true, NULL, CNET_TLS_MIN_IO_BUFFER_BYTES),
-        SALTS_OK);
-    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
-    cnet_tls_test_pair_destroy(&pair);
+    it("requires and verifies a configured client certificate") {
+      check_equal(cnet_tls_test_mtls_pair_init(&pair, CNET_TLS_CLIENT_AUTH_REQUIRED, true), SALTS_OK);
+      check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+    }
+
+    it("rejects an absent client identity when client authentication is required") {
+      check_equal(cnet_tls_test_mtls_pair_init(&pair, CNET_TLS_CLIENT_AUTH_REQUIRED, false), SALTS_OK);
+      check_equal(cnet_tls_test_handshake(&pair), SALTS_ECONNABORTED);
+    }
   }
 
   it("derives RFC 5929 tls-server-end-point from a SHA-384 certificate signature") {
