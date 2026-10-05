@@ -2569,6 +2569,7 @@ static int io_bench_compare_receive_ownership(
   printf("| payload | borrowed+consumer-copy p50 us | owned receive p50 us | "
          "borrowed MiB/s | owned MiB/s | owned p50 delta | owned rate delta |\n");
   printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+  fflush(stdout);
 
   for (size_t payload_index = 0u; payload_index < RECEIVE_PAYLOADS; ++payload_index) {
     io_bench_result runs[RECEIVE_METHODS][RECEIVE_REPLICATES];
@@ -2589,7 +2590,15 @@ static int io_bench_compare_receive_ownership(
             backend->kind, IO_BENCH_SEND_RETAINED, 0u,
             warmups[payload_index], exchanges[payload_index], true,
             modes[method], &runs[method][repeat]);
-        if (status != SALTS_OK) return status;
+        if (status != SALTS_OK) {
+          fprintf(stderr,
+                  "CNet receive ownership measurement failed: backend=%s "
+                  "payload=%zu mode=%s repeat=%zu status=%d\n",
+                  backend->name, payloads[payload_index],
+                  modes[method] == IO_BENCH_RECEIVE_OWNED ? "owned" : "borrowed_copy",
+                  repeat, status);
+          return status;
+        }
       }
     }
 
