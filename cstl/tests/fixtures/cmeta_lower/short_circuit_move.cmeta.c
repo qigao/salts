@@ -8,8 +8,8 @@ static int consume(IntList value) {
 }
 
 static void probe(int condition) {
-    owned(IntList) value;
-    (void)(condition && consume(move(value)));
+    cmeta_owned(IntList) value;
+    (void)(condition && consume(cmeta_move(value)));
 }
 
 int main(void) {
