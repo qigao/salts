@@ -33,6 +33,7 @@ typedef struct cnet_kcp_test_endpoint {
   cnet_kcp_test_link *outbound;
   unsigned char received[CNET_KCP_TEST_MESSAGE_BYTES];
   size_t received_size;
+  size_t received_total_size;
   int receive_count;
 } cnet_kcp_test_endpoint;
 
@@ -63,6 +64,7 @@ static void cnet_kcp_test_receive(void *user, cnet_kcp *session,
     return;
   memcpy(endpoint->received, view->data, view->size);
   endpoint->received_size = view->size;
+  endpoint->received_total_size += view->size;
   ++endpoint->receive_count;
 }
 
@@ -96,6 +98,109 @@ static int cnet_kcp_test_deliver(cnet_kcp_test_link *link, cnet_kcp *destination
 }
 
 spec("CNet bounded KCP session") {
+  group("stream fragment admission") {
+    static cnet_kcp left;
+    static cnet_kcp right;
+    static cnet_kcp_test_link left_to_right;
+    static cnet_kcp_test_link right_to_left;
+    static cnet_kcp_test_endpoint left_endpoint;
+    static cnet_kcp_test_endpoint right_endpoint;
+    static cnet_kcp_config config;
+    static const unsigned char prefix[] = "queued";
+    static const unsigned char message[
+        CNET_KCP_TEST_MSS * (CNET_KCP_TEST_MAX_FRAGMENTS + 1u)] = {0};
+
+    before_each() {
+      memset(&left, 0, sizeof(left));
+      memset(&right, 0, sizeof(right));
+      memset(&left_to_right, 0, sizeof(left_to_right));
+      memset(&right_to_left, 0, sizeof(right_to_left));
+      left_endpoint = (cnet_kcp_test_endpoint){.outbound = &left_to_right};
+      right_endpoint = (cnet_kcp_test_endpoint){.outbound = &right_to_left};
+      config = cnet_kcp_test_config(&left_endpoint);
+      config.stream_mode = true;
+      config.max_message_bytes = sizeof(message);
+      config.send_segment_capacity = CNET_KCP_TEST_MAX_FRAGMENTS + 2u;
+      check_equal(cnet_kcp_init(&left, &config), SALTS_OK);
+      config.observer.user = &right_endpoint;
+      check_equal(cnet_kcp_init(&right, &config), SALTS_OK);
+    }
+
+    after_each() {
+      check_equal(cnet_kcp_destroy(&right), SALTS_OK);
+      check_equal(cnet_kcp_destroy(&left), SALTS_OK);
+    }
+
+    it("rejects 128 new stream segments with a size error and retains no input") {
+      const size_t size = CNET_KCP_TEST_MSS * CNET_KCP_TEST_MAX_FRAGMENTS + 1u;
+      check_equal(cnet_kcp_send(&left, message, size), SALTS_EMSGSIZE);
+      check_equal(cnet_kcp_send(&left, prefix, sizeof(prefix)), SALTS_OK);
+      check_equal(cnet_kcp_update(&left, 0u), SALTS_OK);
+      check_equal(cnet_kcp_test_deliver(&left_to_right, &right), SALTS_OK);
+      check_equal(right_endpoint.receive_count, 1);
+      check_equal(right_endpoint.received_size, sizeof(prefix));
+      check_equal(right_endpoint.received, prefix, sizeof(prefix));
+    }
+
+    it("leaves the queued stream tail unchanged after an oversized send") {
+      check_equal(cnet_kcp_send(&left, prefix, sizeof(prefix)), SALTS_OK);
+      check_equal_warn(cnet_kcp_send(&left, message, sizeof(message)), SALTS_EMSGSIZE);
+      check_equal(cnet_kcp_update(&left, 0u), SALTS_OK);
+      check_equal(cnet_kcp_test_deliver(&left_to_right, &right), SALTS_OK);
+      check_equal(right_endpoint.receive_count, 1);
+      check_equal(right_endpoint.received_size, sizeof(prefix));
+      check_equal(right_endpoint.received, prefix, sizeof(prefix));
+    }
+
+    it("accepts exactly 127 new stream segments") {
+      check_equal(cnet_kcp_send(&left, message,
+                               CNET_KCP_TEST_MSS * CNET_KCP_TEST_MAX_FRAGMENTS),
+                  SALTS_OK);
+    }
+
+    it("accepts a send completely absorbed by the queued stream tail") {
+      check_equal(cnet_kcp_send(&left, prefix, sizeof(prefix)), SALTS_OK);
+      check_equal(cnet_kcp_send(&left, prefix, sizeof(prefix)), SALTS_OK);
+      check_equal(cnet_kcp_update(&left, 0u), SALTS_OK);
+      check_equal(cnet_kcp_test_deliver(&left_to_right, &right), SALTS_OK);
+      check_equal(right_endpoint.receive_count, 1);
+      check_equal(right_endpoint.received_size, sizeof(prefix) * 2u);
+      check_equal(right_endpoint.received, prefix, sizeof(prefix));
+      check_equal(right_endpoint.received + sizeof(prefix), prefix, sizeof(prefix));
+    }
+
+    it("preserves conservative capacity rejection even when the tail has room") {
+      check_equal(cnet_kcp_destroy(&left), SALTS_OK);
+      config.observer.user = &left_endpoint;
+      config.send_segment_capacity = 1u;
+      check_equal(cnet_kcp_init(&left, &config), SALTS_OK);
+      check_equal(cnet_kcp_send(&left, prefix, sizeof(prefix)), SALTS_OK);
+      check_equal(cnet_kcp_send(&left, prefix, sizeof(prefix)), SALTS_ENOBUFS);
+      check_equal(cnet_kcp_update(&left, 0u), SALTS_OK);
+      check_equal(cnet_kcp_test_deliver(&left_to_right, &right), SALTS_OK);
+      check_equal(right_endpoint.receive_count, 1);
+      check_equal(right_endpoint.received_size, sizeof(prefix));
+      check_equal(right_endpoint.received, prefix, sizeof(prefix));
+    }
+
+    it("preserves valid tail merging before the 127-new-segment limit") {
+      const size_t size = CNET_KCP_TEST_MSS * CNET_KCP_TEST_MAX_FRAGMENTS + 1u;
+      uint32_t now;
+      check_equal(cnet_kcp_send(&left, prefix, sizeof(prefix)), SALTS_OK);
+      check_equal(cnet_kcp_send(&left, message, size), SALTS_OK);
+      for (now = 0u; now <= CNET_KCP_TEST_DEADLINE_MS &&
+                     right_endpoint.received_total_size < sizeof(prefix) + size;
+           now += CNET_KCP_TEST_STEP_MS) {
+        check_equal(cnet_kcp_update(&left, now), SALTS_OK);
+        check_equal(cnet_kcp_update(&right, now), SALTS_OK);
+        check_equal(cnet_kcp_test_deliver(&left_to_right, &right), SALTS_OK);
+        check_equal(cnet_kcp_test_deliver(&right_to_left, &left), SALTS_OK);
+      }
+      check_equal(right_endpoint.received_total_size, sizeof(prefix) + size);
+      check_equal(right_endpoint.receive_count, CNET_KCP_TEST_MAX_FRAGMENTS + 1);
+    }
+  }
+
   it("rejects malformed configuration without publishing an object") {
     cnet_kcp session = {0};
     cnet_kcp_test_link link = {0};

@@ -336,6 +336,11 @@ datagram transport. Its `output` callback is borrowed, `input` consumes one
 borrowed wire packet synchronously, and `update/check` make timer ownership
 explicit.
 
+Each `cnet_kcp_send()` call may add at most 127 new segments after any
+stream-mode tail merge. Exceeding this protocol limit returns `SALTS_EMSGSIZE`
+before retaining input or changing an already queued stream tail; the separate
+conservative `send_segment_capacity` admission bound remains unchanged.
+
 Plain `cnet_kcp` provides reliability, not confidentiality or peer
 authentication. `cnet_secure_kcp` and the packet endpoint's explicit PSK v1
 mode add the CoroNet-compatible authenticated handshake, XChaCha20-Poly1305
