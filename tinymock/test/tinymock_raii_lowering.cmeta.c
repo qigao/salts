@@ -1,3 +1,4 @@
+#define TINYTEST_NO_MAIN
 #include <cmeta/data.h>
 #include <cmeta/interface.h>
 
