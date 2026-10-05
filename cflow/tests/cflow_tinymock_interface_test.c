@@ -116,6 +116,50 @@ suite("TinyMock existing CMeta interface") {
     tinymock_cflow_publisher_init(&mock);
     publisher = tinymock_cflow_publisher_as_interface(&mock);
 
+    {
+      const cmeta_interface_desc *meta = cflow_publisher_interface();
+      const cmeta_function_desc *name_fn =
+          TINYMOCk_INTERFACE_METHOD_FUNCTION(cflow_publisher, name);
+      const cmeta_function_desc *resume_fn =
+          TINYMOCk_INTERFACE_METHOD_FUNCTION(cflow_publisher, resume);
+      const cmeta_function_desc *poll_fn =
+          TINYMOCk_INTERFACE_METHOD_FUNCTION(cflow_publisher, poll_terminal);
+      size_t method_index;
+
+      check_true(cmeta_interface_desc_valid(meta));
+      check_equal(meta->method_count, (size_t)7);
+      for (method_index = 0u; method_index < meta->method_count;
+           ++method_index)
+        check_true(cmeta_interface_method_reflection_valid(
+            &meta->methods[method_index]));
+
+      check_equal(name_fn->result_flags,
+                  (cmeta_result_flags)CMETA_RESULT_BORROWED);
+      check_equal(resume_fn->result_flags,
+                  (cmeta_result_flags)CMETA_RESULT_VALUE);
+      check_true((resume_fn->params[0].flags &
+                  (CMETA_PARAM_IN | CMETA_PARAM_BORROWED |
+                   CMETA_PARAM_NULLABLE)) ==
+                 (CMETA_PARAM_IN | CMETA_PARAM_BORROWED |
+                  CMETA_PARAM_NULLABLE));
+      check_true((resume_fn->params[1].flags &
+                  (CMETA_PARAM_OUT | CMETA_PARAM_BORROWED)) ==
+                 (CMETA_PARAM_OUT | CMETA_PARAM_BORROWED));
+      check_true(resume_fn->params[0].type ==
+                 &cflow_type_publish_context_ptr);
+      check_true(resume_fn->params[1].type == &cmeta_type_void_ptr);
+
+      check_equal(poll_fn->result_flags,
+                  (cmeta_result_flags)CMETA_RESULT_VALUE);
+      check_true((poll_fn->params[0].flags &
+                  (CMETA_PARAM_OUT | CMETA_PARAM_BORROWED |
+                   CMETA_PARAM_NULLABLE)) ==
+                 (CMETA_PARAM_OUT | CMETA_PARAM_BORROWED |
+                  CMETA_PARAM_NULLABLE));
+      check_true(poll_fn->params[0].type == &cmeta_type_char_ptr_ptr);
+      check_true(cmeta_interface_method_owns_self(&meta->methods[4]));
+    }
+
     check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, name, scripted_name));
     check_true(TINYMOCk_INTERFACE_SET_RETURN(
         &mock, output_type, scripted_type));
