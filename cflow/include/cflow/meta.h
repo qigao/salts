@@ -172,7 +172,7 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
  *
  * cmeta_bindable declares a binary C function whose LAST argument may be
  * partially applied.  The resulting object is the same operator-specific
- * callable value used by typed()/lambda(), so Graph/optimizer/plan need no
+ * callable value used by cmeta_function()/lambda(), so Graph/optimizer/plan need no
  * special bind semantic.
  *
  * Example:
