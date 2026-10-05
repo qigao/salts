@@ -94,7 +94,15 @@ extern const cmeta_type_desc cmeta_type_int32;
 extern const cmeta_type_desc cmeta_type_uint32;
 extern const cmeta_type_desc cmeta_type_int64;
 extern const cmeta_type_desc cmeta_type_uint64;
+/* Canonical pointer-boundary types used by reflection consumers.
+ * Source-level const does not imply ownership; ownership remains explicit in
+ * function parameter/result flags. */
+extern const cmeta_type_desc cmeta_type_char;
+extern const cmeta_type_desc cmeta_type_char_ptr;
 extern const cmeta_type_desc cmeta_type_void;
+extern const cmeta_type_desc cmeta_type_void_ptr;
+extern const cmeta_type_desc cmeta_type_descriptor;
+extern const cmeta_type_desc cmeta_type_descriptor_ptr;
 extern const cmeta_type_desc cmeta_type_size;
 extern const cmeta_type_desc cmeta_type_size_ptr;
 extern const cmeta_type_desc cmeta_type_gen_status;
