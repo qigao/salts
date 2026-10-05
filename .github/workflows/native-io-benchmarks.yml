@@ -438,7 +438,8 @@ jobs:
         run: |
           set -euo pipefail
           cmake --preset "${{ matrix.configure_preset }}" \
-            -DBUILD_BENCHMARKS=ON -DCFLOW_BUILD_BENCHMARKS=OFF \
+            -DBUILD_BENCHMARKS=OFF -DNATIVE_IO_BUILD_BENCHMARKS=ON \
+            -DCOROUTINE_BUILD_BENCHMARKS=ON -DCNET_BUILD_BENCHMARKS=ON \
             -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
           cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
       - name: Configure Windows benchmark targets
@@ -448,7 +449,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DCFLOW_BUILD_BENCHMARKS=OFF -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
+          cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=OFF -DNATIVE_IO_BUILD_BENCHMARKS=ON -DCOROUTINE_BUILD_BENCHMARKS=ON -DCNET_BUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build Windows benchmark targets
         if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         shell: cmd
@@ -463,7 +464,8 @@ jobs:
         run: |
           set -euo pipefail
           cmake --preset "${{ matrix.configure_preset }}" \
-            -DBUILD_BENCHMARKS=ON -DCFLOW_BUILD_BENCHMARKS=OFF \
+            -DBUILD_BENCHMARKS=OFF -DNATIVE_IO_BUILD_BENCHMARKS=ON \
+            -DCOROUTINE_BUILD_BENCHMARKS=ON -DCNET_BUILD_BENCHMARKS=ON \
             -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
           cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
 

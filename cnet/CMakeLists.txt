@@ -70,7 +70,7 @@ set_target_properties(${TARGET_NAME} PROPERTIES
   WINDOWS_EXPORT_ALL_SYMBOLS ON)
 cnet_configure_target(${TARGET_NAME})
 
-if(BUILD_TESTS OR BUILD_BENCHMARKS)
+if(BUILD_TESTS OR BUILD_BENCHMARKS OR CNET_BUILD_BENCHMARKS)
   # Diagnostics use a private static copy so profiling and deterministic test
   # faults add neither exported symbols nor hot-path branches to installed CNet.
   add_library(cnet_profile STATIC ${CNET_SOURCE_FILES})
@@ -103,6 +103,6 @@ if(BUILD_TESTS)
   add_subdirectory(tests)
 endif()
 
-if(BUILD_BENCHMARKS)
+if(BUILD_BENCHMARKS OR CNET_BUILD_BENCHMARKS)
   add_subdirectory(benchmarks)
 endif()

@@ -179,6 +179,6 @@ if(BUILD_EXAMPLES)
   add_subdirectory(examples)
 endif()
 
-if(CFLOW_BUILD_BENCHMARKS)
+if(BUILD_BENCHMARKS)
   add_subdirectory(benchmarks)
 endif()
