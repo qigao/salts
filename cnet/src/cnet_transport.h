@@ -38,6 +38,9 @@ int cnet_transport_apply_stream_socket_options(
 int cnet_transport_parse_numeric_address(const char *host, uint16_t port, void *out_address,
                                          size_t address_capacity, size_t *out_address_length);
 
+/** Validates one IPv6 literal without consulting DNS or creating a socket. */
+int cnet_transport_validate_ipv6_literal(const char *host);
+
 /** Listener variant that additionally accepts port zero for ephemeral bind. */
 int cnet_transport_parse_bind_address(const char *host, uint16_t port, void *out_address,
                                       size_t address_capacity, size_t *out_address_length);

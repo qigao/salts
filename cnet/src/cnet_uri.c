@@ -1,5 +1,7 @@
 #include "cnet_uri.h"
 
+#include "cnet_transport.h"
+
 #include <uri_parser.h>
 
 #include <stdbool.h>
@@ -37,6 +39,16 @@ static int cnet_uri_parse_network(const uri_t *generic, cnet_uri_scheme scheme, 
       generic->port > UINT16_MAX)
     return SALTS_ERANGE;
   if (host_length >= CNET_URI_HOST_CAPACITY) return SALTS_ERANGE;
+
+  /* Brackets describe an IP literal, never a DNS name after parser normalization. */
+  if (generic->host_type == URI_HOST_IPVFUTURE ||
+      (generic->host_type == URI_HOST_IPV6ADDR &&
+       (generic->host[0] == 'v' || generic->host[0] == 'V')))
+    return SALTS_ENOTSUP;
+  if (generic->host_type == URI_HOST_IPV6ADDR) {
+    const int status = cnet_transport_validate_ipv6_literal(generic->host);
+    if (status != SALTS_OK) return status;
+  }
 
   out_uri->scheme = scheme;
   out_uri->port = (uint16_t)generic->port;

@@ -285,6 +285,15 @@ int cnet_transport_parse_numeric_address(const char *host, uint16_t port, void *
                                       out_address_length);
 }
 
+int cnet_transport_validate_ipv6_literal(const char *host) {
+  struct in6_addr address;
+  int parsed;
+  if (host == NULL || host[0] == '\0') return SALTS_EINVAL;
+  parsed = inet_pton(AF_INET6, host, &address);
+  if (parsed < 0) return cnet_transport_native_error();
+  return parsed == 1 ? SALTS_OK : SALTS_EINVAL;
+}
+
 int cnet_transport_parse_bind_address(const char *host, uint16_t port, void *out_address,
                                       size_t address_capacity, size_t *out_address_length) {
   return cnet_transport_parse_address(host, port, true, out_address, address_capacity,
