@@ -982,6 +982,7 @@ static int cmeta_lower_try_receiver_call(
     const char *source = context->source;
     size_t size = context->source_size;
     const cmeta_lower_symbol *symbol = cmeta_lower_find_symbol(context, ident);
+    const cmeta_lower_type *type;
     size_t i;
     size_t method_end;
     size_t after_open;
@@ -990,6 +991,9 @@ static int cmeta_lower_try_receiver_call(
     char replacement[384];
 
     if (symbol == NULL)
+        return 0;
+    type = cmeta_lower_find_type(context, symbol->concrete);
+    if (type == NULL || type->owner_id[0] == '\0')
         return 0;
 
     i = cmeta_lower_skip_space(source, size, ident_end);
@@ -1298,7 +1302,7 @@ done:
 
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
-        puts("cmeta-lower 5");
+        puts("cmeta-lower 6");
         return 0;
     }
     if (argc != 3) {
