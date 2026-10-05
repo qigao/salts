@@ -306,6 +306,87 @@ spec("CNet NativeIO transport ownership") {
     cnet_test_stream_socket_options();
   }
 
+#if !defined(_WIN32)
+  it("preserves full-width linger durations on platforms with native int seconds") {
+    cnet_stream_socket_options options = CNET_STREAM_SOCKET_OPTIONS_INIT;
+    options.linger = 1;
+    options.linger_ms = UINT32_MAX;
+    check_equal(cnet_stream_socket_options_validate(&options), SALTS_OK);
+  }
+#else
+  group("Windows linger bounds") {
+    static cnet_test_socket socket_value;
+    static bool module_initialized;
+    enum { MILLISECONDS_PER_SECOND = 1000 };
+    const uint32_t max_linger_ms = (uint32_t)UINT16_MAX * MILLISECONDS_PER_SECOND;
+
+    before_each() {
+      socket_value = CNET_TEST_INVALID_SOCKET;
+      module_initialized = false;
+      check_equal(cnet_module_init(), SALTS_OK);
+      module_initialized = true;
+      socket_value = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+      check_true(socket_value != CNET_TEST_INVALID_SOCKET);
+    }
+
+    after_each() {
+      cnet_test_close_socket(socket_value);
+      if (module_initialized) check_equal(cnet_module_shutdown(), SALTS_OK);
+    }
+
+    it("preserves abortive close and rounds representable durations up to seconds") {
+      const uint32_t durations[] = {0u,
+                                    1u,
+                                    MILLISECONDS_PER_SECOND,
+                                    MILLISECONDS_PER_SECOND + 1u,
+                                    max_linger_ms - MILLISECONDS_PER_SECOND + 1u,
+                                    max_linger_ms};
+      cnet_stream_socket_options options = CNET_STREAM_SOCKET_OPTIONS_INIT;
+      options.linger = 1;
+      for (size_t index = 0u; index < sizeof(durations) / sizeof(durations[0]); ++index) {
+        struct linger actual = {0};
+        int option_size = (int)sizeof(actual);
+        const uint32_t expected_seconds =
+            (durations[index] + MILLISECONDS_PER_SECOND - 1u) / MILLISECONDS_PER_SECOND;
+        options.linger_ms = durations[index];
+        check_equal(cnet_stream_socket_options_validate(&options), SALTS_OK);
+        check_equal(cnet_transport_apply_stream_socket_options((uintptr_t)socket_value, &options),
+                    SALTS_OK);
+        check_equal(getsockopt(socket_value, SOL_SOCKET, SO_LINGER, (char *)&actual, &option_size),
+                    0);
+        check_equal(actual.l_onoff, 1);
+        check_equal((uint32_t)actual.l_linger, expected_seconds);
+      }
+    }
+
+    it("rejects durations exceeding native seconds before applying any socket option") {
+      const uint32_t durations[] = {max_linger_ms + 1u, max_linger_ms + MILLISECONDS_PER_SECOND,
+                                    UINT32_MAX};
+      cnet_stream_socket_options options = CNET_STREAM_SOCKET_OPTIONS_INIT;
+      options.linger = 1;
+      options.nodelay = 1;
+      for (size_t index = 0u; index < sizeof(durations) / sizeof(durations[0]); ++index) {
+        options.linger_ms = durations[index];
+        check_equal(cnet_stream_socket_options_validate(&options), SALTS_ERANGE);
+        check_equal(cnet_transport_apply_stream_socket_options((uintptr_t)socket_value, &options),
+                    SALTS_ERANGE);
+      }
+      {
+        struct linger actual = {0};
+        int nodelay = 0;
+        int option_size = (int)sizeof(nodelay);
+        check_equal(
+            getsockopt(socket_value, IPPROTO_TCP, TCP_NODELAY, (char *)&nodelay, &option_size), 0);
+        check_equal(nodelay, 0);
+        option_size = (int)sizeof(actual);
+        check_equal(getsockopt(socket_value, SOL_SOCKET, SO_LINGER, (char *)&actual, &option_size),
+                    0);
+        check_equal(actual.l_onoff, 0);
+      }
+    }
+  }
+#endif
+
   it("rejects malformed versioned TCP endpoints") {
     cnet_stream_endpoint endpoint = CNET_STREAM_ENDPOINT_INIT;
     struct sockaddr_storage address;
