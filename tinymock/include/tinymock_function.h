@@ -11,10 +11,9 @@
  * declarations. The CMeta declaration extension hook replays those exact rows
  * into external replacement definitions.
  *
- * Reflected wrappers use only CMeta typed history/actions/returns. The
- * tinymock_mock_t member is retained as a call-count/verification facade; the
- * legacy boxed expectation/script/return engine is not part of reflected
- * dispatch.
+ * Reflected wrappers use only CMeta typed history/actions/returns. Call-count
+ * verification is derived directly from typed history; reflected functions do
+ * not carry legacy mock state or its boxed expectation/script engine.
  * Literal-void and value-return functions are generated separately at
  * preprocessing time. Variadic declarations remain outside this backend.
  */
@@ -24,9 +23,6 @@
 #ifdef __cplusplus
 #error "tinymock_function.h is the strict-C11 free-function mock bridge"
 #endif
-
-#define TINYMOCk_FUNCTION_STATE_NAME_I(name) tinymock_function_##name
-#define TINYMOCk_FUNCTION_STATE_NAME(name) TINYMOCk_FUNCTION_STATE_NAME_I(name)
 
 #define TINYMOCk_FUNCTION_RESET_NAME_I(name) tinymock_function_##name##_reset
 #define TINYMOCk_FUNCTION_RESET_NAME(name) TINYMOCk_FUNCTION_RESET_NAME_I(name)
@@ -51,7 +47,6 @@
   TINYMOCk_FUNCTION_RETURN_STATE_NAME_I(name)
 
 #define TINYMOCk_FUNCTION_DECLARE(name) \
-  extern tinymock_mock_t TINYMOCk_FUNCTION_STATE_NAME(name); \
   extern struct tinymock_cmeta_history TINYMOCk_FUNCTION_HISTORY_NAME(name); \
   extern struct tinymock_cmeta_actions TINYMOCk_FUNCTION_ACTIONS_NAME(name); \
   extern struct tinymock_cmeta_return TINYMOCk_FUNCTION_RETURN_STATE_NAME(name); \
@@ -60,7 +55,6 @@
   const struct cmeta_function_desc *TINYMOCk_FUNCTION_META_NAME(name)(void); \
   const struct cmeta_function_abi_desc *TINYMOCk_FUNCTION_ABI_META_NAME(name)(void)
 
-#define TINYMOCk_FUNCTION(name) (&TINYMOCk_FUNCTION_STATE_NAME(name))
 #define TINYMOCk_FUNCTION_HISTORY(name) (&TINYMOCk_FUNCTION_HISTORY_NAME(name))
 #define TINYMOCk_FUNCTION_ACTIONS(name) (&TINYMOCk_FUNCTION_ACTIONS_NAME(name))
 #define TINYMOCk_FUNCTION_RETURN_STATE(name) \
@@ -69,6 +63,36 @@
 #define TINYMOCk_FUNCTION_DESTROY(name) TINYMOCk_FUNCTION_DESTROY_NAME(name)()
 #define TINYMOCk_FUNCTION_META(name) TINYMOCk_FUNCTION_META_NAME(name)()
 #define TINYMOCk_FUNCTION_ABI(name) TINYMOCk_FUNCTION_ABI_META_NAME(name)()
+
+#define TINYMOCk_FUNCTION_CALL_COUNT(name) \
+  tinymock_cmeta_history_call_count(TINYMOCk_FUNCTION_HISTORY(name))
+
+#define TINYMOCk_FUNCTION_VERIFY_TIMES(name, expected) \
+  do { \
+    size_t expected__ = (size_t)(expected); \
+    size_t actual__ = TINYMOCk_FUNCTION_CALL_COUNT(name); \
+    TINYMOCk_ASSERT(actual__ == expected__, \
+        "tinymock reflected %s: expected exactly %zu calls, got %zu", \
+        #name, expected__, actual__); \
+  } while (0)
+#define TINYMOCk_FUNCTION_VERIFY_NEVER(name) \
+  TINYMOCk_FUNCTION_VERIFY_TIMES(name, 0u)
+#define TINYMOCk_FUNCTION_VERIFY_AT_LEAST(name, minimum) \
+  do { \
+    size_t minimum__ = (size_t)(minimum); \
+    size_t actual__ = TINYMOCk_FUNCTION_CALL_COUNT(name); \
+    TINYMOCk_ASSERT(actual__ >= minimum__, \
+        "tinymock reflected %s: expected at least %zu calls, got %zu", \
+        #name, minimum__, actual__); \
+  } while (0)
+#define TINYMOCk_FUNCTION_VERIFY_AT_MOST(name, maximum) \
+  do { \
+    size_t maximum__ = (size_t)(maximum); \
+    size_t actual__ = TINYMOCk_FUNCTION_CALL_COUNT(name); \
+    TINYMOCk_ASSERT(actual__ <= maximum__, \
+        "tinymock reflected %s: expected at most %zu calls, got %zu", \
+        #name, maximum__, actual__); \
+  } while (0)
 
 #define TINYMOCk_FUNCTION_ARG_EQUAL_TYPED( \
     name, call_index, param_name, expected_lvalue) \
@@ -282,7 +306,6 @@
   CMETA_PP_CAT(TINYMOCk_FUNCTION_RETURN_, carrier)(name, type)
 
 #define TINYMOCk_FUNCTION_DEFINE_STATE(fn_name) \
-  tinymock_mock_t TINYMOCk_FUNCTION_STATE_NAME(fn_name); \
   tinymock_cmeta_history TINYMOCk_FUNCTION_HISTORY_NAME(fn_name); \
   tinymock_cmeta_actions TINYMOCk_FUNCTION_ACTIONS_NAME(fn_name); \
   tinymock_cmeta_return TINYMOCk_FUNCTION_RETURN_STATE_NAME(fn_name); \
@@ -293,7 +316,6 @@
                     "tinymock reflected function metadata is invalid: %s", #fn_name); \
     TINYMOCk_ASSERT(cmeta_function_abi_desc_valid(abi__), \
                     "tinymock reflected ABI metadata is invalid: %s", #fn_name); \
-    tinymock_mock_init(&TINYMOCk_FUNCTION_STATE_NAME(fn_name), meta__->name); \
     tinymock_cmeta_history_reset(&TINYMOCk_FUNCTION_HISTORY_NAME(fn_name), meta__); \
     tinymock_cmeta_actions_reset(&TINYMOCk_FUNCTION_ACTIONS_NAME(fn_name), meta__); \
     tinymock_cmeta_return_reset(&TINYMOCk_FUNCTION_RETURN_STATE_NAME(fn_name), meta__); \
@@ -325,7 +347,6 @@
             &TINYMOCk_FUNCTION_HISTORY_NAME(name), FunctionMeta(name), \
             CMETA_PP_NARG(__VA_ARGS__), typed_args__), \
         "tinymock cannot snapshot reflected arguments for %s", #name); \
-    tinymock_mock_note_call(&TINYMOCk_FUNCTION_STATE_NAME(name)); \
     TINYMOCk_ASSERT( \
         tinymock_cmeta_actions_apply( \
             &TINYMOCk_FUNCTION_ACTIONS_NAME(name), FunctionMeta(name), \
@@ -349,7 +370,6 @@
             &TINYMOCk_FUNCTION_HISTORY_NAME(name), FunctionMeta(name), \
             CMETA_PP_NARG(__VA_ARGS__), typed_args__), \
         "tinymock cannot snapshot reflected arguments for %s", #name); \
-    tinymock_mock_note_call(&TINYMOCk_FUNCTION_STATE_NAME(name)); \
     TINYMOCk_ASSERT( \
         tinymock_cmeta_actions_apply( \
             &TINYMOCk_FUNCTION_ACTIONS_NAME(name), FunctionMeta(name), \
@@ -382,7 +402,6 @@
             &TINYMOCk_FUNCTION_HISTORY_NAME(name), FunctionMeta(name), \
             0u, NULL), \
         "tinymock cannot snapshot reflected arguments for %s", #name); \
-    tinymock_mock_note_call(&TINYMOCk_FUNCTION_STATE_NAME(name)); \
     TINYMOCk_ASSERT( \
         tinymock_cmeta_actions_apply( \
             &TINYMOCk_FUNCTION_ACTIONS_NAME(name), FunctionMeta(name), \
@@ -401,7 +420,6 @@
             &TINYMOCk_FUNCTION_HISTORY_NAME(name), FunctionMeta(name), \
             0u, NULL), \
         "tinymock cannot snapshot reflected arguments for %s", #name); \
-    tinymock_mock_note_call(&TINYMOCk_FUNCTION_STATE_NAME(name)); \
     TINYMOCk_ASSERT( \
         tinymock_cmeta_actions_apply( \
             &TINYMOCk_FUNCTION_ACTIONS_NAME(name), FunctionMeta(name), \
