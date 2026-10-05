@@ -159,50 +159,6 @@ static bool tinymock_cmeta_param_index_by_name(
   return *out_index < history->function->param_count;
 }
 
-bool tinymock_cmeta_history_arg_equal(
-    const tinymock_cmeta_history *history,
-    size_t call_index,
-    size_t param_index,
-    const void *expected,
-    tinymock_value_t expected_boxed) {
-  const tinymock_cmeta_value *snapshot;
-  const cmeta_type_traits *traits;
-
-  if (!history || !expected || call_index >= history->call_count ||
-      call_index >= TINYMOCk_MAX_CALLS)
-    return false;
-  if (param_index >= history->calls[call_index].argc)
-    return false;
-
-  snapshot = &history->calls[call_index].args[param_index];
-  if (!snapshot->constructed || !snapshot->type || !snapshot->data)
-    return false;
-
-  if (snapshot->type->kind == CMETA_T_POINTER) {
-    return snapshot->has_pointer_identity &&
-           expected_boxed.kind == TINYMOCk_VALUE_POINTER &&
-           snapshot->pointer_identity == expected_boxed.as.pointer_value;
-  }
-
-  traits = snapshot->type->traits;
-  return traits && (traits->flags & CMETA_TRAIT_EQUAL) != 0u &&
-         traits->equal &&
-         traits->equal(snapshot->data, expected);
-}
-
-bool tinymock_cmeta_history_arg_equal_name(
-    const tinymock_cmeta_history *history,
-    size_t call_index,
-    const char *param_name,
-    const void *expected,
-    tinymock_value_t expected_boxed) {
-  size_t index;
-  if (!tinymock_cmeta_param_index_by_name(history, param_name, &index))
-    return false;
-  return tinymock_cmeta_history_arg_equal(
-      history, call_index, index, expected, expected_boxed);
-}
-
 bool tinymock_cmeta_history_arg_equal_typed(
     const tinymock_cmeta_history *history,
     size_t call_index,
@@ -297,36 +253,6 @@ size_t tinymock_cmeta_history_count_equal_typed_name(
     return 0u;
   return tinymock_cmeta_history_count_equal_typed(
       history, index, expected);
-}
-
-size_t tinymock_cmeta_history_count_equal(
-    const tinymock_cmeta_history *history,
-    size_t param_index,
-    const void *expected,
-    tinymock_value_t expected_boxed) {
-  size_t call_index;
-  size_t count = 0u;
-  size_t limit;
-
-  if (!history) return 0u;
-  limit = tinymock_cmeta_recorded_limit(history->call_count);
-  for (call_index = 0; call_index < limit; ++call_index)
-    if (tinymock_cmeta_history_arg_equal(
-            history, call_index, param_index, expected, expected_boxed))
-      ++count;
-  return count;
-}
-
-size_t tinymock_cmeta_history_count_equal_name(
-    const tinymock_cmeta_history *history,
-    const char *param_name,
-    const void *expected,
-    tinymock_value_t expected_boxed) {
-  size_t index;
-  if (!tinymock_cmeta_param_index_by_name(history, param_name, &index))
-    return 0u;
-  return tinymock_cmeta_history_count_equal(
-      history, index, expected, expected_boxed);
 }
 
 void tinymock_cmeta_captor_init(tinymock_cmeta_captor *captor) {
