@@ -78,6 +78,19 @@ The lowerer records that accessor with the owned symbol. A source such as
 `owned(MissingResource) value` fails closed because the compiler cannot prove
 which lifecycle provider owns cleanup.
 
+Non-container providers can bind the same canonical authority explicitly:
+
+```c
+CMETA_LIFECYCLE(MyOwner, MyOwner_cmeta_data);
+
+owned(MyOwner) value;
+```
+
+`CMETA_LIFECYCLE(Type, accessor)` is compile-time source metadata only. The
+lowerer records the explicit `cmeta_data_desc` accessor and generated cleanup
+calls it directly; no runtime lifecycle registry or string lookup is introduced.
+A conflicting `typed(...)`/lifecycle binding fails closed.
+
 ## Straight-line deterministic cleanup
 
 Version 4 adds the first cleanup-lowering slice.
