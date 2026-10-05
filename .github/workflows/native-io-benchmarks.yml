@@ -571,7 +571,10 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset win-release-user -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_BENCHMARKS=ON -DBUILD_EXAMPLES=OFF
+          rem Historical baseline 847857c couples BUILD_BENCHMARKS to BUILD_TESTS.
+          rem Keep runtime tests disabled, but enable the old build gate so the
+          rem benchmark target is actually generated.
+          cmake --preset win-release-user -DBUILD_TESTS=ON -DENABLE_TESTS=OFF -DBUILD_BENCHMARKS=ON -DBUILD_EXAMPLES=OFF
           if errorlevel 1 exit /b 1
           cmake --build --preset win-release-user --parallel 2 --target cflow_parallel_reduce_benchmark
           if errorlevel 1 exit /b 1
