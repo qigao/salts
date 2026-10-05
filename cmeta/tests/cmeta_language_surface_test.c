@@ -21,6 +21,17 @@ cmeta_enum(SurfaceState,
     (SURFACE_AFTER, "after")
 );
 
+typedef struct SurfaceNode {
+    int marker;
+} SurfaceNode;
+
+cmeta_struct(SurfaceOwner,
+    (int, id),
+    (SurfaceNode, node)
+);
+
+cmeta_intrusive(SurfaceOwner, node, SurfaceNode);
+
 typedef struct SurfaceBox {
     int value;
 } SurfaceBox;
@@ -128,6 +139,8 @@ implements(SurfaceCounter, surface_counter_impl,
 
 int main(void) {
     SurfacePoint point = { .x = 3, .y = 4 };
+    SurfaceOwner owner = { .id = 9, .node = { .marker = 17 } };
+    const SurfaceOwner const_owner = { .id = 10, .node = { .marker = 18 } };
     const cmeta_field_desc *field = FieldFind(SurfacePoint, "y");
     SurfaceState state = SURFACE_READY;
     SurfaceBox left = { 7 };
@@ -159,6 +172,9 @@ int main(void) {
     size_t i;
 
     REQUIRE(point.x == 3 && point.y == 4L);
+    REQUIRE(SurfaceOwner_from_node(&owner.node) == &owner);
+    REQUIRE(SurfaceOwner_from_node_const(&const_owner.node) == &const_owner);
+    REQUIRE(SurfaceOwner_from_node(NULL) == NULL);
     REQUIRE(strcmp(StructMeta(SurfacePoint)->name, "SurfacePoint") == 0);
     REQUIRE(FieldCount(SurfacePoint) == 2u);
     REQUIRE(field != NULL);
