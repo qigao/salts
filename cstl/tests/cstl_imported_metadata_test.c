@@ -4,10 +4,10 @@
 
 #include <string.h>
 
-typed(Vec, ImportSafeTstrVec, tstr,
+cmeta_type(Vec, ImportSafeTstrVec, tstr,
       SALTS_TSTR_CMETA_TYPE_REF, SALTS_TSTR_CMETA_DATA_REF);
 
-typed(Map, ImportSafeTstrIntMap, tstr, int,
+cmeta_type(Map, ImportSafeTstrIntMap, tstr, int,
       SALTS_TSTR_CMETA_TYPE_REF, SALTS_TSTR_CMETA_DATA_REF,
       &cmeta_type_int, &cmeta_data_int);
 
