@@ -5,11 +5,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-typed(map, value, long, backend_as_long, (int value)) {
+cmeta_function(map, value, long, backend_as_long, (int value)) {
     return (long)value;
 }
 
-typed(reduce, associative, long, backend_add_pair, (long left, long right)) {
+cmeta_function(reduce, associative, long, backend_add_pair, (long left, long right)) {
     return left + right;
 }
 
