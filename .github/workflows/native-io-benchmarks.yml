@@ -551,7 +551,7 @@ jobs:
         run: |
           set -euo pipefail
           cmake --preset "\${{ matrix.configure_preset }}" \
-            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF
+            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
           cmake --build --preset "\${{ matrix.build_preset }}" --parallel 2 --target \
             cnet_io_benchmark cnet_tls_sg_benchmark \
             cnet_tls_provider_parallel_benchmark cnet_tls_public_owner_benchmark \
@@ -571,7 +571,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset "\${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF
+          cmake --preset "\${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build Windows benchmarks
         if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         shell: cmd
@@ -592,7 +592,7 @@ jobs:
         run: |
           set -euo pipefail
           cmake --preset "\${{ matrix.configure_preset }}" \
-            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF
+            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
           cmake --build --preset "\${{ matrix.build_preset }}" --parallel 2 --target \
             cnet_io_benchmark cnet_tls_sg_benchmark \
             native_io_sharded_routing_benchmark native_io_owner_mailbox_benchmark \
@@ -633,7 +633,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset win-release-user -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=ON
+          cmake --preset win-release-user -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=ON
           if errorlevel 1 exit /b 1
           cmake --build --preset win-release-user --parallel 2 --target cflow_parallel_reduce_benchmark
           if errorlevel 1 exit /b 1
