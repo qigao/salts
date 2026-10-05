@@ -43,8 +43,7 @@ bool tinymock_cmeta_history_record(
     tinymock_cmeta_history *history,
     const cmeta_function_desc *function,
     size_t argc,
-    const void *const *args,
-    const tinymock_value_t *boxed_args);
+    const tinymock_cmeta_arg_view *args);
 
 size_t tinymock_cmeta_history_call_count(const tinymock_cmeta_history *history);
 
