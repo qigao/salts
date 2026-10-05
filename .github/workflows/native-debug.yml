@@ -1,0 +1,88 @@
+name: Native debug and sanitizers
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/native-debug.yml"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "CMakeUserPresets.json"
+      - "vcpkg.json"
+      - "vcpkg-configuration.json"
+      - "cmake/**"
+      - "platform/**"
+      - "native-io/**"
+      - "cnet/src/**"
+      - "cnet/include/**"
+      - "cnet/tests/**"
+      - "cnet/CMakeLists.txt"
+      - "cmeta/**"
+      - "cflow/src/**"
+      - "cflow/include/**"
+      - "concurrency/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: salts-debug-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-asan:
+    name: Debug / Linux ASan lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:abort_on_error=1
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+      - name: Prepare Linux dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes ninja-build nasm
+          echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+      - name: Configure Debug with AddressSanitizer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset linux-dev-user \
+            -DENABLE_TESTS=ON \
+            -DBUILD_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_ADDRESS=ON
+      - name: Build lifecycle and ownership tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build --preset linux-dev-user --parallel 2 --target \
+            cmeta_data_test \
+            cmeta_header_cpp_test \
+            cmeta_core_test \
+            cmeta_type_identity_test \
+            cmeta_container_type_test \
+            cmeta_collector_test \
+            cnet_owner_test \
+            cnet_session_test \
+            cnet_event_test \
+            cnet_dispatcher_test \
+            cnet_api_test \
+            cnet_tls_test \
+            cnet_datagram_test \
+            cnet_stop_contract_test
+      - name: Run lifecycle and ownership tests under ASan
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/linux-gcc-debug \
+            -R '^(cmeta_(data|header_cpp|core|type_identity|container_type|collector)_test|cnet_(owner|session|event|dispatcher|api|tls|datagram|stop_contract)_test)$' \
+            --no-tests=error --timeout 90 --output-on-failure
