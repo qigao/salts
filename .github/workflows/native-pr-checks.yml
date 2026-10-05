@@ -1,0 +1,128 @@
+name: Native PR correctness
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/native-pr-checks.yml"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "CMakeUserPresets.json"
+      - "vcpkg.json"
+      - "vcpkg-configuration.json"
+      - "cmake/**"
+      - "platform/**"
+      - "native-io/**"
+      - "cnet/src/**"
+      - "cnet/include/**"
+      - "cnet/tests/**"
+      - "cnet/CMakeLists.txt"
+      - "cflow/src/**"
+      - "cflow/include/**"
+      - "cflow/tests/**"
+      - "cflow/CMakeLists.txt"
+      - "cmeta/**"
+      - "cstl/**"
+      - "concurrency/**"
+      - "utils/**"
+      - "tinytest/**"
+      - "tinymock/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: salts-pr-correctness-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Correctness / Linux x64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+      - name: Prepare Linux dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes nasm ninja-build
+          echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+      - name: Configure correctness build
+        shell: bash
+        run: cmake --preset linux-release-user -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+      - name: Build correctness targets
+        shell: bash
+        run: cmake --build --preset linux-release-user --parallel 2
+      - name: Run tests
+        shell: bash
+        run: ctest --preset linux-release-user --no-tests=error --output-on-failure --timeout 90
+
+  windows:
+    name: Correctness / Windows x64
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+      - name: Prepare MSVC environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ([string]::IsNullOrWhiteSpace($vsInstall)) { throw "Visual Studio x64 C++ toolchain was not found" }
+          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+          "PROJECT_ROOT=$env:GITHUB_WORKSPACE" >> $env:GITHUB_ENV
+      - name: Configure correctness build
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
+          cmake --preset win-release-user -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+      - name: Build correctness targets
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
+          cmake --build --preset win-release-user --parallel 2
+      - name: Run tests
+        shell: pwsh
+        run: ctest --preset win-release-user --no-tests=error --output-on-failure --timeout 90
+
+  macos:
+    name: Correctness / macOS
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+      - name: Prepare macOS dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install nasm
+          echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+      - name: Configure correctness build
+        shell: bash
+        run: cmake --preset mac-release-user -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+      - name: Build correctness targets
+        shell: bash
+        run: cmake --build --preset mac-release-user --parallel 2
+      - name: Run tests
+        shell: bash
+        run: ctest --preset mac-release-user --no-tests=error --output-on-failure --timeout 90
