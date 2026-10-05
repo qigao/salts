@@ -285,6 +285,13 @@ set_target_properties(
     CXX_STANDARD_REQUIRED ON
     CXX_EXTENSIONS OFF)
 
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  foreach(target IN ITEMS cstl_header_typed_test cstl_header_typed_cpp_test
+                          cstl_typed_decl_cpp_test)
+    target_compile_options(${target} PRIVATE -Werror=missing-field-initializers)
+  endforeach()
+endif()
+
 set_target_properties(
   cstl_stack_type_collision_test
   cstl_generic_identity_test
