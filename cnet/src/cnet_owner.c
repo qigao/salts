@@ -197,6 +197,12 @@ static void cnet_owner_profile_finish(cnet_owner_impl *impl, uint64_t started_ns
   *elapsed_ns = elapsed > UINT64_MAX - *elapsed_ns ? UINT64_MAX : *elapsed_ns + elapsed;
   if (*calls != UINT64_MAX) ++*calls;
 }
+
+static void cnet_owner_profile_add(cnet_owner_impl *impl, uint64_t *counter,
+                                   uint64_t value) {
+  if (!impl->profile_active || counter == NULL || value == 0u) return;
+  *counter = value > UINT64_MAX - *counter ? UINT64_MAX : *counter + value;
+}
 #endif
 
 static int cnet_owner_validate_receive_publication(cnet_owner_impl *impl,
@@ -1023,7 +1029,19 @@ static int cnet_owner_tls_start_write(cnet_owner_impl *impl, cnet_owner_session 
                                     .length = size};
   status = cnet_owner_start_request(impl, session, NULL, NULL, CNET_OWNER_REQUEST_TLS_WRITE, &operation,
                                     false, false);
-  if (status == SALTS_OK) *out_started = true;
+  if (status == SALTS_OK) {
+#if defined(CNET_INTERNAL_PROFILING)
+    if (impl->profile_active) {
+      if (impl->profile.tls_write_submit_calls != UINT64_MAX)
+        ++impl->profile.tls_write_submit_calls;
+      cnet_owner_profile_add(
+          impl, &impl->profile.tls_write_submit_bytes, (uint64_t)size);
+      cnet_owner_profile_add(
+          impl, &impl->profile.tls_ciphertext_bytes, (uint64_t)size);
+    }
+#endif
+    *out_started = true;
+  }
   return status;
 }
 
@@ -1134,7 +1152,21 @@ static int cnet_owner_tls_accept_write(cnet_owner_impl *impl,
   return SALTS_OK;
 }
 
-static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *session) {
+static int cnet_owner_tls_pump(cnet_owner_impl *impl,
+                               cnet_owner_session *session) {
+#if defined(CNET_INTERNAL_PROFILING)
+  const uint64_t profile_started = cnet_owner_profile_start(impl);
+  const int status = cnet_owner_tls_pump_impl(impl, session);
+  cnet_owner_profile_finish(
+      impl, profile_started, &impl->profile.tls_pump_ns,
+      &impl->profile.tls_pump_calls);
+  return status;
+#else
+  return cnet_owner_tls_pump_impl(impl, session);
+#endif
+}
+
+static int cnet_owner_tls_pump_impl(cnet_owner_impl *impl, cnet_owner_session *session) {
   bool started = false;
   int status;
 
@@ -1208,6 +1240,11 @@ static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *sessio
     if (status != SALTS_OK) return status;
     if (plaintext_size != 0u) {
       cnet_event event;
+#if defined(CNET_INTERNAL_PROFILING)
+      cnet_owner_profile_add(
+          impl, &impl->profile.tls_plaintext_receive_bytes,
+          (uint64_t)plaintext_size);
+#endif
       mem_set_used(session->receive_buffer, plaintext_size);
       event = (cnet_event){CNET_EVENT_RECEIVE,
                            session->handle,
@@ -2012,6 +2049,16 @@ static int cnet_owner_route_completion(cnet_owner_impl *impl,
     int status;
 
     if (session == NULL) return SALTS_EPROTO;
+#if defined(CNET_INTERNAL_PROFILING)
+    if (request->role == CNET_OWNER_REQUEST_TLS_WRITE &&
+        impl->profile_active) {
+      if (impl->profile.tls_write_completion_calls != UINT64_MAX)
+        ++impl->profile.tls_write_completion_calls;
+      cnet_owner_profile_add(
+          impl, &impl->profile.tls_write_completion_bytes,
+          (uint64_t)completion->bytes);
+    }
+#endif
     /* Cancellation may lose to a partial success already queued by the OS. */
     if (session->pending_status != SALTS_OK)
       return cnet_owner_finish_direct_completion(impl, request, completion);
