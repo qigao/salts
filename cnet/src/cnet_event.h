@@ -5,11 +5,14 @@
 
 #include <salts_buffer.h>
 
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
 
 typedef struct cnet_event_queue {
   void *impl;
+  /* Admission must outlive impl so late publishers never touch reclaimed storage. */
+  atomic_size_t _publisher_lifecycle;
 } cnet_event_queue;
 
 typedef struct cnet_event_queue_config {
@@ -84,7 +87,11 @@ bool cnet_event_queue_get_config(const cnet_event_queue *queue,
 bool cnet_event_queue_get_stats(const cnet_event_queue *queue,
                                 cnet_event_queue_stats *out_stats);
 
-/** MPSC, nonblocking; data and total capacity exhaustion return `SALTS_ENOBUFS`. */
+/**
+ * MPSC, nonblocking; data and total capacity exhaustion return `SALTS_ENOBUFS`.
+ * The wrapper must remain alive until every publisher has returned, including
+ * publishers rejected after close/destroy. Reinitialization requires quiescence.
+ */
 int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event);
 
 /** Single-consumer take; empty-open returns `SALTS_ETIMEDOUT`. */
@@ -97,9 +104,10 @@ int cnet_event_queue_wake(cnet_event_queue *queue);
 /** A taken view may be released exactly once by its dispatcher consumer. */
 int cnet_event_queue_release(cnet_event_queue *queue, cnet_event_view *view);
 
+/** Stops new publication and returns `SALTS_EBUSY` until entered publishers leave. */
 int cnet_event_queue_close(cnet_event_queue *queue);
 
-/** Requires closed admission, no borrowed views, and a fully drained queue. */
+/** Requires completed close, no borrowed views, and a fully drained, quiescent consumer. */
 int cnet_event_queue_destroy(cnet_event_queue *queue);
 
 #endif /* CNET_EVENT_H */

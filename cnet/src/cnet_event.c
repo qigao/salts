@@ -4,6 +4,7 @@
 #include <salts/disruptor.h>
 #include <salts_buffer.h>
 
+#include <limits.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -33,8 +34,6 @@ typedef struct cnet_event_queue_impl {
   atomic_size_t live_payload_bytes;
   atomic_size_t peak_payload_bytes;
   _Atomic uint64_t rejected_payload_bytes;
-  atomic_size_t publisher_entrants;
-  atomic_bool admission_open;
   atomic_bool close_complete;
   _Atomic uint64_t *borrowed_sequences;
   size_t borrowed_capacity;
@@ -47,12 +46,44 @@ typedef struct cnet_event_wait_context {
   void *context;
 } cnet_event_wait_context;
 
+#define CNET_EVENT_PUBLISHER_CLOSED ((size_t)1u << (sizeof(size_t) * CHAR_BIT - 1u))
+#define CNET_EVENT_PUBLISHER_DESTROYED ((size_t)1u << (sizeof(size_t) * CHAR_BIT - 2u))
+#define CNET_EVENT_PUBLISHER_FLAGS (CNET_EVENT_PUBLISHER_CLOSED | CNET_EVENT_PUBLISHER_DESTROYED)
+#define CNET_EVENT_PUBLISHER_COUNT_MASK (~CNET_EVENT_PUBLISHER_FLAGS)
+
 static cnet_event_queue_impl *cnet_event_impl(cnet_event_queue *queue) {
   return queue != NULL ? (cnet_event_queue_impl *)queue->impl : NULL;
 }
 
 static const cnet_event_queue_impl *cnet_event_const_impl(const cnet_event_queue *queue) {
   return queue != NULL ? (const cnet_event_queue_impl *)queue->impl : NULL;
+}
+
+static int cnet_event_publisher_enter(cnet_event_queue *queue, cnet_event_queue_impl **out_impl) {
+  size_t observed;
+  if (queue == NULL || out_impl == NULL) return SALTS_EINVAL;
+  *out_impl = NULL;
+  observed = atomic_load_explicit(&queue->_publisher_lifecycle, memory_order_acquire);
+  for (;;) {
+    if ((observed & CNET_EVENT_PUBLISHER_DESTROYED) != 0u) return SALTS_EINVAL;
+    if ((observed & CNET_EVENT_PUBLISHER_CLOSED) != 0u) return SALTS_ESHUTDOWN;
+    if ((observed & CNET_EVENT_PUBLISHER_COUNT_MASK) == CNET_EVENT_PUBLISHER_COUNT_MASK)
+      return SALTS_ERANGE;
+    if (atomic_compare_exchange_weak_explicit(&queue->_publisher_lifecycle, &observed,
+                                              observed + 1u, memory_order_acq_rel,
+                                              memory_order_acquire))
+      break;
+  }
+  *out_impl = cnet_event_impl(queue);
+  if (*out_impl == NULL) {
+    atomic_fetch_sub_explicit(&queue->_publisher_lifecycle, 1u, memory_order_release);
+    return SALTS_EINVAL;
+  }
+  return SALTS_OK;
+}
+
+static void cnet_event_publisher_leave(cnet_event_queue *queue) {
+  atomic_fetch_sub_explicit(&queue->_publisher_lifecycle, 1u, memory_order_release);
 }
 
 static bool cnet_event_power_of_two(uint64_t value) {
@@ -187,11 +218,10 @@ int cnet_event_queue_init(cnet_event_queue *queue, const cnet_event_queue_config
   atomic_init(&impl->live_payload_bytes, 0u);
   atomic_init(&impl->peak_payload_bytes, 0u);
   atomic_init(&impl->rejected_payload_bytes, 0u);
-  atomic_init(&impl->publisher_entrants, 0u);
-  atomic_init(&impl->admission_open, true);
   atomic_init(&impl->close_complete, false);
   atomic_init(&impl->borrowed_count, 0u);
   queue->impl = impl;
+  atomic_store_explicit(&queue->_publisher_lifecycle, 0u, memory_order_release);
   return SALTS_OK;
 }
 
@@ -213,33 +243,33 @@ bool cnet_event_queue_get_stats(const cnet_event_queue *queue,
       atomic_load_explicit(&impl->live_payload_bytes, memory_order_acquire),
       atomic_load_explicit(&impl->peak_payload_bytes, memory_order_acquire),
       atomic_load_explicit(&impl->rejected_payload_bytes, memory_order_acquire),
-      atomic_load_explicit(&impl->admission_open, memory_order_acquire)};
+      (atomic_load_explicit(&queue->_publisher_lifecycle, memory_order_acquire) &
+       CNET_EVENT_PUBLISHER_CLOSED) == 0u};
   return true;
 }
 
 int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event) {
-  cnet_event_queue_impl *impl = cnet_event_impl(queue);
+  cnet_event_queue_impl *impl = NULL;
   disruptor_cursor_t cursor = {0};
   cnet_event_entry *entry;
   mem_buffer_t *payload = NULL;
   const bool data_event = event != NULL && event->kind == CNET_EVENT_RECEIVE;
+  int status;
 
-  if (impl == NULL || !cnet_event_valid(event)) return SALTS_EINVAL;
-  if (event->size > impl->max_payload_bytes) return SALTS_EMSGSIZE;
-  if (!atomic_load_explicit(&impl->admission_open, memory_order_acquire)) return SALTS_ESHUTDOWN;
-
-  atomic_fetch_add_explicit(&impl->publisher_entrants, 1u, memory_order_acq_rel);
-  if (!atomic_load_explicit(&impl->admission_open, memory_order_acquire)) {
-    atomic_fetch_sub_explicit(&impl->publisher_entrants, 1u, memory_order_release);
-    return SALTS_ESHUTDOWN;
+  if (!cnet_event_valid(event)) return SALTS_EINVAL;
+  status = cnet_event_publisher_enter(queue, &impl);
+  if (status != SALTS_OK) return status;
+  if (event->size > impl->max_payload_bytes) {
+    cnet_event_publisher_leave(queue);
+    return SALTS_EMSGSIZE;
   }
   if (data_event && !cnet_event_reserve_data(impl)) {
-    atomic_fetch_sub_explicit(&impl->publisher_entrants, 1u, memory_order_release);
+    cnet_event_publisher_leave(queue);
     return SALTS_ENOBUFS;
   }
   if (!cnet_event_reserve_payload(impl, event->size)) {
     if (data_event) atomic_fetch_sub_explicit(&impl->live_data_events, 1u, memory_order_release);
-    atomic_fetch_sub_explicit(&impl->publisher_entrants, 1u, memory_order_release);
+    cnet_event_publisher_leave(queue);
     return SALTS_ENOBUFS;
   }
   if (event->size != 0u) {
@@ -256,7 +286,7 @@ int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event) {
       atomic_fetch_sub_explicit(&impl->live_payload_bytes, event->size, memory_order_release);
       if (data_event)
         atomic_fetch_sub_explicit(&impl->live_data_events, 1u, memory_order_release);
-      atomic_fetch_sub_explicit(&impl->publisher_entrants, 1u, memory_order_release);
+      cnet_event_publisher_leave(queue);
       return SALTS_ENOMEM;
     }
   }
@@ -265,7 +295,7 @@ int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event) {
     if (event->size != 0u)
       atomic_fetch_sub_explicit(&impl->live_payload_bytes, event->size, memory_order_release);
     if (data_event) atomic_fetch_sub_explicit(&impl->live_data_events, 1u, memory_order_release);
-    atomic_fetch_sub_explicit(&impl->publisher_entrants, 1u, memory_order_release);
+    cnet_event_publisher_leave(queue);
     return SALTS_ENOBUFS;
   }
 
@@ -281,7 +311,7 @@ int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event) {
   entry->canonical_backing = data_event && event->backing != NULL;
   atomic_fetch_add_explicit(&impl->live_events, 1u, memory_order_release);
   (void)disruptor_publisher_publish(impl->ring, &cursor);
-  atomic_fetch_sub_explicit(&impl->publisher_entrants, 1u, memory_order_release);
+  cnet_event_publisher_leave(queue);
   return SALTS_OK;
 }
 
@@ -386,11 +416,13 @@ int cnet_event_queue_release(cnet_event_queue *queue, cnet_event_view *view) {
 
 int cnet_event_queue_close(cnet_event_queue *queue) {
   cnet_event_queue_impl *impl = cnet_event_impl(queue);
+  size_t lifecycle;
 
   if (impl == NULL) return SALTS_EINVAL;
-  (void)atomic_exchange_explicit(&impl->admission_open, false, memory_order_acq_rel);
-  if (atomic_load_explicit(&impl->publisher_entrants, memory_order_acquire) != 0u)
-    return SALTS_EBUSY;
+  lifecycle = atomic_fetch_or_explicit(&queue->_publisher_lifecycle, CNET_EVENT_PUBLISHER_CLOSED,
+                                       memory_order_acq_rel);
+  if ((lifecycle & CNET_EVENT_PUBLISHER_DESTROYED) != 0u) return SALTS_EINVAL;
+  if ((lifecycle & CNET_EVENT_PUBLISHER_COUNT_MASK) != 0u) return SALTS_EBUSY;
   if (atomic_exchange_explicit(&impl->close_complete, true, memory_order_acq_rel))
     return SALTS_EALREADY;
   disruptor_worker_wake_all(impl->ring);
@@ -399,11 +431,14 @@ int cnet_event_queue_close(cnet_event_queue *queue) {
 
 int cnet_event_queue_destroy(cnet_event_queue *queue) {
   cnet_event_queue_impl *impl = cnet_event_impl(queue);
+  const size_t lifecycle =
+      queue != NULL ? atomic_load_explicit(&queue->_publisher_lifecycle, memory_order_acquire) : 0u;
 
   if (queue == NULL) return SALTS_EINVAL;
   if (impl == NULL) return SALTS_OK;
-  if (!atomic_load_explicit(&impl->close_complete, memory_order_acquire) ||
-      atomic_load_explicit(&impl->publisher_entrants, memory_order_acquire) != 0u ||
+  if ((lifecycle & CNET_EVENT_PUBLISHER_CLOSED) == 0u ||
+      (lifecycle & CNET_EVENT_PUBLISHER_COUNT_MASK) != 0u ||
+      !atomic_load_explicit(&impl->close_complete, memory_order_acquire) ||
       atomic_load_explicit(&impl->live_events, memory_order_acquire) != 0u ||
       atomic_load_explicit(&impl->borrowed_count, memory_order_acquire) != 0u)
     return SALTS_EBUSY;
@@ -412,5 +447,8 @@ int cnet_event_queue_destroy(cnet_event_queue *queue) {
   free((void *)impl->borrowed_sequences);
   free(impl);
   queue->impl = NULL;
+  atomic_store_explicit(&queue->_publisher_lifecycle,
+                        CNET_EVENT_PUBLISHER_CLOSED | CNET_EVENT_PUBLISHER_DESTROYED,
+                        memory_order_release);
   return SALTS_OK;
 }

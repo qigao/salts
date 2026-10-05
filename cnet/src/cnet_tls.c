@@ -1,5 +1,9 @@
 #include "cnet_tls.h"
 
+#if defined(CNET_INTERNAL_TESTING)
+  #include "cnet_test_internal.h"
+#endif
+
 #include <salts/error_codes.h>
 
 #include <gmssl/tls.h>
@@ -110,6 +114,23 @@ static bool cnet_tls_optional_path_valid(const char *value) {
          (value == NULL || size != 0u);
 }
 
+static int cnet_tls_der_bundle_required_size(size_t current, size_t appended,
+                                             size_t *out_required) {
+  if (out_required == NULL) return SALTS_EINVAL;
+  *out_required = 0u;
+  if (appended == 0u) return SALTS_EINVAL;
+  if (appended > CNET_TLS_TRUST_MAX_BYTES || current > CNET_TLS_TRUST_MAX_BYTES - appended)
+    return SALTS_ERANGE;
+  *out_required = current + appended;
+  return SALTS_OK;
+}
+
+#if defined(CNET_INTERNAL_TESTING)
+int cnet_test_tls_der_bundle_required_size(size_t current, size_t appended, size_t *out_required) {
+  return cnet_tls_der_bundle_required_size(current, appended, out_required);
+}
+#endif
+
 #if !defined(_WIN32) && !defined(__APPLE__)
 static bool cnet_tls_file_readable(const char *path) {
   FILE *file;
@@ -125,29 +146,32 @@ static int cnet_tls_der_bundle_append(cnet_tls_der_bundle *bundle,
                                       const unsigned char *data, size_t size) {
   unsigned char *next;
   size_t capacity;
+  size_t required;
+  int status;
   if (bundle == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
-  if (bundle->size > CNET_TLS_TRUST_MAX_BYTES - size) return SALTS_ERANGE;
-  if (bundle->size + size <= bundle->capacity) {
+  status = cnet_tls_der_bundle_required_size(bundle->size, size, &required);
+  if (status != SALTS_OK) return status;
+  if (required <= bundle->capacity) {
     memcpy(bundle->data + bundle->size, data, size);
-    bundle->size += size;
+    bundle->size = required;
     return SALTS_OK;
   }
 
   capacity = bundle->capacity != 0u ? bundle->capacity : 4096u;
-  while (capacity < bundle->size + size) {
+  while (capacity < required) {
     if (capacity > CNET_TLS_TRUST_MAX_BYTES / 2u) {
       capacity = CNET_TLS_TRUST_MAX_BYTES;
       break;
     }
     capacity *= 2u;
   }
-  if (capacity < bundle->size + size) return SALTS_ERANGE;
+  if (capacity < required) return SALTS_ERANGE;
   next = (unsigned char *)realloc(bundle->data, capacity);
   if (next == NULL) return SALTS_ENOMEM;
   bundle->data = next;
   bundle->capacity = capacity;
   memcpy(bundle->data + bundle->size, data, size);
-  bundle->size += size;
+  bundle->size = required;
   return SALTS_OK;
 }
 
