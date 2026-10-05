@@ -12,6 +12,9 @@ cmake_dependent_option(ENABLE_ASAN "Enable Address Sanitizer" ON
 option(BUILD_EXAMPLES "Build example programs" ON)
 option(BUILD_TESTS "Build test suite" ON)
 option(BUILD_BENCHMARKS "Build benchmark executables" ON)
+cmake_dependent_option(CFLOW_BUILD_BENCHMARKS
+                       "Build CFlow benchmark executables" ON
+                       "BUILD_BENCHMARKS" OFF)
 option(CFLOW_ENABLE_MINICORO
        "Build the optional minicoro-backed CFlow Resumable adapter" OFF)
 

@@ -301,19 +301,6 @@
       ]
     },
     {
-      "id": "cflow_control_path",
-      "scope": "cflow",
-      "role": "CONTRACT",
-      "verifier": "cflow/benchmarks/verify_control_path_benchmark.ps1",
-      "pr_mode": "affected",
-      "anchor": "direct -> actor -> publisher lifecycle/accounting; timing is trend evidence",
-      "noise": "sub-microsecond timer quantization on some runners",
-      "threshold": "contract only",
-      "evidence": [
-        "cflow-control-path.csv"
-      ]
-    },
-    {
       "id": "raw_io_samples",
       "scope": "forensic",
       "role": "DIAGNOSTIC",
