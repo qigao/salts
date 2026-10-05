@@ -150,12 +150,6 @@ jobs:
             $runCflow = $true
             $runNativeUring = $true
             $runForensic = $true
-            $runNativeContracts = $true
-            $runCnetContracts = $true
-            $runCoroutineContracts = $true
-            $runCflowContracts = $true
-            $runContracts = $true
-            $runAsan = $true
           } else {
             $base = "${{ github.event.pull_request.base.sha }}"
             if ([string]::IsNullOrWhiteSpace($base) -or $base -match "^0+$") {
@@ -169,12 +163,6 @@ jobs:
               $runCflow = $true
               $runNativeUring = $true
               $runForensic = $true
-              $runNativeContracts = $true
-              $runCnetContracts = $true
-              $runCoroutineContracts = $true
-              $runCflowContracts = $true
-              $runContracts = $true
-              $runAsan = $true
             } else {
               $head = (git rev-parse HEAD).Trim()
               $changed = @(git diff --name-only $base $head)
@@ -212,21 +200,6 @@ jobs:
                 }).Count -gt 0
               $platformRuntime = @($changed | Where-Object {
                   $_ -like "platform/src/*" -or $_ -like "platform/include/*"
-                }).Count -gt 0
-              $nativeTestsChanged = @($changed | Where-Object {
-                  $_ -like "native-io/tests/*"
-                }).Count -gt 0
-              $cnetTestsChanged = @($changed | Where-Object {
-                  $_ -like "cnet/tests/*"
-                }).Count -gt 0
-              $coroutineTestsChanged = @($changed | Where-Object {
-                  $_ -like "coroutine/tests/*"
-                }).Count -gt 0
-              $cflowContractsChanged = @($changed | Where-Object {
-                  $_ -like "cflow/src/*" -or
-                  $_ -like "cflow/include/*" -or
-                  $_ -like "cflow/tests/*" -or
-                  $_ -eq "cflow/CMakeLists.txt"
                 }).Count -gt 0
 
               $nativeOwnerBench = @($changed | Where-Object {
@@ -290,23 +263,6 @@ jobs:
               $runCnetCompare = $cnetRuntime -or $nativeRuntime -or
                 $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
                 $buildChanged -or $dependencyChanged
-
-              $runNativeContracts = $nativeRuntime -or $nativeTestsChanged -or
-                $concurrencyRuntime -or $platformRuntime -or
-                $buildChanged -or $dependencyChanged
-              $runCnetContracts = $cnetRuntime -or $cnetTestsChanged -or
-                $nativeRuntime -or $concurrencyRuntime -or $platformRuntime -or
-                $buildChanged -or $dependencyChanged
-              $runCoroutineContracts = $coroutineRuntime -or $coroutineTestsChanged -or
-                $concurrencyRuntime -or $buildChanged -or $dependencyChanged
-              $runCflowContracts = $cflowContractsChanged -or $nativeRuntime -or
-                $cnetRuntime -or $buildChanged -or $dependencyChanged
-              $runContracts = $runNativeContracts -or $runCnetContracts -or
-                $runCoroutineContracts -or $runCflowContracts
-
-              $runAsan = $cnetRuntime -or $nativeRuntime -or
-                $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
-                $cnetTestsChanged -or $buildChanged -or $dependencyChanged
 
             }
           }
