@@ -784,11 +784,13 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
+          for /f "tokens=2 delims==" %%T in ('findstr /b /c:"VCPKG_TARGET_TRIPLET:STRING=" "%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\CMakeCache.txt"') do set "BASELINE_TARGET_TRIPLET=%%T"
+          if not defined BASELINE_TARGET_TRIPLET exit /b 1
           set "BASELINE_PKGCONF=%BASELINE_SOURCE%\vcpkg_installed\%QIGAO_VCPKG_WINDOWS_HOST_TRIPLET%\tools\pkgconf\pkgconf.exe"
           cmake -S . -B build\Msvc-Release -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DCMAKE_TOOLCHAIN_FILE="%QIGAO_VCPKG_TOOLCHAIN_FILE%" ^
-            -DVCPKG_TARGET_TRIPLET=x64-windows ^
+            -DVCPKG_TARGET_TRIPLET=%BASELINE_TARGET_TRIPLET% ^
             -DVCPKG_HOST_TRIPLET=%QIGAO_VCPKG_WINDOWS_HOST_TRIPLET% ^
             -DVCPKG_MANIFEST_MODE=ON ^
             -DVCPKG_INSTALLED_DIR="%BASELINE_SOURCE%\vcpkg_installed" ^
