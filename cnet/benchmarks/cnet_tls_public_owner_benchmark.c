@@ -76,6 +76,7 @@ typedef struct tls_public_shared {
   size_t payload_size;
   size_t ops_per_owner;
   size_t warmup_rounds_per_pair;
+  int nodelay;
   tls_public_mode mode;
   atomic_size_t ready;
   atomic_size_t measured_done;
@@ -303,7 +304,8 @@ static int tls_public_drive(tls_public_pair *pair, uint32_t timeout_ms) {
 static int tls_public_pair_init(
     tls_public_pair *pair,
     const unsigned char *payload_bytes,
-    size_t payload_size) {
+    size_t payload_size,
+    int nodelay) {
   static const char *alpn[] = {"http/1.1"};
   cnet_client_config client_config =
       tls_public_config(payload_size);
@@ -328,6 +330,8 @@ static int tls_public_pair_init(
       .alpn_protocols = alpn,
       .alpn_protocol_count = 1u};
   cnet_connect_options options;
+  cnet_stream_socket_options socket_options =
+      CNET_STREAM_SOCKET_OPTIONS_INIT;
   cnet_connection client_connection = {0};
   uint16_t port = 0u;
   char uri[64];
@@ -369,6 +373,13 @@ static int tls_public_pair_init(
   status = cnet_client_init(&pair->server, &server_config);
   if (status != SALTS_OK) return status;
   pair->server_initialized = true;
+  socket_options.nodelay = nodelay;
+  status = cnet_client_set_stream_socket_options(
+      &pair->client, &socket_options);
+  if (status != SALTS_OK) return status;
+  status = cnet_client_set_stream_socket_options(
+      &pair->server, &socket_options);
+  if (status != SALTS_OK) return status;
   status = cnet_listener_init(&pair->listener, &listener_config);
   if (status != SALTS_OK) return status;
   pair->listener_initialized = true;
@@ -544,7 +555,8 @@ static void tls_public_worker_run(void *user) {
   for (index = 0u; index < worker->pair_count; ++index) {
     status = tls_public_pair_init(
         &worker->pairs[index],
-        shared->payload_bytes, shared->payload_size);
+        shared->payload_bytes, shared->payload_size,
+        shared->nodelay);
     if (status != SALTS_OK) break;
   }
 
@@ -662,6 +674,8 @@ int main(int argc, char **argv) {
   uint64_t wall_ns;
   tls_public_mode mode;
   const char *temperature;
+  const char *nodelay_text;
+  int nodelay = 0;
   int status = SALTS_OK;
 
   if (argc != 5) {
@@ -699,6 +713,16 @@ int main(int argc, char **argv) {
     return 2;
   }
 
+  nodelay_text = getenv("CNET_TLS_PUBLIC_NODELAY");
+  if (nodelay_text != NULL && nodelay_text[0] != '\0') {
+    if (strcmp(nodelay_text, "0") == 0)
+      nodelay = 0;
+    else if (strcmp(nodelay_text, "1") == 0)
+      nodelay = 1;
+    else
+      return 2;
+  }
+
   total_ops = tls_public_env_count(
       "CNET_TLS_PUBLIC_OWNER_OPS",
       TLS_PUBLIC_DEFAULT_OPS);
@@ -723,6 +747,7 @@ int main(int argc, char **argv) {
   shared.ops_per_owner = ops_per_owner;
   shared.warmup_rounds_per_pair =
       warmup_rounds_per_pair;
+  shared.nodelay = nodelay;
   shared.mode = mode;
   atomic_init(&shared.ready, 0u);
   atomic_init(&shared.measured_done, 0u);
@@ -819,6 +844,7 @@ int main(int argc, char **argv) {
         "{\"benchmark\":\"cnet_tls_public_loopback_parallel\","
         "\"mode\":\"%s\","
         "\"temperature\":\"%s\","
+        "\"nodelay\":%d,"
         "\"payload_bytes\":%zu,"
         "\"owners\":%zu,"
         "\"pairs\":%u,"
@@ -838,7 +864,7 @@ int main(int argc, char **argv) {
         "\"p99_ns\":%llu,"
         "\"errors\":0}\n",
         tls_public_mode_name(mode), temperature,
-        payload_size, owner_count, TLS_PUBLIC_PAIRS,
+        nodelay, payload_size, owner_count, TLS_PUBLIC_PAIRS,
         total_ops, samples, operations_per_second,
         cpu_ns_per_op,
         total_ops != 0u
