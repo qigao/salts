@@ -151,8 +151,11 @@ cmeta_struct_find_field(const cmeta_struct_desc *desc, const char *name) {
     } \
     typedef char type##__struct_declaration_complete[1]
 
+#ifndef cmeta_struct
+#define cmeta_struct(type, ...) CMETA_STRUCT(type, __VA_ARGS__)
+#endif
 #ifndef Struct
-#define Struct(type, ...) CMETA_STRUCT(type, __VA_ARGS__)
+#define Struct(type, ...) cmeta_struct(type, __VA_ARGS__)
 #endif
 
 #ifndef StructMeta
