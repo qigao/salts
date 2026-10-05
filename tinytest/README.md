@@ -324,11 +324,12 @@ legacy R/V/D rows remain available to CMeta itself but are not a TinyMock
 interface path. CMeta-aware free-function mocking uses the same type/trait truth
 through `FunctionDecl(...)`, `FunctionMeta(...)`, and `FunctionAbi(...)`.
 
-When an interface uses fully reflected CMeta `F/FV/FD` rows, TinyMock also
+When an interface uses fully reflected CMeta `F/FR/FV/FD` rows, TinyMock
 consumes the interface method's canonical `cmeta_function_desc` /
 `cmeta_function_abi_desc`; it does not reconstruct a second method signature
-from the method name or arity. Legacy `R/V/D` rows remain ABI-only and retain
-the compatibility mock path.
+from the method name or arity. Legacy `R/V/D` rows remain available to CMeta
+for source compatibility, but TinyMock no longer implements a boxed interface
+mock path for them.
 
 ### Reflected free-function auto-mocking
 
@@ -350,10 +351,11 @@ direct array declarator, static-inline helper, or missing name fails the Test
 Build selection witness instead of silently producing no mock.
 
 The current reflected ABI carriers include builtin scalar, object pointer,
-aggregate-by-value, function-pointer, enum, and literal void. Object pointers
-use TinyMock's explicit pointer carrier; aggregate, function-pointer, and enum
-values use CMeta typed history/return state. These reflected categories do not
-depend on the legacy `TINYMOCk_VALUE` generic carrier. Explicit descriptors with
+aggregate-by-value, function-pointer, enum, and literal void. Exact-ABI wrappers
+project arguments into CMeta typed argument views; object-pointer identity,
+aggregate values, function pointers, and enums are recorded through typed
+history/return state. These reflected categories do not depend on the legacy
+`TINYMOCk_VALUE` generic carrier. Explicit descriptors with
 `CMETA_ABI_UNSPECIFIED` and `CMETA_ABI_OPAQUE` remain rejected until a
 consumer-specific lowering is defined.
 
