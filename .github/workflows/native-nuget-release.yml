@@ -310,9 +310,9 @@ jobs:
           restore-keys: |
             vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
       - name: Configure minimal Release SDK
-        run: cmake --preset release-mac-ninja -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+        run: cmake --preset mac-release-user -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build
-        run: cmake --build --preset build-default-mac --parallel 2
+        run: cmake --build --preset mac-release-user --parallel 2
       - name: Install SDK
         shell: bash
         run: |
