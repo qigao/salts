@@ -193,6 +193,20 @@
             ]
         },
         {
+            "name": "android-arm64-v8a-release-user",
+            "cacheVariables": {
+                "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}"
+            },
+            "environment": {
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
+                "VCPKG_ROOT": "$penv{VCPKG_ROOT}"
+            },
+            "inherits": [
+                "android-arm64-v8a-release",
+                "vcpkg-cache"
+            ]
+        },
+        {
             "name": "android-arm64-v8a-debug-win",
             "environment": {
                 "ANDROID_BUILD_VARIANT": "android-arm64-v8a-debug"
@@ -357,6 +371,10 @@
             "targets": [
                 "install"
             ]
+        },
+        {
+            "name": "android-arm64-v8a-release-user",
+            "configurePreset": "android-arm64-v8a-release-user"
         },
         {
             "name": "android-arm64-v8a-debug-win",
