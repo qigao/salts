@@ -1,7 +1,7 @@
 #include "tinytest.h"
 
 #define TINYMOCK_GENERATE_FUNCTION_OVERRIDES 1
-#include "tinymock_function.h"
+#include "tinymock.h"
 
 #include "tinymock_function_consumer.h"
 #include "tinymock_function_fixture.h"
