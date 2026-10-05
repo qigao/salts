@@ -631,7 +631,7 @@ jobs:
 
   pack:
     name: Pack Salts.Native
-    needs: [metadata, cmeta_lifecycle, linux, linux_arm64, macos, windows, android, ios]
+    needs: [metadata, linux, linux_arm64, macos, windows, android, ios]
     if: needs.metadata.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
