@@ -331,6 +331,26 @@ from the method name or arity. Legacy `R/V/D` rows remain available to CMeta
 for source compatibility, but TinyMock no longer implements a boxed interface
 mock path for them.
 
+For CMeta-lowered source, each generated reflected interface mock also exposes
+one canonical DataDesc accessor:
+
+```c
+TINYMOCk_INTERFACE(counter, COUNTER_METHODS);
+CMETA_LIFECYCLE(tinymock_counter, tinymock_counter_cmeta_data);
+
+{
+    owned(tinymock_counter) mock;
+    tinymock_counter_init(&mock);
+    /* stub / invoke / verify */
+} /* cmeta-lower emits exactly one canonical DataDesc cleanup */
+```
+
+The generated DataDesc uses the same `tinymock_counter_destroy()` authority as
+manual C. No compiler cleanup attribute or TinyMock-specific lifetime registry
+is required. Unsupported ownership-sensitive control flow remains fail-closed
+in `cmeta-lower`; plain C callers can continue to call the generated destroy
+function explicitly.
+
 ### Reflected free-function auto-mocking
 
 A test target can generate exact-ABI replacement definitions from production
