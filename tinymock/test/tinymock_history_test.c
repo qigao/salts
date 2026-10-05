@@ -74,7 +74,7 @@ suite("TinyMock CMeta typed history") {
     tinymock_cmeta_captor captor;
     tinymock_managed_value input = {17};
     tinymock_managed_value expected = {17};
-    const void *args[] = {&input};
+    tinymock_cmeta_arg_view args[] = {{&input, false, NULL}};
 
     managed_copy_count = 0u;
     managed_destroy_count = 0u;
@@ -83,7 +83,7 @@ suite("TinyMock CMeta typed history") {
     tinymock_cmeta_captor_init(&captor);
 
     check_true(tinymock_cmeta_history_record(
-        &history, &managed_function, 1u, args, NULL));
+        &history, &managed_function, 1u, args));
     check_equal(managed_copy_count, (size_t)1);
 
     check_true(tinymock_cmeta_history_arg_equal(
@@ -115,8 +115,8 @@ suite("TinyMock CMeta typed history") {
     tinymock_cmeta_captor captor;
     tinymock_managed_value first = {1};
     tinymock_managed_value second = {2};
-    const void *first_args[] = {&first};
-    const void *second_args[] = {&second};
+    tinymock_cmeta_arg_view first_args[] = {{&first, false, NULL}};
+    tinymock_cmeta_arg_view second_args[] = {{&second, false, NULL}};
 
     managed_copy_count = 0u;
     managed_destroy_count = 0u;
@@ -125,9 +125,9 @@ suite("TinyMock CMeta typed history") {
     tinymock_cmeta_captor_init(&captor);
 
     check_true(tinymock_cmeta_history_record(
-        &history, &managed_function, 1u, first_args, NULL));
+        &history, &managed_function, 1u, first_args));
     check_true(tinymock_cmeta_history_record(
-        &history, &managed_function, 1u, second_args, NULL));
+        &history, &managed_function, 1u, second_args));
 
     check_true(tinymock_cmeta_captor_capture_name(
         &captor, &history, 0u, "value"));
