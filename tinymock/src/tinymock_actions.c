@@ -28,7 +28,7 @@ static bool tinymock_cmeta_output_param_valid(
 static void tinymock_cmeta_output_action_reset(
     tinymock_cmeta_output_action *action) {
   if (!action) return;
-  tinymock_cmeta_snapshot_reset(&action->value);
+  tinymock_cmeta_value_reset(&action->value);
   memset(action, 0, sizeof(*action));
 }
 
@@ -77,8 +77,8 @@ bool tinymock_cmeta_actions_set_output(
   action = &actions->outputs[param_index];
   tinymock_cmeta_output_action_reset(action);
 
-  if (!tinymock_cmeta_snapshot_copy(
-          &action->value, param->type->pointee, value, NULL))
+  if (!tinymock_cmeta_value_copy(
+          &action->value, param->type->pointee, value))
     return false;
 
   action->enabled = true;
@@ -184,7 +184,7 @@ bool tinymock_cmeta_actions_apply(
     }
 
     replace_existing = (param->flags & CMETA_PARAM_IN) != 0u;
-    if (!tinymock_cmeta_snapshot_write(
+    if (!tinymock_cmeta_value_write(
             &action->value, destinations[index], replace_existing))
       return false;
   }
