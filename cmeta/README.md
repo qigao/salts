@@ -244,9 +244,8 @@ cmeta_type(kind, generated_name, type_arguments...);
 their finite `CMETA_TYPED_` provider. It does not fall through to callable or
 operator DSLs.
 
-The historical `typed(...)` mixed router remains temporarily for existing
-callable/operator users such as CFlow's `typed(map, ...)`; new concrete types
-must use `cmeta_type(...)`.
+Callable/function DSLs use their own explicit entry points such as CFlow's
+`cmeta_function(...)`; generic type routing never falls through to them.
 
 There is no `Containers(...)` batch DSL and no container `implement(...)`
 generation phase.
