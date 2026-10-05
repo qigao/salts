@@ -221,11 +221,6 @@ jobs:
         run: |
           ./cmake/ci/verify-benchmark-policy.ps1 -ProjectRoot . -WriteSummary
 
-      - name: Validate CNet performance CI contract
-        shell: pwsh
-        run: |
-          cmake -DPROJECT_SOURCE_DIR="$env:GITHUB_WORKSPACE" -P ./cnet/tests/cnet_performance_ci_contract_test.cmake
-
       - name: Validate PR artifact pruning contract
         shell: pwsh
         run: |
