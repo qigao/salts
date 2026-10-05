@@ -1,0 +1,148 @@
+name: Native contracts
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/native-contracts.yml"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "CMakeUserPresets.json"
+      - "vcpkg.json"
+      - "vcpkg-configuration.json"
+      - "cmake/**"
+      - "native-io/**"
+      - "coroutine/**"
+      - "cnet/**"
+      - "cflow/**"
+      - "concurrency/**"
+      - "platform/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: salts-native-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Contracts / ${{ matrix.host }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: Linux Ubuntu 24.04
+            runner: ubuntu-24.04
+            family: linux
+            preset: linux-release-user
+            build_dir: build/linux-gcc-release
+          - host: Windows 2025 MSVC v145
+            runner: windows-2025
+            family: windows
+            preset: win-release-user
+            build_dir: build/Msvc-Release
+          - host: macOS 15 AppleClang
+            runner: macos-15
+            family: mac
+            preset: mac-release-user
+            build_dir: build/mac-clang-release
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Prepare Linux dependencies
+        if: matrix.family == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes ninja-build nasm
+          test -n "${VCPKG_ROOT:-}"
+          test -f "${QIGAO_VCPKG_TOOLCHAIN_FILE:-}"
+
+      - name: Prepare macOS dependencies
+        if: matrix.family == 'mac'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install nasm
+          test -n "${VCPKG_ROOT:-}"
+          test -f "${QIGAO_VCPKG_TOOLCHAIN_FILE:-}"
+
+      - name: Prepare Windows environment
+        if: matrix.family == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) {
+            throw "Visual Studio C++ toolchain not found"
+          }
+          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+          test-path "${env:QIGAO_VCPKG_TOOLCHAIN_FILE}" | Out-Null
+
+      - name: Configure contracts / POSIX
+        if: matrix.family != 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset "${{ matrix.preset }}"             -DENABLE_TESTS=ON             -DBUILD_TESTS=ON             -DBUILD_BENCHMARKS=OFF             -DBUILD_EXAMPLES=OFF
+
+      - name: Configure contracts / Windows
+        if: matrix.family == 'windows'
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
+          cmake --preset "${{ matrix.preset }}" -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+
+      - name: Build contract targets / POSIX
+        if: matrix.family != 'windows'
+        shell: bash
+        run: cmake --build --preset "${{ matrix.preset }}" --parallel 2
+
+      - name: Build contract targets / Windows
+        if: matrix.family == 'windows'
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          cmake --build --preset "${{ matrix.preset }}" --parallel 2
+
+      - name: Run NativeIO and NativeIPC contracts
+        shell: pwsh
+        run: |
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(native_(io|ipc)_(test|header_cpp_test)|native_io_sharded_test|native_io_uring_batch_test|native_io_architecture_contract_test|native_io_accept_escrow_test|native_io_internal_accept_test|native_io_iocp_accept_test|native_io_readiness_accept_test|native_io_uring_accept_test)$' --timeout 30 --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run CNet contracts
+        shell: pwsh
+        run: |
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cnet_.*_test|concurrency_deadline_queue_test)$' --timeout 60 --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./cnet/tests/cnet_io_trace_test.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run CFlow contracts
+        shell: pwsh
+        run: |
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cflow_seeded_reduce_test|cflow_pipeline_test|cflow_plan_managed_test|cflow_parallel_reduce_test|cflow_io_native_test|cflow_io_native(_sharded)?_adapter_test|cflow_io_cnet_adapter_test|cflow_header_cpp_test|cflow_cnet_header_cpp_test|cflow_cnet_dependency_contract_test|cflow_pipe_data_plane_contract_test)$' --timeout 60 --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run coroutine contracts
+        shell: pwsh
+        run: |
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(salts_coro_executor_test|coroutine_executor_private_batch_contract_test)$' --timeout 60 --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
