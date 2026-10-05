@@ -175,7 +175,7 @@ keys and values as ordered pairs, so it supports `Map`, `MultiMap`, `BTree`,
 and `BPlusTree` when their key and value types provide `EQUAL`; duplicate keys
 remain significant by traversal order. `HashMap` is unordered and is rejected
 by these comparators. The type arguments must be the same types used in the
-`typed(...)` declaration; the bridge validates CMeta type identity when it is
+`cmeta_type(...)` declaration; the bridge validates CMeta type identity when it is
 available and always validates destination size and alignment before reading a
 Range value.
 
@@ -370,7 +370,7 @@ container.
 ```c
 #include <cstl/stream.h>
 
-typed(List, AsyncIntList, int);
+cmeta_type(List, AsyncIntList, int);
 
 int main(void) {
     AsyncIntList input = {0};
