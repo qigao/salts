@@ -118,81 +118,50 @@ independent node-based doubly-linked list with stable iterators across insertion
 
 ## Typed operations
 
-A `typed(...)` declaration creates a concrete static type, but the concrete
-type is not the semantic operation namespace:
+A typed declaration creates one concrete C type and its ordinary concrete
+`Type_*` API:
 
 ```c
 typed(List, IntList, int);
 
-IntList list = {0};
+IntList values = {0};
+
+IntList_init(&values, 100u);
+IntList_add(&values, 10);
+IntList_push_back(&values, 20);
+IntList_destroy(&values);
 ```
 
-The CMeta lowering layer treats these source spellings as the same operation:
+The same concrete API is used from ordinary `.c` and from `.cmeta.c`.
+CSTL does not require receiver syntax or a generic operation namespace.
+`list.add(...)` and `List_add(...)` are not part of the forward API.
 
-```c
-list.add(10);         /* receiver / C++-style spelling */
-List_add(&list, 10);  /* generic / STL-style spelling */
-```
-
-Both normalize to `List_add(&list, 10)`: `List` owns the operation,
-`IntList` supplies the receiver's static element type. The native C backend
-then materializes that canonical operation as the existing direct static-inline
-typed helper, for example `IntList_add(&list, 10)`. No runtime lookup or
-dispatch remains in generated C.
+The generated `Type_*` helpers are thin static-inline typed forwarding
+functions. Raw names such as `list_init`, `list_push_back`, and
+`list_destroy` remain ordinary erased C functions for raw handles.
 
 ### CMeta source frontend
 
-`cmeta-lower` is the host source-to-source frontend for these enhanced C
-spellings. It reads a translation unit containing ordinary C plus `typed(...)`
-container declarations and emits ordinary C:
+`cmeta-lower` may be used when source needs CMeta compile-time semantics such
+as `cmeta_owned(T)` / `cmeta_move(x)` and canonical lifecycle placement:
 
 ```sh
 cmeta-lower app.cmeta.c app.c
 ```
 
-`cmeta-lower` is a source-tree host development tool, not part of the
-published Salts native SDK. `Salts.Native` contains target headers, libraries,
-and package metadata only; it does not install `cmeta-lower` or expose a
-lowering helper through `SaltsConfig.cmake`. Repository builds and tests may
-use the internal source-tree lowering integration before ordinary C compilation.
-
-The first frontend slice deliberately recognizes direct typed object variables,
-receiver calls such as `list.add(...)`, and generic calls such as
-`List_add(&list, ...)`. Comments, strings, preprocessor directives, and
-unrelated C are passed through unchanged. Member receiver expressions
-(`obj.field.add(...)`) and pointer receiver syntax (`ptr->add(...)`) remain
-outside this slice.
-
-The same split applies to other kinds:
-
-```text
-vec.push(10)       == Vec_push(&vec, 10)
-set.add(10)        == Set_add(&set, 10)
-map.put(1, 20)     == Map_put(&map, 1, 20)
-```
-
-Concrete `Type_method` names remain the native typed ABI and are still valid
-ordinary C calls:
+Container operations themselves remain ordinary concrete C calls:
 
 ```c
-IntList values = {0};
-IntLongMap index = {0};
+cmeta_owned(IntList) values;
 
 IntList_init(&values, 100u);
-IntList_push_back(&values, 10);
-IntList_push_back(&values, 20);
-
-IntLongMap_init(&index, 100u);
-IntLongMap_put(&index, 7, 70L);
-
-IntLongMap_destroy(&index);
-IntList_destroy(&values);
+IntList_add(&values, 10);
+/* lowerer inserts canonical cleanup at the admitted scope exit */
 ```
 
-Raw names such as `map_init(&scores, 100u)`,
-`map_put(&scores, &key, &value)`, and `map_destroy(&scores)` remain ordinary
-functions; typed declarations never intercept or reinterpret their C
-expressions.
+This keeps CSTL's execution/API model identical between C and CMeta source.
+The lowerer does not introduce runtime method lookup or another container
+dispatch layer.
 
 ## TinyTest equality bridge
 
