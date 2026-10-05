@@ -5,17 +5,17 @@ endif()
 file(READ "${GENERATED}" source)
 
 foreach(expected
-    "IntList_add(&list,10)"
+    "IntList_add(&list, 10)"
     "IntList_add(&list, 20)"
-    "IntVec_push(&vec,10)"
+    "IntVec_push(&vec, 10)"
     "IntVec_push(&vec, 20)"
-    "IntSet_add(&set,10)"
+    "IntSet_add(&set, 10)"
     "IntSet_add(&set, 20)"
-    "IntMap_put(&map,1, 10)"
+    "IntMap_put(&map, 1, 10)"
     "IntMap_put(&map, 2, 20)"
-    "IntVec_push(&list,30)"
+    "IntVec_push(&list, 30)"
     "IntVec_push(&list, 40)"
-    "IntList_add(&list,50)"
+    "IntList_add(&list, 50)"
     "ExternalList external_cleanup = {0}"
     "cmeta_data_value_destroy(IntList_cmeta_data(),&external_cleanup);"
     "IntList cleanup_first = {0}"
@@ -27,13 +27,13 @@ foreach(expected
     "IntList moved_source = {0}"
     "moved_sink = moved_source"
     "IntList transfer = {0}"
-    "IntList_add(&transfer,60)"
+    "IntList_add(&transfer, 60)"
     "inner_received = inner_transfer"
-    "IntList_add(&transfer,61)"
+    "IntList_add(&transfer, 61)"
     "received = transfer"
-    "\"list.add(99); List_add(&list, 99);\""
+    "\"IntList_add(&list, 99);\""
     "\"cmeta_owned(IntList) fake = {0}; cmeta_move(fake);\""
-    "/* list.add(77); List_add(&list, 77); */"
+    "/* IntList_add(&list, 77); */"
     "/* cmeta_owned(IntList) fake = {0}; cmeta_move(fake); */")
   string(FIND "${source}" "${expected}" found)
   if(found EQUAL -1)
@@ -86,14 +86,14 @@ if(cleanup_map_pos EQUAL -1 OR cleanup_second_pos EQUAL -1 OR
    cleanup_first_pos EQUAL -1 OR
    NOT cleanup_map_pos LESS cleanup_second_pos OR
    NOT cleanup_second_pos LESS cleanup_first_pos)
-  message(FATAL_ERROR "owned cleanup must run in reverse declaration order")
+  message(FATAL_ERROR "cmeta_owned cleanup must run in reverse declaration order")
 endif()
 
 string(FIND "${source}"
        "cmeta_data_value_destroy(IntList_cmeta_data(),&moved_source);"
        moved_cleanup)
 if(NOT moved_cleanup EQUAL -1)
-  message(FATAL_ERROR "moved owned source unexpectedly receives automatic cleanup")
+  message(FATAL_ERROR "moved cmeta_owned source unexpectedly receives automatic cleanup")
 endif()
 
 foreach(forbidden
