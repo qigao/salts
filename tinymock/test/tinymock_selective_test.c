@@ -32,12 +32,9 @@ suite("TinyMock selective reflected overrides") {
     check_equal(tinymock_selective_consume_extra(7), 66);
     tinymock_selective_consume_void();
 
-    tinymock_mock_verify_times(
-        TINYMOCk_FUNCTION(tinymock_selective_mocked), 1);
-    tinymock_mock_verify_times(
-        TINYMOCk_FUNCTION(tinymock_selective_void), 1);
-    tinymock_mock_verify_times(
-        TINYMOCk_FUNCTION(tinymock_selective_extra), 1);
+    TINYMOCk_FUNCTION_VERIFY_TIMES(tinymock_selective_mocked, 1);
+    TINYMOCk_FUNCTION_VERIFY_TIMES(tinymock_selective_void, 1);
+    TINYMOCk_FUNCTION_VERIFY_TIMES(tinymock_selective_extra, 1);
     check_true(TINYMOCk_FUNCTION_ARG_EQUAL_TYPED(
         tinymock_selective_mocked, 0, "value", expected));
 
