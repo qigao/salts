@@ -1,6 +1,6 @@
 #include <cmeta/interface.h>
 #include "tinytest.h"
-#include "tinymock_cmeta.h"
+#include "tinymock.h"
 
 #define TINYMOCK_CMETA_COUNTER_METHODS(X, I) \
   X(I,F1,int,add,value, \
