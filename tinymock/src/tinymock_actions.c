@@ -129,13 +129,13 @@ bool tinymock_cmeta_actions_clear_output_name(
 static bool tinymock_cmeta_output_destination(
     const tinymock_cmeta_output_action *action,
     const cmeta_param_desc *param,
-    tinymock_value_t boxed,
+    const tinymock_cmeta_arg_view *arg,
     void **out_destination) {
-  if (!action || !action->enabled || !param || !out_destination ||
-      boxed.kind != TINYMOCk_VALUE_POINTER)
+  if (!action || !action->enabled || !param || !arg || !out_destination ||
+      !arg->has_object_pointer_identity)
     return false;
 
-  *out_destination = (void *)boxed.as.pointer_value;
+  *out_destination = (void *)arg->object_pointer_identity;
   if (*out_destination != NULL)
     return true;
 
@@ -146,14 +146,14 @@ bool tinymock_cmeta_actions_apply(
     tinymock_cmeta_actions *actions,
     const cmeta_function_desc *function,
     size_t argc,
-    const tinymock_value_t *boxed_args) {
+    const tinymock_cmeta_arg_view *args) {
   void *destinations[TINYMOCk_MAX_ARGS] = {0};
   size_t index;
 
   if (!tinymock_cmeta_actions_function_ok(actions, function) ||
       argc != function->param_count ||
       argc > TINYMOCk_MAX_ARGS ||
-      (argc != 0u && !boxed_args))
+      (argc != 0u && !args))
     return false;
 
   /* Admission pass: validate every enabled output before mutating any target. */
@@ -166,7 +166,7 @@ bool tinymock_cmeta_actions_apply(
     if (!tinymock_cmeta_output_param_valid(param) ||
         !cmeta_type_equal(action->value.type, param->type->pointee) ||
         !tinymock_cmeta_output_destination(
-            action, param, boxed_args[index], &destinations[index]))
+            action, param, &args[index], &destinations[index]))
       return false;
   }
 
