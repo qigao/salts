@@ -5,6 +5,17 @@
     ],
     "configurePresets": [
         {
+            "name": "ci-cstl-release-user",
+            "inherits": "linux-release-user",
+            "binaryDir": "${sourceDir}/build/ci-cstl-release",
+            "cacheVariables": {
+                "ENABLE_TESTS": true,
+                "BUILD_TESTS": true,
+                "BUILD_BENCHMARKS": false,
+                "BUILD_EXAMPLES": false
+            }
+        },
+        {
             "name": "vcpkg-cache",
             "hidden": true,
             "toolchainFile": "$env{VCPKG_CACHE_REPOSITORY_ROOT}/cmake/QigaoVcpkgToolchain.cmake",
@@ -314,6 +325,15 @@
     ],
     "buildPresets": [
         {
+            "name": "ci-cstl-release-user",
+            "configurePreset": "ci-cstl-release-user",
+            "targets": [
+                "cstl_header_typed_test",
+                "cstl_header_typed_cpp_test",
+                "cstl_typed_decl_cpp_test"
+            ]
+        },
+        {
             "name": "win-dev-user",
             "configurePreset": "win-dev-user"
         },
@@ -466,6 +486,17 @@
         }
     ],
     "testPresets": [
+        {
+            "name": "ci-cstl-release-user",
+            "inherits": "base-test",
+            "configurePreset": "ci-cstl-release-user",
+            "filter": {
+                "include": {
+                    "name": "^(cstl_header_typed_test|cstl_header_typed_cpp_test|cstl_typed_decl_cpp_test)$"
+                }
+            },
+            "execution": {"noTestsAction": "error"}
+        },
         {
             "name": "win-dev-user",
             "inherits": "base-test",

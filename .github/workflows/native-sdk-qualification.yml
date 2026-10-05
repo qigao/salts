@@ -112,6 +112,13 @@ jobs:
         run: cmake --preset linux-release-user -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build
         run: cmake --build --preset linux-release-user --parallel 2
+      - name: Qualify strict CSTL C11 and C++17 metadata consumers
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset ci-cstl-release-user
+          cmake --build --preset ci-cstl-release-user --parallel 2
+          ctest --preset ci-cstl-release-user --output-on-failure
       - name: Install SDK
         shell: bash
         run: |
