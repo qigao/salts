@@ -3,10 +3,10 @@
 typed(List, IntList, int);
 
 static void probe(int condition) {
-    owned(IntList) value;
+    cmeta_owned(IntList) value;
     IntList sink = {0};
     if (condition)
-        sink = move(value);
+        sink = cmeta_move(value);
     IntList_destroy(&sink);
 }
 
