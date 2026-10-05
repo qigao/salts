@@ -49,7 +49,6 @@
 #define TINYMOCk_INTERFACE_FIELD_LEGACY(I, K, R, N, ...) \
   tinymock_mock_t N;
 #define TINYMOCk_INTERFACE_FIELD_REFLECTED(I, K, R, N, ...) \
-  tinymock_mock_t N; \
   tinymock_cmeta_history TINYMOCk_INTERFACE_HISTORY_NAME(N); \
   tinymock_cmeta_actions TINYMOCk_INTERFACE_ACTIONS_NAME(N); \
   tinymock_cmeta_return TINYMOCk_INTERFACE_RETURN_NAME(N);
@@ -266,7 +265,6 @@
   static R TINYMOCk_INTERFACE_CALLBACK(I, N)(void *opaque) { \
     TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
     TINYMOCk_INTERFACE_RECORD(I,N,0u,NULL); \
-    tinymock_mock_note_call(&mock->N); \
     TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,0u,NULL); \
     TINYMOCk_INTERFACE_RETURN_VALUE(RA,I,N,R); \
   }
@@ -279,7 +277,6 @@
     TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
     tinymock_cmeta_arg_view typed__[] = { TINYMOCk_INTERFACE_ARG_VIEW(P1) }; \
     TINYMOCk_INTERFACE_RECORD(I,N,1u,typed__); \
-    tinymock_mock_note_call(&mock->N); \
     TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,1u,typed__); \
     TINYMOCk_INTERFACE_RETURN_VALUE(RA,I,N,R); \
   }
@@ -294,7 +291,6 @@
       TINYMOCk_INTERFACE_ARG_VIEW(P1), TINYMOCk_INTERFACE_ARG_VIEW(P2) \
     }; \
     TINYMOCk_INTERFACE_RECORD(I,N,2u,typed__); \
-    tinymock_mock_note_call(&mock->N); \
     TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,2u,typed__); \
     TINYMOCk_INTERFACE_RETURN_VALUE(RA,I,N,R); \
   }
@@ -312,7 +308,6 @@
       TINYMOCk_INTERFACE_ARG_VIEW(P3) \
     }; \
     TINYMOCk_INTERFACE_RECORD(I,N,3u,typed__); \
-    tinymock_mock_note_call(&mock->N); \
     TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,3u,typed__); \
     TINYMOCk_INTERFACE_RETURN_VALUE(RA,I,N,R); \
   }
@@ -330,7 +325,6 @@
       TINYMOCk_INTERFACE_ARG_VIEW(P3), TINYMOCk_INTERFACE_ARG_VIEW(P4) \
     }; \
     TINYMOCk_INTERFACE_RECORD(I,N,4u,typed__); \
-    tinymock_mock_note_call(&mock->N); \
     TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,4u,typed__); \
     TINYMOCk_INTERFACE_RETURN_VALUE(RA,I,N,R); \
   }
@@ -340,7 +334,6 @@
   static void TINYMOCk_INTERFACE_CALLBACK(I, N)(void *opaque) { \
     TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
     TINYMOCk_INTERFACE_RECORD(I,N,0u,NULL); \
-    tinymock_mock_note_call(&mock->N); \
     TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,0u,NULL); \
   }
 
@@ -352,7 +345,6 @@
     TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
     tinymock_cmeta_arg_view typed__[] = { TINYMOCk_INTERFACE_ARG_VIEW(P1) }; \
     TINYMOCk_INTERFACE_RECORD(I,N,1u,typed__); \
-    tinymock_mock_note_call(&mock->N); \
     TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,1u,typed__); \
   }
 
@@ -366,7 +358,6 @@
       TINYMOCk_INTERFACE_ARG_VIEW(P1), TINYMOCk_INTERFACE_ARG_VIEW(P2) \
     }; \
     TINYMOCk_INTERFACE_RECORD(I,N,2u,typed__); \
-    tinymock_mock_note_call(&mock->N); \
     TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,2u,typed__); \
   }
 
@@ -383,7 +374,6 @@
       TINYMOCk_INTERFACE_ARG_VIEW(P3) \
     }; \
     TINYMOCk_INTERFACE_RECORD(I,N,3u,typed__); \
-    tinymock_mock_note_call(&mock->N); \
     TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,3u,typed__); \
   }
 
@@ -400,7 +390,6 @@
       TINYMOCk_INTERFACE_ARG_VIEW(P3), TINYMOCk_INTERFACE_ARG_VIEW(P4) \
     }; \
     TINYMOCk_INTERFACE_RECORD(I,N,4u,typed__); \
-    tinymock_mock_note_call(&mock->N); \
     TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,4u,typed__); \
   }
 
@@ -424,7 +413,6 @@
   TINYMOCk_ASSERT(cmeta_function_abi_desc_valid(I##_##N##_function_abi()), \
                   "tinymock reflected interface ABI metadata is invalid: %s.%s", \
                   #I, #N); \
-  tinymock_mock_init(&mock->N, I##_##N##_function()->name); \
   tinymock_cmeta_history_init( \
       &mock->TINYMOCk_INTERFACE_HISTORY_NAME(N), I##_##N##_function()); \
   tinymock_cmeta_actions_init( \
@@ -521,6 +509,35 @@
 #define TINYMOCk_INTERFACE_METHOD_ABI(I, method) I##_##method##_function_abi()
 #define TINYMOCk_INTERFACE_METHOD_HISTORY(mock, method) \
   (&((mock)->TINYMOCk_INTERFACE_HISTORY_NAME(method)))
+#define TINYMOCk_INTERFACE_CALL_COUNT(mock, method) \
+  tinymock_cmeta_history_call_count( \
+      TINYMOCk_INTERFACE_METHOD_HISTORY((mock), method))
+#define TINYMOCk_INTERFACE_VERIFY_TIMES(mock, method, expected) \
+  do { \
+    size_t expected__ = (size_t)(expected); \
+    size_t actual__ = TINYMOCk_INTERFACE_CALL_COUNT((mock), method); \
+    TINYMOCk_ASSERT(actual__ == expected__, \
+        "tinymock reflected interface %s: expected exactly %zu calls, got %zu", \
+        #method, expected__, actual__); \
+  } while (0)
+#define TINYMOCk_INTERFACE_VERIFY_NEVER(mock, method) \
+  TINYMOCk_INTERFACE_VERIFY_TIMES((mock), method, 0u)
+#define TINYMOCk_INTERFACE_VERIFY_AT_LEAST(mock, method, minimum) \
+  do { \
+    size_t minimum__ = (size_t)(minimum); \
+    size_t actual__ = TINYMOCk_INTERFACE_CALL_COUNT((mock), method); \
+    TINYMOCk_ASSERT(actual__ >= minimum__, \
+        "tinymock reflected interface %s: expected at least %zu calls, got %zu", \
+        #method, minimum__, actual__); \
+  } while (0)
+#define TINYMOCk_INTERFACE_VERIFY_AT_MOST(mock, method, maximum) \
+  do { \
+    size_t maximum__ = (size_t)(maximum); \
+    size_t actual__ = TINYMOCk_INTERFACE_CALL_COUNT((mock), method); \
+    TINYMOCk_ASSERT(actual__ <= maximum__, \
+        "tinymock reflected interface %s: expected at most %zu calls, got %zu", \
+        #method, maximum__, actual__); \
+  } while (0)
 #define TINYMOCk_INTERFACE_METHOD_ACTIONS(mock, method) \
   (&((mock)->TINYMOCk_INTERFACE_ACTIONS_NAME(method)))
 #define TINYMOCk_INTERFACE_METHOD_RETURN(mock, method) \
