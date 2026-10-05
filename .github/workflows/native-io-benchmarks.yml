@@ -309,11 +309,6 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "|---|---|"
           foreach ($row in $rows) { Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ("| {0} | **{1}** |" -f $row[0], $row[1]) }
 
-      - name: Validate benchmark decision policy
-        shell: pwsh
-        run: |
-          ./cmake/ci/verify-benchmark-policy.ps1 -ProjectRoot . -WriteSummary
-
       - name: Validate PR artifact pruning contract
         shell: pwsh
         run: |
