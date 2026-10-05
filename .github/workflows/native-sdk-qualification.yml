@@ -201,7 +201,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build build/linux-arm64-smoke --parallel 2 --target native_io_header_cpp_test cmeta_header_cpp_test cflow_header_cpp_test cnet_header_cpp_test
+          cmake --build build/linux-arm64-smoke --parallel 2
           ctest --test-dir build/linux-arm64-smoke --no-tests=error --output-on-failure --timeout 60 -R '^(native_io_header_cpp_test|cmeta_header_cpp_test|cflow_header_cpp_test|cnet_header_cpp_test)$'
       - name: Install and qualify native arm64 SDK
         shell: bash
