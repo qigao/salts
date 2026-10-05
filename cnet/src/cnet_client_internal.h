@@ -57,6 +57,9 @@ typedef struct cnet_client_poll_profile {
 
 /** Samples internal poll-owner/client/dispatcher stages in a private diagnostic build. */
 int cnet_client_profile_begin(cnet_client *client);
+int cnet_client_profile_trace_bind(cnet_client *client,
+                                   cnet_owner_trace_event *events,
+                                   size_t capacity);
 int cnet_client_profile_take(cnet_client *client, cnet_client_poll_profile *out_profile);
 #endif
 

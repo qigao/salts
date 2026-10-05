@@ -385,6 +385,17 @@ int cnet_shards_profile_begin(cnet_shards *shards) {
   return status;
 }
 
+int cnet_shards_profile_trace_bind(cnet_shards *shards,
+                                   cnet_owner_trace_event *events,
+                                   size_t capacity) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  if (impl == NULL || impl->stopping || impl->stopped ||
+      impl->shard_count != 1u)
+    return SALTS_EINVAL;
+  return cnet_owner_profile_trace_bind(&impl->records[0].owner,
+                                       events, capacity);
+}
+
 int cnet_shards_profile_take(cnet_shards *shards, cnet_owner_profile *out_profile) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
   cnet_command_queue_profile command_profile = {0};
