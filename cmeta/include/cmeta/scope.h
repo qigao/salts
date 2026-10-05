@@ -26,13 +26,15 @@
 #define CMETA_SCOPE_LIVE_(scope_, name_) CMETA_SCOPE_LIVE_I_(scope_, name_)
 
 #define CMETA_SCOPE_DECLARE_(row_, scope_) \
-    CMETA_SCOPE_DECLARE_I_(scope_, CMETA_PP_UNPAREN row_)
+    CMETA_SCOPE_DECLARE_EXPAND_(scope_, CMETA_PP_UNPAREN row_)
+#define CMETA_SCOPE_DECLARE_EXPAND_(...) CMETA_SCOPE_DECLARE_I_(__VA_ARGS__)
 #define CMETA_SCOPE_DECLARE_I_(scope_, type_, name_) \
     type_ name_; \
     bool CMETA_SCOPE_LIVE_(scope_, name_) = false;
 
 #define CMETA_SCOPE_INIT_(row_, ctx_) \
-    CMETA_SCOPE_INIT_I_(CMETA_PP_UNPAREN ctx_, CMETA_PP_UNPAREN row_)
+    CMETA_SCOPE_INIT_EXPAND_(CMETA_PP_UNPAREN ctx_, CMETA_PP_UNPAREN row_)
+#define CMETA_SCOPE_INIT_EXPAND_(...) CMETA_SCOPE_INIT_I_(__VA_ARGS__)
 #define CMETA_SCOPE_INIT_I_(scope_, status_, type_, name_)                    \
     do {                                                                       \
         (status_) = cmeta_data_value_init_zero(                               \
@@ -43,7 +45,8 @@
     } while (0);
 
 #define CMETA_SCOPE_DESTROY_(row_, scope_) \
-    CMETA_SCOPE_DESTROY_I_(scope_, CMETA_PP_UNPAREN row_)
+    CMETA_SCOPE_DESTROY_EXPAND_(scope_, CMETA_PP_UNPAREN row_)
+#define CMETA_SCOPE_DESTROY_EXPAND_(...) CMETA_SCOPE_DESTROY_I_(__VA_ARGS__)
 #define CMETA_SCOPE_DESTROY_I_(scope_, type_, name_)                          \
     do {                                                                       \
         if (CMETA_SCOPE_LIVE_(scope_, name_)) {                               \
