@@ -19,9 +19,11 @@ suite("TinyMock reflected CFlow clock interface") {
     clock = tinymock_cflow_clock_as_interface(&mock);
 
     check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, now, scripted_now));
-    tinymock_mock_set_default_return(
-        TINYMOCk_INTERFACE_METHOD(&mock, advance),
-        TINYMOCk_RETURN(true));
+    {
+      bool advance_return = true;
+      check_true(TINYMOCk_INTERFACE_SET_RETURN(
+          &mock, advance, advance_return));
+    }
 
     now = cflow_clock_now(&clock);
     check_equal(now.ns, UINT64_C(1234));
