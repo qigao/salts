@@ -138,6 +138,13 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config);
 int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms);
 
 /**
+ * Owner-thread post-callback flush. Consumes already-published deferred
+ * commands and immediately runs any session work they schedule, but never
+ * observes NativeIO or routes another completion batch.
+ */
+int cnet_owner_flush_deferred(cnet_owner *owner);
+
+/**
  * External-progress mode: advances CNet-owned commands, session work,
  * resolver state and deadlines without observing NativeIO. Valid only when
  * initialized with borrowed_backend.
