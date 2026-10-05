@@ -224,6 +224,15 @@ spec("salts_crypto") {
     check_equal(equal, 1);
   }
 
+  it("securely clears caller-owned memory") {
+    uint8_t secret[] = {1u, 2u, 3u, 4u};
+    uint8_t zero[sizeof(secret)] = {0};
+
+    salts_crypto_clear(secret, sizeof(secret));
+    check_equal(memcmp(secret, zero, sizeof(secret)), 0);
+    salts_crypto_clear(NULL, 0u);
+  }
+
   it("validates digest arguments") {
     uint8_t digest[SALTS_SHA256_DIGEST_BYTES];
 

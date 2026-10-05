@@ -222,6 +222,13 @@ SALTS_C_API int salts_aes128_cfb_decrypt(
 SALTS_C_API int salts_crypto_equal(const void *lhs, const void *rhs, size_t size,
                                    int *out_equal);
 
+/**
+ * Securely clear one caller-owned byte range.
+ *
+ * A zero-length clear accepts NULL. Non-zero size requires a valid buffer.
+ */
+SALTS_C_API void salts_crypto_clear(void *data, size_t size);
+
 #ifdef __cplusplus
 }
 #endif
