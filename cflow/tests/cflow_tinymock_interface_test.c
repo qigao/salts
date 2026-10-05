@@ -7,6 +7,7 @@
 TINYMOCk_INTERFACE(cflow_subscriber, CMETA_SUBSCRIBER_METHODS);
 
 TINYMOCk_INTERFACE(cflow_waitable, CMETA_WAITABLE_METHODS);
+TINYMOCk_INTERFACE(cflow_publisher, CFLOW_PUBLISHER_METHODS);
 
 static void cflow_tinymock_test_wake(void *user) {
     (void)user;
@@ -100,4 +101,66 @@ suite("TinyMock existing CMeta interface") {
 
     tinymock_cflow_waitable_destroy(&mock);
   }
+  it("mocks the fully reflected publisher contract") {
+    tinymock_cflow_publisher mock;
+    cflow_publisher publisher;
+    const char *scripted_name = "mock-publisher";
+    const cmeta_type_desc *scripted_type = &cmeta_type_int;
+    cflow_step scripted_step = {CFLOW_STEP_VALUE, {0}, NULL};
+    cflow_publisher_terminal scripted_terminal = CFLOW_PUBLISHER_ERROR;
+    const char *scripted_error = "terminal failure";
+    cflow_publish_context ctx = {0};
+    int out_value = 0;
+    cflow_waker waker = {cflow_tinymock_test_wake, &mock};
+
+    tinymock_cflow_publisher_init(&mock);
+    publisher = tinymock_cflow_publisher_as_interface(&mock);
+
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, name, scripted_name));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(
+        &mock, output_type, scripted_type));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, resume, scripted_step));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(
+        &mock, poll_terminal, scripted_terminal));
+    check_true(TINYMOCk_INTERFACE_SET_OUT(
+        &mock, poll_terminal, "error", scripted_error));
+
+    check_equal(cflow_publisher_name(&publisher), scripted_name);
+    check_true(cflow_publisher_output_type(&publisher) == scripted_type);
+    check_true(cflow_publisher_resume(&publisher, &ctx, &out_value).kind ==
+               CFLOW_STEP_VALUE);
+    cflow_publisher_cancel(&publisher);
+    cflow_publisher_bind_terminal_waker(&publisher, waker);
+
+    {
+      const char *error = NULL;
+      check_true(cflow_publisher_poll_terminal(&publisher, &error) ==
+                 CFLOW_PUBLISHER_ERROR);
+      check_equal(error, scripted_error);
+    }
+
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, name, 1);
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, output_type, 1);
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, resume, 1);
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, cancel, 1);
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, bind_terminal_waker, 1);
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, poll_terminal, 1);
+    TINYMOCk_INTERFACE_VERIFY_NEVER(&mock, destroy);
+
+    check_true(tinymock_cmeta_history_arg_pointer_equal_name(
+        TINYMOCk_INTERFACE_METHOD_HISTORY(&mock, resume),
+        0u, "ctx", (const void *)&ctx));
+    check_true(tinymock_cmeta_history_arg_pointer_equal_name(
+        TINYMOCk_INTERFACE_METHOD_HISTORY(&mock, resume),
+        0u, "out_value", (const void *)&out_value));
+    check_true(TINYMOCk_INTERFACE_ARG_EQUAL_TYPED(
+        &mock, bind_terminal_waker, 0u, "waker", waker));
+
+    cflow_publisher_destroy(&publisher);
+    check_false(cflow_publisher_valid(&publisher));
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, destroy, 1);
+
+    tinymock_cflow_publisher_destroy(&mock);
+  }
+
 }
