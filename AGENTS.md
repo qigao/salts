@@ -231,10 +231,10 @@
 
 #### 避免重复造轮子（强制规则）
 
-- ❌ **禁止手写**：动态数组 → 包含 `<cstl/typed.h>` 并用 `typed(Vec, Name, Type)`；统一生命周期的临时数组按协议选 `MemoryPool` 或 `mem_pool_t`
+- ❌ **禁止手写**：动态数组 → 包含 `<cstl/typed.h>` 并用 `cmeta_type(Vec, Name, Type)`；统一生命周期的临时数组按协议选 `MemoryPool` 或 `mem_pool_t`
 - ❌ **禁止手写**：字符串拼接 → 用 `tstr`（Salts）或 `sds`（vendor）
-- ❌ **禁止手写**：哈希表/集合 → 包含 `<cstl/typed.h>` 并用 `typed(HashMap, Name, Key, Value)` 或 `typed(Set, Name, Type)`
-- ❌ **禁止手写**：双端队列 → 包含 `<cstl/typed.h>` 并用 `typed(Deque, Name, Type)`
+- ❌ **禁止手写**：哈希表/集合 → 包含 `<cstl/typed.h>` 并用 `cmeta_type(HashMap, Name, Key, Value)` 或 `cmeta_type(Set, Name, Type)`
+- ❌ **禁止手写**：双端队列 → 包含 `<cstl/typed.h>` 并用 `cmeta_type(Deque, Name, Type)`
 - ❌ **禁止手写**：文件读写 → 用 `salts_fs`（Salts）
 - ❌ **禁止手写**：日志系统 → 使用 Salts `tlog`，API、数量、交付与生产协议参见 `logging-guide`
 - ❌ **禁止手写**：线程池 → 用 `salts_threadpool`（Salts）
