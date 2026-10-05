@@ -1871,14 +1871,16 @@ jobs:
           demand_jsonl="$result_dir/cnet-tls-public-demand-ab.jsonl"
           : > "$demand_jsonl"
           for repeat in 1 2 3; do
-            for demand in prearm single; do
-              for payload in 32768 65536; do
-                echo "demand-ab repeat=$repeat demand=$demand payload=$payload"
-                CNET_TLS_PUBLIC_OWNER_OPS=48 \
-                CNET_TLS_PUBLIC_NODELAY=1 \
-                CNET_TLS_PUBLIC_RECEIVE_DEMAND="$demand" \
-                  "$benchmark" echo "$payload" 1 warm \
-                  | tee -a "$demand_jsonl"
+            for nodelay in 0 1; do
+              for demand in prearm single; do
+                for payload in 32768 65536; do
+                  echo "demand-ab repeat=$repeat nodelay=$nodelay demand=$demand payload=$payload"
+                  CNET_TLS_PUBLIC_OWNER_OPS=48 \
+                  CNET_TLS_PUBLIC_NODELAY="$nodelay" \
+                  CNET_TLS_PUBLIC_RECEIVE_DEMAND="$demand" \
+                    "$benchmark" echo "$payload" 1 warm \
+                    | tee -a "$demand_jsonl"
+                done
               done
             done
           done
