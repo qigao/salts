@@ -49,9 +49,9 @@ suite("TinyMock CMeta interface bridge") {
                   (cmeta_abi_carrier)CMETA_ABI_SCALAR);
     }
 
-    tinymock_mock_verify_times(TINYMOCk_INTERFACE_METHOD(&mock, value), 1);
-    tinymock_mock_verify_never(TINYMOCk_INTERFACE_METHOD(&mock, add));
-    tinymock_mock_verify_never(TINYMOCk_INTERFACE_METHOD(&mock, reset_to));
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, value, 1);
+    TINYMOCk_INTERFACE_VERIFY_NEVER(&mock, add);
+    TINYMOCk_INTERFACE_VERIFY_NEVER(&mock, reset_to);
     tinymock_tinymock_cmeta_counter_destroy(&mock);
   }
 
@@ -75,11 +75,11 @@ suite("TinyMock CMeta interface bridge") {
     check_equal(tinymock_cmeta_counter_value(&counter), 23);
     tinymock_cmeta_counter_reset_to(&counter, 9);
 
-    tinymock_mock_verify_times(TINYMOCk_INTERFACE_METHOD(&mock, add), 1);
-    tinymock_mock_verify_times(TINYMOCk_INTERFACE_METHOD(&mock, value), 1);
-    tinymock_mock_verify_times(TINYMOCk_INTERFACE_METHOD(&mock, reset_to), 1);
-    tinymock_mock_verify_at_least(TINYMOCk_INTERFACE_METHOD(&mock, add), 1);
-    tinymock_mock_verify_at_most(TINYMOCk_INTERFACE_METHOD(&mock, add), 1);
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, add, 1);
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, value, 1);
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, reset_to, 1);
+    TINYMOCk_INTERFACE_VERIFY_AT_LEAST(&mock, add, 1);
+    TINYMOCk_INTERFACE_VERIFY_AT_MOST(&mock, add, 1);
 
     {
       int expected_add = 5;
