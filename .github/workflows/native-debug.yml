@@ -58,13 +58,12 @@ jobs:
       - name: Set up shared build dependencies
         uses: ./.github/actions/setup-re2c-tools
       - name: Configure CMeta tests
-        run: cmake --preset ${{ matrix.profile }}
-      - name: Build CMeta lifecycle tests
         run: >-
-          cmake --build --preset ${{ matrix.profile }} --parallel 2 --target
-          cmeta_data_test cmeta_header_cpp_test cmeta_core_test
-          cmeta_type_identity_test cmeta_container_type_test cmeta_collector_test
-          test_salts_cmeta_data test_salts_cmeta_data_cpp
+          cmake --preset ${{ matrix.profile }}
+          -DBUILD_TESTS=ON -DENABLE_TESTS=ON
+          -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+      - name: Build configured CMeta test graph
+        run: cmake --build --preset ${{ matrix.profile }} --parallel 2
       - name: Run CMeta lifecycle tests
         run: >-
           ctest --preset ${{ matrix.profile }} --no-tests=error --output-on-failure
@@ -103,19 +102,11 @@ jobs:
             -DBUILD_EXAMPLES=OFF \
             -DENABLE_SANITIZER_ADDRESS=ON
 
-      - name: Build CNet ownership and lifecycle tests
+      - name: Build configured CNet ASan graph
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build --preset linux-dev-user --parallel 2 --target \
-            cnet_owner_test \
-            cnet_session_test \
-            cnet_event_test \
-            cnet_dispatcher_test \
-            cnet_api_test \
-            cnet_tls_test \
-            cnet_datagram_test \
-            cnet_stop_contract_test
+          cmake --build --preset linux-dev-user --parallel 2
 
       - name: Run CNet ownership and lifecycle tests under ASan
         shell: bash
