@@ -40,11 +40,15 @@ enum { CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION = 1u };
  *
  * cmeta-lower recognizes CMETA_LIFECYCLE(Type, accessor) before preprocessing
  * and binds owned(Type) to the explicit canonical cmeta_data_desc accessor.
- * The C compiler sees a no-op marker; the generated cleanup calls the accessor
- * directly, so there is no runtime lifecycle registry or name lookup.
+ * After preprocessing the marker remains a valid, zero-runtime-cost typedef;
+ * generated cleanup calls the accessor directly, so there is no runtime
+ * lifecycle registry or name lookup.
  */
+#define CMETA_LIFECYCLE_NAME_I_(line_) cmeta_lifecycle_binding_##line_
+#define CMETA_LIFECYCLE_NAME_(line_) CMETA_LIFECYCLE_NAME_I_(line_)
 #ifndef CMETA_LIFECYCLE
-#define CMETA_LIFECYCLE(type_, accessor_)
+#define CMETA_LIFECYCLE(type_, accessor_) \
+    typedef type_ CMETA_LIFECYCLE_NAME_(__LINE__)
 #endif
 
 typedef cmeta_status (*cmeta_data_construct_init_zero_fn)(void *object);
