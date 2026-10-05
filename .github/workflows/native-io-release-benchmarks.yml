@@ -785,9 +785,17 @@ jobs:
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
           set "BASELINE_PKGCONF=%BASELINE_SOURCE%\vcpkg_installed\%QIGAO_VCPKG_WINDOWS_HOST_TRIPLET%\tools\pkgconf\pkgconf.exe"
-          cmake --preset win-release-user -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DPKG_CONFIG_EXECUTABLE="%BASELINE_PKGCONF%"
+          cmake -S . -B build\Msvc-Release -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_TOOLCHAIN_FILE="%QIGAO_VCPKG_TOOLCHAIN_FILE%" ^
+            -DVCPKG_TARGET_TRIPLET=x64-windows ^
+            -DVCPKG_HOST_TRIPLET=%QIGAO_VCPKG_WINDOWS_HOST_TRIPLET% ^
+            -DVCPKG_MANIFEST_MODE=ON ^
+            -DVCPKG_INSTALLED_DIR="%BASELINE_SOURCE%\vcpkg_installed" ^
+            -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF ^
+            -DPKG_CONFIG_EXECUTABLE="%BASELINE_PKGCONF%"
           if errorlevel 1 exit /b 1
-          cmake --build --preset win-release-user --target cnet
+          cmake --build build\Msvc-Release --target cnet
           if errorlevel 1 exit /b 1
           if not exist "build\Msvc-Release\bin\cnet.dll" exit /b 1
           powershell -NoProfile -ExecutionPolicy Bypass -File "%BASELINE_SOURCE%\cmake\ci\stage-windows-cnet-runtime.ps1" -Prefix "%BASELINE_SOURCE%\build\Msvc-Release" -VcpkgInstalledDir "%BASELINE_SOURCE%\vcpkg_installed"
