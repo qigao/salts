@@ -10,7 +10,7 @@ typedef IntList ExternalList;
 CMETA_LIFECYCLE(ExternalList, IntList_cmeta_data);
 
 int main(void) {
-    const char *literal = "list.add(99); List_add(&list, 99);";
+    const char *literal = "IntList_add(&list, 99);";
     const char *ownership_literal =
         "cmeta_owned(IntList) fake = {0}; cmeta_move(fake);";
     IntList list = {0};
@@ -19,10 +19,10 @@ int main(void) {
     IntMap map = {0};
     const int *value;
 
-    /* list.add(77); List_add(&list, 77); */
+    /* IntList_add(&list, 77); */
     /* cmeta_owned(IntList) fake = {0}; cmeta_move(fake); */
 
-    if (strcmp(literal, "list.add(99); List_add(&list, 99);") != 0)
+    if (strcmp(literal, "IntList_add(&list, 99);") != 0)
         return 1;
     if (strcmp(ownership_literal,
                "cmeta_owned(IntList) fake = {0}; cmeta_move(fake);") != 0)
@@ -34,28 +34,28 @@ int main(void) {
         IntMap_init(&map, 8u) != STL_OK)
         return 2;
 
-    if (list.add(10) != STL_OK) return 3;
-    if (List_add(&list, 20) != STL_OK) return 4;
+    if (IntList_add(&list, 10) != STL_OK) return 3;
+    if (IntList_add(&list, 20) != STL_OK) return 4;
 
-    if (vec.push(10) != STL_OK) return 5;
-    if (Vec_push(&vec, 20) != STL_OK) return 6;
+    if (IntVec_push(&vec, 10) != STL_OK) return 5;
+    if (IntVec_push(&vec, 20) != STL_OK) return 6;
 
-    if (set.add(10) != STL_OK) return 7;
-    if (Set_add(&set, 20) != STL_OK) return 8;
+    if (IntSet_add(&set, 10) != STL_OK) return 7;
+    if (IntSet_add(&set, 20) != STL_OK) return 8;
 
-    if (map.put(1, 10) != STL_OK) return 9;
-    if (Map_put(&map, 2, 20) != STL_OK) return 10;
+    if (IntMap_put(&map, 1, 10) != STL_OK) return 9;
+    if (IntMap_put(&map, 2, 20) != STL_OK) return 10;
 
     {
         IntVec list = {0};
         if (IntVec_init(&list, 4u) != STL_OK) return 11;
-        if (list.push(30) != STL_OK) return 12;
-        if (Vec_push(&list, 40) != STL_OK) return 13;
+        if (IntVec_push(&list, 30) != STL_OK) return 12;
+        if (IntVec_push(&list, 40) != STL_OK) return 13;
         if (IntVec_size(&list) != 2u) return 14;
         IntVec_destroy(&list);
     }
 
-    if (list.add(50) != STL_OK) return 15;
+    if (IntList_add(&list, 50) != STL_OK) return 15;
 
     {
         cmeta_owned(ExternalList) external_cleanup;
@@ -74,9 +74,9 @@ int main(void) {
         (void)IntList_init(&cleanup_first, 2u);
         (void)IntVec_init(&cleanup_second, 2u);
         (void)IntMap_init(&cleanup_map, 2u);
-        (void)cleanup_first.add(53);
-        (void)cleanup_second.push(54);
-        (void)cleanup_map.put(1, 55);
+        (void)IntList_add(&cleanup_first, 53);
+        (void)IntVec_push(&cleanup_second, 54);
+        (void)IntMap_put(&cleanup_map, 1, 55);
         cleanup_first_size = (int)IntList_size(&cleanup_first);
         cleanup_second_size = (int)IntVec_size(&cleanup_second);
         cleanup_map_size = IntMap_size(&cleanup_map);
@@ -90,7 +90,7 @@ int main(void) {
         IntList moved_sink = {0};
 
         (void)IntList_init(&moved_source, 2u);
-        (void)moved_source.add(56);
+        (void)IntList_add(&moved_source, 56);
         moved_sink = cmeta_move(moved_source);
         if (IntList_size(&moved_sink) != 1u) return 98;
         IntList_destroy(&moved_sink);
@@ -102,20 +102,20 @@ int main(void) {
         int inner_size;
 
         (void)IntList_init(&transfer, 4u);
-        (void)transfer.add(60);
+        (void)IntList_add(&transfer, 60);
 
         {
             cmeta_owned(IntList) inner_transfer;
             IntList inner_received = {0};
 
             (void)IntList_init(&inner_transfer, 2u);
-            (void)inner_transfer.add(70);
+            (void)IntList_add(&inner_transfer, 70);
             inner_received = cmeta_move(inner_transfer);
             inner_size = (int)IntList_size(&inner_received);
             IntList_destroy(&inner_received);
         }
 
-        (void)transfer.add(61);
+        (void)IntList_add(&transfer, 61);
         received = cmeta_move(transfer);
 
         if (inner_size != 1) return 99;
