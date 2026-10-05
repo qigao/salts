@@ -28,6 +28,7 @@ typedef struct cnet_dispatcher_test_probe {
   atomic_int connected;
   atomic_int received;
   atomic_int terminal;
+  atomic_int terminal_status;
   atomic_int order_error;
   atomic_int last_order;
   unsigned char value;
@@ -65,6 +66,36 @@ static int cnet_dispatcher_test_listener(cnet_dispatcher_test_socket *out_listen
   return SALTS_OK;
 }
 
+static int cnet_dispatcher_test_tcp_pair(cnet_dispatcher_test_socket *out_owned,
+                                         cnet_dispatcher_test_socket *out_peer) {
+  cnet_dispatcher_test_socket listener = CNET_DISPATCHER_TEST_INVALID_SOCKET;
+  struct sockaddr_in address;
+  int status;
+
+  *out_owned = CNET_DISPATCHER_TEST_INVALID_SOCKET;
+  *out_peer = CNET_DISPATCHER_TEST_INVALID_SOCKET;
+  status = cnet_dispatcher_test_listener(&listener, &address);
+  if (status == SALTS_OK) {
+    *out_owned = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (*out_owned == CNET_DISPATCHER_TEST_INVALID_SOCKET) status = SALTS_EIO;
+  }
+  if (status == SALTS_OK &&
+      connect(*out_owned, (const struct sockaddr *)&address, (int)sizeof(address)) != 0)
+    status = SALTS_EIO;
+  if (status == SALTS_OK) {
+    *out_peer = accept(listener, NULL, NULL);
+    if (*out_peer == CNET_DISPATCHER_TEST_INVALID_SOCKET) status = SALTS_EIO;
+  }
+  cnet_dispatcher_test_close_socket(listener);
+  if (status != SALTS_OK) {
+    cnet_dispatcher_test_close_socket(*out_owned);
+    cnet_dispatcher_test_close_socket(*out_peer);
+    *out_owned = CNET_DISPATCHER_TEST_INVALID_SOCKET;
+    *out_peer = CNET_DISPATCHER_TEST_INVALID_SOCKET;
+  }
+  return status;
+}
+
 static void cnet_dispatcher_test_observe(void *context, const cnet_dispatch_view *view) {
   cnet_dispatcher_test_probe *probe = (cnet_dispatcher_test_probe *)context;
   int expected_order;
@@ -83,6 +114,7 @@ static void cnet_dispatcher_test_observe(void *context, const cnet_dispatch_view
     next_order = 3;
   } else {
     next_order = 4;
+    atomic_store_explicit(&probe->terminal_status, view->status, memory_order_release);
     atomic_fetch_add_explicit(&probe->terminal, 1, memory_order_release);
   }
   expected_order = atomic_load_explicit(&probe->last_order, memory_order_acquire);
@@ -113,21 +145,23 @@ static int cnet_dispatcher_test_drive_until(cnet_shards *shards, cnet_dispatcher
   return SALTS_OK;
 }
 
-static int cnet_dispatcher_test_wait_state(cnet_shards *shards,
-                                           cnet_shard_connection connection,
-                                           cnet_session_state expected) {
+static int cnet_dispatcher_test_drive_connected(cnet_shards *shards, cnet_dispatcher *dispatcher,
+                                                cnet_dispatcher_test_probe *probe) {
   const uint64_t deadline = salts_monotonic_ms() + CNET_DISPATCHER_TEST_TIMEOUT_MS;
-  for (;;) {
-    cnet_session_state state = CNET_SESSION_FREE;
-    int status = cnet_shards_state(shards, connection, &state);
+  while (atomic_load_explicit(&probe->connected, memory_order_acquire) == 0) {
+    int status = cnet_shards_poll(shards, 1u);
     if (status != SALTS_OK) return status;
-    if (state == expected) return SALTS_OK;
-    if (state == CNET_SESSION_TERMINAL && expected != CNET_SESSION_TERMINAL)
-      return SALTS_EIO;
+    status = cnet_dispatcher_drive(dispatcher, 0u);
+    if (status != SALTS_OK && status != SALTS_ETIMEDOUT && status != SALTS_ENOBUFS &&
+        status != SALTS_EBUSY)
+      return status;
+    if (atomic_load_explicit(&probe->terminal, memory_order_acquire) != 0) {
+      status = atomic_load_explicit(&probe->terminal_status, memory_order_acquire);
+      return status < SALTS_OK ? status : SALTS_EIO;
+    }
     if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
-    status = cnet_shards_poll(shards, 1u);
-    if (status != SALTS_OK) return status;
   }
+  return SALTS_OK;
 }
 
 spec("CNet event dispatcher") {
@@ -151,9 +185,8 @@ spec("CNet event dispatcher") {
                                               .receive_buffer_bytes = 64u,
                                               .max_command_payload_bytes =
                                                   sizeof(cnet_owner_connect_payload)};
-    cnet_dispatcher_test_socket listener = CNET_DISPATCHER_TEST_INVALID_SOCKET;
+    cnet_dispatcher_test_socket owned = CNET_DISPATCHER_TEST_INVALID_SOCKET;
     cnet_dispatcher_test_socket accepted = CNET_DISPATCHER_TEST_INVALID_SOCKET;
-    struct sockaddr_in address;
     cnet_owner_connect_payload payload = {0};
     cnet_shard_connection connection = {0};
     cnet_shard_connection replacement = {0};
@@ -162,16 +195,19 @@ spec("CNet event dispatcher") {
     const unsigned char inbound = 23u;
 
     check_equal(cnet_module_init(), SALTS_OK);
-    check_equal(cnet_dispatcher_test_listener(&listener, &address), SALTS_OK);
     check_equal(cnet_shards_init(&shards, &shards_config), SALTS_OK);
     check_equal(cnet_dispatcher_init(&dispatcher, &shards), SALTS_OK);
     check_equal(cnet_dispatcher_init(&dispatcher, &shards), SALTS_EALREADY);
     check_equal(cnet_dispatcher_destroy(&dispatcher), SALTS_EBUSY);
 
+    /* Keep this dispatcher contract independent from asynchronous connect timing;
+     * NativeIO and owner tests qualify that transport lifecycle separately. */
+    check_equal(cnet_dispatcher_test_tcp_pair(&owned, &accepted), SALTS_OK);
     payload.scheme = CNET_URI_TCP;
-    memcpy(payload.host, "127.0.0.1", sizeof("127.0.0.1"));
-    payload.port = ntohs(address.sin_port);
+    payload.adopted_socket = (uintptr_t)owned;
+    payload.adopted = true;
     check_equal(cnet_shards_connect(&shards, &payload, &connection), SALTS_OK);
+    owned = CNET_DISPATCHER_TEST_INVALID_SOCKET;
     check_equal(
         cnet_dispatcher_register(&dispatcher, connection, cnet_dispatcher_test_observe, &probe),
         SALTS_OK);
@@ -179,20 +215,7 @@ spec("CNet event dispatcher") {
         cnet_dispatcher_register(&dispatcher, connection, cnet_dispatcher_test_observe, &probe),
         SALTS_EALREADY);
 
-    /*
-     * Separate transport completion from dispatcher publication. The sharded
-     * owner is authoritative for the connection state; once OPEN, complete the
-     * loopback peer accept before waiting for the dispatcher callback. This
-     * avoids coupling IOCP's connect/accept scheduling to callback delivery.
-     */
-    check_equal(cnet_dispatcher_test_wait_state(
-                    &shards, connection, CNET_SESSION_OPEN),
-                SALTS_OK);
-    accepted = accept(listener, NULL, NULL);
-    check_true(accepted != CNET_DISPATCHER_TEST_INVALID_SOCKET);
-    check_equal(cnet_dispatcher_test_drive_until(
-                    &shards, &dispatcher, &probe.connected, 1),
-                SALTS_OK);
+    check_equal(cnet_dispatcher_test_drive_connected(&shards, &dispatcher, &probe), SALTS_OK);
 
     check_equal(cnet_shards_receive(&shards, connection, 1u), SALTS_OK);
     check_equal(send(accepted, (const char *)&inbound, (int)sizeof(inbound), 0),
@@ -211,19 +234,20 @@ spec("CNet event dispatcher") {
     check_equal(cnet_dispatcher_test_drive_until(&shards, &dispatcher, &probe.terminal, 1),
                 SALTS_OK);
     check_equal(cnet_dispatcher_wait_idle(&dispatcher, CNET_DISPATCHER_TEST_TIMEOUT_MS), SALTS_OK);
+    cnet_dispatcher_test_close_socket(accepted);
+    accepted = CNET_DISPATCHER_TEST_INVALID_SOCKET;
+    check_equal(cnet_dispatcher_test_tcp_pair(&owned, &accepted), SALTS_OK);
+    payload.adopted_socket = (uintptr_t)owned;
     check_equal(cnet_shards_connect(&shards, &payload, &replacement), SALTS_OK);
+    owned = CNET_DISPATCHER_TEST_INVALID_SOCKET;
     check_true(replacement.session.generation != connection.session.generation);
     check_equal(atomic_load_explicit(&probe.order_error, memory_order_acquire), 0);
 
     check_equal(cnet_dispatcher_register(&dispatcher, replacement, cnet_dispatcher_test_observe,
                                          &replacement_probe),
                 SALTS_OK);
-    check_equal(
-        cnet_dispatcher_test_drive_until(&shards, &dispatcher, &replacement_probe.connected, 1),
-        SALTS_OK);
-    cnet_dispatcher_test_close_socket(accepted);
-    accepted = accept(listener, NULL, NULL);
-    check_true(accepted != CNET_DISPATCHER_TEST_INVALID_SOCKET);
+    check_equal(cnet_dispatcher_test_drive_connected(&shards, &dispatcher, &replacement_probe),
+                SALTS_OK);
     check_equal(cnet_dispatcher_drain(&dispatcher, CNET_DISPATCHER_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(atomic_load_explicit(&replacement_probe.order_error, memory_order_acquire), 0);
     check_equal(cnet_dispatcher_register(&dispatcher, replacement, cnet_dispatcher_test_observe,
@@ -234,8 +258,8 @@ spec("CNet event dispatcher") {
     check_equal(cnet_dispatcher_destroy(&dispatcher), SALTS_OK);
     check_equal(cnet_shards_stop(&shards, CNET_DISPATCHER_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(cnet_shards_destroy(&shards), SALTS_OK);
+    cnet_dispatcher_test_close_socket(owned);
     cnet_dispatcher_test_close_socket(accepted);
-    cnet_dispatcher_test_close_socket(listener);
     check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 }
