@@ -1207,11 +1207,22 @@ spec("CNet public client API") {
     cnet_client client = {0};
     cnet_client_config config = cnet_api_test_config();
     cnet_client_poll_profile profile = {0};
+    cnet_owner_trace_event trace_events[2] = {{0}};
     size_t events = SIZE_MAX;
 
     check_equal(cnet_client_init(&client, &config), SALTS_OK);
     check_equal(cnet_client_profile_take(&client, &profile), SALTS_EBUSY);
+    check_equal(cnet_client_profile_trace_bind(&client, trace_events, 2u),
+                SALTS_EBUSY);
     check_equal(cnet_client_profile_begin(&client), SALTS_OK);
+    check_equal(cnet_client_profile_trace_bind(&client, NULL, 2u),
+                SALTS_EINVAL);
+    check_equal(cnet_client_profile_trace_bind(&client, trace_events, 0u),
+                SALTS_EINVAL);
+    check_equal(cnet_client_profile_trace_bind(&client, trace_events, 2u),
+                SALTS_OK);
+    check_equal(cnet_client_profile_trace_bind(&client, trace_events, 2u),
+                SALTS_EBUSY);
     check_equal(cnet_client_poll(&client, 0u, &events), SALTS_OK);
     check_equal(events, (size_t)0u);
     check_equal(cnet_client_profile_take(&client, &profile), SALTS_OK);
@@ -1236,6 +1247,8 @@ spec("CNet public client API") {
     check_equal(profile.owner.receive_rearm_request_lifecycle_ns, (uint64_t)0u);
     check_equal(profile.owner.command_request_lifecycle_ns, (uint64_t)0u);
     check_equal(profile.owner.request_resubmit_ns, (uint64_t)0u);
+    check_equal(profile.owner.trace_event_count, (uint64_t)0u);
+    check_equal(profile.owner.trace_dropped, (uint64_t)0u);
     check_true(profile.owner.owner_drive_ns >= profile.owner.command_stage_ns);
     check_true(profile.owner.owner_drive_ns >= profile.owner.request_lifecycle_ns);
     check_true(profile.owner.owner_drive_ns >= profile.owner.request_start_ns);

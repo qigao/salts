@@ -22,7 +22,8 @@ enum {
   TLS_PUBLIC_MAX_OWNERS = 8,
   TLS_PUBLIC_TIMEOUT_MS = 10000,
   TLS_PUBLIC_DEFAULT_OPS = 48,
-  TLS_PUBLIC_WARMUP_ROUNDS_PER_PAIR = 2
+  TLS_PUBLIC_WARMUP_ROUNDS_PER_PAIR = 2,
+  TLS_PUBLIC_TRACE_CAPACITY = 256
 };
 
 #ifndef CNET_TLS_BENCH_CA
@@ -41,6 +42,7 @@ typedef enum tls_public_mode {
 } tls_public_mode;
 
 static bool tls_public_single_receive_demand = false;
+static bool tls_public_trace = false;
 static uint32_t tls_public_poll_timeout_ms = 0u;
 
 typedef struct tls_public_probe {
@@ -97,6 +99,12 @@ typedef struct tls_public_worker {
   uint64_t cpu_ns;
   cnet_owner_profile client_profile;
   cnet_owner_profile server_profile;
+  cnet_owner_trace_event client_trace[TLS_PUBLIC_TRACE_CAPACITY];
+  cnet_owner_trace_event server_trace[TLS_PUBLIC_TRACE_CAPACITY];
+  size_t client_trace_count;
+  size_t server_trace_count;
+  uint64_t trace_started_ns;
+  uint64_t trace_finished_ns;
 } tls_public_worker;
 
 static uint64_t tls_public_thread_cpu_ns(void) {
@@ -135,6 +143,8 @@ static void tls_public_profile_add(
   TLS_PUBLIC_PROFILE_ADD(tls_read_completion_bytes);
   TLS_PUBLIC_PROFILE_ADD(tls_plaintext_receive_calls);
   TLS_PUBLIC_PROFILE_ADD(tls_plaintext_receive_bytes);
+  TLS_PUBLIC_PROFILE_ADD(trace_event_count);
+  TLS_PUBLIC_PROFILE_ADD(trace_dropped);
 #undef TLS_PUBLIC_PROFILE_ADD
 }
 
@@ -604,9 +614,21 @@ static void tls_public_worker_run(void *user) {
       status = cnet_client_profile_begin(&worker->pairs[index].client);
       if (status != SALTS_OK) break;
       worker->pairs[index].client_profile_active = true;
+      if (tls_public_trace && index == 0u) {
+        status = cnet_client_profile_trace_bind(
+            &worker->pairs[index].client, worker->client_trace,
+            TLS_PUBLIC_TRACE_CAPACITY);
+        if (status != SALTS_OK) break;
+      }
       status = cnet_client_profile_begin(&worker->pairs[index].server);
       if (status != SALTS_OK) break;
       worker->pairs[index].server_profile_active = true;
+      if (tls_public_trace && index == 0u) {
+        status = cnet_client_profile_trace_bind(
+            &worker->pairs[index].server, worker->server_trace,
+            TLS_PUBLIC_TRACE_CAPACITY);
+        if (status != SALTS_OK) break;
+      }
     }
   }
 
@@ -625,6 +647,7 @@ static void tls_public_worker_run(void *user) {
       tls_public_pair *pair =
           &worker->pairs[index % worker->pair_count];
       const uint64_t started_ns = salts_hrtime();
+      if (tls_public_trace) worker->trace_started_ns = started_ns;
       status = tls_public_operation(pair, shared->mode);
       if (status != SALTS_OK) {
         tls_public_set_error(shared, status);
@@ -632,6 +655,9 @@ static void tls_public_worker_run(void *user) {
       }
       worker->latencies_ns[index] =
           salts_hrtime() - started_ns;
+      if (tls_public_trace)
+        worker->trace_finished_ns =
+            started_ns + worker->latencies_ns[index];
     }
     {
       const uint64_t cpu_finished_ns =
@@ -653,6 +679,14 @@ static void tls_public_worker_run(void *user) {
         tls_public_profile_add(&worker->client_profile, &observed.owner);
       else
         tls_public_set_error(shared, profile_status);
+      if (tls_public_trace && index == 0u) {
+        worker->client_trace_count =
+            observed.owner.trace_event_count <= TLS_PUBLIC_TRACE_CAPACITY
+                ? (size_t)observed.owner.trace_event_count
+                : TLS_PUBLIC_TRACE_CAPACITY;
+        if (observed.owner.trace_dropped != 0u)
+          tls_public_set_error(shared, SALTS_ENOBUFS);
+      }
     }
     observed = (cnet_client_poll_profile){0};
     if (worker->pairs[index].server_profile_active) {
@@ -663,6 +697,14 @@ static void tls_public_worker_run(void *user) {
         tls_public_profile_add(&worker->server_profile, &observed.owner);
       else
         tls_public_set_error(shared, profile_status);
+      if (tls_public_trace && index == 0u) {
+        worker->server_trace_count =
+            observed.owner.trace_event_count <= TLS_PUBLIC_TRACE_CAPACITY
+                ? (size_t)observed.owner.trace_event_count
+                : TLS_PUBLIC_TRACE_CAPACITY;
+        if (observed.owner.trace_dropped != 0u)
+          tls_public_set_error(shared, SALTS_ENOBUFS);
+      }
     }
   }
 
@@ -678,6 +720,84 @@ static void tls_public_worker_run(void *user) {
 
 static const char *tls_public_mode_name(tls_public_mode mode) {
   return mode == TLS_PUBLIC_ECHO ? "echo" : "push";
+}
+
+static const char *tls_public_trace_kind_name(cnet_owner_trace_kind kind) {
+  switch (kind) {
+  case CNET_OWNER_TRACE_TLS_WRITE_SUBMIT:
+    return "tls_write_submit";
+  case CNET_OWNER_TRACE_TLS_WRITE_COMPLETION:
+    return "socket_write_completion";
+  case CNET_OWNER_TRACE_TLS_READ_ARM:
+    return "nativeio_read_armed";
+  case CNET_OWNER_TRACE_TLS_READ_COMPLETION:
+    return "nativeio_read_completion";
+  case CNET_OWNER_TRACE_TLS_DECRYPT:
+    return "tls_record_decrypt";
+  case CNET_OWNER_TRACE_PLAINTEXT_PUBLISH:
+    return "plaintext_publish";
+  }
+  return "unknown";
+}
+
+typedef struct tls_public_trace_ref {
+  const cnet_owner_trace_event *event;
+  const char *side;
+} tls_public_trace_ref;
+
+static int tls_public_trace_ref_compare(const void *left, const void *right) {
+  const tls_public_trace_ref *left_ref =
+      (const tls_public_trace_ref *)left;
+  const tls_public_trace_ref *right_ref =
+      (const tls_public_trace_ref *)right;
+  if (left_ref->event->timestamp_ns < right_ref->event->timestamp_ns)
+    return -1;
+  if (left_ref->event->timestamp_ns > right_ref->event->timestamp_ns)
+    return 1;
+  return strcmp(left_ref->side, right_ref->side);
+}
+
+static void tls_public_print_trace(const tls_public_worker *worker) {
+  tls_public_trace_ref refs[TLS_PUBLIC_TRACE_CAPACITY * 2u];
+  size_t count = 0u;
+  if (worker == NULL) return;
+  for (size_t index = 0u; index < worker->client_trace_count; ++index)
+    refs[count++] = (tls_public_trace_ref){&worker->client_trace[index],
+                                           "client"};
+  for (size_t index = 0u; index < worker->server_trace_count; ++index)
+    refs[count++] = (tls_public_trace_ref){&worker->server_trace[index],
+                                           "server"};
+  qsort(refs, count, sizeof(refs[0]), tls_public_trace_ref_compare);
+  for (size_t index = 0u; index < count; ++index) {
+    const cnet_owner_trace_event *event = refs[index].event;
+    const int64_t relative_ns =
+        event->timestamp_ns >= worker->trace_started_ns
+            ? (int64_t)(event->timestamp_ns - worker->trace_started_ns)
+            : -(int64_t)(worker->trace_started_ns - event->timestamp_ns);
+    fprintf(stderr,
+            "{\"trace\":\"cnet_tls_public_owner\","
+            "\"side\":\"%s\",\"phase\":\"%s\","
+            "\"timestamp_ns\":%llu,\"operation_offset_ns\":%lld,"
+            "\"session_slot\":%u,\"session_generation\":%u,"
+            "\"request_slot\":%u,\"request_generation\":%u,"
+            "\"endpoint_slot\":%u,\"endpoint_generation\":%u,"
+            "\"bytes\":%llu}\n",
+            refs[index].side, tls_public_trace_kind_name(event->kind),
+            (unsigned long long)event->timestamp_ns,
+            (long long)relative_ns,
+            event->session.slot, event->session.generation,
+            event->request.slot, event->request.generation,
+            event->endpoint.slot, event->endpoint.generation,
+            (unsigned long long)event->bytes);
+  }
+  fprintf(stderr,
+          "{\"trace\":\"cnet_tls_public_owner_summary\","
+          "\"operation_started_ns\":%llu,"
+          "\"operation_finished_ns\":%llu,"
+          "\"client_events\":%zu,\"server_events\":%zu}\n",
+          (unsigned long long)worker->trace_started_ns,
+          (unsigned long long)worker->trace_finished_ns,
+          worker->client_trace_count, worker->server_trace_count);
 }
 
 int main(int argc, char **argv) {
@@ -703,6 +823,7 @@ int main(int argc, char **argv) {
   const char *nodelay_text;
   const char *receive_demand_text;
   const char *poll_timeout_text;
+  const char *trace_text;
   long logical_cpus = sysconf(_SC_NPROCESSORS_ONLN);
   int nodelay = 0;
   int status = SALTS_OK;
@@ -774,12 +895,30 @@ int main(int argc, char **argv) {
       return 2;
   }
 
+  trace_text = getenv("CNET_TLS_PUBLIC_TRACE");
+  if (trace_text != NULL && trace_text[0] != '\0') {
+    if (strcmp(trace_text, "0") == 0)
+      tls_public_trace = false;
+    else if (strcmp(trace_text, "1") == 0)
+      tls_public_trace = true;
+    else
+      return 2;
+  }
+
   total_ops = tls_public_env_count(
       "CNET_TLS_PUBLIC_OWNER_OPS",
       TLS_PUBLIC_DEFAULT_OPS);
   if (total_ops < owner_count) total_ops = owner_count;
   total_ops -= total_ops % owner_count;
   ops_per_owner = total_ops / owner_count;
+  if (tls_public_trace &&
+      (mode != TLS_PUBLIC_ECHO || owner_count != 1u || total_ops != 1u ||
+       warmup_rounds_per_pair != 0u)) {
+    fprintf(stderr,
+            "CNET_TLS_PUBLIC_TRACE=1 requires echo, owners=1, fresh, and "
+            "CNET_TLS_PUBLIC_OWNER_OPS=1\n");
+    return 2;
+  }
 
   payload = (unsigned char *)malloc(payload_size);
   latencies = (uint64_t *)calloc(
@@ -880,6 +1019,8 @@ int main(int argc, char **argv) {
 
   if (status == SALTS_OK && samples != total_ops)
     status = SALTS_EPROTO;
+
+  if (tls_public_trace) tls_public_print_trace(&workers[0]);
 
   if (status == SALTS_OK) {
     const double operations_per_second =

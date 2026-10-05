@@ -1880,6 +1880,24 @@ int cnet_client_profile_begin(cnet_client *client) {
   return status;
 }
 
+int cnet_client_profile_trace_bind(cnet_client *client,
+                                   cnet_owner_trace_event *events,
+                                   size_t capacity) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  int status;
+  if (impl == NULL || events == NULL || capacity == 0u)
+    return SALTS_EINVAL;
+  if (cnet_active_callback_client == impl) return SALTS_EBUSY;
+  salts_mutex_lock(&impl->control_lock);
+  if (impl->poll_active || impl->stop_active || !impl->profile_active)
+    status = SALTS_EBUSY;
+  else
+    status = cnet_shards_profile_trace_bind(&impl->shards, events,
+                                            capacity);
+  salts_mutex_unlock(&impl->control_lock);
+  return status;
+}
+
 int cnet_client_profile_take(cnet_client *client, cnet_client_poll_profile *out_profile) {
   cnet_client_impl *impl = cnet_client_get(client);
   cnet_dispatcher_profile dispatcher_profile = {0};
