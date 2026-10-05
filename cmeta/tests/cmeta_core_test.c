@@ -546,6 +546,23 @@ suite("CMeta core") {
         check_equal(destroy_count, 1);
     }
 
+    it("publishes canonical pointer-boundary descriptors") {
+        check_true(cmeta_type_desc_valid(&cmeta_type_char));
+        check_true(cmeta_type_desc_valid(&cmeta_type_char_ptr));
+        check_true(cmeta_type_desc_valid(&cmeta_type_void_ptr));
+        check_true(cmeta_type_desc_valid(&cmeta_type_descriptor));
+        check_true(cmeta_type_desc_valid(&cmeta_type_descriptor_ptr));
+
+        check_true(cmeta_type_char_ptr.pointee == &cmeta_type_char);
+        check_true(cmeta_type_void_ptr.pointee == &cmeta_type_void);
+        check_true(cmeta_type_descriptor_ptr.pointee ==
+                   &cmeta_type_descriptor);
+        check_equal(cmeta_type_char_ptr.size, sizeof(char *));
+        check_equal(cmeta_type_void_ptr.size, sizeof(void *));
+        check_equal(cmeta_type_descriptor_ptr.size,
+                    sizeof(cmeta_type_desc *));
+    }
+
     it("exposes builtin type metadata through a bounded registry") {
         const cmeta_type_desc *int_type = cmeta_type_find("int");
         cmeta_type_desc equivalent;

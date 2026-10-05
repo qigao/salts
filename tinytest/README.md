@@ -264,10 +264,10 @@ Use the explicit TinyMock usage target for CMeta-aware mocking:
 target_link_libraries(my_test PRIVATE Salts::TinyMock)
 ```
 
-`Salts::TinyMock` propagates `Salts::TinyTest + Salts::CMeta`. During the
-compatibility migration its runtime objects still live in the TinyTest archive,
-so existing TinyTest-only consumers keep their current binary contract while
-new code can already declare the final dependency boundary.
+`Salts::TinyMock` propagates `Salts::TinyTest + Salts::CMeta`. The reflected
+history/action/return runtime is owned by TinyMock; TinyTest remains usable on
+its own and keeps the standalone legacy `TINYMOCk_MOCK(...)` API without a
+CMeta dependency.
 
 Strict-C11 tests can replay an existing `CMETA_INTERFACE` method schema into a
 mock vtable without hand-writing a second implementation:
@@ -278,46 +278,58 @@ mock vtable without hand-writing a second implementation:
 #include "tinymock_cmeta.h"
 
 #define COUNTER_METHODS(X, I) \
-    X(I,R1,int,add,int,delta) \
-    X(I,R0,int,value,_) \
-    X(I,V0,void,reset,_)
+    X(I,FR1,int,add,value, \
+      &cmeta_type_int,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
+      (int,delta,CMETA_PARAM_IN,&cmeta_type_int,CMETA_ABI_SCALAR)) \
+    X(I,FR0,int,value,value, \
+      &cmeta_type_int,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE) \
+    X(I,FV0,void,reset,stateful, \
+      &cmeta_type_void,CMETA_ABI_VOID)
 
 CMETA_INTERFACE(counter, COUNTER_METHODS);
 TINYMOCk_INTERFACE(counter, COUNTER_METHODS);
 
 spec("counter consumer") {
-    it("records interface calls independently from stubbing") {
+    it("uses the same reflected contract for stubbing and verification") {
         tinymock_counter mock;
         counter dependency;
+        int scripted = 7;
+        int expected_delta = 3;
 
         tinymock_counter_init(&mock);
         dependency = tinymock_counter_as_interface(&mock);
 
-        tinymock_mock_set_default_return(
-            TINYMOCk_INTERFACE_METHOD(&mock, add), TINYMOCk_RETURN(7));
+        check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, add, scripted));
 
-        check_equal(counter_add(&dependency, 3), 7);
-        tinymock_mock_verify_times(
-            TINYMOCk_INTERFACE_METHOD(&mock, add), 1);
+        check_equal(counter_add(&dependency, expected_delta), 7);
+        TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, add, 1);
+        check_true(TINYMOCk_INTERFACE_ARG_EQUAL_TYPED(
+            &mock, add, 0u, "delta", expected_delta));
+
+        tinymock_counter_destroy(&mock);
     }
 }
 ```
 
-Generated interface mocks are relaxed by default: unstubbed methods return the
-portable TinyMock zero/null value so calls can be recorded and verified without
-first declaring an ordered expectation. Existing `TINYMOCk_MOCK(...)` usage
-keeps its strict expectation API.
+Generated reflected interface mocks are typed-only. Non-void methods require
+an explicit typed return; missing or ownership-unsupported return behavior fails
+closed instead of falling back to boxed zero/null semantics. Invocation history,
+matching, capture, OUT/INOUT actions, and call-count verification all consume
+the canonical CMeta descriptors. Existing standalone `TINYMOCk_MOCK(...)`
+usage keeps its TinyTest expectation/script API.
 
 The bridge deliberately reuses the interface X-list rather than defining a
-second reflection schema. CMeta-aware free-function mocking now uses the same
-type/trait truth through `FunctionDecl(...)`, `FunctionMeta(...)`, and
-`FunctionAbi(...)`.
+second reflection schema. TinyMock accepts full-reflection F/FR/FV/FD rows;
+legacy R/V/D rows remain available to CMeta itself but are not a TinyMock
+interface path. CMeta-aware free-function mocking uses the same type/trait truth
+through `FunctionDecl(...)`, `FunctionMeta(...)`, and `FunctionAbi(...)`.
 
-When an interface uses fully reflected CMeta `F/FV/FD` rows, TinyMock also
+When an interface uses fully reflected CMeta `F/FR/FV/FD` rows, TinyMock
 consumes the interface method's canonical `cmeta_function_desc` /
 `cmeta_function_abi_desc`; it does not reconstruct a second method signature
-from the method name or arity. Legacy `R/V/D` rows remain ABI-only and retain
-the compatibility mock path.
+from the method name or arity. Legacy `R/V/D` rows remain available to CMeta
+for source compatibility, but TinyMock no longer implements a boxed interface
+mock path for them.
 
 ### Reflected free-function auto-mocking
 
@@ -339,10 +351,11 @@ direct array declarator, static-inline helper, or missing name fails the Test
 Build selection witness instead of silently producing no mock.
 
 The current reflected ABI carriers include builtin scalar, object pointer,
-aggregate-by-value, function-pointer, enum, and literal void. Object pointers
-use TinyMock's explicit pointer carrier; aggregate, function-pointer, and enum
-values use CMeta typed history/return state. These reflected categories do not
-depend on the legacy `TINYMOCk_VALUE` generic carrier. Explicit descriptors with
+aggregate-by-value, function-pointer, enum, and literal void. Exact-ABI wrappers
+project arguments into CMeta typed argument views; object-pointer identity,
+aggregate values, function pointers, and enums are recorded through typed
+history/return state. These reflected categories do not depend on the legacy
+`TINYMOCk_VALUE` generic carrier. Explicit descriptors with
 `CMETA_ABI_UNSPECIFIED` and `CMETA_ABI_OPAQUE` remain rejected until a
 consumer-specific lowering is defined.
 

@@ -281,6 +281,14 @@ nullable/borrowed/owned may be known while direction remains UNKNOWN.
 OUT/nullability/ownership metadata still requires a pointer descriptor where
 the respective semantic demands it.
 
+CMeta publishes canonical pointer-boundary descriptors for common reflected
+contracts: `cmeta_type_void_ptr`, `cmeta_type_char_ptr`, and
+`cmeta_type_descriptor_ptr` (plus their pointee descriptors where applicable).
+They provide type identity and exact pointer shape only. A source declaration
+such as `const char *` may use `cmeta_type_char_ptr`; `const` does not imply
+BORROWED, and ownership/lifetime still comes exclusively from explicit
+parameter/result flags.
+
 Function results have an independent semantic flag set:
 
 ```text
