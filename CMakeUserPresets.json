@@ -5,45 +5,12 @@
     ],
     "configurePresets": [
         {
-            "name": "ci-benchmark-options",
-            "hidden": true,
-            "cacheVariables": {
-                "BUILD_BENCHMARKS": true,
-                "BUILD_TESTS": false,
-                "ENABLE_TESTS": false,
-                "BUILD_EXAMPLES": false
-            }
-        },
-        {
-            "name": "ci-linux-benchmark-user",
-            "inherits": ["ci-benchmark-options", "linux-release-user"]
-        },
-        {
-            "name": "ci-win-benchmark-user",
-            "inherits": ["ci-benchmark-options", "win-release-user"]
-        },
-        {
-            "name": "ci-mac-benchmark-user",
-            "inherits": ["ci-benchmark-options", "mac-release-user"]
-        },
-        {
-            "name": "ci-cstl-release-user",
-            "inherits": "linux-release-user",
-            "binaryDir": "${sourceDir}/build/ci-cstl-release",
-            "cacheVariables": {
-                "ENABLE_TESTS": true,
-                "BUILD_TESTS": true,
-                "BUILD_BENCHMARKS": false,
-                "BUILD_EXAMPLES": false
-            }
-        },
-        {
             "name": "vcpkg-cache",
             "hidden": true,
             "toolchainFile": "$env{VCPKG_CACHE_REPOSITORY_ROOT}/cmake/QigaoVcpkgToolchain.cmake",
             "environment": {
                 "VCPKG_CACHE_REPOSITORY_ROOT": "$penv{VCPKG_CACHE_REPOSITORY_ROOT}",
-                "VCPKG_BINARY_SOURCES": "clear;default,readwrite;nugettimeout,1800;nugetconfig,${sourceDir}/cmake/vcpkg-cache.nuget.config,read"
+                "VCPKG_BINARY_SOURCES": "$penv{VCPKG_BINARY_SOURCES}"
             }
         },
         {
@@ -63,7 +30,7 @@
             "inherits": "win-toolchain",
             "cacheVariables": {
                 "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}",
-                "VCPKG_TARGET_TRIPLET": "x64-windows",
+                "VCPKG_TARGET_TRIPLET": "$env{QIGAO_VCPKG_WINDOWS_TRIPLET}",
                 "VCPKG_MANIFEST_MODE": "ON"
             },
             "architecture": {
@@ -126,11 +93,11 @@
             "cacheVariables": {
                 "ENABLE_SANITIZER_ADDRESS": "ON",
                 "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
-                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-windows/debug"
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/debug"
             },
             "environment": {
                 "SALTS_ROOT": "$env{PKG_ROOT}/salts/debug",
-                "PATH": "${sourceDir}/build/Msvc/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
+                "PATH": "${sourceDir}/build/Msvc/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
                 "base-win-dev-user",
@@ -141,11 +108,11 @@
             "name": "win-release-user",
             "cacheVariables": {
                 "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
-                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-windows"
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}"
             },
             "environment": {
                 "SALTS_ROOT": "$env{PKG_ROOT}/salts/release",
-                "PATH": "${sourceDir}/build/Msvc-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
+                "PATH": "${sourceDir}/build/Msvc-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
                 "base-win-release-user",
@@ -316,11 +283,11 @@
             "cacheVariables": {
                 "ENABLE_SANITIZER_ADDRESS": "OFF",
                 "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
-                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-windows/debug"
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/debug"
             },
             "environment": {
                 "SALTS_ROOT": "$env{PKG_ROOT}/salts/debug",
-                "PATH": "${sourceDir}/build/Clang/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
+                "PATH": "${sourceDir}/build/Clang/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
                 "base-win-dev-clang-user",
@@ -333,11 +300,11 @@
                 "ENABLE_SANITIZER_ADDRESS": "OFF",
                 "ENABLE_TESTS": "ON",
                 "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
-                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-windows"
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}"
             },
             "environment": {
                 "SALTS_ROOT": "$env{PKG_ROOT}/salts/release",
-                "PATH": "${sourceDir}/build/Clang-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
+                "PATH": "${sourceDir}/build/Clang-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
                 "base-win-release-clang-user",
@@ -346,27 +313,6 @@
         }
     ],
     "buildPresets": [
-        {
-            "name": "ci-linux-benchmark-user",
-            "configurePreset": "ci-linux-benchmark-user"
-        },
-        {
-            "name": "ci-win-benchmark-user",
-            "configurePreset": "ci-win-benchmark-user"
-        },
-        {
-            "name": "ci-mac-benchmark-user",
-            "configurePreset": "ci-mac-benchmark-user"
-        },
-        {
-            "name": "ci-cstl-release-user",
-            "configurePreset": "ci-cstl-release-user",
-            "targets": [
-                "cstl_header_typed_test",
-                "cstl_header_typed_cpp_test",
-                "cstl_typed_decl_cpp_test"
-            ]
-        },
         {
             "name": "win-dev-user",
             "configurePreset": "win-dev-user"
@@ -520,17 +466,6 @@
         }
     ],
     "testPresets": [
-        {
-            "name": "ci-cstl-release-user",
-            "inherits": "base-test",
-            "configurePreset": "ci-cstl-release-user",
-            "filter": {
-                "include": {
-                    "name": "^(cstl_header_typed_test|cstl_header_typed_cpp_test|cstl_typed_decl_cpp_test)$"
-                }
-            },
-            "execution": {"noTestsAction": "error"}
-        },
         {
             "name": "win-dev-user",
             "inherits": "base-test",

@@ -52,14 +52,14 @@ const cmeta_type_desc cflow_test_owned_value_type = {
     .identity = NULL
 };
 
-typed(filter, value, bool, cflow_test_even, (int value)) {
+cmeta_function(filter, value, bool, cflow_test_even, (int value)) {
     return value % 2 == 0;
 }
 
-typed(map, value, long, cflow_test_square, (int value)) {
+cmeta_function(map, value, long, cflow_test_square, (int value)) {
     return (long)value * (long)value;
 }
 
-typed(map, value, double, cflow_test_half, (long value)) {
+cmeta_function(map, value, double, cflow_test_half, (long value)) {
     return (double)value / 2.0;
 }

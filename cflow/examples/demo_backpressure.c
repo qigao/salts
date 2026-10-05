@@ -6,7 +6,7 @@
 
 #define N 10000u
 
-typed(flatMap, value, cmeta_gen_status, generate_many,
+cmeta_function(flatMap, value, cmeta_gen_status, generate_many,
       (int x, long *out, size_t *cursor)) {
     if (*cursor >= N) return CMETA_GEN_DONE;
     *out = (long)x * 100000L + (long)*cursor;

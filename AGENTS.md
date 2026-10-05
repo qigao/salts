@@ -231,10 +231,10 @@
 
 #### 避免重复造轮子（强制规则）
 
-- ❌ **禁止手写**：动态数组 → 包含 `<cstl/typed.h>` 并用 `typed(Vec, Name, Type)`；统一生命周期的临时数组按协议选 `MemoryPool` 或 `mem_pool_t`
+- ❌ **禁止手写**：动态数组 → 包含 `<cstl/typed.h>` 并用 `cmeta_type(Vec, Name, Type)`；统一生命周期的临时数组按协议选 `MemoryPool` 或 `mem_pool_t`
 - ❌ **禁止手写**：字符串拼接 → 用 `tstr`（Salts）或 `sds`（vendor）
-- ❌ **禁止手写**：哈希表/集合 → 包含 `<cstl/typed.h>` 并用 `typed(HashMap, Name, Key, Value)` 或 `typed(Set, Name, Type)`
-- ❌ **禁止手写**：双端队列 → 包含 `<cstl/typed.h>` 并用 `typed(Deque, Name, Type)`
+- ❌ **禁止手写**：哈希表/集合 → 包含 `<cstl/typed.h>` 并用 `cmeta_type(HashMap, Name, Key, Value)` 或 `cmeta_type(Set, Name, Type)`
+- ❌ **禁止手写**：双端队列 → 包含 `<cstl/typed.h>` 并用 `cmeta_type(Deque, Name, Type)`
 - ❌ **禁止手写**：文件读写 → 用 `salts_fs`（Salts）
 - ❌ **禁止手写**：日志系统 → 使用 Salts `tlog`，API、数量、交付与生产协议参见 `logging-guide`
 - ❌ **禁止手写**：线程池 → 用 `salts_threadpool`（Salts）
@@ -402,6 +402,10 @@
 - 优先运行最贴近改动范围的测试；能小跑，不必先全跑
 - 若无法运行测试，必须明言原因、影响与剩余风险
 - CI、远程流水线与人工复核皆可作为补充；不可将其视为禁物
+- CI 的 CMake configure 决定完整 build graph；`cmake --build` 必须构建该 graph，禁止在 workflow 中使用 `--target` 或点名具体构建 target
+- CI 不得直接运行 CMake 生成的测试/benchmark executable；验证与 benchmark 执行统一通过 CTest（`ctest`，可用 label/regex 选择）
+- 禁止以 CMake 脚本读取源码/workflow 并用 `string(FIND)`/marker 判断实现形状；行为、ownership、ABI、state 等约束必须实现为 C/C++ 可执行测试并由 CTest 运行
+- test / benchmark / release/debug graph 必须通过 configure 选项分离，不得靠 build 阶段点 target 实现用途隔离
 - 不得以“理论正确”代替实际验证
 
 ## 审查规则

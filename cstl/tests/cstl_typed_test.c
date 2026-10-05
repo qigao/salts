@@ -17,19 +17,19 @@ _Static_assert(SALTS_TEST_ARITY_Vec == 1 && SALTS_TEST_ARITY_HashMap == 2 &&
                    SALTS_TEST_ARITY_BPlusTree == 2,
                "SALTS_STL_KIND_SCHEMA_ARITY_MISMATCH");
 
-typed(Vec, IntVec, int);
-typed(Deque, IntDeque, int);
-typed(List, IntList, int);
-typed(Stack, IntStack, int);
-typed(Queue, IntQueue, int);
-typed(Heap, IntHeap, int);
-typed(Set, IntSet, int);
-typed(HashSet, IntHashSet, int);
-typed(HashMap, IntLongHashMap, int, long);
-typed(Map, IntLongMap, int, long);
-typed(MultiMap, IntLongMultiMap, int, long);
-typed(BTree, IntLongBTree, int, long);
-typed(BPlusTree, IntLongBPlusTree, int, long);
+cmeta_type(Vec, IntVec, int);
+cmeta_type(Deque, IntDeque, int);
+cmeta_type(List, IntList, int);
+cmeta_type(Stack, IntStack, int);
+cmeta_type(Queue, IntQueue, int);
+cmeta_type(Heap, IntHeap, int);
+cmeta_type(Set, IntSet, int);
+cmeta_type(HashSet, IntHashSet, int);
+cmeta_type(HashMap, IntLongHashMap, int, long);
+cmeta_type(Map, IntLongMap, int, long);
+cmeta_type(MultiMap, IntLongMultiMap, int, long);
+cmeta_type(BTree, IntLongBTree, int, long);
+cmeta_type(BPlusTree, IntLongBPlusTree, int, long);
 
 #define VERIFY_EMPTY_COLLECTOR(Name) do {                                  \
     Name output = {0};                                                      \

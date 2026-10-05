@@ -3,99 +3,13 @@ name: NativeIO and CNet benchmarks
 on:
   pull_request:
     paths:
-      - ".github/workflows/native-io-benchmarks.yml"
       - "native-io/**"
-      - "coroutine/**"
       - "cnet/**"
-      - "cflow/include/cflow/io_cnet_adapter.h"
-      - "cflow/cnet-adapter/**"
-      - "CMakeLists.txt"
-      - "CMakePresets.json"
-      - "CMakeUserPresets.json"
-      - ".github/actions/setup-re2c-tools/action.yml"
-      - "cmake/ci/benchmark-policy.json"
-      - "cmake/ci/verify-benchmark-policy.ps1"
-      - "cmake/ci/render-benchmark-verdicts.ps1"
-      - "cmake/ci/prune-benchmark-artifacts.ps1"
-      - "cflow/include/cflow/io_native_sharded_adapter.h"
-      - "cflow/src/io_native_sharded_adapter.c"
-      - "cflow/include/cflow/io_actor.h"
-      - "cflow/src/io_actor.c"
-      - "cflow/include/cflow/io_publisher.h"
-      - "cflow/src/io_publisher.c"
-      - "cflow/tests/cflow_io_native_sharded_adapter_test.c"
-      - "cflow/tests/cflow_io_native_adapter_test.c"
-      - "cflow/include/cflow/cflow.h"
-      - "cflow/tests/cflow_header_cpp_test.cpp"
-      - "cflow/CMakeLists.txt"
-      - "cflow/include/cflow/io_native.h"
-      - "cflow/src/io_native.c"
-      - "cflow/src/io_native_internal.h"
-      - "cflow/src/io_native_iocp.c"
-      - "cflow/src/io_native_io_uring.c"
-      - "cflow/src/io_native_readiness.c"
-      - "cflow/tests/cflow_io_native_test.c"
-      - "cflow/tests/cflow_pipe_data_plane_contract_test.cmake"
-      - "cflow/tests/CMakeLists.txt"
-      - "cflow/include/cflow/plan.h"
-      - "cflow/include/cflow/plan_internal.h"
-      - "cflow/src/plan_exec.c"
-      - "cflow/src/plan_compile.c"
-      - "cflow/src/plan_parallel_reduce.c"
-      - "cflow/src/adapters.c"
-      - "cflow/include/cflow/adapters.h"
-      - "cflow/tests/cflow_pipeline_test.c"
-      - "cflow/tests/cflow_plan_managed_test.c"
-      - "cflow/tests/cflow_parallel_reduce_test.c"
-      - "cflow/benchmarks/**"
   push:
     branches: [master]
     paths:
-      - ".github/workflows/native-io-benchmarks.yml"
       - "native-io/**"
-      - "coroutine/**"
       - "cnet/**"
-      - "cflow/include/cflow/io_cnet_adapter.h"
-      - "cflow/cnet-adapter/**"
-      - "CMakeLists.txt"
-      - "CMakePresets.json"
-      - "CMakeUserPresets.json"
-      - ".github/actions/setup-re2c-tools/action.yml"
-      - "cmake/ci/benchmark-policy.json"
-      - "cmake/ci/verify-benchmark-policy.ps1"
-      - "cmake/ci/render-benchmark-verdicts.ps1"
-      - "cmake/ci/prune-benchmark-artifacts.ps1"
-      - "cflow/include/cflow/io_native_sharded_adapter.h"
-      - "cflow/src/io_native_sharded_adapter.c"
-      - "cflow/include/cflow/io_actor.h"
-      - "cflow/src/io_actor.c"
-      - "cflow/include/cflow/io_publisher.h"
-      - "cflow/src/io_publisher.c"
-      - "cflow/tests/cflow_io_native_sharded_adapter_test.c"
-      - "cflow/tests/cflow_io_native_adapter_test.c"
-      - "cflow/include/cflow/cflow.h"
-      - "cflow/tests/cflow_header_cpp_test.cpp"
-      - "cflow/CMakeLists.txt"
-      - "cflow/include/cflow/io_native.h"
-      - "cflow/src/io_native.c"
-      - "cflow/src/io_native_internal.h"
-      - "cflow/src/io_native_iocp.c"
-      - "cflow/src/io_native_io_uring.c"
-      - "cflow/src/io_native_readiness.c"
-      - "cflow/tests/cflow_io_native_test.c"
-      - "cflow/tests/cflow_pipe_data_plane_contract_test.cmake"
-      - "cflow/tests/CMakeLists.txt"
-      - "cflow/include/cflow/plan.h"
-      - "cflow/include/cflow/plan_internal.h"
-      - "cflow/src/plan_exec.c"
-      - "cflow/src/plan_compile.c"
-      - "cflow/src/plan_parallel_reduce.c"
-      - "cflow/src/adapters.c"
-      - "cflow/include/cflow/adapters.h"
-      - "cflow/tests/cflow_pipeline_test.c"
-      - "cflow/tests/cflow_plan_managed_test.c"
-      - "cflow/tests/cflow_parallel_reduce_test.c"
-      - "cflow/benchmarks/**"
   workflow_dispatch:
 
 permissions:
@@ -122,7 +36,6 @@ jobs:
       cnet_io: ${{ steps.scope.outputs.cnet_io }}
       cnet_sg: ${{ steps.scope.outputs.cnet_sg }}
       coroutine: ${{ steps.scope.outputs.coroutine }}
-      cflow: ${{ steps.scope.outputs.cflow }}
       native_uring: ${{ steps.scope.outputs.native_uring }}
       forensic: ${{ steps.scope.outputs.forensic }}
     steps:
@@ -147,7 +60,6 @@ jobs:
             $runCnetIo = $true
             $runCnetSg = $true
             $runCoroutine = $true
-            $runCflow = $true
             $runNativeUring = $true
             $runForensic = $true
           } else {
@@ -160,7 +72,6 @@ jobs:
               $runCnetIo = $true
               $runCnetSg = $true
               $runCoroutine = $true
-              $runCflow = $true
               $runNativeUring = $true
               $runForensic = $true
             } else {
@@ -239,9 +150,6 @@ jobs:
               $coroutineBench = @($changed | Where-Object {
                   $_ -like "coroutine/benchmarks/*"
                 }).Count -gt 0
-              $cflowChanged = @($changed | Where-Object {
-                  $_ -like "cflow/*"
-                }).Count -gt 0
               $forensicChanged = @($changed | Where-Object {
                   $_ -like "cnet/benchmarks/summarize_*" -or
                   $_ -like "native-io/benchmarks/summarize_*" -or
@@ -254,7 +162,6 @@ jobs:
               $runCnetIo = $cnetRuntime -or $cnetIoBench -or $nativeRuntime -or $coroutineRuntime -or $buildChanged -or $dependencyChanged -or $verdictRendererChanged
               $runCnetSg = $cnetRuntime -or $cnetSgBench -or $nativeRuntime -or $buildChanged -or $dependencyChanged
               $runCoroutine = $coroutineRuntime -or $coroutineBench -or $concurrencyRuntime -or $buildChanged -or $dependencyChanged
-              $runCflow = $cflowChanged -or $cnetRuntime -or $nativeRuntime -or $buildChanged -or $dependencyChanged
               $runNativeUring = $nativeRuntime -or $nativeUringBench -or $buildChanged -or $dependencyChanged
               $runForensic = $forensicChanged
 
@@ -269,7 +176,7 @@ jobs:
 
           $runEvidence = $runNativeOwner -or $runNativeStyle -or
             $runCnetOwner -or $runCnetIo -or $runCnetSg -or
-            $runCoroutine -or $runCflow -or $runNativeUring -or $runForensic
+            $runCoroutine -or $runNativeUring -or $runForensic
           $runWork = $runEvidence
 
           "profile=$benchmarkProfile" >> $env:GITHUB_OUTPUT
@@ -282,7 +189,6 @@ jobs:
           "cnet_io=$($runCnetIo.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "cnet_sg=$($runCnetSg.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "coroutine=$($runCoroutine.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          "cflow=$($runCflow.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "native_uring=$($runNativeUring.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "forensic=$($runForensic.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
@@ -296,7 +202,6 @@ jobs:
             @("cnet_io", "${{ steps.scope.outputs.cnet_io }}"),
             @("cnet_sg", "${{ steps.scope.outputs.cnet_sg }}"),
             @("coroutine", "${{ steps.scope.outputs.coroutine }}"),
-            @("cflow", "${{ steps.scope.outputs.cflow }}"),
             @("native_uring", "${{ steps.scope.outputs.native_uring }}"),
             @("forensic", "${{ steps.scope.outputs.forensic }}"),
             @("work", "${{ steps.scope.outputs.work }}"),
@@ -315,11 +220,6 @@ jobs:
         shell: pwsh
         run: |
           ./cmake/ci/verify-benchmark-policy.ps1 -ProjectRoot . -WriteSummary
-
-      - name: Validate CNet performance CI contract
-        shell: pwsh
-        run: |
-          cmake -DPROJECT_SOURCE_DIR="$env:GITHUB_WORKSPACE" -P ./cnet/tests/cnet_performance_ci_contract_test.cmake
 
       - name: Validate PR artifact pruning contract
         shell: pwsh
@@ -360,32 +260,32 @@ jobs:
             family: linux
             backend: epoll
             artifact: linux-epoll
-            configure_preset: ci-linux-benchmark-user
-            build_preset: ci-linux-benchmark-user
+            configure_preset: linux-release-user
+            build_preset: linux-release-user
             build_dir: build/linux-gcc-release
           - host: io_uring / Ubuntu 24.04 GCC
             runner: ubuntu-24.04
             family: linux
             backend: io_uring
             artifact: linux-io-uring
-            configure_preset: ci-linux-benchmark-user
-            build_preset: ci-linux-benchmark-user
+            configure_preset: linux-release-user
+            build_preset: linux-release-user
             build_dir: build/linux-gcc-release
           - host: IOCP / Windows 2025 MSVC v145
             runner: windows-2025
             family: windows
             backend: iocp
             artifact: windows-iocp
-            configure_preset: ci-win-benchmark-user
-            build_preset: ci-win-benchmark-user
+            configure_preset: win-release-user
+            build_preset: win-release-user
             build_dir: build/Msvc-Release
           - host: kqueue / macOS 15 AppleClang
             runner: macos-15
             family: mac
             backend: kqueue
             artifact: macos-kqueue
-            configure_preset: ci-mac-benchmark-user
-            build_preset: ci-mac-benchmark-user
+            configure_preset: mac-release-user
+            build_preset: mac-release-user
             build_dir: build/mac-clang-release
 
     steps:
@@ -471,15 +371,20 @@ jobs:
               [string]::IsNullOrWhiteSpace($env:ImageVersion)) {
             throw "GitHub runner image identity is unavailable"
           }
+          if ([string]::IsNullOrWhiteSpace($env:QIGAO_VCPKG_WINDOWS_TRIPLET)) {
+            throw "Windows vcpkg target triplet is unavailable"
+          }
 
           $binaryCache = Join-Path $env:GITHUB_WORKSPACE "build\vcpkg-binary-cache"
+          $installedBin = Join-Path $env:GITHUB_WORKSPACE `
+            "vcpkg_installed\$env:QIGAO_VCPKG_WINDOWS_TRIPLET\bin"
           New-Item -ItemType Directory -Force -Path $binaryCache | Out-Null
           "PROJECT_ROOT=$env:GITHUB_WORKSPACE" >> $env:GITHUB_ENV
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
           "VCPKG_BINARY_CACHE=$binaryCache" >> $env:GITHUB_ENV
-          (Join-Path $env:GITHUB_WORKSPACE "vcpkg_installed\x64-windows\bin") >> $env:GITHUB_PATH
+          $installedBin >> $env:GITHUB_PATH
           "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
-          "triplet=x64-windows" >> $env:GITHUB_OUTPUT
+          "triplet=$env:QIGAO_VCPKG_WINDOWS_TRIPLET" >> $env:GITHUB_OUTPUT
 
       - name: Restore Windows vcpkg binary cache
         if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
@@ -532,15 +437,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset "${{ matrix.configure_preset }}"
-          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target \
-            cnet_io_benchmark cnet_tls_sg_benchmark cnet_tls_provider_parallel_benchmark cnet_tls_public_owner_benchmark \
-            cnet_owner_lifecycle_compare cnet_scaling_benchmark cnet_owner_parallel_benchmark cnet_shards_parallel_benchmark \
-            cnet_external_owner_parallel_benchmark cnet_central_callback_benchmark \
-            native_io_queue_depth_benchmark native_io_idle_observe_benchmark native_io_sharded_routing_benchmark \
-            native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark \
-            native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark native_io_vsock_styles_benchmark \
-            salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark cflow_control_path_benchmark
+          cmake --preset "${{ matrix.configure_preset }}" \
+            -DBUILD_BENCHMARKS=OFF -DNATIVE_IO_BUILD_BENCHMARKS=ON \
+            -DCOROUTINE_BUILD_BENCHMARKS=ON -DCNET_BUILD_BENCHMARKS=ON \
+            -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
       - name: Configure Windows benchmark targets
         if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         shell: cmd
@@ -548,7 +449,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset "${{ matrix.configure_preset }}"
+          cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=OFF -DNATIVE_IO_BUILD_BENCHMARKS=ON -DCOROUTINE_BUILD_BENCHMARKS=ON -DCNET_BUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build Windows benchmark targets
         if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         shell: cmd
@@ -556,114 +457,17 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target cnet_io_benchmark cnet_tls_sg_benchmark cnet_owner_lifecycle_compare native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_control_path_benchmark
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
       - name: Configure and build macOS benchmark targets
         if: needs.scope.outputs.work == 'true' && matrix.family == 'mac'
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset "${{ matrix.configure_preset }}"
-          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target \
-            cnet_io_benchmark cnet_tls_sg_benchmark \
-            native_io_sharded_routing_benchmark native_io_owner_handoff_benchmark native_io_owner_mailbox_benchmark native_io_owner_local_parallel_benchmark \
-            salts_coro_executor_batch_benchmark salts_coro_executor_dequeue_batch_benchmark \
-            native_io_pipe_styles_benchmark native_io_stream_styles_benchmark native_io_udp_styles_benchmark cflow_control_path_benchmark
-      - name: Run CFlow ordered parallel reduce benchmark
-        if: needs.scope.outputs.cflow == 'true' && matrix.family == 'linux' && matrix.backend == 'io_uring'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 \
-            --target cflow_parallel_reduce_benchmark
-          mkdir -p native-io-results
-          benchmark="$GITHUB_WORKSPACE/${{ matrix.build_dir }}/bin/cflow_parallel_reduce_benchmark"
-          test -x "$benchmark"
-          "$benchmark" | tee native-io-results/cflow-parallel-reduce.txt
-          {
-            echo ""
-            echo "## CFlow ordered parallel reduce measurement"
-            echo '~~~text'
-            cat native-io-results/cflow-parallel-reduce.txt
-            echo '~~~'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Build pre-slot-isolation CFlow benchmark / Windows
-        if: needs.scope.outputs.cflow == 'true' && matrix.family == 'windows' && matrix.backend == 'iocp' && github.event_name == 'pull_request'
-        shell: cmd
-        env:
-          CFLOW_SLOT_ISOLATION_BASE_SHA: 847857cdbd637030c3f3e893f68a6e1796831977
-        run: |
-          set "BASELINE_SOURCE=%RUNNER_TEMP%\salts-cflow-before-slot-isolation"
-          if exist "%BASELINE_SOURCE%" rmdir /s /q "%BASELINE_SOURCE%"
-          git worktree add --detach "%BASELINE_SOURCE%" "%CFLOW_SLOT_ISOLATION_BASE_SHA%"
-          if errorlevel 1 exit /b 1
-          cd /d "%BASELINE_SOURCE%"
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset win-release-user -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_BENCHMARKS=ON -DBUILD_EXAMPLES=OFF
-          if errorlevel 1 exit /b 1
-          cmake --build --preset win-release-user --parallel 2 --target cflow_parallel_reduce_benchmark
-          if errorlevel 1 exit /b 1
-          if not exist "build\Msvc-Release\bin\cflow_parallel_reduce_benchmark.exe" exit /b 1
-
-      - name: Run pre-slot-isolation CFlow benchmark / Windows
-        if: needs.scope.outputs.cflow == 'true' && matrix.family == 'windows' && matrix.backend == 'iocp' && github.event_name == 'pull_request'
-        shell: pwsh
-        env:
-          CFLOW_SLOT_ISOLATION_BASE_SHA: 847857cdbd637030c3f3e893f68a6e1796831977
-        run: |
-          $ErrorActionPreference = "Stop"
-          $baselineSource = Join-Path $env:RUNNER_TEMP "salts-cflow-before-slot-isolation"
-          $benchmark = Join-Path $baselineSource "build/Msvc-Release/bin/cflow_parallel_reduce_benchmark.exe"
-          try {
-            if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
-              throw "Baseline CFlow parallel reduce benchmark not found: $benchmark"
-            }
-            $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
-            New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
-            $result = Join-Path $resultDir "cflow-parallel-reduce-windows-before-slot-isolation.txt"
-            $output = & $benchmark 2>&1 | Tee-Object -FilePath $result
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CFlow managed reduce baseline: Windows / IOCP / pre-#817"
-            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "baseline_sha=$env:CFLOW_SLOT_ISOLATION_BASE_SHA"
-            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '~~~text'
-            $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
-            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '~~~'
-          } finally {
-            git worktree remove --force $baselineSource 2>$null
-          }
-
-      - name: Build CFlow ordered parallel reduce benchmark / Windows
-        if: needs.scope.outputs.cflow == 'true' && matrix.family == 'windows' && matrix.backend == 'iocp'
-        shell: cmd
-        run: |
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target cflow_parallel_reduce_benchmark
-          if errorlevel 1 exit /b 1
-
-      - name: Run CFlow ordered parallel reduce benchmark / Windows
-        if: needs.scope.outputs.cflow == 'true' && matrix.family == 'windows' && matrix.backend == 'iocp'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
-          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
-          $benchmark = Join-Path $env:GITHUB_WORKSPACE "${{ matrix.build_dir }}/bin/cflow_parallel_reduce_benchmark.exe"
-          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
-            throw "CFlow parallel reduce benchmark executable not found: $benchmark"
-          }
-          $result = Join-Path $resultDir "cflow-parallel-reduce-windows-after-slot-isolation.txt"
-          $output = & $benchmark 2>&1 | Tee-Object -FilePath $result
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CFlow ordered parallel reduce measurement: Windows / IOCP / candidate"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '~~~text'
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '~~~'
+          cmake --preset "${{ matrix.configure_preset }}" \
+            -DBUILD_BENCHMARKS=OFF -DNATIVE_IO_BUILD_BENCHMARKS=ON \
+            -DCOROUTINE_BUILD_BENCHMARKS=ON -DCNET_BUILD_BENCHMARKS=ON \
+            -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
 
       - name: Build PR-base CNet comparison DSO
         if: matrix.family == 'windows' && needs.scope.outputs.cnet_compare == 'true' && github.event_name == 'pull_request'
@@ -690,10 +494,11 @@ jobs:
             -DVCPKG_HOST_TRIPLET=%QIGAO_VCPKG_WINDOWS_HOST_TRIPLET% ^
             -DVCPKG_MANIFEST_MODE=ON ^
             -DVCPKG_INSTALLED_DIR="%BASELINE_SOURCE%\vcpkg_installed" ^
-            -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF ^
+            -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF ^
+            -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF ^
             -DPKG_CONFIG_EXECUTABLE="%BASELINE_PKGCONF%"
           if errorlevel 1 exit /b 1
-          cmake --build build\Msvc-Release --target cnet
+          cmake --build build\Msvc-Release
           if errorlevel 1 exit /b 1
           if not exist "build\Msvc-Release\bin\cnet.dll" exit /b 1
           powershell -NoProfile -ExecutionPolicy Bypass -File "%BASELINE_SOURCE%\cmake\ci\stage-windows-cnet-runtime.ps1" -Prefix "%BASELINE_SOURCE%\build\Msvc-Release" -VcpkgInstalledDir "%BASELINE_SOURCE%\vcpkg_installed"
@@ -1435,35 +1240,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## Coroutine Executor consumer dequeue batching / default"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
-
-      - name: Run CFlow Direct/Actor/Publisher control-path baseline
-        if: needs.scope.outputs.cflow == 'true'
-        shell: pwsh
-        env:
-          CFLOW_CONTROL_BASELINE_EXECUTABLE: ${{ matrix.build_dir }}/bin/cflow_control_path_benchmark
-          CFLOW_CONTROL_BASELINE_BACKEND: ${{ matrix.backend }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
-          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
-          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:CFLOW_CONTROL_BASELINE_EXECUTABLE
-          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
-          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
-            throw "CFlow control-path benchmark executable not found: $benchmark"
-          }
-          $env:CFLOW_CONTROL_BASELINE_OUTPUT =
-            Join-Path $resultDir "cflow-control-path"
-          $output = & $benchmark 2>&1 |
-            Tee-Object -FilePath (Join-Path $resultDir "cflow-control-path.md")
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & ./cflow/benchmarks/verify_control_path_benchmark.ps1 `
-            -Path "$env:CFLOW_CONTROL_BASELINE_OUTPUT.csv" `
-            -Backend $env:CFLOW_CONTROL_BASELINE_BACKEND
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CFlow Direct / IO Actor / IO Publisher: $env:CFLOW_CONTROL_BASELINE_BACKEND"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 

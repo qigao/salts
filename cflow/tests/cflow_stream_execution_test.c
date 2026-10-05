@@ -130,7 +130,7 @@ static void execution_destroy_probe_done(void *user) {
     if (sink != NULL) atomic_store(&sink->done, 1);
 }
 
-typed(filter, value, bool, execution_control_filter, (int value)) {
+cmeta_function(filter, value, bool, execution_control_filter, (int value)) {
     (void)value;
     execution_operator_wait_status =
         cflow_stream_execution_wait(execution_operator_control);

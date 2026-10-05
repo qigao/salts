@@ -13,9 +13,9 @@ typedef struct unregistered_element {
     int value;
 } unregistered_element;
 
-typed(Vec, HeaderGenericVec, int);
-typed(List, HeaderGenericList, int);
-typed(Map, HeaderGenericMap, int, long);
+cmeta_type(Vec, HeaderGenericVec, int);
+cmeta_type(List, HeaderGenericList, int);
+cmeta_type(Map, HeaderGenericMap, int, long);
 
 #ifndef VecOf
 #error "typed.h must retain PR #53 unary expression initializers"
@@ -25,6 +25,29 @@ typed(Map, HeaderGenericMap, int, long);
 #endif
 
 suite("CSTL typed public header") {
+    it("uses cmeta_type and cmeta_move from ordinary C") {
+        HeaderGenericList source = {0};
+        HeaderGenericList destination = {0};
+        bool source_zero = false;
+
+        check_equal(HeaderGenericList_init(&source, 2u), STL_OK);
+        check_equal(HeaderGenericList_add(&source, 11), STL_OK);
+        check_equal(HeaderGenericList_add(&source, 22), STL_OK);
+
+        check_equal(cmeta_move(HeaderGenericList, &destination, &source),
+                    CMETA_OK);
+        check_equal(HeaderGenericList_size(&destination), (size_t)2u);
+        check_equal(
+            cmeta_data_value_is_zero(
+                HeaderGenericList_cmeta_data(), &source, &source_zero),
+            CMETA_OK);
+        check_true(source_zero);
+
+        /* Moved-from source remains a valid semantic-zero C object. */
+        HeaderGenericList_destroy(&source);
+        HeaderGenericList_destroy(&destination);
+    }
+
     it("exposes self-describing declarations without generated type names") {
         Vec(int, vec);
         List(int, list);

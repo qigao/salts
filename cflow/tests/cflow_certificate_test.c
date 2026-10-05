@@ -4,27 +4,27 @@
 
 #include <string.h>
 
-typed(filter, value, bool, cflow_cert_even, (int value)) {
+cmeta_function(filter, value, bool, cflow_cert_even, (int value)) {
   return value % 2 == 0;
 }
 
-typed(map, value, long, cflow_cert_square, (int value)) {
+cmeta_function(map, value, long, cflow_cert_square, (int value)) {
   return (long)value * (long)value;
 }
 
-typed(reduce, associative, long, cflow_cert_add, (long left, long right)) {
+cmeta_function(reduce, associative, long, cflow_cert_add, (long left, long right)) {
   return left + right;
 }
 
-typed(reduce, associative, long, cflow_cert_other, (long left, long right)) {
+cmeta_function(reduce, associative, long, cflow_cert_other, (long left, long right)) {
   return left > right ? left : right;
 }
 
-typed(map, value, double, cflow_cert_as_double, (int value)) {
+cmeta_function(map, value, double, cflow_cert_as_double, (int value)) {
   return (double)value + 0.25;
 }
 
-typed(zip, value, double, cflow_cert_merge, (long left, double right)) {
+cmeta_function(zip, value, double, cflow_cert_merge, (long left, double right)) {
   return (double)left + right;
 }
 

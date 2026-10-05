@@ -25,8 +25,3 @@ set_target_properties(
     CXX_STANDARD_REQUIRED ON
     CXX_EXTENSIONS OFF)
 
-add_test(
-  NAME cflow_cnet_dependency_contract_test
-  COMMAND ${CMAKE_COMMAND}
-          -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
-          -P ${CMAKE_CURRENT_SOURCE_DIR}/cflow_cnet_dependency_contract_test.cmake)

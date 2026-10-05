@@ -167,8 +167,11 @@ CMETA_INLINE bool cmeta_enum_from_string(const cmeta_enum_desc *desc,
     } \
     typedef char type##__enum_declaration_complete[1]
 
+#ifndef cmeta_enum
+#define cmeta_enum(type, ...) CMETA_ENUM(type, __VA_ARGS__)
+#endif
 #ifndef Enum
-#define Enum(type, ...) CMETA_ENUM(type, __VA_ARGS__)
+#define Enum(type, ...) cmeta_enum(type, __VA_ARGS__)
 #endif
 
 #define EnumMeta(type) (&type##__enum_meta)
