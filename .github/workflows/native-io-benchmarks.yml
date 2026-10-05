@@ -5,6 +5,7 @@ on:
     paths:
       - "native-io/**"
       - "cnet/**"
+      - "coroutine/**"
   push:
     branches: [master]
     paths:
