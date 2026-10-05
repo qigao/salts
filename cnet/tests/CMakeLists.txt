@@ -484,6 +484,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
                                                               77)
 endif()
 
+find_program(CNET_POWERSHELL_EXECUTABLE NAMES pwsh powershell)
+if(CNET_POWERSHELL_EXECUTABLE)
+  add_test(
+    NAME cnet_io_trace_test
+    COMMAND ${CNET_POWERSHELL_EXECUTABLE}
+            -NoProfile
+            -File ${CMAKE_CURRENT_SOURCE_DIR}/cnet_io_trace_test.ps1)
+endif()
+
 cmake_add_test(
   cnet_datagram_test
   SOURCES
