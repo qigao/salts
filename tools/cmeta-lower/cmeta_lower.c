@@ -648,18 +648,18 @@ static int cmeta_lower_reject_live_owned_control(
     if (strcmp(ident, "return") == 0) {
         (void)snprintf(
             message, sizeof(message),
-            "early return exits live owned value '%s'", owned->name);
+            "early return exits live cmeta_owned value '%s'", owned->name);
     } else if (strcmp(ident, "break") == 0 ||
                strcmp(ident, "continue") == 0 ||
                strcmp(ident, "goto") == 0) {
         (void)snprintf(
             message, sizeof(message),
-            "%s exits or crosses live owned value '%s'",
+            "%s exits or crosses live cmeta_owned value '%s'",
             ident, owned->name);
     } else {
         (void)snprintf(
             message, sizeof(message),
-            "owned value '%s' crosses unsupported control flow '%s'",
+            "cmeta_owned value '%s' crosses unsupported control flow '%s'",
             owned->name, ident);
     }
     cmeta_lower_set_error(context, offset, message);
@@ -1144,7 +1144,7 @@ static int cmeta_lower_transform(
                 (source[i] == '|' && i + 1u < size && source[i + 1u] == '|')) {
                 cmeta_lower_set_error(
                     context, i,
-                    "live owned value crosses unsupported conditional expression");
+                    "live cmeta_owned value crosses unsupported conditional expression");
                 return 0;
             }
         }
