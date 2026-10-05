@@ -124,6 +124,44 @@ spec("NativeIPC pipe control plane") {
   }
 
 #if defined(_WIN32)
+  describe("Windows client endpoint type validation") {
+    static char *file_path;
+    static salts_ipc_pipe_endpoint endpoint;
+
+    before_each() {
+      salts_ipc_pipe_endpoint_init(&endpoint);
+      file_path = tt_make_temp_file("native-ipc-not-pipe-", ".bin");
+      check_not_null(file_path);
+    }
+
+    after_each() {
+      check_equal(salts_ipc_pipe_endpoint_close(&endpoint), SALTS_OK);
+      if (file_path != NULL) {
+        check_equal(tt_remove_file(file_path), 0);
+        free(file_path);
+        file_path = NULL;
+      }
+    }
+
+    it("rejects regular files for every pipe direction without leaking handles") {
+      static const salts_ipc_pipe_direction directions[] = {
+          SALTS_IPC_PIPE_READ, SALTS_IPC_PIPE_WRITE, SALTS_IPC_PIPE_DUPLEX};
+      DWORD handles_before = 0u;
+      DWORD handles_after = 0u;
+
+      check_true(GetProcessHandleCount(GetCurrentProcess(), &handles_before));
+      for (size_t index = 0u; index < sizeof(directions) / sizeof(directions[0]); ++index) {
+        check_equal(salts_ipc_named_pipe_connect(file_path, directions[index], &endpoint),
+                    SALTS_ENOTSUP);
+        check_false(salts_ipc_pipe_endpoint_valid(&endpoint));
+        check_equal(endpoint.native_io_flags, (uint32_t)0u);
+        check_true(GetProcessHandleCount(GetCurrentProcess(), &handles_after));
+        check_equal(handles_after, handles_before);
+        check_equal(salts_ipc_pipe_endpoint_close(&endpoint), SALTS_OK);
+      }
+    }
+  }
+
   it("transfers one overlapped endpoint after a client connects") {
     char name[160];
     salts_ipc_pipe_server server = {0};

@@ -299,6 +299,11 @@ int salts_ipc_platform_named_pipe_connect(const char *name, salts_ipc_pipe_direc
     if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return SALTS_ENOENT;
     return salts_ipc_windows_error(error);
   }
+  /* CreateFile also opens regular files; only a pipe may become an IPC endpoint. */
+  if (GetFileType(handle) != FILE_TYPE_PIPE) {
+    (void)CloseHandle(handle);
+    return SALTS_ENOTSUP;
+  }
   out_endpoint->handle = (uintptr_t)handle;
   out_endpoint->native_io_flags = NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE;
   return SALTS_OK;
