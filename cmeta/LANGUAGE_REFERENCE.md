@@ -366,13 +366,8 @@ finite callable type/signature configuration require separate agreement before
 dispatch; equal reflection epochs do not authorize exchanging arbitrary
 `cmeta_callable` builds. CMeta owns neither the platform loader nor its references.
 
-The complete [provider bootstrap](tests/cmeta_reflection_plugin.c) and
-[dynamic host regression](tests/cmeta_reflection_plugin_test.c) demonstrate mismatch
-rejection and borrowed metadata remaining valid while a consumer holds a module
-reference. The test does not dereference pointers after the last reference closes.
-Build `cmeta_reflection_plugin_test` and run
-`ctest --preset win-dev-user -R "^cmeta_reflection_plugin_test$"`
-from the VS developer environment (or use the matching Linux user preset).
+Dynamic module publication, loading, lease and unload verification belong to the
+Salts Plugin module and its tests.
 
 ### `interface(...)`
 

@@ -1,5 +1,13 @@
 #include "tinytest.h"
+
+#define TINYMOCK_GENERATE_FUNCTION_OVERRIDES 1
+#define TINYMOCK_SELECTIVE_FUNCTION_OVERRIDES 1
+#define TINYMOCK_SELECTED_FUNCTION_tinymock_selective_mocked TINYMOCk_PP_PROBE_()
+#define TINYMOCK_SELECTED_FUNCTION_tinymock_selective_void TINYMOCk_PP_PROBE_()
+#define TINYMOCK_SELECTED_FUNCTION_tinymock_selective_extra TINYMOCk_PP_PROBE_()
 #include "tinymock_function.h"
+#include "tinymock_selective_fixture.h"
+#include "tinymock_selective_extra_fixture.h"
 
 int tinymock_selective_consume_mocked(int value);
 int tinymock_selective_consume_real(int value);

@@ -121,6 +121,17 @@ Requirements:
 
 Repository presets use `VCPKG_ROOT` to locate vcpkg and `PROJECT_ROOT` to derive shared build/package locations.
 
+All user presets consume the shared [qigao/vcpkg-cache](https://github.com/qigao/vcpkg-cache)
+binary feed in read-only mode through `cmake/vcpkg-cache.nuget.config`, alongside
+the default local binary cache. Export `GITHUB_TOKEN` with
+`read:packages` access before configuring; the config references this environment
+variable and contains no token. The shared user preset selects
+`cmake/QigaoVcpkgToolchain.cmake` directly from the cache checkout. Windows uses
+`%LOCALAPPDATA%/qigao/vcpkg-cache`; Linux requires `VCPKG_CACHE_REPOSITORY_ROOT`
+to point to its checkout and Mono for NuGet binary restore. Clone the cache
+repository to that location before configuring. Configure presets do not load
+`.env` files automatically.
+
 ### Windows Release
 
 ```powershell

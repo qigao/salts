@@ -86,8 +86,8 @@ suite("TinyMock CMeta typed history") {
         &history, &managed_function, 1u, args));
     check_equal(managed_copy_count, (size_t)1);
 
-    check_true(tinymock_cmeta_history_arg_equal(
-        &history, 0u, 0u, &expected, tinymock_value_zero()));
+    check_true(tinymock_cmeta_history_arg_equal_typed(
+        &history, 0u, 0u, &expected));
 
     check_true(tinymock_cmeta_captor_capture(
         &captor, &history, 0u, 0u));

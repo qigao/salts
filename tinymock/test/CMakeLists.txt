@@ -22,13 +22,9 @@ cmake_add_test(cmeta_tinymock_function_auto_mock_test
   SOURCES
     tinymock_function_auto_mock_test.c
     tinymock_function_consumer.c
-  LIBS Salts::TinyTest
+  LIBS Salts::TinyMock
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
   FOLDER "tinymock/tests")
-
-salts_tinymock_override_functions(
-  cmeta_tinymock_function_auto_mock_test
-  HEADERS tinymock_function_fixture.h)
 
 set_target_properties(cmeta_tinymock_function_auto_mock_test PROPERTIES
   C_STANDARD 11
@@ -60,19 +56,9 @@ cmake_add_test(cmeta_tinymock_selective_override_test
     tinymock_selective_test.c
     tinymock_selective_consumer.c
     tinymock_selective_real.c
-  LIBS Salts::TinyTest
+  LIBS Salts::TinyMock
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
   FOLDER "tinymock/tests")
-
-salts_tinymock_override_functions(
-  cmeta_tinymock_selective_override_test
-  HEADERS
-    tinymock_selective_fixture.h
-    tinymock_selective_extra_fixture.h
-  FUNCTIONS
-    tinymock_selective_mocked
-    tinymock_selective_void
-    tinymock_selective_extra)
 
 set_target_properties(cmeta_tinymock_selective_override_test PROPERTIES
   C_STANDARD 11
@@ -138,28 +124,16 @@ tinymock_add_compile_failure_test(
   cmeta_tinymock_variadic_selection_compile_fail
   compile_fail/tinymock_variadic_selection.c
   "tinymock_required_FunctionDecl_tinymock_bad_variadic")
-salts_tinymock_override_functions(
-  cmeta_tinymock_variadic_selection_compile_fail
-  HEADERS compile_fail/tinymock_variadic_header.h
-  FUNCTIONS tinymock_bad_variadic)
 
 tinymock_add_compile_failure_test(
   cmeta_tinymock_array_selection_compile_fail
   compile_fail/tinymock_array_selection.c
   "tinymock_required_FunctionDecl_tinymock_bad_array")
-salts_tinymock_override_functions(
-  cmeta_tinymock_array_selection_compile_fail
-  HEADERS compile_fail/tinymock_array_header.h
-  FUNCTIONS tinymock_bad_array)
 
 tinymock_add_compile_failure_test(
   cmeta_tinymock_static_inline_selection_compile_fail
   compile_fail/tinymock_static_inline_selection.c
   "tinymock_required_FunctionDecl_tinymock_bad_inline")
-salts_tinymock_override_functions(
-  cmeta_tinymock_static_inline_selection_compile_fail
-  HEADERS compile_fail/tinymock_static_inline_header.h
-  FUNCTIONS tinymock_bad_inline)
 
 
 if(NOT CMAKE_CROSSCOMPILING)

@@ -1,4 +1,6 @@
 #include "tinytest.h"
+
+#define TINYMOCK_GENERATE_FUNCTION_OVERRIDES 1
 #include "tinymock_function.h"
 
 #include "tinymock_function_consumer.h"
@@ -255,12 +257,16 @@ suite("TinyMock reflected free functions") {
 
   it("uses typed scalar and pointer returns") {
     int typed_add = 88;
+    int typed_answer = 25;
     int pointer_value = 123;
     int *typed_pointer = &pointer_value;
 
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_add);
+    TINYMOCk_FUNCTION_RESET(tinymock_fixture_answer);
     check_true(TINYMOCk_FUNCTION_SET_RETURN(
         tinymock_fixture_add, typed_add));
+    check_true(TINYMOCk_FUNCTION_SET_RETURN(
+        tinymock_fixture_answer, typed_answer));
     check_equal(tinymock_function_consumer_run(1), 88);
 
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_pointer_answer);
@@ -269,6 +275,7 @@ suite("TinyMock reflected free functions") {
     check_true(tinymock_function_consumer_pointer_answer() == &pointer_value);
 
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_add);
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_answer);
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_pointer_answer);
   }
 
@@ -393,5 +400,16 @@ suite("TinyMock reflected free functions") {
 
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_add);
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_answer);
+  }
+
+  group("unstubbed returns") {
+    after_each() {
+      TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_answer);
+    }
+
+    it_should_fail("fails immediately when no return value is scripted") {
+      TINYMOCk_FUNCTION_RESET(tinymock_fixture_answer);
+      (void)tinymock_fixture_answer();
+    }
   }
 }

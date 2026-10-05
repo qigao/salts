@@ -20,7 +20,6 @@
         {
             "name": "pkg-vcpkg",
             "hidden": true,
-            "toolchainFile": "$env{QIGAO_VCPKG_TOOLCHAIN_FILE}",
             "cacheVariables": {
                 "VCPKG_MANIFEST_MODE": true
             }

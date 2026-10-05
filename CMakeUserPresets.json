@@ -5,20 +5,30 @@
     ],
     "configurePresets": [
         {
+            "name": "vcpkg-cache",
+            "hidden": true,
+            "toolchainFile": "$env{VCPKG_CACHE_REPOSITORY_ROOT}/cmake/QigaoVcpkgToolchain.cmake",
+            "environment": {
+                "VCPKG_CACHE_REPOSITORY_ROOT": "$penv{VCPKG_CACHE_REPOSITORY_ROOT}",
+                "VCPKG_BINARY_SOURCES": "clear;default,readwrite;nugettimeout,1800;nugetconfig,${sourceDir}/cmake/vcpkg-cache.nuget.config,read"
+            }
+        },
+        {
             "name": "win-toolchain",
             "hidden": true,
+            "inherits": "vcpkg-cache",
             "environment": {
                 "PROJECT_ROOT": "$penv{PROJECT_ROOT}",
                 "PKG_ROOT": "$env{PROJECT_ROOT}/external/pkgs",
                 "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
-                "VCPKG_ROOT": "$penv{VCPKG_ROOT}"
+                "VCPKG_ROOT": "$penv{VCPKG_ROOT}",
+                "VCPKG_CACHE_REPOSITORY_ROOT": "$penv{LOCALAPPDATA}/qigao/vcpkg-cache"
             }
         },
         {
             "name": "win-paths",
             "hidden": true,
             "inherits": "win-toolchain",
-            "toolchainFile": "$env{QIGAO_VCPKG_TOOLCHAIN_FILE}",
             "cacheVariables": {
                 "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}",
                 "VCPKG_TARGET_TRIPLET": "x64-windows",
@@ -36,7 +46,7 @@
         {
             "name": "linux-paths",
             "hidden": true,
-            "toolchainFile": "$env{QIGAO_VCPKG_TOOLCHAIN_FILE}",
+            "inherits": "vcpkg-cache",
             "cacheVariables": {
                 "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}",
                 "VCPKG_TARGET_TRIPLET": "x64-linux",

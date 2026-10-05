@@ -1,5 +1,5 @@
 #include "salts_crypto.h"
-#include "tinytest.h"
+#include "tinytest.hpp"
 
 #include <cstddef>
 #include <cstdint>

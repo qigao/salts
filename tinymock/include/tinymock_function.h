@@ -4,12 +4,18 @@
 /*
  * TinyMock free-function bridge for CMeta FunctionDecl.
  *
- * Normal test translation units include this header for state/access macros.
- * A generated replacement translation unit defines
- * TINYMOCK_GENERATE_FUNCTION_OVERRIDES before including this header, then
- * includes one or more production headers containing FunctionDecl(...)
- * declarations. The CMeta declaration extension hook replays those exact rows
- * into external replacement definitions.
+ * Define TINYMOCK_GENERATE_FUNCTION_OVERRIDES in the test source before
+ * including this header and any production headers containing FunctionDecl.
+ * The CMeta declaration extension hook replays those exact rows into external
+ * replacement definitions in that test translation unit. No additional source
+ * file or CMake generator is required; link the test with Salts::TinyMock.
+ * Other translation units can include this header without the generation flag
+ * to access the same mock state through TINYMOCk_FUNCTION_DECLARE.
+ * In the generating test source, TINYMOCk_FUNCTION_DECLARE must follow the
+ * production declarations and rejects functions without generated overrides.
+ *
+ * See tinymock/test/tinymock_function_auto_mock_test.c for a complete test,
+ * and tinymock/test/tinymock_selective_test.c for selective replacement.
  *
  * Reflected wrappers use only CMeta typed history/actions/returns. Call-count
  * verification is derived directly from typed history; reflected functions do
@@ -46,7 +52,18 @@
 #define TINYMOCk_FUNCTION_RETURN_STATE_NAME(name) \
   TINYMOCk_FUNCTION_RETURN_STATE_NAME_I(name)
 
+#if defined(TINYMOCK_GENERATE_FUNCTION_OVERRIDES)
+#define TINYMOCk_FUNCTION_REQUIRE_DECL_(name) \
+  _Static_assert( \
+      sizeof(struct tinymock_required_FunctionDecl_##name) == sizeof(char), \
+      "TinyMock function " #name " must be declared with FunctionDecl " \
+      "and selected for generation");
+#else
+#define TINYMOCk_FUNCTION_REQUIRE_DECL_(name)
+#endif
+
 #define TINYMOCk_FUNCTION_DECLARE(name) \
+  TINYMOCk_FUNCTION_REQUIRE_DECL_(name) \
   extern struct tinymock_cmeta_history TINYMOCk_FUNCTION_HISTORY_NAME(name); \
   extern struct tinymock_cmeta_actions TINYMOCk_FUNCTION_ACTIONS_NAME(name); \
   extern struct tinymock_cmeta_return TINYMOCk_FUNCTION_RETURN_STATE_NAME(name); \
@@ -156,12 +173,12 @@
 #if defined(TINYMOCK_SELECTIVE_FUNCTION_OVERRIDES)
 #define TINYMOCk_FUNCTION_SHOULD_GENERATE_(name) \
   TINYMOCk_FUNCTION_IS_SELECTED_(name)
-#define TINYMOCk_FUNCTION_SELECTION_WITNESS(name) \
-  struct TINYMOCk_FUNCTION_WITNESS_TAG(name) { char seen; };
 #else
 #define TINYMOCk_FUNCTION_SHOULD_GENERATE_(name) 1
-#define TINYMOCk_FUNCTION_SELECTION_WITNESS(name)
 #endif
+
+#define TINYMOCk_FUNCTION_SELECTION_WITNESS(name) \
+  struct TINYMOCk_FUNCTION_WITNESS_TAG(name) { char seen; };
 
 #ifdef CMETA_FUNCTION_DECL_EXTENSION
 #undef CMETA_FUNCTION_DECL_EXTENSION

@@ -26,28 +26,6 @@ foreach(admission_case IN ITEMS POINTER_PARAM OBJECT_PARAM POINTER_RETURN OBJECT
     PASS_REGULAR_EXPRESSION "${admission_diagnostic}" RUN_SERIAL TRUE)
 endforeach()
 
-# libuv is already a manifest dependency. It is used only by the test host;
-# CMeta and the provider remain independent of the platform loader.
-find_package(libuv CONFIG REQUIRED)
-add_library(cmeta_reflection_plugin MODULE cmeta_reflection_plugin.c)
-target_link_libraries(cmeta_reflection_plugin PRIVATE Salts::CMeta)
-set_target_properties(cmeta_reflection_plugin PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "cmeta/tests")
-add_executable(cmeta_reflection_plugin_test cmeta_reflection_plugin_test.c)
-target_link_libraries(cmeta_reflection_plugin_test PRIVATE
-  Salts::CMeta Salts::TinyTest
-  $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
-target_compile_definitions(cmeta_reflection_plugin_test PRIVATE
-  CMETA_TEST_PLUGIN_PATH="$<TARGET_FILE:cmeta_reflection_plugin>")
-# uv.h exposes pthread_rwlock_t even when only its loader API is used.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  target_compile_definitions(cmeta_reflection_plugin_test PRIVATE _POSIX_C_SOURCE=200809L)
-endif()
-add_dependencies(cmeta_reflection_plugin_test cmeta_reflection_plugin)
-set_target_properties(cmeta_reflection_plugin_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "cmeta/tests")
-add_test(NAME cmeta_reflection_plugin_test COMMAND cmeta_reflection_plugin_test)
-
 cmake_add_test(cmeta_enum_bits_test
   SOURCES cmeta_enum_bits_test.c
   LIBS Salts::CMeta
