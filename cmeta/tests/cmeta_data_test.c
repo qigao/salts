@@ -763,6 +763,122 @@ spec("CMeta semantic data descriptors") {
     check_equal(cmeta_data_fixed_restore_zero(peer, &destination), CMETA_OK);
   }
 
+  it("assigns and borrows complete inline bytes through the v2 buffer facade") {
+    const cmeta_data_desc *data = cmeta_fixed_bytes_fixture_from_peer();
+    cmeta_fixed_bytes_fixture source = {1u, 2u, 3u, 4u, 5u, 6u};
+    struct {
+      unsigned char before;
+      cmeta_fixed_bytes_fixture value;
+      unsigned char after;
+    } destination = {0x5au, {0}, 0xa5u};
+    const unsigned char *span = NULL;
+    size_t size = 0u;
+
+    check_not_null(cmeta_data_buffer_ops_of(data));
+    check_true(cmeta_data_value_traits_supported(data));
+    check_equal(cmeta_data_buffer_assign(data, &destination.value, source,
+                                         sizeof(source), sizeof(source)),
+                CMETA_OK);
+    source[0] = 9u;
+    check_equal(destination.value[0], (unsigned char)1u);
+    check_equal(cmeta_data_buffer_read(data, &destination.value,
+                                       sizeof(destination.value), &span, &size),
+                CMETA_OK);
+    check_true(span == destination.value);
+    check_equal(size, sizeof(destination.value));
+    check_equal(cmeta_data_buffer_restore_zero(data, &destination.value), CMETA_OK);
+    check_equal(cmeta_data_buffer_read(data, &destination.value,
+                                       sizeof(destination.value), &span, &size),
+                CMETA_OK);
+    check_true(span == destination.value);
+    check_equal(size, sizeof(destination.value));
+    check_true(data->buffer_ops->is_zero(&destination.value));
+    check_equal(destination.before, (unsigned char)0x5au);
+    check_equal(destination.after, (unsigned char)0xa5u);
+  }
+
+  it("rejects fixed byte length and budget mismatches before publication") {
+    const cmeta_data_desc *data = cmeta_fixed_bytes_fixture_from_peer();
+    const unsigned char source[sizeof(cmeta_fixed_bytes_fixture) + 1u] = {1u};
+    cmeta_fixed_bytes_fixture destination = {0};
+    const unsigned char *span = source;
+    size_t size = sizeof(source);
+
+    check_equal(cmeta_data_buffer_assign(data, &destination, source,
+                                         sizeof(destination) - 1u, sizeof(source)),
+                CMETA_TYPE_MISMATCH);
+    check_equal(cmeta_data_buffer_assign(data, &destination, source,
+                                         sizeof(source), sizeof(source)),
+                CMETA_TYPE_MISMATCH);
+    check_equal(cmeta_data_buffer_assign(data, &destination, source, 0u,
+                                         sizeof(source)), CMETA_TYPE_MISMATCH);
+    check_equal(cmeta_data_buffer_assign(data, &destination, source,
+                                         sizeof(destination), sizeof(destination) - 1u),
+                CMETA_CAPACITY_EXCEEDED);
+    check_true(data->buffer_ops->is_zero(&destination));
+    check_equal(cmeta_data_buffer_read(data, &destination,
+                                       sizeof(destination) - 1u, &span, &size),
+                CMETA_CAPACITY_EXCEEDED);
+    check_true(span == source);
+    check_equal(size, sizeof(source));
+
+    destination[0] = 9u;
+    check_equal(cmeta_data_buffer_assign(data, &destination, source,
+                                         sizeof(destination), sizeof(destination)),
+                CMETA_INVALID_ARGUMENT);
+    check_equal(destination[0], (unsigned char)9u);
+    check_equal(cmeta_data_buffer_assign(data, &destination, NULL,
+                                         sizeof(destination), sizeof(destination)),
+                CMETA_INVALID_ARGUMENT);
+  }
+
+  it("moves fixed bytes through canonical value and construction lifecycles") {
+    const cmeta_data_desc *data = cmeta_fixed_bytes_fixture_from_peer();
+    const cmeta_fixed_bytes_fixture expected = {1u, 2u, 3u, 4u, 5u, 6u};
+    cmeta_fixed_bytes_fixture source = {1u, 2u, 3u, 4u, 5u, 6u};
+    cmeta_fixed_bytes_fixture destination = {9u};
+
+    check_not_null(cmeta_data_construct_ops_of(data));
+    check_equal(cmeta_data_value_move(data, &destination, &source),
+                CMETA_INVALID_ARGUMENT);
+    check_equal(source, expected, sizeof(expected));
+    check_equal(destination[0], (unsigned char)9u);
+    check_equal(cmeta_data_buffer_init_zero(data, &destination), CMETA_OK);
+    check_equal(cmeta_data_value_move(data, &source, &source), CMETA_INVALID_ARGUMENT);
+    check_equal(cmeta_data_value_move(data, &destination, &source), CMETA_OK);
+    check_equal(destination, expected, sizeof(expected));
+    check_true(data->buffer_ops->is_zero(&source));
+    check_equal(cmeta_data_construct_move(data, &source, &destination), CMETA_OK);
+    check_equal(source, expected, sizeof(expected));
+    check_true(data->buffer_ops->is_zero(&destination));
+    check_equal(cmeta_data_value_restore_zero(data, &source), CMETA_OK);
+    check_equal(cmeta_data_value_move(data, &destination, &source), CMETA_OK);
+    check_true(data->buffer_ops->is_zero(&destination));
+    check_equal(cmeta_data_construct_restore_zero(data, &source), CMETA_OK);
+    check_equal(cmeta_data_construct_restore_zero(data, &source), CMETA_OK);
+  }
+
+  it("constructs independent fixed byte elements through native type traits") {
+    const cmeta_data_desc *data = cmeta_fixed_bytes_fixture_from_peer();
+    const cmeta_type_traits *traits = data->storage_type->traits;
+    const cmeta_fixed_bytes_fixture expected = {1u, 2u, 3u, 4u, 5u, 6u};
+    cmeta_fixed_bytes_fixture source = {1u, 2u, 3u, 4u, 5u, 6u};
+    cmeta_fixed_bytes_fixture destination = {9u};
+
+    check_equal(cmeta_type_require_traits(data->storage_type,
+                  CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY), CMETA_OK);
+    check_true(traits->copy_construct(&destination, &source));
+    check_equal(destination, expected, sizeof(expected));
+    source[0] = 9u;
+    check_equal(destination[0], (unsigned char)1u);
+    traits->move_construct(&source, &destination);
+    check_equal(source, expected, sizeof(expected));
+    check_true(data->buffer_ops->is_zero(&destination));
+    traits->destroy(&source);
+    traits->destroy(&source);
+    check_true(data->buffer_ops->is_zero(&source));
+  }
+
   it("copies exact fixed native values through explicit provider authority") {
     const cmeta_data_test_fixed_storage source = {{1u, 2u, 3u, 4u}};
     cmeta_data_test_fixed_storage destination = {{0}};

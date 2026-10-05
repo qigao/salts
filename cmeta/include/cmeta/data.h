@@ -198,8 +198,12 @@ struct cmeta_data_fixed_ops {
  * storage_type must be a complete native type, including an array typedef when
  * the native value is an array. extent is explicit and compilation fails when
  * it differs from sizeof(storage_type). The generated semantic zero is the
- * all-zero byte representation; copy and restore neither allocate nor retain
- * pointers. Repeated declarations in separate translation units compare by
+ * all-zero byte representation. The exact-value and buffer-v2 providers share
+ * that representation: assign requires exactly extent bytes, read borrows the
+ * complete inline value until mutation or destruction, and move clears source.
+ * Copy, move, construction, and restore neither allocate nor retain pointers.
+ * Access is single-threaded unless the owner supplies synchronization; work is
+ * O(extent) with O(1) additional storage. Repeated declarations compare by
  * the supplied stable type identity rather than by descriptor address.
  */
 #ifdef __cplusplus
@@ -216,8 +220,10 @@ struct cmeta_data_fixed_ops {
 #define CMETA_DATA_FIXED_DESC_INIT_(name_, stable_id_, display_name_)         \
     {sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,                   \
      stable_id_ ".data", display_name_, CMETA_DATA_BYTES,                   \
-     &name_##_cmeta_type, &name_##_cmeta_shape, NULL, NULL, NULL,            \
-     &name_##_cmeta_fixed_ops, NULL, NULL, NULL, NULL}
+     &name_##_cmeta_type, &name_##_cmeta_shape,                             \
+     &name_##_cmeta_buffer_ops, NULL, NULL,                                \
+     &name_##_cmeta_fixed_ops, NULL, NULL, NULL,                            \
+     &name_##_cmeta_construct_ops}
 #else
 #define CMETA_DATA_FIXED_DESC_INIT_(name_, stable_id_, display_name_)         \
     {.struct_size = sizeof(cmeta_data_desc),                                 \
@@ -227,14 +233,14 @@ struct cmeta_data_fixed_ops {
      .kind = CMETA_DATA_BYTES,                                               \
      .storage_type = &name_##_cmeta_type,                                    \
      .shape = &name_##_cmeta_shape,                                          \
-     .buffer_ops = NULL,                                                     \
+     .buffer_ops = &name_##_cmeta_buffer_ops,                              \
      .enum_ops = NULL,                                                       \
      .variant_ops = NULL,                                                    \
      .fixed_ops = &name_##_cmeta_fixed_ops,                                  \
      .enum_bits_ops = NULL,                                                  \
      .collection_ops = NULL,                                                 \
      .map_ops = NULL,                                                        \
-     .construct_ops = NULL}
+     .construct_ops = &name_##_cmeta_construct_ops}
 #endif
 
 #define CMETA_DEFINE_FIXED_BYTES(name_, storage_type_, extent_, stable_id_,  \
@@ -274,17 +280,68 @@ struct cmeta_data_fixed_ops {
         for (index_ = 0u; index_ < (extent_); ++index_)                      \
             bytes_[index_] = 0u;                                             \
     }                                                                        \
+    static inline cmeta_status name_##_cmeta_init_zero(void *object_) {     \
+        if (object_ == NULL)                                                 \
+            return CMETA_INVALID_ARGUMENT;                                  \
+        name_##_cmeta_restore_zero(object_);                                \
+        return CMETA_OK;                                                     \
+    }                                                                        \
+    static inline void name_##_cmeta_move(                                  \
+        void *destination_, void *source_) {                                \
+        (void)name_##_cmeta_copy(destination_, source_);                    \
+        name_##_cmeta_restore_zero(source_);                                \
+    }                                                                        \
+    static inline bool name_##_cmeta_copy_construct(                        \
+        void *destination_, const void *source_) {                          \
+        return name_##_cmeta_copy(destination_, source_) == CMETA_OK;       \
+    }                                                                        \
+    static inline cmeta_status name_##_cmeta_assign(                        \
+        void *object_, const unsigned char *data_,                          \
+        size_t size_, size_t max_bytes_) {                                  \
+        if (object_ == NULL || data_ == NULL)                               \
+            return CMETA_INVALID_ARGUMENT;                                  \
+        if (size_ != (extent_))                                              \
+            return CMETA_TYPE_MISMATCH;                                      \
+        if (size_ > max_bytes_)                                              \
+            return CMETA_CAPACITY_EXCEEDED;                                  \
+        return name_##_cmeta_copy(object_, data_);                          \
+    }                                                                        \
+    static inline cmeta_status name_##_cmeta_read(                          \
+        const void *object_, const unsigned char **out_data_,               \
+        size_t *out_size_) {                                                 \
+        if (object_ == NULL || out_data_ == NULL || out_size_ == NULL)       \
+            return CMETA_INVALID_ARGUMENT;                                  \
+        *out_data_ = CMETA_DATA_BYTES_CONST(object_);                       \
+        *out_size_ = (extent_);                                              \
+        return CMETA_OK;                                                     \
+    }                                                                        \
+    static const cmeta_type_traits name_##_cmeta_traits = {                 \
+        CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY,          \
+        NULL, NULL, NULL, name_##_cmeta_copy_construct,                     \
+        name_##_cmeta_move, name_##_cmeta_restore_zero};                    \
     static const cmeta_type_identity name_##_cmeta_identity =                \
         CMETA_TYPE_ID_ATOM_INIT(stable_id_);                                 \
     static const cmeta_type_desc name_##_cmeta_type = {                      \
         #storage_type_, sizeof(storage_type_), CMETA_ALIGNOF(storage_type_), \
-        CMETA_T_OBJECT, NULL, NULL, &name_##_cmeta_identity};                \
+        CMETA_T_OBJECT, NULL, &name_##_cmeta_traits,                        \
+        &name_##_cmeta_identity};                                           \
     static const cmeta_data_buffer_shape name_##_cmeta_shape = {             \
         CMETA_DATA_BUFFER_OWNED};                                            \
     static const cmeta_data_fixed_ops name_##_cmeta_fixed_ops = {            \
         sizeof(cmeta_data_fixed_ops), CMETA_DATA_FIXED_OPS_ABI_VERSION,      \
         &name_##_cmeta_type, (extent_), name_##_cmeta_is_zero,               \
         name_##_cmeta_copy, name_##_cmeta_restore_zero};                     \
+    static const cmeta_data_buffer_ops name_##_cmeta_buffer_ops = {         \
+        sizeof(cmeta_data_buffer_ops), CMETA_DATA_BUFFER_OPS_ABI_VERSION,  \
+        &name_##_cmeta_type, CMETA_DATA_BUFFER_OWNED,                       \
+        name_##_cmeta_is_zero, name_##_cmeta_assign,                        \
+        name_##_cmeta_restore_zero, name_##_cmeta_read,                      \
+        name_##_cmeta_init_zero, name_##_cmeta_move};                       \
+    static const cmeta_data_construct_ops name_##_cmeta_construct_ops = {   \
+        sizeof(cmeta_data_construct_ops),                                  \
+        CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION, &name_##_cmeta_type,          \
+        name_##_cmeta_init_zero, name_##_cmeta_restore_zero,                \
+        name_##_cmeta_move};                                                \
     static const cmeta_data_desc name_##_cmeta_data =                        \
         CMETA_DATA_FIXED_DESC_INIT_(name_, stable_id_, display_name_)
 

@@ -57,7 +57,8 @@ header.
 
 `cmeta/data.h` keeps STRING/BYTES meaning separate from native storage layout.
 A full `cmeta_data_desc` may point at versioned `cmeta_data_buffer_ops` that
-define semantic-zero detection, bounded assignment, restore-to-zero, and an
+define semantic-zero construction and detection, bounded assignment,
+no-fail move into a zero destination, restore-to-zero, and an
 optional bounded borrowed read view. The checked facade validates adapter ABI,
 storage identity plus exact physical layout, owned/borrowed agreement, the
 provider's returned pointer/size pair, and the caller's byte ceiling before
@@ -71,9 +72,19 @@ passes a byte slice to CMeta.
 
 A successful read does not copy or extend ownership. Its view expires when the
 source object is mutated, assigned, restored, destroyed, concurrently changed,
-or otherwise invalidated by the provider. Adapters that implement only the
-original v1 prefix remain valid for assignment and return
-`CMETA_TRAIT_MISSING` from the read facade.
+or otherwise invalidated by the provider. The v2 lifecycle requires both
+`init_zero` and `move`; v1 providers are rejected. Read remains optional and
+an otherwise complete provider without it returns `CMETA_TRAIT_MISSING`.
+
+`CMETA_DEFINE_FIXED_BYTES` supplies this lifecycle for a complete inline byte
+type, alongside the exact native-value provider and copy/move/destroy traits.
+Its extent must equal the native type's size and must be nonzero. Assignment
+requires exactly that extent (`CMETA_TYPE_MISMATCH` for another length) and
+obeys the byte budget (`CMETA_CAPACITY_EXCEEDED`). Read borrows the entire
+inline extent, including an all-zero value; semantic zero does not mean an
+empty span. Copy produces independent storage, move clears the source, and
+restore is idempotent. These operations allocate nothing and require exclusive
+access to mutated objects.
 
 Salts Core provides header-local `tstr` and `vstr` adapter metadata in
 `salts_cmeta_data.h`. As with other header-generated CMeta metadata, descriptor

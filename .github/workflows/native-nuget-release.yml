@@ -119,6 +119,33 @@ jobs:
           echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
           echo "release=$release" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
+  cmeta_lifecycle:
+    name: CMeta lifecycle (${{ matrix.profile }})
+    needs: metadata
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [linux-release-user, linux-dev-user]
+    env:
+      ASAN_OPTIONS: detect_leaks=1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.release_sha }}
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+      - name: Configure CMeta tests
+        run: cmake --preset ${{ matrix.profile }}
+      - name: Build CMeta lifecycle tests
+        run: >-
+          cmake --build --preset ${{ matrix.profile }} --parallel 2 --target
+          cmeta_data_test cmeta_header_cpp_test cmeta_core_test
+          cmeta_type_identity_test cmeta_container_type_test cmeta_collector_test
+      - name: Run CMeta lifecycle tests
+        run: >-
+          ctest --preset ${{ matrix.profile }} --no-tests=error --output-on-failure
+          -R '^(cmeta_data_test|cmeta_header_cpp_test|cmeta_core_test|cmeta_type_identity_test|cmeta_container_type_test|cmeta_collector_test)$'
   linux:
     name: Linux x64 SDK
     needs: metadata
@@ -653,7 +680,7 @@ jobs:
 
   pack:
     name: Pack Salts.Native
-    needs: [metadata, linux, linux_arm64, macos, windows, android, ios]
+    needs: [metadata, cmeta_lifecycle, linux, linux_arm64, macos, windows, android, ios]
     if: needs.metadata.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
