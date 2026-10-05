@@ -11,10 +11,9 @@
  * declarations. The CMeta declaration extension hook replays those exact rows
  * into external replacement definitions.
  *
- * Reflected wrappers use the legacy portable value carrier only for builtin
- * scalar compatibility. Object pointers use the explicit pointer carrier;
- * aggregate, function-pointer, and enum values use CMeta typed history/return
- * state.
+ * Reflected wrappers keep the legacy portable value carrier only as an
+ * invocation/stub-dispatch compatibility ledger. Argument semantics, capture,
+ * OUT/INOUT actions, and all reflected return values use CMeta typed state.
  * Literal-void and value-return functions are generated separately at
  * preprocessing time. Variadic declarations remain outside this backend.
  */
@@ -273,72 +272,29 @@
       "TinyMock auto-mock void return for " #name \
       " must use CMETA_ABI_VOID")
 
-#define TINYMOCk_FUNCTION_RETURN_TYPED_OR_LEGACY( \
-    name, type, legacy_result) \
+#define TINYMOCk_FUNCTION_RETURN_TYPED_ONLY(name, type) \
   do { \
     type typed_result__; \
-    if (tinymock_cmeta_return_enabled(TINYMOCk_FUNCTION_RETURN_STATE(name))) { \
-      bool typed_ok__ = tinymock_cmeta_return_write( \
-          TINYMOCk_FUNCTION_RETURN_STATE(name), FunctionMeta(name), \
-          &typed_result__); \
-      TINYMOCk_ASSERT(typed_ok__, \
-                      "tinymock cannot materialize typed return for %s", #name); \
-      if (typed_ok__) return typed_result__; \
-    } \
-    return TINYMOCk_VALUE_AS(type, legacy_result); \
+    bool typed_ok__ = tinymock_cmeta_return_write( \
+        TINYMOCk_FUNCTION_RETURN_STATE(name), FunctionMeta(name), \
+        &typed_result__); \
+    TINYMOCk_ASSERT(typed_ok__, \
+                    "tinymock reflected return for %s requires a typed return", \
+                    #name); \
+    if (typed_ok__) return typed_result__; \
+    return (type){0}; \
   } while (0)
 
 #define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_SCALAR(name, type, result) \
-  TINYMOCk_FUNCTION_RETURN_TYPED_OR_LEGACY(name, type, result)
+  do { (void)(result); TINYMOCk_FUNCTION_RETURN_TYPED_ONLY(name, type); } while (0)
 #define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_OBJECT_POINTER(name, type, result) \
-  do { \
-    type typed_result__; \
-    if (tinymock_cmeta_return_enabled(TINYMOCk_FUNCTION_RETURN_STATE(name))) { \
-      bool typed_ok__ = tinymock_cmeta_return_write( \
-          TINYMOCk_FUNCTION_RETURN_STATE(name), FunctionMeta(name), \
-          &typed_result__); \
-      TINYMOCk_ASSERT(typed_ok__, \
-                      "tinymock cannot materialize typed return for %s", #name); \
-      if (typed_ok__) return typed_result__; \
-    } \
-    return (type)tinymock_detail_unbox_ptr(result); \
-  } while (0)
+  do { (void)(result); TINYMOCk_FUNCTION_RETURN_TYPED_ONLY(name, type); } while (0)
 #define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_AGGREGATE(name, type, result) \
-  do { \
-    (void)(result); \
-    type typed_result__ = {0}; \
-    bool typed_ok__ = tinymock_cmeta_return_write( \
-        TINYMOCk_FUNCTION_RETURN_STATE(name), FunctionMeta(name), \
-        &typed_result__); \
-    TINYMOCk_ASSERT(typed_ok__, \
-                    "tinymock aggregate return for %s requires a typed return", \
-                    #name); \
-    return typed_result__; \
-  } while (0)
+  do { (void)(result); TINYMOCk_FUNCTION_RETURN_TYPED_ONLY(name, type); } while (0)
 #define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_FUNCTION_POINTER(name, type, result) \
-  do { \
-    (void)(result); \
-    type typed_result__ = (type)0; \
-    bool typed_ok__ = tinymock_cmeta_return_write( \
-        TINYMOCk_FUNCTION_RETURN_STATE(name), FunctionMeta(name), \
-        &typed_result__); \
-    TINYMOCk_ASSERT(typed_ok__, \
-                    "tinymock function-pointer return for %s requires a typed return", \
-                    #name); \
-    return typed_result__; \
-  } while (0)
+  do { (void)(result); TINYMOCk_FUNCTION_RETURN_TYPED_ONLY(name, type); } while (0)
 #define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_ENUM(name, type, result) \
-  do { \
-    (void)(result); \
-    type typed_result__ = (type)0; \
-    bool typed_ok__ = tinymock_cmeta_return_write( \
-        TINYMOCk_FUNCTION_RETURN_STATE(name), FunctionMeta(name), \
-        &typed_result__); \
-    TINYMOCk_ASSERT(typed_ok__, \
-                    "tinymock enum return for %s requires a typed return", \
-                    #name); \
-    return typed_result__; \
-  } while (0)
+  do { (void)(result); TINYMOCk_FUNCTION_RETURN_TYPED_ONLY(name, type); } while (0)
 #define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_UNSPECIFIED(name, type, result) \
   return *(type *)0
 #define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_OPAQUE(name, type, result) \
