@@ -576,7 +576,7 @@ jobs:
           rem benchmark target is actually generated.
           cmake --preset win-release-user -DBUILD_TESTS=ON -DENABLE_TESTS=OFF -DBUILD_BENCHMARKS=ON -DBUILD_EXAMPLES=OFF
           if errorlevel 1 exit /b 1
-          cmake --build --preset win-release-user --parallel 2 --target cflow_parallel_reduce_benchmark
+          cmake --build --preset win-release-user --parallel 2
           if errorlevel 1 exit /b 1
           if not exist "build\Msvc-Release\bin\cflow_parallel_reduce_benchmark.exe" exit /b 1
 
@@ -608,15 +608,6 @@ jobs:
           } finally {
             git worktree remove --force $baselineSource 2>$null
           }
-
-      - name: Build CFlow ordered parallel reduce benchmark / Windows
-        if: needs.scope.outputs.cflow == 'true' && matrix.family == 'windows' && matrix.backend == 'iocp'
-        shell: cmd
-        run: |
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target cflow_parallel_reduce_benchmark
-          if errorlevel 1 exit /b 1
 
       - name: Run CFlow ordered parallel reduce benchmark / Windows
         if: needs.scope.outputs.cflow == 'true' && matrix.family == 'windows' && matrix.backend == 'iocp'
@@ -663,10 +654,10 @@ jobs:
             -DVCPKG_HOST_TRIPLET=%QIGAO_VCPKG_WINDOWS_HOST_TRIPLET% ^
             -DVCPKG_MANIFEST_MODE=ON ^
             -DVCPKG_INSTALLED_DIR="%BASELINE_SOURCE%\vcpkg_installed" ^
-            -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF ^
+            -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF ^
             -DPKG_CONFIG_EXECUTABLE="%BASELINE_PKGCONF%"
           if errorlevel 1 exit /b 1
-          cmake --build build\Msvc-Release --target cnet
+          cmake --build build\Msvc-Release --parallel 2
           if errorlevel 1 exit /b 1
           if not exist "build\Msvc-Release\bin\cnet.dll" exit /b 1
           powershell -NoProfile -ExecutionPolicy Bypass -File "%BASELINE_SOURCE%\cmake\ci\stage-windows-cnet-runtime.ps1" -Prefix "%BASELINE_SOURCE%\build\Msvc-Release" -VcpkgInstalledDir "%BASELINE_SOURCE%\vcpkg_installed"
