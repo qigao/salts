@@ -7,10 +7,13 @@
 
 #include <cnet/cnet.h>
 
+#include <stddef.h>
+
 int cnet_test_datagram_fail_next_drive(cnet_datagram *datagram, int status);
 int cnet_test_datagram_set_persistent_drive_failure(cnet_datagram *datagram, int status);
 int cnet_test_datagram_process_mixed_batch(size_t *out_callbacks);
 int cnet_test_packet_endpoint_fail_next_datagram_drive(cnet_packet_endpoint *endpoint,
                                                        int status);
+int cnet_test_tls_der_bundle_required_size(size_t current, size_t appended, size_t *out_required);
 
 #endif /* CNET_TEST_INTERNAL_H */
