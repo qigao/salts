@@ -169,6 +169,8 @@ static const cmeta_type_identity cmeta_id_void_ptr =
     CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_void);
 static const cmeta_type_identity cmeta_id_char_ptr =
     CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_char);
+static const cmeta_type_identity cmeta_id_char_ptr_ptr =
+    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_char_ptr);
 static const cmeta_type_identity cmeta_id_descriptor_ptr =
     CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_descriptor);
 static const cmeta_type_identity cmeta_id_bool_ptr =
@@ -251,6 +253,11 @@ const cmeta_type_desc cmeta_type_char_ptr = {
     .name = "char *", .size = sizeof(char *), .align = _Alignof(char *),
     .kind = CMETA_T_POINTER, .pointee = &cmeta_type_char,
     .traits = NULL, .identity = &cmeta_id_char_ptr
+};
+const cmeta_type_desc cmeta_type_char_ptr_ptr = {
+    .name = "char **", .size = sizeof(char **), .align = _Alignof(char **),
+    .kind = CMETA_T_POINTER, .pointee = &cmeta_type_char_ptr,
+    .traits = NULL, .identity = &cmeta_id_char_ptr_ptr
 };
 const cmeta_type_desc cmeta_type_void = {
     .name = "void", .size = 0, .align = 1, .kind = CMETA_T_VOID,

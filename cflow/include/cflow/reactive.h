@@ -43,6 +43,8 @@ typedef struct cflow_step {
     const char *error;
 } cflow_step;
 
+extern const cmeta_type_desc cflow_type_step;
+
 typedef struct cflow_publish_context {
     cflow_scheduler *scheduler;
     /**
@@ -52,6 +54,9 @@ typedef struct cflow_publish_context {
      */
     size_t downstream_demand;
 } cflow_publish_context;
+
+extern const cmeta_type_desc cflow_type_publish_context;
+extern const cmeta_type_desc cflow_type_publish_context_ptr;
 
 typedef struct cflow_resumable_ops {
     /* resume receives empty output storage and constructs a live value only
@@ -74,14 +79,35 @@ Enum(cflow_publisher_terminal,
     (CFLOW_PUBLISHER_ERROR, "error")
 );
 
+extern const cmeta_type_desc cflow_type_publisher_terminal;
+
 #define CFLOW_PUBLISHER_METHODS(X,I) \
-    X(I,R0,const char *,name,_) \
-    X(I,R0,const cmeta_type_desc *,output_type,_) \
-    X(I,R2,cflow_step,resume,cflow_publish_context *,ctx,void *,out_value) \
-    X(I,V0,void,cancel,_) \
-    X(I,V0,void,destroy,_) \
-    X(I,V1,void,bind_terminal_waker,cflow_waker,waker) \
-    X(I,R1,cflow_publisher_terminal,poll_terminal,const char **,error)
+    X(I,FR0,const char *,name,value, \
+      &cmeta_type_char_ptr,CMETA_ABI_OBJECT_POINTER, \
+      CMETA_RESULT_BORROWED) \
+    X(I,FR0,const cmeta_type_desc *,output_type,value, \
+      &cmeta_type_descriptor_ptr,CMETA_ABI_OBJECT_POINTER, \
+      CMETA_RESULT_BORROWED) \
+    X(I,FR2,cflow_step,resume,stateful, \
+      &cflow_type_step,CMETA_ABI_AGGREGATE,CMETA_RESULT_VALUE, \
+      (cflow_publish_context *,ctx, \
+       CMETA_PARAM_IN | CMETA_PARAM_BORROWED | CMETA_PARAM_NULLABLE, \
+       &cflow_type_publish_context_ptr,CMETA_ABI_OBJECT_POINTER), \
+      (void *,out_value,CMETA_PARAM_OUT | CMETA_PARAM_BORROWED, \
+       &cmeta_type_void_ptr,CMETA_ABI_OBJECT_POINTER)) \
+    X(I,FV0,void,cancel,stateful, \
+      &cmeta_type_void,CMETA_ABI_VOID) \
+    X(I,FD0,void,destroy,stateful, \
+      &cmeta_type_void,CMETA_ABI_VOID) \
+    X(I,FV1,void,bind_terminal_waker,stateful, \
+      &cmeta_type_void,CMETA_ABI_VOID, \
+      (cflow_waker,waker,CMETA_PARAM_IN, \
+       &cflow_type_waker,CMETA_ABI_AGGREGATE)) \
+    X(I,FR1,cflow_publisher_terminal,poll_terminal,stateful, \
+      &cflow_type_publisher_terminal,CMETA_ABI_ENUM,CMETA_RESULT_VALUE, \
+      (const char **,error, \
+       CMETA_PARAM_OUT | CMETA_PARAM_BORROWED | CMETA_PARAM_NULLABLE, \
+       &cmeta_type_char_ptr_ptr,CMETA_ABI_OBJECT_POINTER))
 CMETA_INTERFACE(cflow_publisher, CFLOW_PUBLISHER_METHODS);
 
 enum {
