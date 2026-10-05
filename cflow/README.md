@@ -254,6 +254,14 @@ explicit-self reasons above. Hybrid artifacts such as `cflow_plan` expose
 documented read-only fields, but are not the template for a
 new long-lived execution owner.
 
+All public CFlow extension interfaces use CMeta full reflection
+(`F/FR/FV/FD`) as their single semantic schema. Each method publishes a
+canonical `FunctionDesc` plus exact `FunctionAbi`, including explicit result
+semantics and pointer direction/borrow/nullability where authoritative.
+Legacy CMeta `R/V/D` rows remain a CMeta compatibility facility, but CFlow
+does not use them for public interfaces and does not maintain a fallback
+reflection model.
+
 Every new opaque execution owner must extend the public-header compile test and
 add lifecycle tests for zero-state rejection, failed initialization, successful
 shutdown, repeated empty destruction where promised, and forbidden callback or
