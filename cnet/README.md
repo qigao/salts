@@ -170,9 +170,13 @@ their unified packet endpoint; WebSocket remains in `<cnet/websocket.h>`. CNet p
 TCP, TLS, and UDP URIs through Salts UriParser and then applies
 transport-specific constraints: network URIs require an explicit port and reject
 userinfo, path, query, and fragment components instead of accepting truncated or
-ambiguous input. VSOCK uses a separate strict decimal `uint32` CID/port parser
-and never enters DNS. Pipe is a scheme-specific IPC endpoint rather than a
-network authority, so its bounded name after `pipe://` is preserved byte-for-byte.
+ambiguous input. Bracketed network hosts must be valid IPv6 literals;
+bracketed names, IPv4 addresses, and malformed IPv6 return `SALTS_EINVAL`,
+while unsupported IPvFuture literals return `SALTS_ENOTSUP`. These failures
+occur before connection admission or DNS lookup. VSOCK uses a separate strict
+decimal `uint32` CID/port parser and never enters DNS. Pipe is a scheme-specific
+IPC endpoint rather than a network authority, so its bounded name after
+`pipe://` is preserved byte-for-byte.
 
 ## Socket tuning
 

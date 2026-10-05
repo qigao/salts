@@ -39,6 +39,49 @@ spec("CNet strict transport URI") {
     check_equal(strcmp(uri.path, "name:segment"), 0);
   }
 
+  it("preserves compressed full and IPv4-mapped IPv6 literals") {
+    static const char *const inputs[] = {"tcp://[2001:db8::1]:443",
+                                         "tls://[2001:0db8:0000:0000:0000:0000:0000:0001]:443",
+                                         "udp://[::ffff:192.0.2.1]:443"};
+    static const char *const hosts[] = {"2001:db8::1", "2001:0db8:0000:0000:0000:0000:0000:0001",
+                                        "::ffff:192.0.2.1"};
+    cnet_uri uri = {0};
+    for (size_t index = 0u; index < sizeof(inputs) / sizeof(inputs[0]); ++index) {
+      check_equal(cnet_uri_parse(inputs[index], &uri), SALTS_OK);
+      check_equal(uri.host, hosts[index]);
+      check_equal(uri.port, 443u);
+    }
+  }
+
+  it("rejects bracketed names IPv4 addresses and malformed IPv6 literals") {
+    static const char *const inputs[] = {
+        "tcp://[localhost]:80",        "tls://[example.com]:443",
+        "udp://[127.0.0.1]:9000",      "tcp://[::g]:80",
+        "tls://[::1::]:443",           "udp://[::ffff:999.0.0.1]:9000",
+        "tcp://[1:2:3:4:5:6:7:8:9]:80"};
+    cnet_uri uri;
+    for (size_t index = 0u; index < sizeof(inputs) / sizeof(inputs[0]); ++index) {
+      memset(&uri, 0xff, sizeof(uri));
+      check_equal(cnet_uri_parse(inputs[index], &uri), SALTS_EINVAL);
+      check_equal(uri.scheme, CNET_URI_NONE);
+      check_equal(uri.host[0], '\0');
+      check_equal(uri.port, 0u);
+    }
+  }
+
+  it("rejects unsupported IPvFuture instead of routing its contents to DNS") {
+    static const char *const inputs[] = {"tcp://[v1.localhost]:80", "tls://[vf.example]:443",
+                                         "udp://[v1.loopback]:9000", "tcp://[V1.localhost]:80"};
+    cnet_uri uri;
+    for (size_t index = 0u; index < sizeof(inputs) / sizeof(inputs[0]); ++index) {
+      memset(&uri, 0xff, sizeof(uri));
+      check_equal(cnet_uri_parse(inputs[index], &uri), SALTS_ENOTSUP);
+      check_equal(uri.scheme, CNET_URI_NONE);
+      check_equal(uri.host[0], '\0');
+      check_equal(uri.port, 0u);
+    }
+  }
+
   it("parses full-width numeric VSOCK endpoints") {
     cnet_uri uri = {0};
 

@@ -275,6 +275,14 @@ static void cnet_api_test_ignore_state(void *user, cnet_connection connection,
   (void)error;
 }
 
+static void cnet_api_test_count_state(void *user, cnet_connection connection,
+                                      cnet_connection_state state, const cnet_error *error) {
+  (void)connection;
+  (void)state;
+  (void)error;
+  ++*(size_t *)user;
+}
+
 static void cnet_api_test_poll_state(void *user, cnet_connection connection,
                                      cnet_connection_state state, const cnet_error *error) {
   cnet_api_test_poll_probe *probe = (cnet_api_test_poll_probe *)user;
@@ -1568,6 +1576,63 @@ spec("CNet public client API") {
     check_equal(cnet_client_stop(&client, 5000u), SALTS_OK);
     check_equal(cnet_client_destroy(&client), SALTS_OK);
     check_null(client.impl);
+  }
+
+  group("network IP literal admission") {
+    static cnet_client client;
+    static size_t state_callbacks;
+
+    before_each() {
+      cnet_client_config config = cnet_api_test_config();
+      config.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
+      config.tls_handshake_timeout_ms = CNET_API_TEST_TIMEOUT_MS;
+      client = (cnet_client){0};
+      state_callbacks = 0u;
+      check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    }
+
+    after_each() {
+      if (client.impl != NULL) {
+        check_equal_warn(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+        check_equal_warn(cnet_client_destroy(&client), SALTS_OK);
+      }
+    }
+
+    it("rejects bracketed names and IPv4 without publishing a connection or callback") {
+      static const char *const inputs[] = {"tcp://[localhost]:80", "tls://[example.com]:443",
+                                           "udp://[127.0.0.1]:9000"};
+      cnet_connect_options options = {
+          .observer = {.on_state = cnet_api_test_count_state, .user = &state_callbacks}};
+      for (size_t index = 0u; index < sizeof(inputs) / sizeof(inputs[0]); ++index) {
+        cnet_connection connection = {17u, 19u};
+        size_t events = 1u;
+        options.uri = inputs[index];
+        check_equal(cnet_connect(&client, &options, &connection), SALTS_EINVAL);
+        check_equal(connection.slot, 0u);
+        check_equal(connection.generation, 0u);
+        check_equal(cnet_client_poll(&client, 0u, &events), SALTS_OK);
+        check_equal(events, 0u);
+        check_equal(state_callbacks, 0u);
+      }
+    }
+
+    it("rejects IPvFuture without publishing a connection or callback") {
+      static const char *const inputs[] = {"tcp://[v1.localhost]:80", "tls://[vf.example]:443",
+                                           "udp://[v1.loopback]:9000", "tcp://[V1.localhost]:80"};
+      cnet_connect_options options = {
+          .observer = {.on_state = cnet_api_test_count_state, .user = &state_callbacks}};
+      for (size_t index = 0u; index < sizeof(inputs) / sizeof(inputs[0]); ++index) {
+        cnet_connection connection = {17u, 19u};
+        size_t events = 1u;
+        options.uri = inputs[index];
+        check_equal(cnet_connect(&client, &options, &connection), SALTS_ENOTSUP);
+        check_equal(connection.slot, 0u);
+        check_equal(connection.generation, 0u);
+        check_equal(cnet_client_poll(&client, 0u, &events), SALTS_OK);
+        check_equal(events, 0u);
+        check_equal(state_callbacks, 0u);
+      }
+    }
   }
 
   it("rejects unsupported VSOCK without publishing a connection") {

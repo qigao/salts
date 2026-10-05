@@ -723,6 +723,9 @@ int cnet_client_set_stream_socket_options(cnet_client *client,
 /**
  * Copies all options needed after return. On immediate failure `out_connection`
  * remains zero and no callback is delivered. `observer.on_state` is required.
+ * Bracketed network hosts must be IPv6 literals; invalid literals return
+ * `SALTS_EINVAL`, and unsupported IPvFuture returns `SALTS_ENOTSUP`, before
+ * connection admission or DNS lookup.
  *
  * @return `SALTS_OK` for asynchronous admission, a URI/configuration error,
  * `SALTS_ENOBUFS` at the hard connection/command bound, or `SALTS_ESHUTDOWN`
