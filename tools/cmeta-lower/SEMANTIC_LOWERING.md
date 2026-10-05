@@ -26,7 +26,7 @@ branch.
 
 ## Admitted syntax roadmap
 
-1. structured scope exits / `defer`;
+1. structured scope exits / `defer` (first direct-call slice implemented);
 2. explicit error propagation with deterministic cleanup;
 3. exact Interface receiver calls;
 4. finite enum/variant `match`;
@@ -73,3 +73,10 @@ Required before Ready-for-review:
 - host-tool/cross-build qualification;
 - synchronized README/inspection docs;
 - no production TODO/fallback path.
+
+## Current experimental slice
+
+`defer direct_c_call(...);` is implemented with one cleanup stack shared with
+`owned(T)`. It is intentionally stricter than the eventual surface: tracked
+owned captures and non-local control transfers remain rejected until a sound
+finite rule is proven.
