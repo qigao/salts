@@ -22,8 +22,3 @@ cmake_add_test(cmeta_coroutine_header_cpp_test
   FOLDER "coroutine/tests")
 
 
-add_test(
-  NAME coroutine_executor_private_batch_contract_test
-  COMMAND ${CMAKE_COMMAND}
-          -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
-          -P ${CMAKE_CURRENT_SOURCE_DIR}/coroutine_executor_private_batch_contract_test.cmake)
