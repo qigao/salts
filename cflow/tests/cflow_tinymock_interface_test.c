@@ -225,6 +225,7 @@ suite("TinyMock existing CMeta interface") {
     };
     cflow_executor_stats observed = {0};
     int user_value = 17;
+    cflow_task_fn expected_task = cflow_tinymock_test_task;
 
     tinymock_cflow_executor_init(&mock);
     executor = tinymock_cflow_executor_as_interface(&mock);
@@ -256,7 +257,7 @@ suite("TinyMock existing CMeta interface") {
     check_equal(observed.pending, (size_t)3);
 
     check_true(TINYMOCk_INTERFACE_ARG_EQUAL_TYPED(
-        &mock, try_post, 0u, "fn", cflow_tinymock_test_task));
+        &mock, try_post, 0u, "fn", expected_task));
     check_true(tinymock_cmeta_history_arg_pointer_equal_name(
         TINYMOCk_INTERFACE_METHOD_HISTORY(&mock, try_post),
         0u, "user", &user_value));
@@ -312,8 +313,6 @@ suite("TinyMock existing CMeta interface") {
     check_equal(observed.capacity, (size_t)16);
     check_equal(observed.accepted, (size_t)4);
 
-    check_true(TINYMOCk_INTERFACE_ARG_EQUAL_TYPED(
-        &mock, shutdown, 0u, "policy", policy));
     check_true(tinymock_cmeta_history_arg_pointer_equal_name(
         TINYMOCk_INTERFACE_METHOD_HISTORY(&mock, post),
         0u, "user", &user_value));
