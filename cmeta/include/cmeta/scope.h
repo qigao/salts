@@ -29,7 +29,7 @@
     CMETA_SCOPE_DECLARE_EXPAND_(scope_, CMETA_PP_UNPAREN row_)
 #define CMETA_SCOPE_DECLARE_EXPAND_(...) CMETA_SCOPE_DECLARE_I_(__VA_ARGS__)
 #define CMETA_SCOPE_DECLARE_I_(scope_, type_, name_) \
-    type_ name_; \
+    type_ name_ = {0}; \
     bool CMETA_SCOPE_LIVE_(scope_, name_) = false;
 
 #define CMETA_SCOPE_INIT_(row_, ctx_) \
