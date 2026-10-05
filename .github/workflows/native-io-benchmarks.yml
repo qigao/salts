@@ -112,23 +112,23 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      profile: \${{ steps.scope.outputs.profile }}
-      evidence: \${{ steps.scope.outputs.evidence }}
-      work: \${{ steps.scope.outputs.work }}
-      cnet_compare: \${{ steps.scope.outputs.cnet_compare }}
-      native_owner: \${{ steps.scope.outputs.native_owner }}
-      native_style: \${{ steps.scope.outputs.native_style }}
-      cnet_owner: \${{ steps.scope.outputs.cnet_owner }}
-      cnet_io: \${{ steps.scope.outputs.cnet_io }}
-      cnet_sg: \${{ steps.scope.outputs.cnet_sg }}
-      coroutine: \${{ steps.scope.outputs.coroutine }}
-      cflow: \${{ steps.scope.outputs.cflow }}
-      native_uring: \${{ steps.scope.outputs.native_uring }}
-      forensic: \${{ steps.scope.outputs.forensic }}
+      profile: ${{ steps.scope.outputs.profile }}
+      evidence: ${{ steps.scope.outputs.evidence }}
+      work: ${{ steps.scope.outputs.work }}
+      cnet_compare: ${{ steps.scope.outputs.cnet_compare }}
+      native_owner: ${{ steps.scope.outputs.native_owner }}
+      native_style: ${{ steps.scope.outputs.native_style }}
+      cnet_owner: ${{ steps.scope.outputs.cnet_owner }}
+      cnet_io: ${{ steps.scope.outputs.cnet_io }}
+      cnet_sg: ${{ steps.scope.outputs.cnet_sg }}
+      coroutine: ${{ steps.scope.outputs.coroutine }}
+      cflow: ${{ steps.scope.outputs.cflow }}
+      native_uring: ${{ steps.scope.outputs.native_uring }}
+      forensic: ${{ steps.scope.outputs.forensic }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: \${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -137,7 +137,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $runFull = "\${{ github.event_name }}" -ne "pull_request"
+          $runFull = "${{ github.event_name }}" -ne "pull_request"
           $benchmarkProfile = if ($runFull) { "full" } else { "pr" }
 
           if ($runFull) {
@@ -152,7 +152,7 @@ jobs:
             $runNativeUring = $true
             $runForensic = $true
           } else {
-            $base = "\${{ github.event.pull_request.base.sha }}"
+            $base = "${{ github.event.pull_request.base.sha }}"
             if ([string]::IsNullOrWhiteSpace($base) -or $base -match "^0+$") {
               throw "pull request base SHA is unavailable"
             }
@@ -314,17 +314,17 @@ jobs:
         shell: pwsh
         run: |
           $rows = @(
-            @("native_owner", "\${{ steps.scope.outputs.native_owner }}"),
-            @("native_style", "\${{ steps.scope.outputs.native_style }}"),
-            @("cnet_owner", "\${{ steps.scope.outputs.cnet_owner }}"),
-            @("cnet_io", "\${{ steps.scope.outputs.cnet_io }}"),
-            @("cnet_sg", "\${{ steps.scope.outputs.cnet_sg }}"),
-            @("coroutine", "\${{ steps.scope.outputs.coroutine }}"),
-            @("cflow", "\${{ steps.scope.outputs.cflow }}"),
-            @("native_uring", "\${{ steps.scope.outputs.native_uring }}"),
-            @("forensic", "\${{ steps.scope.outputs.forensic }}"),
-            @("work", "\${{ steps.scope.outputs.work }}"),
-            @("cnet_compare", "\${{ steps.scope.outputs.cnet_compare }}")
+            @("native_owner", "${{ steps.scope.outputs.native_owner }}"),
+            @("native_style", "${{ steps.scope.outputs.native_style }}"),
+            @("cnet_owner", "${{ steps.scope.outputs.cnet_owner }}"),
+            @("cnet_io", "${{ steps.scope.outputs.cnet_io }}"),
+            @("cnet_sg", "${{ steps.scope.outputs.cnet_sg }}"),
+            @("coroutine", "${{ steps.scope.outputs.coroutine }}"),
+            @("cflow", "${{ steps.scope.outputs.cflow }}"),
+            @("native_uring", "${{ steps.scope.outputs.native_uring }}"),
+            @("forensic", "${{ steps.scope.outputs.forensic }}"),
+            @("work", "${{ steps.scope.outputs.work }}"),
+            @("cnet_compare", "${{ steps.scope.outputs.cnet_compare }}")
           )
           Write-Host "Selected benchmark scopes:"
           foreach ($row in $rows) { Write-Host ("  {0}={1}" -f $row[0], $row[1]) }
@@ -550,9 +550,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset "\${{ matrix.configure_preset }}" \
+          cmake --preset "${{ matrix.configure_preset }}" \
             -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
-          cmake --build --preset "\${{ matrix.build_preset }}" --parallel 2 --target \
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target \
             cnet_io_benchmark cnet_tls_sg_benchmark \
             cnet_tls_provider_parallel_benchmark cnet_tls_public_owner_benchmark \
             native_io_queue_depth_benchmark native_io_idle_observe_benchmark \
@@ -571,7 +571,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset "\${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
+          cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build Windows benchmarks
         if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         shell: cmd
@@ -579,7 +579,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --build --preset "\${{ matrix.build_preset }}" --parallel 2 --target ^
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target ^
             cnet_io_benchmark cnet_tls_sg_benchmark ^
             native_io_sharded_routing_benchmark native_io_owner_mailbox_benchmark ^
             native_io_owner_local_parallel_benchmark salts_coro_executor_batch_benchmark ^
@@ -591,9 +591,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset "\${{ matrix.configure_preset }}" \
+          cmake --preset "${{ matrix.configure_preset }}" \
             -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
-          cmake --build --preset "\${{ matrix.build_preset }}" --parallel 2 --target \
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target \
             cnet_io_benchmark cnet_tls_sg_benchmark \
             native_io_sharded_routing_benchmark native_io_owner_mailbox_benchmark \
             native_io_owner_local_parallel_benchmark salts_coro_executor_batch_benchmark \
@@ -713,7 +713,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          for /f "tokens=2 delims==" %%T in ('findstr /b /c:"VCPKG_TARGET_TRIPLET:STRING=" "%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\CMakeCache.txt"') do set "BASELINE_TARGET_TRIPLET=%%T"
+          for /f "tokens=2 delims==" %%T in ('findstr /b /c:"VCPKG_TARGET_TRIPLET:STRING=" "%GITHUB_WORKSPACE%${{ matrix.build_dir }}\CMakeCache.txt"') do set "BASELINE_TARGET_TRIPLET=%%T"
           if not defined BASELINE_TARGET_TRIPLET exit /b 1
           set "BASELINE_PKGCONF=%BASELINE_SOURCE%\vcpkg_installed\%QIGAO_VCPKG_WINDOWS_HOST_TRIPLET%\tools\pkgconf\pkgconf.exe"
           cmake -S . -B build\Msvc-Release -G Ninja ^
@@ -738,8 +738,8 @@ jobs:
           if errorlevel 1 exit /b 1
           dir /b "build\Msvc-Release\bin\*.dll"
           echo CNET_COMPARE_BASELINE_DSO=%BASELINE_SOURCE%\build\Msvc-Release\bin\cnet.dll>>"%GITHUB_ENV%"
-          echo CNET_COMPARE_CANDIDATE_DSO=%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\bin\cnet.dll>>"%GITHUB_ENV%"
-          echo CNET_COMPARE_EXECUTABLE=%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\bin\cnet_owner_lifecycle_compare.exe>>"%GITHUB_ENV%"
+          echo CNET_COMPARE_CANDIDATE_DSO=%GITHUB_WORKSPACE%${{ matrix.build_dir }}\bin\cnet.dll>>"%GITHUB_ENV%"
+          echo CNET_COMPARE_EXECUTABLE=%GITHUB_WORKSPACE%${{ matrix.build_dir }}\bin\cnet_owner_lifecycle_compare.exe>>"%GITHUB_ENV%"
 
       - name: Compare PR-base and candidate CNet owner
         if: matrix.family == 'windows' && needs.scope.outputs.cnet_compare == 'true' && github.event_name == 'pull_request'
