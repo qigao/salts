@@ -60,7 +60,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
   cmake_add_benchmark(cnet_tls_public_owner_benchmark
     SOURCES cnet_tls_public_owner_benchmark.c
-    LIBS Salts::CNet Salts::Platform Salts::Core
+    LIBS cnet_profile Salts::Platform Salts::Core
     FOLDER "cnet/benchmarks")
   target_compile_definitions(cnet_tls_public_owner_benchmark PRIVATE
     "CNET_TLS_BENCH_CA=\"${CNET_TLS_BENCH_CA}\""

@@ -1830,14 +1830,17 @@ jobs:
           : > "$jsonl"
 
           for repeat in 1 2 3; do
-            for temperature in fresh warm; do
-              for mode in push echo; do
-                for payload in 16384 32768 65536; do
-                  for owners in 1 2 4; do
-                    echo "public repeat=$repeat temperature=$temperature mode=$mode payload=$payload owners=$owners"
-                    CNET_TLS_PUBLIC_OWNER_OPS=48 \
-                      "$benchmark" "$mode" "$payload" "$owners" "$temperature" \
-                      | tee -a "$jsonl"
+            for nodelay in 0 1; do
+              for temperature in fresh warm; do
+                for mode in push echo; do
+                  for payload in 16384 32768 65536; do
+                    for owners in 1 2 4; do
+                      echo "public repeat=$repeat nodelay=$nodelay temperature=$temperature mode=$mode payload=$payload owners=$owners"
+                      CNET_TLS_PUBLIC_OWNER_OPS=48 \
+                      CNET_TLS_PUBLIC_NODELAY="$nodelay" \
+                        "$benchmark" "$mode" "$payload" "$owners" "$temperature" \
+                        | tee -a "$jsonl"
+                    done
                   done
                 done
               done

@@ -3,6 +3,7 @@
 #endif
 
 #include <cnet/cnet.h>
+#include "cnet_client_internal.h"
 #include <salts/clock.h>
 #include <salts/error_codes.h>
 #include <salts/thread.h>
@@ -66,6 +67,8 @@ typedef struct tls_public_pair {
   bool listener_initialized;
   bool tls_client_initialized;
   bool tls_server_initialized;
+  bool client_profile_active;
+  bool server_profile_active;
 } tls_public_pair;
 
 typedef struct tls_public_shared {
@@ -73,6 +76,7 @@ typedef struct tls_public_shared {
   size_t payload_size;
   size_t ops_per_owner;
   size_t warmup_rounds_per_pair;
+  int nodelay;
   tls_public_mode mode;
   atomic_size_t ready;
   atomic_size_t measured_done;
@@ -87,6 +91,8 @@ typedef struct tls_public_worker {
   uint64_t *latencies_ns;
   size_t pair_count;
   uint64_t cpu_ns;
+  cnet_owner_profile client_profile;
+  cnet_owner_profile server_profile;
 } tls_public_worker;
 
 static uint64_t tls_public_thread_cpu_ns(void) {
@@ -95,6 +101,26 @@ static uint64_t tls_public_thread_cpu_ns(void) {
     return 0u;
   return (uint64_t)value.tv_sec * UINT64_C(1000000000) +
          (uint64_t)value.tv_nsec;
+}
+
+static uint64_t tls_public_add_u64(uint64_t left, uint64_t right) {
+  return right > UINT64_MAX - left ? UINT64_MAX : left + right;
+}
+
+static void tls_public_profile_add(
+    cnet_owner_profile *target, const cnet_owner_profile *source) {
+  if (target == NULL || source == NULL) return;
+#define TLS_PUBLIC_PROFILE_ADD(FIELD) \
+  target->FIELD = tls_public_add_u64(target->FIELD, source->FIELD)
+  TLS_PUBLIC_PROFILE_ADD(tls_pump_ns);
+  TLS_PUBLIC_PROFILE_ADD(tls_pump_calls);
+  TLS_PUBLIC_PROFILE_ADD(tls_ciphertext_bytes);
+  TLS_PUBLIC_PROFILE_ADD(tls_write_submit_calls);
+  TLS_PUBLIC_PROFILE_ADD(tls_write_submit_bytes);
+  TLS_PUBLIC_PROFILE_ADD(tls_write_completion_calls);
+  TLS_PUBLIC_PROFILE_ADD(tls_write_completion_bytes);
+  TLS_PUBLIC_PROFILE_ADD(tls_plaintext_receive_bytes);
+#undef TLS_PUBLIC_PROFILE_ADD
 }
 
 static int tls_public_u64_compare(const void *left, const void *right) {
@@ -278,7 +304,8 @@ static int tls_public_drive(tls_public_pair *pair, uint32_t timeout_ms) {
 static int tls_public_pair_init(
     tls_public_pair *pair,
     const unsigned char *payload_bytes,
-    size_t payload_size) {
+    size_t payload_size,
+    int nodelay) {
   static const char *alpn[] = {"http/1.1"};
   cnet_client_config client_config =
       tls_public_config(payload_size);
@@ -303,6 +330,8 @@ static int tls_public_pair_init(
       .alpn_protocols = alpn,
       .alpn_protocol_count = 1u};
   cnet_connect_options options;
+  cnet_stream_socket_options socket_options =
+      CNET_STREAM_SOCKET_OPTIONS_INIT;
   cnet_connection client_connection = {0};
   uint16_t port = 0u;
   char uri[64];
@@ -344,6 +373,13 @@ static int tls_public_pair_init(
   status = cnet_client_init(&pair->server, &server_config);
   if (status != SALTS_OK) return status;
   pair->server_initialized = true;
+  socket_options.nodelay = nodelay;
+  status = cnet_client_set_stream_socket_options(
+      &pair->client, &socket_options);
+  if (status != SALTS_OK) return status;
+  status = cnet_client_set_stream_socket_options(
+      &pair->server, &socket_options);
+  if (status != SALTS_OK) return status;
   status = cnet_listener_init(&pair->listener, &listener_config);
   if (status != SALTS_OK) return status;
   pair->listener_initialized = true;
@@ -519,7 +555,8 @@ static void tls_public_worker_run(void *user) {
   for (index = 0u; index < worker->pair_count; ++index) {
     status = tls_public_pair_init(
         &worker->pairs[index],
-        shared->payload_bytes, shared->payload_size);
+        shared->payload_bytes, shared->payload_size,
+        shared->nodelay);
     if (status != SALTS_OK) break;
   }
 
@@ -533,6 +570,17 @@ static void tls_public_worker_run(void *user) {
         if (status != SALTS_OK) break;
       }
       if (status != SALTS_OK) break;
+    }
+  }
+
+  if (status == SALTS_OK) {
+    for (index = 0u; index < worker->pair_count; ++index) {
+      status = cnet_client_profile_begin(&worker->pairs[index].client);
+      if (status != SALTS_OK) break;
+      worker->pairs[index].client_profile_active = true;
+      status = cnet_client_profile_begin(&worker->pairs[index].server);
+      if (status != SALTS_OK) break;
+      worker->pairs[index].server_profile_active = true;
     }
   }
 
@@ -569,6 +617,29 @@ static void tls_public_worker_run(void *user) {
     }
   }
 
+  for (index = 0u; index < worker->pair_count; ++index) {
+    cnet_client_poll_profile observed = {0};
+    if (worker->pairs[index].client_profile_active) {
+      const int profile_status =
+          cnet_client_profile_take(&worker->pairs[index].client, &observed);
+      worker->pairs[index].client_profile_active = false;
+      if (profile_status == SALTS_OK)
+        tls_public_profile_add(&worker->client_profile, &observed.owner);
+      else
+        tls_public_set_error(shared, profile_status);
+    }
+    observed = (cnet_client_poll_profile){0};
+    if (worker->pairs[index].server_profile_active) {
+      const int profile_status =
+          cnet_client_profile_take(&worker->pairs[index].server, &observed);
+      worker->pairs[index].server_profile_active = false;
+      if (profile_status == SALTS_OK)
+        tls_public_profile_add(&worker->server_profile, &observed.owner);
+      else
+        tls_public_set_error(shared, profile_status);
+    }
+  }
+
   atomic_fetch_add_explicit(
       &shared->measured_done, 1u, memory_order_release);
   while (!atomic_load_explicit(
@@ -597,10 +668,14 @@ int main(int argc, char **argv) {
   size_t warmup_rounds_per_pair;
   size_t samples = 0u;
   uint64_t total_cpu_ns = 0u;
+  cnet_owner_profile client_profile = {0};
+  cnet_owner_profile server_profile = {0};
   uint64_t started_ns;
   uint64_t wall_ns;
   tls_public_mode mode;
   const char *temperature;
+  const char *nodelay_text;
+  int nodelay = 0;
   int status = SALTS_OK;
 
   if (argc != 5) {
@@ -638,6 +713,16 @@ int main(int argc, char **argv) {
     return 2;
   }
 
+  nodelay_text = getenv("CNET_TLS_PUBLIC_NODELAY");
+  if (nodelay_text != NULL && nodelay_text[0] != '\0') {
+    if (strcmp(nodelay_text, "0") == 0)
+      nodelay = 0;
+    else if (strcmp(nodelay_text, "1") == 0)
+      nodelay = 1;
+    else
+      return 2;
+  }
+
   total_ops = tls_public_env_count(
       "CNET_TLS_PUBLIC_OWNER_OPS",
       TLS_PUBLIC_DEFAULT_OPS);
@@ -662,6 +747,7 @@ int main(int argc, char **argv) {
   shared.ops_per_owner = ops_per_owner;
   shared.warmup_rounds_per_pair =
       warmup_rounds_per_pair;
+  shared.nodelay = nodelay;
   shared.mode = mode;
   atomic_init(&shared.ready, 0u);
   atomic_init(&shared.measured_done, 0u);
@@ -733,6 +819,8 @@ int main(int argc, char **argv) {
       status = SALTS_EIO;
     salts_thread_destroy(&threads[owner]);
     total_cpu_ns += workers[owner].cpu_ns;
+    tls_public_profile_add(&client_profile, &workers[owner].client_profile);
+    tls_public_profile_add(&server_profile, &workers[owner].server_profile);
     for (size_t index = 0u;
          index < ops_per_owner; ++index)
       if (workers[owner].latencies_ns[index] != 0u)
@@ -756,6 +844,7 @@ int main(int argc, char **argv) {
         "{\"benchmark\":\"cnet_tls_public_loopback_parallel\","
         "\"mode\":\"%s\","
         "\"temperature\":\"%s\","
+        "\"nodelay\":%d,"
         "\"payload_bytes\":%zu,"
         "\"owners\":%zu,"
         "\"pairs\":%u,"
@@ -763,14 +852,32 @@ int main(int argc, char **argv) {
         "\"samples\":%zu,"
         "\"ops_per_second\":%.3f,"
         "\"owner_cpu_ns_per_op\":%.3f,"
+        "\"server_tls_pump_ns_per_op\":%.3f,"
+        "\"client_tls_pump_ns_per_op\":%.3f,"
+        "\"server_tls_write_submits\":%llu,"
+        "\"server_tls_write_submit_bytes\":%llu,"
+        "\"server_tls_write_completions\":%llu,"
+        "\"server_tls_write_completion_bytes\":%llu,"
+        "\"client_tls_plaintext_receive_bytes\":%llu,"
         "\"p50_ns\":%llu,"
         "\"p95_ns\":%llu,"
         "\"p99_ns\":%llu,"
         "\"errors\":0}\n",
         tls_public_mode_name(mode), temperature,
-        payload_size, owner_count, TLS_PUBLIC_PAIRS,
+        nodelay, payload_size, owner_count, TLS_PUBLIC_PAIRS,
         total_ops, samples, operations_per_second,
         cpu_ns_per_op,
+        total_ops != 0u
+            ? (double)server_profile.tls_pump_ns / (double)total_ops
+            : 0.0,
+        total_ops != 0u
+            ? (double)client_profile.tls_pump_ns / (double)total_ops
+            : 0.0,
+        (unsigned long long)server_profile.tls_write_submit_calls,
+        (unsigned long long)server_profile.tls_write_submit_bytes,
+        (unsigned long long)server_profile.tls_write_completion_calls,
+        (unsigned long long)server_profile.tls_write_completion_bytes,
+        (unsigned long long)client_profile.tls_plaintext_receive_bytes,
         (unsigned long long)tls_public_percentile(
             latencies, samples, 50u),
         (unsigned long long)tls_public_percentile(
