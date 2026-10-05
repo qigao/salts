@@ -86,6 +86,48 @@ empty span. Copy produces independent storage, move clears the source, and
 restore is idempotent. These operations allocate nothing and require exclusive
 access to mutated objects.
 
+`<cmeta/fixed_array.h>` provides `CMETA_DEFINE_FIXED_ARRAY` for an inline array
+typedef. It exposes `CMETA_DATA_SEQUENCE` with a constant element count and
+contiguous borrowed iteration, while preserving the existing C array ABI.
+Every slot is live even in semantic zero. Element zero initialization must be
+allocation-free and no-fail; copy, move and cleanup dispatch to the element's
+canonical provider. Copy failure releases the accepted prefix and any partial
+element; move leaves every source element in semantic zero. A collector accepts
+exactly the declared count, rejects a short finish with `CMETA_TYPE_MISMATCH`,
+and rejects excess input or an insufficient item budget with
+`CMETA_CAPACITY_EXCEEDED`. There is no extra native count field, metadata
+allocation or ownership registry. Element payload allocation remains governed
+by the element provider's byte budget.
+
+For example, a consumer linked with `Salts::CMeta` can use:
+
+```c
+#include <cmeta/fixed_array.h>
+
+typedef int readings[3];
+CMETA_DEFINE_FIXED_ARRAY(readings_value, readings, int, 3u, &cmeta_data_int,
+                         "example.Readings3", "Readings3");
+
+int main(void) {
+    readings source = {1, 2, 3};
+    readings destination;
+    const cmeta_data_desc *data = &readings_value_cmeta_data;
+    if (cmeta_data_value_init_zero(data, destination) != CMETA_OK) return 1;
+    if (cmeta_data_value_move(data, destination, source) != CMETA_OK) return 1;
+    cmeta_data_value_destroy(data, destination);
+    cmeta_data_value_destroy(data, source);
+    return 0;
+}
+```
+
+`cmeta_data_value_is_zero` queries the canonical lifecycle zero without
+changing ownership. A fixed array's zero means zero elements in every live
+slot, rather than an empty borrowed range. Record queries cover reflected
+fields; a consumer still owns any unreflected presence/default overlay bytes.
+Unsupported zero providers return an error and never infer zero from native
+pointer or descriptor identity. These additions use optional size-versioned
+collection callbacks; older provider prefixes retain their existing behavior.
+
 Salts Core provides header-local `tstr` and `vstr` adapter metadata in
 `salts_cmeta_data.h`. As with other header-generated CMeta metadata, descriptor
 addresses may differ across translation units; use semantic type comparison.
@@ -300,6 +342,14 @@ container descriptor may expose an optional value-oriented factory:
 ```c
 cmeta_collector (*collector)(void *zero_output, size_t limit);
 ```
+
+A provider may instead expose the optional `collector_init` tail callback.
+`cmeta_data_collection_collector` initializes it directly in the final caller
+slot, allowing fixed arrays to borrow the collector's own count without
+allocating a separate context. Such a collector must not be copied or moved
+before termination. Its output and slot remain alive until finish/abort;
+discarding it before begin retains no resources. The older factory remains
+available for providers using the established value-oriented construction.
 
 `begin` receives the input descriptor and hard item limit. `accept` borrows one
 value only until the callback returns; the adapter must copy, retain, or move it

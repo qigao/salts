@@ -542,6 +542,12 @@ typedef struct cmeta_data_collection_borrow_cursor {
 typedef cmeta_collector (*cmeta_data_collection_collector_fn)(
     void *zero_output, size_t limit);
 
+/** Initialize a collector in its final caller-owned slot. Providers may borrow
+ * that slot as callback context; it must not be copied before termination. */
+typedef cmeta_status (*cmeta_data_collection_collector_init_fn)(
+    void *zero_output, size_t limit, cmeta_collector *out);
+typedef bool (*cmeta_data_collection_is_zero_fn)(const void *object);
+
 typedef struct cmeta_data_collection_ops {
     size_t struct_size;
     uint32_t abi_version;
@@ -554,6 +560,10 @@ typedef struct cmeta_data_collection_ops {
     const cmeta_data_collection_borrow_ops *borrow;
     /** Optional descriptor-only element semantics; no object callback required. */
     const cmeta_data_desc *element_data;
+    /** Optional allocation-free collector construction, preferred when present. */
+    cmeta_data_collection_collector_init_fn collector_init;
+    /** Optional semantic zero for collections whose zero is not an empty range. */
+    cmeta_data_collection_is_zero_fn is_zero;
 } cmeta_data_collection_ops;
 
 enum { CMETA_DATA_MAP_OPS_ABI_VERSION = 1u };
@@ -720,6 +730,10 @@ cmeta_status cmeta_data_construct_move(
  * These operations select the canonical authority for the data kind.
  */
 bool cmeta_data_struct_constructible(const cmeta_data_desc *desc);
+/** Query canonical semantic zero without mutating or retaining the object.
+ * Unsupported providers return CMETA_TRAIT_MISSING and leave *out false. */
+cmeta_status cmeta_data_value_is_zero(
+    const cmeta_data_desc *desc, const void *object, bool *out);
 cmeta_status cmeta_data_value_init_zero(
     const cmeta_data_desc *desc, void *object);
 cmeta_status cmeta_data_value_restore_zero(

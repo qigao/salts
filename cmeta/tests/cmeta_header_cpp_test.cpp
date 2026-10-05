@@ -4,6 +4,7 @@
 #include <cmeta/collector.h>
 #include <cmeta/data.h>
 #include "cmeta_fixed_bytes_fixture.h"
+#include "cmeta_fixed_array_fixture.h"
 #include <cmeta/range.h>
 #include <cmeta/meta.h>
 #include <cmeta/object_interface.h>
@@ -235,6 +236,18 @@ static bool cmeta_cpp_copy_construct(void *destination, const void *source) {
 }
 
 spec("CMeta C++ public headers") {
+  it("constructs and moves an inline array through C++ canonical metadata") {
+    cmeta_fixed_array_fixture source = {1, 2, 3};
+    cmeta_fixed_array_fixture destination;
+    const auto *data = &cmeta_fixed_array_value_cmeta_data;
+    bool zero = false;
+    check_equal(cmeta_data_value_init_zero(data, destination), CMETA_OK);
+    check_equal(cmeta_data_value_move(data, destination, source), CMETA_OK);
+    check_equal(destination[2], 3);
+    check_equal(cmeta_data_value_is_zero(data, source, &zero), CMETA_OK);
+    check_true(zero);
+    cmeta_data_value_destroy(data, destination);
+  }
   it("publishes reflected interface functions through C++17") {
     const cmeta_interface_desc *meta = cmeta_cpp_reflected_interface_interface();
 
