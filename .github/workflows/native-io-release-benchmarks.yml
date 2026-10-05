@@ -442,8 +442,8 @@ jobs:
             family: mac
             backend: kqueue
             artifact: macos-kqueue
-            configure_preset: release-mac-ninja
-            build_preset: build-default-mac
+            configure_preset: mac-release-user
+            build_preset: mac-release-user
             build_dir: build/mac-clang-release
 
     steps:
