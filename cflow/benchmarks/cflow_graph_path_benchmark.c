@@ -55,8 +55,8 @@ typedef struct cflow_graph_path_fixture {
 static cflow_graph_path_fixture cflow_graph_path_fixture_state;
 static volatile uint64_t cflow_graph_path_benchmark_sink;
 
-typed(map, value, int, cflow_graph_path_identity, (int value)) { return value; }
-typed(filter, value, bool, cflow_graph_path_keep, (int value)) {
+cmeta_function(map, value, int, cflow_graph_path_identity, (int value)) { return value; }
+cmeta_function(filter, value, bool, cflow_graph_path_keep, (int value)) {
   (void)value;
   return true;
 }
