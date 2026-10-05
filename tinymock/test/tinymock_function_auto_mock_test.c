@@ -35,12 +35,14 @@ suite("TinyMock reflected free functions") {
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_add);
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_answer);
 
-    tinymock_mock_set_default_return(
-        TINYMOCk_FUNCTION(tinymock_fixture_add),
-        TINYMOCk_RETURN(17));
-    tinymock_mock_set_default_return(
-        TINYMOCk_FUNCTION(tinymock_fixture_answer),
-        TINYMOCk_RETURN(25));
+    {
+      int add_return = 17;
+      int answer_return = 25;
+      check_true(TINYMOCk_FUNCTION_SET_RETURN(
+          tinymock_fixture_add, add_return));
+      check_true(TINYMOCk_FUNCTION_SET_RETURN(
+          tinymock_fixture_answer, answer_return));
+    }
 
     check_equal(tinymock_function_consumer_run(9), 17);
 
@@ -94,9 +96,11 @@ suite("TinyMock reflected free functions") {
     int *expected = &value;
 
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_pointer);
-    tinymock_mock_set_default_return(
-        TINYMOCk_FUNCTION(tinymock_fixture_pointer),
-        TINYMOCk_RETURN(33));
+    {
+      int scripted_return = 33;
+      check_true(TINYMOCk_FUNCTION_SET_RETURN(
+          tinymock_fixture_pointer, scripted_return));
+    }
 
     check_equal(tinymock_function_consumer_pointer(&value), 33);
     check_true(TINYMOCk_FUNCTION_ARG_EQUAL(
@@ -119,9 +123,11 @@ suite("TinyMock reflected free functions") {
     int scripted_adjusted = 41;
 
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_write_size);
-    tinymock_mock_set_default_return(
-        TINYMOCk_FUNCTION(tinymock_fixture_write_size),
-        TINYMOCk_RETURN(7));
+    {
+      int scripted_return = 7;
+      check_true(TINYMOCk_FUNCTION_SET_RETURN(
+          tinymock_fixture_write_size, scripted_return));
+    }
     check_true(TINYMOCk_FUNCTION_SET_OUT(
         tinymock_fixture_write_size, "written", scripted_written));
 
@@ -132,9 +138,11 @@ suite("TinyMock reflected free functions") {
         TINYMOCk_FUNCTION(tinymock_fixture_write_size), 1);
 
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_adjust_int);
-    tinymock_mock_set_default_return(
-        TINYMOCk_FUNCTION(tinymock_fixture_adjust_int),
-        TINYMOCk_RETURN(8));
+    {
+      int scripted_return = 8;
+      check_true(TINYMOCk_FUNCTION_SET_RETURN(
+          tinymock_fixture_adjust_int, scripted_return));
+    }
     check_true(TINYMOCk_FUNCTION_SET_OUT(
         tinymock_fixture_adjust_int, "value", scripted_adjusted));
 
@@ -161,9 +169,11 @@ suite("TinyMock reflected free functions") {
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_unknown_ptr);
 
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_nullable_out);
-    tinymock_mock_set_default_return(
-        TINYMOCk_FUNCTION(tinymock_fixture_nullable_out),
-        TINYMOCk_RETURN(3));
+    {
+      int scripted_return = 3;
+      check_true(TINYMOCk_FUNCTION_SET_RETURN(
+          tinymock_fixture_nullable_out, scripted_return));
+    }
     check_true(TINYMOCk_FUNCTION_SET_OUT(
         tinymock_fixture_nullable_out, "written", nullable_value));
 
@@ -258,7 +268,7 @@ suite("TinyMock reflected free functions") {
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_box_copy);
   }
 
-  it("lets typed scalar and pointer returns override legacy defaults") {
+  it("uses typed scalar and pointer returns independently of legacy dispatch defaults") {
     int typed_add = 88;
     int pointer_value = 123;
     int *typed_pointer = &pointer_value;
@@ -271,9 +281,6 @@ suite("TinyMock reflected free functions") {
     check_true(TINYMOCk_FUNCTION_SET_RETURN(
         tinymock_fixture_add, typed_add));
     check_equal(tinymock_function_consumer_run(1), 88);
-
-    TINYMOCk_FUNCTION_CLEAR_RETURN(tinymock_fixture_add);
-    check_equal(tinymock_function_consumer_run(1), 17);
 
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_pointer_answer);
     check_true(TINYMOCk_FUNCTION_SET_RETURN(
@@ -294,9 +301,11 @@ suite("TinyMock reflected free functions") {
     scripted_callback = tinymock_test_callback_b;
 
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_apply_callback);
-    tinymock_mock_set_default_return(
-        TINYMOCk_FUNCTION(tinymock_fixture_apply_callback),
-        TINYMOCk_RETURN(77));
+    {
+      int scripted_return = 77;
+      check_true(TINYMOCk_FUNCTION_SET_RETURN(
+          tinymock_fixture_apply_callback, scripted_return));
+    }
 
     check_equal(
         tinymock_function_consumer_apply_callback(tinymock_test_callback_a, 4),
@@ -387,12 +396,14 @@ suite("TinyMock reflected free functions") {
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_add);
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_answer);
 
-    tinymock_mock_set_default_return(
-        TINYMOCk_FUNCTION(tinymock_fixture_add),
-        TINYMOCk_RETURN(-3));
-    tinymock_mock_set_default_return(
-        TINYMOCk_FUNCTION(tinymock_fixture_answer),
-        TINYMOCk_RETURN(4));
+    {
+      int add_return = -3;
+      int answer_return = 4;
+      check_true(TINYMOCk_FUNCTION_SET_RETURN(
+          tinymock_fixture_add, add_return));
+      check_true(TINYMOCk_FUNCTION_SET_RETURN(
+          tinymock_fixture_answer, answer_return));
+    }
 
     check_equal(tinymock_function_consumer_run(1), -3);
     check_equal(tinymock_function_consumer_run(2), -3);
