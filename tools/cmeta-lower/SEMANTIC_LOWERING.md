@@ -29,11 +29,22 @@ C
 
 New source-level CMeta extensions use the `cmeta_` prefix. The minimal public vocabulary is `cmeta_type(...)`, `cmeta_owned(T)`, `cmeta_move(x)`, `cmeta_value_ref`, and `cmeta_value_view`. No unprefixed compatibility aliases are kept on this branch.
 
+## Authoring headers
+
+Public C ABI remains ordinary `.h`, but a generated public header may have a
+`.cmeta.h` authoring source. The authoring header is lowered to ordinary C and
+may use the finite `cmeta_type Name = Kind(args...);` declaration tracked by
+#915. Ordinary `.c` consumers never require the lowerer.
+
+A `.cmeta.c` source may import a direct quoted `.cmeta.h`; semantic discovery
+reads that finite header source and generated C rewrites the include to the
+generated ordinary `.h`. This is not a general preprocessor/header parser.
+
 ## Core surface
 
 The branch is limited to:
 
-- `cmeta_type(...)` — canonical concrete type + Reflection/lifecycle binding;
+- `cmeta_type` — finite concrete type + Reflection/lifecycle declaration;
 - `cmeta_owned(T)` — lexical ownership;
 - `cmeta_move(x)` — explicit ownership transfer;
 - deterministic automatic cleanup for LIVE owned values;
