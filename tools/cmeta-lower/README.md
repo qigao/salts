@@ -66,6 +66,32 @@ Lexical shadowing uses the same symbol stack as typed receiver lowering, so an
 inner owned variable has independent move state from an outer variable with the
 same name.
 
+## Experimental branch: lexical defer
+
+The maturity-gated semantic-lowering branch tracked by #905 admits a narrow
+lexical defer form:
+
+```c
+defer cleanup_marker(&state);
+```
+
+The first slice accepts only a direct C function call. The call is removed from
+its source position and emitted at normal lexical scope exit. Deferred calls and
+owned-value destruction share one reverse lexical LIFO cleanup stack.
+
+The slice is deliberately conservative:
+
+- `defer` is valid only inside a lexical block;
+- active defer is not silently crossed by `return`, `goto`, `break` or
+  `continue`;
+- a deferred call may not capture a tracked `owned(T)` value yet;
+- receiver syntax and arbitrary deferred statements are not admitted;
+- unsupported forms fail closed.
+
+The tool version is intentionally not bumped while the branch remains
+experimental. Version/grammar publication is part of the final #905 maturity
+gate.
+
 ## Canonical lifecycle binding
 
 A source-owned type must now be a concrete type discovered from a supported
