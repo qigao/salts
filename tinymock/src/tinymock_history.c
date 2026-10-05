@@ -239,6 +239,66 @@ bool tinymock_cmeta_history_arg_equal_typed_name(
       history, call_index, index, expected);
 }
 
+bool tinymock_cmeta_history_arg_pointer_equal(
+    const tinymock_cmeta_history *history,
+    size_t call_index,
+    size_t param_index,
+    const void *expected_identity) {
+  const tinymock_cmeta_value *snapshot;
+
+  if (!history || call_index >= history->call_count ||
+      call_index >= TINYMOCk_MAX_CALLS ||
+      param_index >= history->calls[call_index].argc)
+    return false;
+
+  snapshot = &history->calls[call_index].args[param_index];
+  return snapshot->constructed &&
+         snapshot->type &&
+         snapshot->type->kind == CMETA_T_POINTER &&
+         snapshot->has_pointer_identity &&
+         snapshot->pointer_identity == expected_identity;
+}
+
+bool tinymock_cmeta_history_arg_pointer_equal_name(
+    const tinymock_cmeta_history *history,
+    size_t call_index,
+    const char *param_name,
+    const void *expected_identity) {
+  size_t index;
+  if (!tinymock_cmeta_param_index_by_name(history, param_name, &index))
+    return false;
+  return tinymock_cmeta_history_arg_pointer_equal(
+      history, call_index, index, expected_identity);
+}
+
+size_t tinymock_cmeta_history_count_equal_typed(
+    const tinymock_cmeta_history *history,
+    size_t param_index,
+    const void *expected) {
+  size_t call_index;
+  size_t count = 0u;
+  size_t limit;
+
+  if (!history) return 0u;
+  limit = tinymock_cmeta_recorded_limit(history->call_count);
+  for (call_index = 0u; call_index < limit; ++call_index)
+    if (tinymock_cmeta_history_arg_equal_typed(
+            history, call_index, param_index, expected))
+      ++count;
+  return count;
+}
+
+size_t tinymock_cmeta_history_count_equal_typed_name(
+    const tinymock_cmeta_history *history,
+    const char *param_name,
+    const void *expected) {
+  size_t index;
+  if (!tinymock_cmeta_param_index_by_name(history, param_name, &index))
+    return 0u;
+  return tinymock_cmeta_history_count_equal_typed(
+      history, index, expected);
+}
+
 size_t tinymock_cmeta_history_count_equal(
     const tinymock_cmeta_history *history,
     size_t param_index,
