@@ -1867,11 +1867,31 @@ jobs:
 
           python3 ./cnet/benchmarks/verify_tls_public_owner_benchmark.py "$jsonl" \
             | tee "$result_dir/cnet-tls-public-owner.md"
+
+          demand_jsonl="$result_dir/cnet-tls-public-demand-ab.jsonl"
+          : > "$demand_jsonl"
+          for repeat in 1 2 3; do
+            for demand in prearm single; do
+              for payload in 32768 65536; do
+                echo "demand-ab repeat=$repeat demand=$demand payload=$payload"
+                CNET_TLS_PUBLIC_OWNER_OPS=48 \
+                CNET_TLS_PUBLIC_NODELAY=1 \
+                CNET_TLS_PUBLIC_RECEIVE_DEMAND="$demand" \
+                  "$benchmark" echo "$payload" 1 warm \
+                  | tee -a "$demand_jsonl"
+              done
+            done
+          done
+
           {
             echo
             echo "## CNet public TLS owner attribution"
             echo
             cat "$result_dir/cnet-tls-public-owner.md"
+            echo
+            echo "## CNet TLS receive-demand A/B"
+            echo
+            cat "$demand_jsonl"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run borrowed-copy versus owned receive benchmark
