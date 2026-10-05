@@ -46,6 +46,12 @@ cmeta_status cmeta_data_fixed_array_collect_finish(
 void cmeta_data_fixed_array_collect_abort(
     const cmeta_data_fixed_array_spec *spec, cmeta_collector *collector);
 
+#ifdef __cplusplus
+#define CMETA_FIXED_ARRAY_COLLECTOR_(context_) static_cast<cmeta_collector *>(context_)
+#else
+#define CMETA_FIXED_ARRAY_COLLECTOR_(context_) ((cmeta_collector *)(context_))
+#endif
+
 /**
  * Define canonical SEQUENCE metadata for one inline array typedef.
  *
@@ -126,20 +132,20 @@ void cmeta_data_fixed_array_collect_abort(
     static inline cmeta_status name_##_collect_begin(                        \
         void *context_, const cmeta_type_desc *input_, size_t limit_) {       \
         return cmeta_data_fixed_array_collect_begin(&name_##_cmeta_spec,     \
-            (cmeta_collector *)context_, input_, limit_);                    \
+            CMETA_FIXED_ARRAY_COLLECTOR_(context_), input_, limit_);         \
     }                                                                       \
     static inline cmeta_status name_##_collect_accept(                       \
         void *context_, const void *value_) {                                \
         return cmeta_data_fixed_array_collect_accept(&name_##_cmeta_spec,     \
-            (cmeta_collector *)context_, value_);                            \
+            CMETA_FIXED_ARRAY_COLLECTOR_(context_), value_);                  \
     }                                                                       \
     static inline cmeta_status name_##_collect_finish(void *context_) {      \
         return cmeta_data_fixed_array_collect_finish(                        \
-            &name_##_cmeta_spec, (cmeta_collector *)context_);                \
+            &name_##_cmeta_spec, CMETA_FIXED_ARRAY_COLLECTOR_(context_));      \
     }                                                                       \
     static inline void name_##_collect_abort(void *context_) {               \
         cmeta_data_fixed_array_collect_abort(                                \
-            &name_##_cmeta_spec, (cmeta_collector *)context_);                \
+            &name_##_cmeta_spec, CMETA_FIXED_ARRAY_COLLECTOR_(context_));      \
     }                                                                       \
     static const cmeta_collector_ops name_##_collector_ops = {                \
         name_##_collect_begin, name_##_collect_accept,                        \
