@@ -35,8 +35,22 @@
     CMETA_TYPED_ROUTE_I(CMETA_GENERIC_IS_KIND(kind), kind, __VA_ARGS__)
 
 
+/* Canonical ordinary-C finite generic declaration.
+ *
+ * cmeta_type(List, IntList, int);
+ *
+ * Providers register a finite kind and emit one concrete C type plus its
+ * ordinary Type_* API and canonical metadata. This is a macro declaration,
+ * not source syntax and requires no CMeta lowerer.
+ */
+#ifndef cmeta_type
+#define cmeta_type(kind, ...) CMETA_TYPED_ROUTE(kind, __VA_ARGS__)
+#endif
+
+/* Legacy spelling retained temporarily while in-tree users migrate to
+ * cmeta_type(...). Do not introduce new users of typed(...). */
 #ifndef typed
-#define typed(kind, ...) CMETA_TYPED_ROUTE(kind, __VA_ARGS__)
+#define typed(kind, ...) cmeta_type(kind, __VA_ARGS__)
 #endif
 
 /* Compose a generated Type_method symbol behind a semantic public facade. */
