@@ -168,9 +168,8 @@ One declaration may generate the wrapper type, static-inline typed forwarding
 functions, canonical metadata, Range factories, and relevant traits. Allocation
 and container algorithms remain ordinary compiled C in the provider library.
 
-The historical `typed(...)` mixed router is not the canonical generic type
-surface. It remains temporarily for existing callable/operator DSL users such as
-CFlow lower-case operators.
+Callable/function DSLs use separate explicit entry points such as
+`cmeta_function(...)`; `cmeta_type(...)` never routes into callable syntax.
 
 ### `typed_any(...)`
 
