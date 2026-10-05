@@ -13,24 +13,21 @@ Version 6 generalizes ownership lifecycle discovery with explicit
 typed receiver syntax or a generic-container owner; the binding supplies
 cleanup authority only.
 
-### Typed receiver calls
+### Ordinary typed operations
 
-Given a CMeta typed declaration and a concrete local:
-
-```c
-typed(List, IntList, int);
-
-IntList list = {0};
-list.add(10);
-```
-
-the lowerer emits the direct typed call:
+Container/data-structure operations remain ordinary concrete C calls in both
+`.c` and `.cmeta.c`:
 
 ```c
+IntList_init(&list, 16);
 IntList_add(&list, 10);
+IntList_destroy(&list);
 ```
 
-No runtime method lookup is generated.
+`cmeta-lower` does not provide receiver syntax (`list.add(...)`) or generic
+operation syntax (`List_add(...)`). CMeta source lowering is reserved for
+semantic features that C cannot express directly, such as ownership state and
+automatic lifecycle placement.
 
 ### Ownership-state proof
 
@@ -62,9 +59,8 @@ source: LIVE_OWNED -> MOVED
 
 A second move or any later value use of `source` is rejected.
 
-Lexical shadowing uses the same symbol stack as typed receiver lowering, so an
-inner cmeta_owned variable has independent move state from an outer variable with the
-same name.
+Lexical shadowing uses the ownership symbol stack, so an inner cmeta_owned
+variable has independent move state from an outer variable with the same name.
 
 ## Canonical lifecycle binding
 
@@ -127,7 +123,7 @@ cmeta_data_value_destroy(IntList_cmeta_data(), &values);
 A source consumed by `cmeta_move(name)` is MOVED and receives no source-scope
 cleanup.
 
-This is deliberately a **straight-line ownership subset**. While a LIVE owned
+This is deliberately a **straight-line ownership subset**. While a LIVE cmeta_owned
 value exists, the lowerer rejects ownership-relevant control flow it cannot yet
 join soundly: early return, outer conditional/loop/switch flow, goto,
 break/continue, and short-circuit/ternary expressions. cmeta_owned values scoped
@@ -146,4 +142,5 @@ inferred.
 - normal cmeta_owned cleanup is reverse lexical order;
 - cmeta_moved sources are not cleaned by the source scope;
 - unsupported ownership-sensitive control flow fails closed;
+- receiver/generic operation lowering is not part of this tool;
 - runtime CMeta method resolution is never introduced by this tool.
