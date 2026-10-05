@@ -267,6 +267,28 @@ spec("CMeta C++ public headers") {
                 sizeof(cmeta_fixed_bytes_fixture));
   }
 
+  it("owns inline fixed bytes through the C++ provider surface") {
+    const auto *data = &cmeta_fixed_bytes_fixture_value_cmeta_data;
+    const cmeta_fixed_bytes_fixture expected = {1u, 2u, 3u, 4u, 5u, 6u};
+    cmeta_fixed_bytes_fixture source = {1u, 2u, 3u, 4u, 5u, 6u};
+    cmeta_fixed_bytes_fixture destination = {9u};
+    const unsigned char *span = nullptr;
+    size_t size = 0u;
+
+    check_true(cmeta_data_value_traits_supported(data));
+    check_equal(cmeta_data_construct_init_zero(data, &destination), CMETA_OK);
+    check_equal(cmeta_data_value_copy(data, &destination, &source), CMETA_OK);
+    check_equal(destination, expected, sizeof(expected));
+    check_equal(cmeta_data_value_restore_zero(data, &source), CMETA_OK);
+    check_equal(cmeta_data_value_move(data, &source, &destination), CMETA_OK);
+    check_true(data->buffer_ops->is_zero(&destination));
+    check_equal(cmeta_data_buffer_read(data, &source, sizeof(source), &span, &size), CMETA_OK);
+    check_true(span == source);
+    check_equal(size, sizeof(source));
+    check_equal(span, expected, sizeof(expected));
+    check_equal(cmeta_data_construct_restore_zero(data, &source), CMETA_OK);
+  }
+
   it("expands enum reflection without C-style casts") {
     cmeta_cpp_state state = CMETA_CPP_READY;
 
