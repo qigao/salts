@@ -6,6 +6,7 @@
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #ifdef __cplusplus
   #define SALTS_CMETA_FIXED_WIDTH_STATIC_ASSERT(condition_, message_)                              \
@@ -38,9 +39,17 @@ SALTS_CMETA_FIXED_WIDTH_STATIC_ASSERT(sizeof(uint64_t) * CHAR_BIT == 64u,
 
 static const cmeta_type_identity salts_bool8_cmeta_identity =
     CMETA_TYPE_ID_ATOM_INIT("salts.bool8");
+static inline bool salts_bool8_cmeta_copy_construct(void *, const void *);
+static inline void salts_bool8_cmeta_move(void *, void *);
+static inline void salts_bool8_cmeta_restore_zero(void *);
+static const cmeta_type_traits salts_bool8_cmeta_traits = {
+    CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY,
+    NULL, NULL, NULL, salts_bool8_cmeta_copy_construct,
+    salts_bool8_cmeta_move, salts_bool8_cmeta_restore_zero
+};
 static const cmeta_type_desc salts_bool8_cmeta_type = {
     "uint8_t", sizeof(uint8_t), CMETA_ALIGNOF(uint8_t), CMETA_T_INTEGER,
-    NULL, NULL, &salts_bool8_cmeta_identity
+    NULL, &salts_bool8_cmeta_traits, &salts_bool8_cmeta_identity
 };
 
 static inline bool salts_bool8_cmeta_is_zero(const void *object) {
@@ -61,6 +70,19 @@ static inline cmeta_status salts_bool8_cmeta_copy(void *destination,
 static inline void salts_bool8_cmeta_restore_zero(void *object) {
   if (object != NULL)
     *(uint8_t *)object = 0u;
+}
+
+static inline bool salts_bool8_cmeta_copy_construct(void *destination,
+                                                    const void *source) {
+  return salts_bool8_cmeta_copy(destination, source) == CMETA_OK;
+}
+
+static inline void salts_bool8_cmeta_move(void *destination, void *source) {
+  if (destination == source) return;
+  /* Move is no-fail only for a valid Bool value; invalid octets violate the
+   * provider contract instead of being copied into another owner. */
+  if (salts_bool8_cmeta_copy(destination, source) != CMETA_OK) abort();
+  salts_bool8_cmeta_restore_zero(source);
 }
 
 /** Canonical octet-backed Bool provider for schemas with an 8-bit native ABI. */

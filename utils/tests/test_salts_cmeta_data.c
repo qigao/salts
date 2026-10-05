@@ -1,10 +1,16 @@
 #include "salts_cmeta_data.h"
+#include <cmeta/fixed_array.h>
 #include "tstr.h"
 #include "vstr.h"
 #include "tinytest.h"
 
 #include <stdint.h>
 #include <string.h>
+
+enum { BOOL8_ARRAY_COUNT = 2u };
+typedef uint8_t Bool8Array[BOOL8_ARRAY_COUNT];
+CMETA_DEFINE_FIXED_ARRAY(Bool8ArrayProvider, Bool8Array, uint8_t, BOOL8_ARRAY_COUNT,
+                         &salts_bool8_cmeta_data, "test.bool8.array", "Bool8 array");
 
 const cmeta_data_desc *salts_uuid_cmeta_data_from_peer(void);
 const cmeta_type_desc *salts_uuid_cmeta_type_from_peer(void);
@@ -312,6 +318,40 @@ spec("Salts CMeta buffer adapters") {
 }
 
 spec("Salts fixed-width CMeta descriptors") {
+  it("copies moves and collects octet Bool arrays through canonical owning traits") {
+    Bool8Array source = {1u, 0u};
+    Bool8Array copy = {0u};
+    Bool8Array moved = {0u};
+    cmeta_collector collector = {0};
+    const uint8_t one = 1u;
+    const uint8_t zero = 0u;
+    bool is_zero = false;
+    check_equal(cmeta_type_require_traits(&salts_bool8_cmeta_type,
+                CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY), CMETA_OK);
+    check_true(cmeta_data_value_copy_supported(&Bool8ArrayProvider_cmeta_data));
+    check_equal(cmeta_data_value_copy(&Bool8ArrayProvider_cmeta_data, copy, source), CMETA_OK);
+    check_equal(copy, source, sizeof(source));
+    check_equal(cmeta_data_value_move(&Bool8ArrayProvider_cmeta_data, moved, copy), CMETA_OK);
+    check_equal(moved, source, sizeof(source));
+    check_equal(cmeta_data_value_is_zero(&Bool8ArrayProvider_cmeta_data, copy, &is_zero), CMETA_OK);
+    check_true(is_zero);
+    check_equal(cmeta_data_collection_collector(&Bool8ArrayProvider_cmeta_data, copy,
+                BOOL8_ARRAY_COUNT, &collector), CMETA_OK);
+    check_equal(cmeta_collector_begin(&collector), CMETA_OK);
+    check_equal(cmeta_data_collection_accept(&Bool8ArrayProvider_cmeta_data, &collector,
+                &salts_bool8_cmeta_data, &one), CMETA_OK);
+    check_equal(cmeta_data_collection_accept(&Bool8ArrayProvider_cmeta_data, &collector,
+                &salts_bool8_cmeta_data, &zero), CMETA_OK);
+    check_equal(cmeta_collector_finish(&collector), CMETA_OK);
+    check_equal(copy, source, sizeof(source));
+    check_equal(cmeta_data_value_restore_zero(&Bool8ArrayProvider_cmeta_data, moved), CMETA_OK);
+    check_equal(cmeta_data_value_restore_zero(&Bool8ArrayProvider_cmeta_data, copy), CMETA_OK);
+    source[1] = 2u;
+    check_equal(cmeta_data_value_copy(&Bool8ArrayProvider_cmeta_data, copy, source), CMETA_INVALID_ARGUMENT);
+    check_equal(cmeta_data_value_is_zero(&Bool8ArrayProvider_cmeta_data, copy, &is_zero), CMETA_OK);
+    check_true(is_zero);
+  }
+
   it("provides an octet-backed Bool with native fixed-value semantics") {
     const uint8_t true_octet = 1u;
     const uint8_t invalid_octet = 2u;

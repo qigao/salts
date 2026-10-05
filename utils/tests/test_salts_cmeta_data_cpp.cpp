@@ -22,6 +22,9 @@ static_assert(std::is_same_v<decltype(salts_bool8_cmeta_fixed_ops),
                   std::is_same_v<decltype(salts_bool8_cmeta_data),
                                  const cmeta_data_desc>,
               "octet Bool exposes immutable fixed-value metadata");
+static_assert(std::is_same_v<decltype(salts_bool8_cmeta_traits),
+                             const cmeta_type_traits>,
+              "octet Bool exposes immutable owning traits");
 static_assert(std::is_same_v<decltype(salts_uuid_cmeta_buffer_ops),
                              const cmeta_data_buffer_ops>,
               "UUID adapter preserves its declared object type");
@@ -64,6 +67,25 @@ spec("Salts CMeta buffer adapter C++ surface") {
 }
 
 spec("Salts fixed-width and UUID CMeta C++ surface") {
+  it("uses checked Bool copy and canonical move and destruction traits") {
+    const uint8_t invalid = 2u;
+    uint8_t source = 1u;
+    uint8_t destination = 0u;
+    const cmeta_type_traits *traits = salts_bool8_cmeta_type.traits;
+    check_equal(cmeta_type_require_traits(&salts_bool8_cmeta_type,
+                  CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY), CMETA_OK);
+    check_false(traits->copy_construct(&destination, &invalid));
+    check_equal(destination, uint8_t{0u});
+    check_true(traits->copy_construct(&destination, &source));
+    check_equal(destination, uint8_t{1u});
+    traits->destroy(&destination);
+    traits->move_construct(&destination, &source);
+    check_equal(destination, uint8_t{1u});
+    check_equal(source, uint8_t{0u});
+    traits->destroy(&destination);
+    check_equal(destination, uint8_t{0u});
+  }
+
   it("compares header-local descriptors semantically") {
     cmeta_type_desc equivalent = cmeta_type_int64;
 

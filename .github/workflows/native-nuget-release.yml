@@ -142,10 +142,11 @@ jobs:
           cmake --build --preset ${{ matrix.profile }} --parallel 2 --target
           cmeta_data_test cmeta_header_cpp_test cmeta_core_test
           cmeta_type_identity_test cmeta_container_type_test cmeta_collector_test
+          test_salts_cmeta_data test_salts_cmeta_data_cpp
       - name: Run CMeta lifecycle tests
         run: >-
           ctest --preset ${{ matrix.profile }} --no-tests=error --output-on-failure
-          -R '^(cmeta_data_test|cmeta_header_cpp_test|cmeta_core_test|cmeta_type_identity_test|cmeta_container_type_test|cmeta_collector_test)$'
+          -R '^(cmeta_data_test|cmeta_header_cpp_test|cmeta_core_test|cmeta_type_identity_test|cmeta_container_type_test|cmeta_collector_test|test_salts_cmeta_data|test_salts_cmeta_data_cpp)$'
   linux:
     name: Linux x64 SDK
     needs: metadata
