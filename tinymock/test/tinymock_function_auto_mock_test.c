@@ -30,7 +30,6 @@ TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_mode_echo);
 suite("TinyMock reflected free functions") {
   it("generates replacement definitions without repeating signatures") {
     const cmeta_function_desc *add_meta;
-    const tinymock_recorded_call_t *call;
 
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_add);
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_answer);
@@ -50,13 +49,6 @@ suite("TinyMock reflected free functions") {
         TINYMOCk_FUNCTION(tinymock_fixture_add), 1);
     tinymock_mock_verify_times(
         TINYMOCk_FUNCTION(tinymock_fixture_answer), 1);
-
-    call = tinymock_mock_call_at(
-        TINYMOCk_FUNCTION(tinymock_fixture_add), 0);
-    check_not_null(call);
-    check_equal(call->argc, (size_t)2);
-    check_equal(TINYMOCk_VALUE_AS(int, call->args[0]), 9);
-    check_equal(TINYMOCk_VALUE_AS(int, call->args[1]), 25);
 
     {
       int expected_left = 9;
