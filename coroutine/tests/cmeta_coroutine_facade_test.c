@@ -85,6 +85,6 @@ spec("CMeta coroutine facade") {
     check_equal(cmeta_yield(), SALTS_EINVAL);
     check_equal(cmeta_wait_begin(&wait), SALTS_EINVAL);
     check_equal(wait.owner, (uintptr_t)0u);
-    check_equal(cmeta_current_executor(), NULL);
+    check_null(cmeta_current_executor());
   }
 }
