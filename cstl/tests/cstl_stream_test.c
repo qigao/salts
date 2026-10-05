@@ -12,9 +12,9 @@ Struct(StreamStudent,
 
 #include <string.h>
 
-typed(List, StreamIntList, int);
-typed(List, StreamLongList, long);
-typed(Map, StreamAgeMap, int, int);
+cmeta_type(List, StreamIntList, int);
+cmeta_type(List, StreamLongList, long);
+cmeta_type(Map, StreamAgeMap, int, int);
 
 typedef cmeta_collector (*StreamLongListCollector)(StreamLongList *, size_t);
 typedef cmeta_collector (*StreamAgeMapCollector)(StreamAgeMap *, size_t);
