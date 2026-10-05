@@ -38,6 +38,7 @@ install(
 
 install(
   FILES
+    include/tinymock.h
     include/tinymock_support.h
     include/tinymock_cmeta.h
     include/tinymock_value.h
