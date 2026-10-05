@@ -799,6 +799,25 @@ bool cmeta_data_value_move_supported(const cmeta_data_desc *desc);
 cmeta_status cmeta_data_value_move(
     const cmeta_data_desc *desc, void *destination, void *source);
 
+/* Ordinary-C move facades.
+ *
+ * cmeta_move_data() is the descriptor-explicit form for arbitrary providers.
+ * cmeta_move(Type, ...) is the typed convenience for concrete types exposing
+ * the canonical Type_cmeta_data() accessor. A successful move must leave the
+ * source in provider-defined semantic zero, so source remains safe to destroy
+ * or reinitialize without compiler-private ownership state.
+ */
+#define CMETA_DATA_ACCESSOR_I_(type_) type_##_cmeta_data
+#define CMETA_DATA_ACCESSOR_(type_) CMETA_DATA_ACCESSOR_I_(type_)
+#ifndef cmeta_move_data
+#define cmeta_move_data(data_, destination_, source_) \
+    cmeta_data_value_move((data_), (destination_), (source_))
+#endif
+#ifndef cmeta_move
+#define cmeta_move(type_, destination_, source_) \
+    cmeta_move_data(CMETA_DATA_ACCESSOR_(type_)(), (destination_), (source_))
+#endif
+
 typedef enum cmeta_data_temp_lifecycle {
     CMETA_DATA_TEMP_NONE = 0,
     CMETA_DATA_TEMP_TRIVIAL,
