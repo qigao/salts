@@ -53,6 +53,39 @@ static const cmeta_function_desc return_managed_function = {
   CMETA_RESULT_UNKNOWN
 };
 
+static const cmeta_function_desc return_value_function = {
+  sizeof(cmeta_function_desc),
+  "tinymock_return_value_function",
+  &return_managed_type,
+  NULL,
+  0u,
+  CMETA_EFFECT_PURE,
+  CMETA_PROP_NONE,
+  CMETA_RESULT_VALUE
+};
+
+static const cmeta_function_desc return_owned_function = {
+  sizeof(cmeta_function_desc),
+  "tinymock_return_owned_function",
+  &return_managed_type,
+  NULL,
+  0u,
+  CMETA_EFFECT_PURE,
+  CMETA_PROP_NONE,
+  CMETA_RESULT_OWNED
+};
+
+static const cmeta_function_desc return_shared_function = {
+  sizeof(cmeta_function_desc),
+  "tinymock_return_shared_function",
+  &return_managed_type,
+  NULL,
+  0u,
+  CMETA_EFFECT_PURE,
+  CMETA_PROP_NONE,
+  CMETA_RESULT_SHARED
+};
+
 suite("TinyMock CMeta typed return") {
   it("owns and materializes nontrivial return values") {
     tinymock_cmeta_return state;
@@ -122,5 +155,33 @@ suite("TinyMock CMeta typed return") {
     check_false(tinymock_cmeta_return_enabled(&state));
 
     tinymock_cmeta_return_destroy(&state);
+  }
+
+  it("consumes canonical result semantics and fails closed without ownership authority") {
+    tinymock_cmeta_return state;
+    tinymock_return_managed scripted = {21};
+
+    return_copy_count = 0u;
+    return_destroy_count = 0u;
+
+    tinymock_cmeta_return_init(&state, &return_value_function);
+    check_true(tinymock_cmeta_return_set(
+        &state, &return_value_function, &scripted));
+    tinymock_cmeta_return_destroy(&state);
+
+    tinymock_cmeta_return_init(&state, &return_owned_function);
+    check_false(tinymock_cmeta_return_set(
+        &state, &return_owned_function, &scripted));
+    check_false(tinymock_cmeta_return_enabled(&state));
+    tinymock_cmeta_return_destroy(&state);
+
+    tinymock_cmeta_return_init(&state, &return_shared_function);
+    check_false(tinymock_cmeta_return_set(
+        &state, &return_shared_function, &scripted));
+    check_false(tinymock_cmeta_return_enabled(&state));
+    tinymock_cmeta_return_destroy(&state);
+
+    check_equal(return_copy_count, (size_t)1);
+    check_equal(return_destroy_count, (size_t)1);
   }
 }
