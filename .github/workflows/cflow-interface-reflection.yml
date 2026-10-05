@@ -83,6 +83,19 @@ jobs:
             --output-on-failure \
             -R '^(cflow_interface_reflection_test|cflow_tinymock_interface_test|cflow_header_cpp_test)$'
 
+      - name: Reject legacy public CFlow interface rows
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -REn 'X\(I,[RVD][0-9]' \
+              cflow/include/cflow/clock.h \
+              cflow/include/cflow/reactive.h \
+              cflow/include/cflow/executor.h \
+              cflow/include/cflow/scheduler.h; then
+            echo "public CFlow interfaces must use full F/FR/FV/FD reflection" >&2
+            exit 1
+          fi
+
       - name: Source hygiene
         shell: bash
         run: git diff --check

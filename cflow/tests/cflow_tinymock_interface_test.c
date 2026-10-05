@@ -10,6 +10,7 @@ TINYMOCk_INTERFACE(cflow_waitable, CMETA_WAITABLE_METHODS);
 TINYMOCk_INTERFACE(cflow_publisher, CFLOW_PUBLISHER_METHODS);
 TINYMOCk_INTERFACE(cflow_executor, CMETA_EXECUTOR_METHODS);
 TINYMOCk_INTERFACE(cflow_executor_control, CMETA_EXECUTOR_CONTROL_METHODS);
+TINYMOCk_INTERFACE(cflow_scheduler, CMETA_SCHEDULER_METHODS);
 
 static void cflow_tinymock_test_wake(void *user) {
     (void)user;
@@ -318,6 +319,113 @@ suite("TinyMock existing CMeta interface") {
         0u, "user", &user_value));
 
     tinymock_cflow_executor_control_destroy(&mock);
+  }
+
+  it("mocks the fully reflected scheduler contract") {
+    tinymock_cflow_scheduler mock;
+    cflow_scheduler scheduler;
+    cflow_schedule_result scheduled = {
+      CFLOW_ADMISSION_ACCEPTED, (cflow_task_id)42u
+    };
+    cflow_task_id posted = 43u;
+    bool yes = true;
+    size_t ready = 2u;
+    size_t advanced = 3u;
+    size_t idle_runs = 4u;
+    uint64_t now = 99u;
+    size_t pending = 5u;
+    cflow_scheduler_stats stats = {
+      .ready_capacity = 8u,
+      .timer_capacity = 16u,
+      .ready_pending = 1u,
+      .timer_pending = 2u
+    };
+    cflow_scheduler_stats observed = {0};
+    cflow_task_fn expected_task = cflow_tinymock_test_task;
+    uint64_t delay = 7u;
+    uint64_t ticks = 11u;
+    size_t max_steps = 13u;
+    cflow_task_id cancel_id = 42u;
+    int user_value = 29;
+
+    tinymock_cflow_scheduler_init(&mock);
+    scheduler = tinymock_cflow_scheduler_as_interface(&mock);
+
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(
+        &mock, try_post_after, scheduled));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, post_after, posted));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, cancel, yes));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, run_one, yes));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, run_ready, ready));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, advance, advanced));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(
+        &mock, run_until_idle, idle_runs));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, wait_idle, yes));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, now, now));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, pending, pending));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, shutdown, yes));
+    check_true(TINYMOCk_INTERFACE_SET_RETURN(&mock, get_stats, yes));
+    check_true(TINYMOCk_INTERFACE_SET_OUT(
+        &mock, get_stats, "out", stats));
+
+    check_true(cflow_scheduler_try_post_after(
+        &scheduler, delay, cflow_tinymock_test_task, &user_value).task_id ==
+        scheduled.task_id);
+    check_equal(cflow_scheduler_post_after(
+        &scheduler, delay, cflow_tinymock_test_task, &user_value),
+        posted);
+    check_true(cflow_scheduler_cancel(&scheduler, cancel_id));
+    check_true(cflow_scheduler_run_one(&scheduler));
+    check_equal(cflow_scheduler_run_ready(&scheduler), ready);
+    check_equal(cflow_scheduler_advance(&scheduler, ticks), advanced);
+    check_equal(cflow_scheduler_run_until_idle(&scheduler, max_steps),
+                idle_runs);
+    check_true(cflow_scheduler_wait_idle(&scheduler));
+    check_equal(cflow_scheduler_now(&scheduler), now);
+    check_equal(cflow_scheduler_pending(&scheduler), pending);
+    check_true(cflow_scheduler_shutdown(&scheduler));
+    check_true(cflow_scheduler_get_stats(&scheduler, &observed));
+    check_equal(observed.ready_capacity, (size_t)8);
+    check_equal(observed.timer_capacity, (size_t)16);
+
+    check_true(TINYMOCk_INTERFACE_ARG_EQUAL_TYPED(
+        &mock, try_post_after, 0u, "fn", expected_task));
+    check_true(tinymock_cmeta_history_arg_pointer_equal_name(
+        TINYMOCk_INTERFACE_METHOD_HISTORY(&mock, try_post_after),
+        0u, "user", &user_value));
+
+    {
+      const cmeta_interface_desc *meta = cflow_scheduler_interface();
+      const cmeta_function_desc *try_fn =
+          TINYMOCk_INTERFACE_METHOD_FUNCTION(
+              cflow_scheduler, try_post_after);
+      const cmeta_function_desc *stats_fn =
+          TINYMOCk_INTERFACE_METHOD_FUNCTION(cflow_scheduler, get_stats);
+      size_t method_index;
+
+      check_true(cmeta_interface_desc_valid(meta));
+      check_equal(meta->method_count, (size_t)13);
+      for (method_index = 0u; method_index < meta->method_count;
+           ++method_index)
+        check_true(cmeta_interface_method_reflection_valid(
+            &meta->methods[method_index]));
+      check_equal(try_fn->result_flags,
+                  (cmeta_result_flags)CMETA_RESULT_VALUE);
+      check_true((try_fn->params[2].flags &
+                  (CMETA_PARAM_IN | CMETA_PARAM_BORROWED |
+                   CMETA_PARAM_NULLABLE)) ==
+                 (CMETA_PARAM_IN | CMETA_PARAM_BORROWED |
+                  CMETA_PARAM_NULLABLE));
+      check_true(try_fn->params[1].type == &cflow_type_task_fn);
+      check_true(stats_fn->params[0].type ==
+                 &cflow_type_scheduler_stats_ptr);
+      check_true(cmeta_interface_method_owns_self(&meta->methods[12]));
+    }
+
+    cflow_scheduler_destroy(&scheduler);
+    check_false(cflow_scheduler_valid(&scheduler));
+    TINYMOCk_INTERFACE_VERIFY_TIMES(&mock, destroy, 1);
+    tinymock_cflow_scheduler_destroy(&mock);
   }
 
 }

@@ -32,6 +32,9 @@ typedef struct cflow_scheduler_stats {
     size_t cancelled_on_shutdown;
 } cflow_scheduler_stats;
 
+extern const cmeta_type_desc cflow_type_scheduler_stats;
+extern const cmeta_type_desc cflow_type_scheduler_stats_ptr;
+
 /**
  * Scheduler is an execution facade, not an inheritance hierarchy.
  *
@@ -43,19 +46,52 @@ typedef struct cflow_scheduler_stats {
  * then returns false.
  */
 #define CMETA_SCHEDULER_METHODS(X,I) \
-    X(I,R3,cflow_schedule_result,try_post_after,uint64_t,delay_ticks,cflow_task_fn,fn,void *,user) \
-    X(I,R3,cflow_task_id,post_after,uint64_t,delay_ticks,cflow_task_fn,fn,void *,user) \
-    X(I,R1,bool,cancel,cflow_task_id,id) \
-    X(I,R0,bool,run_one,_) \
-    X(I,R0,size_t,run_ready,_) \
-    X(I,R1,size_t,advance,uint64_t,ticks) \
-    X(I,R1,size_t,run_until_idle,size_t,max_steps) \
-    X(I,R0,bool,wait_idle,_) \
-    X(I,R0,uint64_t,now,_) \
-    X(I,R0,size_t,pending,_) \
-    X(I,R0,bool,shutdown,_) \
-    X(I,R1,bool,get_stats,cflow_scheduler_stats *,out) \
-    X(I,D0,void,destroy,_)
+    X(I,FR3,cflow_schedule_result,try_post_after,stateful, \
+      &cflow_type_schedule_result,CMETA_ABI_AGGREGATE,CMETA_RESULT_VALUE, \
+      (uint64_t,delay_ticks,CMETA_PARAM_IN, \
+       &cmeta_type_uint64,CMETA_ABI_SCALAR), \
+      (cflow_task_fn,fn,CMETA_PARAM_IN, \
+       &cflow_type_task_fn,CMETA_ABI_FUNCTION_POINTER), \
+      (void *,user,CMETA_PARAM_IN | CMETA_PARAM_BORROWED | CMETA_PARAM_NULLABLE, \
+       &cmeta_type_void_ptr,CMETA_ABI_OBJECT_POINTER)) \
+    X(I,FR3,cflow_task_id,post_after,stateful, \
+      &cflow_type_task_id,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
+      (uint64_t,delay_ticks,CMETA_PARAM_IN, \
+       &cmeta_type_uint64,CMETA_ABI_SCALAR), \
+      (cflow_task_fn,fn,CMETA_PARAM_IN, \
+       &cflow_type_task_fn,CMETA_ABI_FUNCTION_POINTER), \
+      (void *,user,CMETA_PARAM_IN | CMETA_PARAM_BORROWED | CMETA_PARAM_NULLABLE, \
+       &cmeta_type_void_ptr,CMETA_ABI_OBJECT_POINTER)) \
+    X(I,FR1,bool,cancel,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
+      (cflow_task_id,id,CMETA_PARAM_IN, \
+       &cflow_type_task_id,CMETA_ABI_SCALAR)) \
+    X(I,FR0,bool,run_one,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE) \
+    X(I,FR0,size_t,run_ready,stateful, \
+      &cmeta_type_size,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE) \
+    X(I,FR1,size_t,advance,stateful, \
+      &cmeta_type_size,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
+      (uint64_t,ticks,CMETA_PARAM_IN, \
+       &cmeta_type_uint64,CMETA_ABI_SCALAR)) \
+    X(I,FR1,size_t,run_until_idle,stateful, \
+      &cmeta_type_size,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
+      (size_t,max_steps,CMETA_PARAM_IN, \
+       &cmeta_type_size,CMETA_ABI_SCALAR)) \
+    X(I,FR0,bool,wait_idle,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE) \
+    X(I,FR0,uint64_t,now,stateful, \
+      &cmeta_type_uint64,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE) \
+    X(I,FR0,size_t,pending,stateful, \
+      &cmeta_type_size,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE) \
+    X(I,FR0,bool,shutdown,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE) \
+    X(I,FR1,bool,get_stats,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
+      (cflow_scheduler_stats *,out,CMETA_PARAM_OUT | CMETA_PARAM_BORROWED, \
+       &cflow_type_scheduler_stats_ptr,CMETA_ABI_OBJECT_POINTER)) \
+    X(I,FD0,void,destroy,stateful, \
+      &cmeta_type_void,CMETA_ABI_VOID)
 
 CMETA_INTERFACE(cflow_scheduler, CMETA_SCHEDULER_METHODS);
 

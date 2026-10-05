@@ -181,4 +181,60 @@ suite("CFlow clock interface reflection") {
     check_false(cmeta_interface_desc_has_owning_method(meta));
   }
 
+  it("publishes complete scheduler semantics") {
+    const cmeta_interface_desc *meta = cflow_scheduler_interface();
+    const cmeta_function_desc *try_fn;
+    const cmeta_function_abi_desc *try_abi;
+    const cmeta_function_desc *stats_fn;
+    size_t index;
+
+    check_true(cmeta_type_desc_valid(&cflow_type_scheduler_stats));
+    check_true(cmeta_type_desc_valid(&cflow_type_scheduler_stats_ptr));
+    check_true(cmeta_interface_desc_valid(meta));
+    check_equal(meta->method_count, (size_t)13);
+
+    for (index = 0u; index < meta->method_count; ++index)
+      check_true(cmeta_interface_method_reflection_valid(&meta->methods[index]));
+
+    try_fn = cmeta_interface_method_function(&meta->methods[0]);
+    try_abi = cmeta_interface_method_abi(&meta->methods[0]);
+    check_equal(try_fn->name, "cflow_scheduler.try_post_after");
+    check_true(try_fn->return_type == &cflow_type_schedule_result);
+    check_equal(try_fn->result_flags,
+                (cmeta_result_flags)CMETA_RESULT_VALUE);
+    check_equal(try_abi->return_carrier,
+                (cmeta_abi_carrier)CMETA_ABI_AGGREGATE);
+    check_equal(try_fn->param_count, (size_t)3);
+    check_true(try_fn->params[0].type == &cmeta_type_uint64);
+    check_equal(try_fn->params[0].flags,
+                (cmeta_param_flags)CMETA_PARAM_IN);
+    check_true(try_fn->params[1].type == &cflow_type_task_fn);
+    check_equal(try_abi->param_carriers[1],
+                (cmeta_abi_carrier)CMETA_ABI_FUNCTION_POINTER);
+    check_true(try_fn->params[2].type == &cmeta_type_void_ptr);
+    check_true((try_fn->params[2].flags &
+                (CMETA_PARAM_IN | CMETA_PARAM_BORROWED |
+                 CMETA_PARAM_NULLABLE)) ==
+               (CMETA_PARAM_IN | CMETA_PARAM_BORROWED |
+                CMETA_PARAM_NULLABLE));
+
+    check_true(cmeta_interface_method_function(&meta->methods[1])->return_type ==
+               &cflow_type_task_id);
+    check_true(cmeta_interface_method_function(&meta->methods[2])
+                   ->params[0].type == &cflow_type_task_id);
+    check_true(cmeta_interface_method_function(&meta->methods[5])
+                   ->params[0].type == &cmeta_type_uint64);
+    check_true(cmeta_interface_method_function(&meta->methods[6])
+                   ->params[0].type == &cmeta_type_size);
+
+    stats_fn = cmeta_interface_method_function(&meta->methods[11]);
+    check_true(stats_fn->params[0].type == &cflow_type_scheduler_stats_ptr);
+    check_equal(stats_fn->params[0].flags,
+                (cmeta_param_flags)(CMETA_PARAM_OUT | CMETA_PARAM_BORROWED));
+
+    check_true(cmeta_interface_method_owns_self(&meta->methods[12]));
+    check_equal(cmeta_interface_method_function(&meta->methods[12])->name,
+                "cflow_scheduler.destroy");
+  }
+
 }

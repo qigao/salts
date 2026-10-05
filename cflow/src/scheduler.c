@@ -8,6 +8,31 @@
 #include <stdlib.h>
 #include <string.h>
 
+static const cmeta_type_traits cflow_scheduler_trivial_traits = {
+    .flags = CMETA_TRAIT_TRIVIAL_COPY |
+             CMETA_TRAIT_TRIVIAL_DESTROY
+};
+
+const cmeta_type_desc cflow_type_scheduler_stats = {
+    .name = "cflow_scheduler_stats",
+    .size = sizeof(cflow_scheduler_stats),
+    .align = _Alignof(cflow_scheduler_stats),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &cflow_scheduler_trivial_traits,
+    .identity = NULL
+};
+
+const cmeta_type_desc cflow_type_scheduler_stats_ptr = {
+    .name = "cflow_scheduler_stats *",
+    .size = sizeof(cflow_scheduler_stats *),
+    .align = _Alignof(cflow_scheduler_stats *),
+    .kind = CMETA_T_POINTER,
+    .pointee = &cflow_type_scheduler_stats,
+    .traits = NULL,
+    .identity = NULL
+};
+
 typedef struct cflow_test_loop_state {
     salts_mutex_t mutex;
     cflow_clock clock;
