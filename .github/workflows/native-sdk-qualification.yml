@@ -1,9 +1,9 @@
-name: Salts native NuGet release
+name: Salts native SDK qualification
 
 on:
   pull_request:
     paths:
-      - ".github/workflows/native-nuget-release.yml"
+      - ".github/workflows/native-sdk-qualification.yml"
       - "CMakeLists.txt"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
@@ -21,29 +21,17 @@ on:
       - "tinytest/**"
       - "tinymock/**"
       - "packaging/nuget/**"
-  push:
-    tags: ["v*"]
-  workflow_dispatch:
-    inputs:
-      release_sha:
-        description: "Exact immutable release commit SHA"
-        required: true
-        type: string
-      tag:
-        description: "Existing immutable release tag"
-        required: true
-        type: string
 permissions:
   contents: read
   packages: read
 
 concurrency:
-  group: salts-native-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  group: salts-native-qualification-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   metadata:
-    name: Release metadata
+    name: Qualification metadata
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -62,11 +50,7 @@ jobs:
           set -euo pipefail
           release=true
           publish=false
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            release_sha="${{ inputs.release_sha }}"
-          else
-            release_sha="$GITHUB_SHA"
-          fi
+          release_sha="${{ github.event.pull_request.head.sha || github.sha }}"
 
           test -n "$release_sha"
           git cat-file -e "$release_sha^{commit}"
@@ -86,67 +70,12 @@ jobs:
           fi
 
           expected_tag="v$version"
-          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
-            test "$GITHUB_REF_TYPE" = "tag"
-            requested_tag="$GITHUB_REF_NAME"
-            publish=true
-          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            requested_tag="${{ inputs.tag }}"
-            publish=true
-          elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            requested_tag="$expected_tag"
-          else
-            echo "unsupported native package event: $GITHUB_EVENT_NAME" >&2
-            exit 1
-          fi
-
-          if [ "$requested_tag" != "$expected_tag" ]; then
-            echo "release tag mismatch: requested=$requested_tag expected=$expected_tag" >&2
-            exit 1
-          fi
-
-          if [ "$publish" = "true" ]; then
-            git fetch origin "refs/tags/$expected_tag:refs/tags/$expected_tag" --force
-            tagged_commit="$(git rev-list -n 1 "$expected_tag")"
-            if [ "$tagged_commit" != "$release_sha" ]; then
-              echo "release tag $expected_tag resolves to $tagged_commit, not $release_sha" >&2
-              exit 1
-            fi
-          fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$expected_tag" >> "$GITHUB_OUTPUT"
           echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
           echo "release=$release" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
-  cmeta_lifecycle:
-    name: CMeta lifecycle (${{ matrix.profile }})
-    needs: metadata
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        profile: [linux-release-user, linux-dev-user]
-    env:
-      ASAN_OPTIONS: detect_leaks=1
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.metadata.outputs.release_sha }}
-      - name: Set up shared build dependencies
-        uses: ./.github/actions/setup-re2c-tools
-      - name: Configure CMeta tests
-        run: cmake --preset ${{ matrix.profile }}
-      - name: Build CMeta lifecycle tests
-        run: >-
-          cmake --build --preset ${{ matrix.profile }} --parallel 2 --target
-          cmeta_data_test cmeta_header_cpp_test cmeta_core_test
-          cmeta_type_identity_test cmeta_container_type_test cmeta_collector_test
-          test_salts_cmeta_data test_salts_cmeta_data_cpp
-      - name: Run CMeta lifecycle tests
-        run: >-
-          ctest --preset ${{ matrix.profile }} --no-tests=error --output-on-failure
-          -R '^(cmeta_data_test|cmeta_header_cpp_test|cmeta_core_test|cmeta_type_identity_test|cmeta_container_type_test|cmeta_collector_test|test_salts_cmeta_data|test_salts_cmeta_data_cpp)$'
   linux:
     name: Linux x64 SDK
     needs: metadata
@@ -681,7 +610,7 @@ jobs:
 
   pack:
     name: Pack Salts.Native
-    needs: [metadata, cmeta_lifecycle, linux, linux_arm64, macos, windows, android, ios]
+    needs: [metadata, linux, linux_arm64, macos, windows, android, ios]
     if: needs.metadata.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -835,69 +764,3 @@ jobs:
           cmake -S consumer -B consumer/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$SALTS_ARM64_PREFIX"
           cmake --build consumer/build --parallel 2
           consumer/build/salts_linux_arm64_consumer
-
-  publish:
-    name: Publish package and GitHub Release
-    needs: [metadata, pack, qualify_linux_arm64]
-    if: needs.metadata.outputs.publish == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: salts-native-nuget
-          path: dist
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-      - name: Enforce immutable release identity
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.metadata.outputs.tag }}
-          RELEASE_SHA: ${{ needs.metadata.outputs.release_sha }}
-        run: |
-          set -euo pipefail
-          if existing_tag="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha 2>/dev/null)"; then
-            if [ "$existing_tag" != "$RELEASE_SHA" ]; then
-              echo "tag $TAG resolves to $existing_tag, not $RELEASE_SHA" >&2
-              echo "bump the Salts project/package version before publishing a changed SDK" >&2
-              exit 1
-            fi
-            echo "tag $TAG already resolves to this commit"
-          else
-            echo "required release tag $TAG does not exist" >&2
-            exit 1
-          fi
-          if existing_release="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish 2>/dev/null)"; then
-            if [ "$existing_release" != "$RELEASE_SHA" ] && [ "$existing_release" != "$TAG" ]; then
-              echo "release $TAG targets $existing_release, not $RELEASE_SHA" >&2
-              exit 1
-            fi
-            echo "release $TAG already exists for this release identity"
-          fi
-      - name: Publish to GitHub Packages
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          dotnet nuget add source --username qigao --password "$GITHUB_TOKEN" --store-password-in-clear-text --name github https://nuget.pkg.github.com/qigao/index.json
-          dotnet nuget push "dist/Salts.Native.${{ needs.metadata.outputs.version }}.nupkg" --api-key "$GITHUB_TOKEN" --source github --skip-duplicate
-      - name: Create GitHub Release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.metadata.outputs.tag }}
-          VERSION: ${{ needs.metadata.outputs.version }}
-          RELEASE_SHA: ${{ needs.metadata.outputs.release_sha }}
-        run: |
-          set -euo pipefail
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "release $TAG already exists; package publish was idempotent"
-            exit 0
-          fi
-          gh release create "$TAG" dist/*.nupkg --repo "$GITHUB_REPOSITORY" \
-            --verify-tag --title "Salts $VERSION" --generate-notes

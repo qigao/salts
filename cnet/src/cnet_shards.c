@@ -299,6 +299,16 @@ int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms) {
   return cnet_shards_poll_owner_impl(shards, 0u, timeout_ms);
 }
 
+int cnet_shards_flush_deferred(cnet_shards *shards) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  int status;
+  if (impl == NULL || impl->shard_count != 1u) return SALTS_EINVAL;
+  if (impl->stopping || impl->stopped) return SALTS_ESHUTDOWN;
+  status = cnet_owner_flush_deferred(&impl->records[0].owner);
+  cnet_shards_record_error(&impl->records[0], status);
+  return status;
+}
+
 int cnet_shards_advance_external(cnet_shards *shards) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
   if (impl == NULL || impl->shard_count != 1u) return SALTS_EINVAL;

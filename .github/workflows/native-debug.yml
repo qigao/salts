@@ -1,0 +1,128 @@
+name: Native debug and sanitizer checks
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/native-debug.yml"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "CMakeUserPresets.json"
+      - "vcpkg.json"
+      - "vcpkg-configuration.json"
+      - "cmake/**"
+      - "cmeta/**"
+      - "utils/include/salts_cmeta_fixed_width.h"
+      - "utils/tests/test_salts_cmeta_data.c"
+      - "utils/tests/test_salts_cmeta_data_cpp.cpp"
+      - "cnet/src/**"
+      - "cnet/include/**"
+      - "cnet/CMakeLists.txt"
+      - "cnet/tests/cnet_owner_test.c"
+      - "cnet/tests/cnet_session_test.c"
+      - "cnet/tests/cnet_event_test.c"
+      - "cnet/tests/cnet_dispatcher_test.c"
+      - "cnet/tests/cnet_api_test.c"
+      - "cnet/tests/cnet_tls_test.c"
+      - "cnet/tests/cnet_datagram_test.c"
+      - "cnet/tests/cnet_stop_contract_test.c"
+      - "native-io/src/**"
+      - "native-io/include/**"
+      - "native-io/CMakeLists.txt"
+      - "concurrency/**"
+      - "platform/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: salts-native-debug-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cmeta_lifecycle:
+    name: CMeta lifecycle (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [linux-release-user, linux-dev-user]
+    env:
+      ASAN_OPTIONS: detect_leaks=1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+      - name: Configure CMeta tests
+        run: cmake --preset ${{ matrix.profile }}
+      - name: Build CMeta lifecycle tests
+        run: >-
+          cmake --build --preset ${{ matrix.profile }} --parallel 2 --target
+          cmeta_data_test cmeta_header_cpp_test cmeta_core_test
+          cmeta_type_identity_test cmeta_container_type_test cmeta_collector_test
+          test_salts_cmeta_data test_salts_cmeta_data_cpp
+      - name: Run CMeta lifecycle tests
+        run: >-
+          ctest --preset ${{ matrix.profile }} --no-tests=error --output-on-failure
+          -R '^(cmeta_data_test|cmeta_header_cpp_test|cmeta_core_test|cmeta_type_identity_test|cmeta_container_type_test|cmeta_collector_test|test_salts_cmeta_data|test_salts_cmeta_data_cpp)$'
+  cnet-owned-receive-asan:
+    name: CNet owned receive ASan / Ubuntu 24.04 GCC
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Prepare Linux ASan dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes ninja-build nasm
+          test -n "${VCPKG_ROOT:-}"
+          test -f "${QIGAO_VCPKG_TOOLCHAIN_FILE:-}"
+
+      - name: Configure CNet Debug with AddressSanitizer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset linux-dev-user \
+            -DBUILD_TESTS=ON \
+            -DENABLE_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_ADDRESS=ON
+
+      - name: Build CNet ownership and lifecycle tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build --preset linux-dev-user --parallel 2 --target \
+            cnet_owner_test \
+            cnet_session_test \
+            cnet_event_test \
+            cnet_dispatcher_test \
+            cnet_api_test \
+            cnet_tls_test \
+            cnet_datagram_test \
+            cnet_stop_contract_test
+
+      - name: Run CNet ownership and lifecycle tests under ASan
+        shell: bash
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:abort_on_error=1
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/linux-gcc-debug \
+            -R '^(cnet_(owner|session|event|dispatcher|api|tls|datagram|stop_contract)_test)$' \
+            --timeout 90 --output-on-failure
+

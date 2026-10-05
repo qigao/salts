@@ -2,7 +2,7 @@ if(NOT DEFINED PROJECT_SOURCE_DIR)
   message(FATAL_ERROR "PROJECT_SOURCE_DIR is required")
 endif()
 
-set(workflow "${PROJECT_SOURCE_DIR}/.github/workflows/native-io-release-benchmarks.yml")
+set(workflow "${PROJECT_SOURCE_DIR}/.github/workflows/native-io-benchmarks.yml")
 set(scaling_verifier "${PROJECT_SOURCE_DIR}/cnet/benchmarks/verify_scaling_benchmark.ps1")
 set(io_verifier "${PROJECT_SOURCE_DIR}/cnet/benchmarks/verify_io_benchmark.ps1")
 
