@@ -3,9 +3,9 @@
 typed(List, IntList, int);
 
 int main(void) {
-    owned(IntList) list = {0};
+    cmeta_owned(IntList) list = {0};
     IntList transferred = {0};
 
-    transferred = move(list);
+    transferred = cmeta_move(list);
     return (int)IntList_size(&list);
 }
