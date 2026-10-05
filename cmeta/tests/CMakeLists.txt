@@ -253,6 +253,11 @@ cmeta_add_compile_failure_test(
   compile_fail/cmeta_compute_require.c
   "CMeta predicate CMetaRejected rejects blocked")
 
+cmeta_add_compile_failure_test(
+  cmeta_intrusive_type_mismatch_compile_fail
+  compile_fail/cmeta_intrusive_type_mismatch.c
+  "CMeta intrusive member type mismatch")
+
 set_target_properties(cmeta_header_cpp_test PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON
