@@ -196,7 +196,12 @@ cmake_add_test(cmeta_abi_test
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
-set_target_properties(cmeta_abi_test PROPERTIES
+cmake_add_test(cmeta_manifest_test
+  SOURCES cmeta_manifest_test.c
+  LIBS Salts::CMeta Salts::TinyTest
+  FOLDER "cmeta/tests")
+
+set_target_properties(cmeta_abi_test cmeta_manifest_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
