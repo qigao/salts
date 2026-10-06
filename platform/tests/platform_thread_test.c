@@ -227,6 +227,21 @@ spec("Platform thread primitives") {
     check_equal(tls_value, 0);
   }
 
+  it("owns thread-affinity state without CMeta") {
+    salts_thread_affine_state state = {0};
+    int owner = 0;
+    int other = 0;
+
+    check_equal(salts_thread_affine_init(&state, &owner), SALTS_OK);
+    check_equal(salts_thread_affine_check(&state, &owner), SALTS_OK);
+    check_equal(salts_thread_affine_check(&state, &other), SALTS_EINVAL);
+    check_equal(salts_thread_affine_set_busy(&state, &owner, true), SALTS_OK);
+    check_equal(salts_thread_affine_check(&state, &owner), SALTS_EBUSY);
+    state.busy = false;
+    check_equal(salts_thread_affine_reset(&state, &owner), SALTS_OK);
+    check_equal(salts_thread_affine_check(&state, &owner), SALTS_EINVAL);
+  }
+
   it("reports at least one CPU and accepts yield and sleep") {
     check(salts_cpu_count() > 0);
     salts_thread_yield();
