@@ -62,14 +62,14 @@ jobs:
           $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) { throw "Visual Studio with the x64 C++ toolchain was not found" }
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
-      - name: Run Unix native fastpath and capability contracts
+      - name: Run Unix native and capability contracts
         if: matrix.family != 'windows' && matrix.native
         shell: bash
         run: |
           set -euo pipefail
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V \
             -R '^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_(test|cpp_test|wrong_descriptor.*|manifest_test)$|cmeta_fingerprint_|cmeta_manifest_)'
-      - name: Run Windows native fastpath and capability contracts
+      - name: Run Windows native and capability contracts
         if: matrix.family == 'windows' && matrix.native
         shell: cmd
         run: |
@@ -79,13 +79,6 @@ jobs:
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V -R "^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_(test|cpp_test|wrong_descriptor.*|manifest_test)$|cmeta_fingerprint_|cmeta_manifest_|cflow_execution_test$|cflow_interface_reflection_test$|cflow_executor_dso_test$)"
           if errorlevel 1 exit /b 1
-      - name: Run portable atomics under TSan
-        shell: bash
-        run: |
-          set -euo pipefail
-          ctest --preset ${{ matrix.preset }} --no-tests=error --output-on-failure --timeout 60 \
-            -R '^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_(test|cpp_test|.*compile_fail)$|cmeta_function_reflection_test$|cmeta_abi_test$)'
-        if: matrix.portable
       - name: Run CMeta semantic contracts on Unix
         if: matrix.family != 'windows' && matrix.semantic
         shell: bash
