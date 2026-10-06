@@ -41,8 +41,10 @@ MSVC C header 的 lock-free 宏统一报告 1；其实现对不超过 8 字节�
 sequence）才建立对此前数据的可见性；bool 反复切换不是版本或完成通知。
 关联可变数据仍需自己的同步或不可变快照协议，不能靠 gate 获得互斥。
 
-目标代码及借用的 ABI metadata 由调用方所属模块持有。update 不 retain、drain、
-取消或卸载旧目标；所有旧目标必须存活到读者和在途调用结束。停机顺序是停止
+目标代码由调用方所属模块持有。ABI metadata 只在控制面校验期间借用，不保存
+进槽；candidate metadata 可在 update 返回后释放，default metadata 在每次更新
+时必须仍有效。update 不 retain、drain、取消或卸载旧目标；所有旧代码目标必须
+存活到读者和在途调用结束。停机顺序是停止
 接收调用、等待所有读者/调用结束，再释放槽或卸载提供者。替换不引入第二份
 状态，不依赖 #927 未合并的 guard 实现。
 

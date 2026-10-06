@@ -64,6 +64,7 @@ _Static_assert(sizeof(atomic_bool) == 1u &&
 /** Declare one typed atomic call slot from an existing FunctionDecl/Function0Decl.
  * The default and replacement providers must outlive every reader and in-flight
  * call. update does not drain or unload old targets. Storage is bounded, no heap.
+ * ABI views are borrowed during update only; no candidate descriptor is retained.
  * Declaration/initialization is quiescent; updates and loads permit MPMC access. */
 #define cmeta_static_call(name_, default_) \
     typedef default_##_function_type name_##_target_type; \

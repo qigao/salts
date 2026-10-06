@@ -582,7 +582,7 @@ call 声明要求文件作用域、每槽一个 TU；热路径无 Reflection 查
 
 默认使用可移植 C 原子；`CMETA_NATIVE_FASTPATH=ON` 才暴露显式 native 读取/调用。
 C++17 借用 C-owned opaque key。更新失败不改变目标；更新不 retain 或 drain 旧
-提供者，所有旧代码/metadata 必须活到在途调用结束。完整契约、边界、benchmark
+提供者，所有旧代码目标必须活到在途调用结束。完整契约、边界、benchmark
 和可编译测试示例见 [FASTPATH.md](FASTPATH.md)。
 
 ## 2. Framework DSL
