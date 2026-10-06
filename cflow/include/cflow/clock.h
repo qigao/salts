@@ -14,10 +14,10 @@ enum {
 };
 
 #define CMETA_CLOCK_METHODS(X,I) \
-    X(I,F0,cflow_instant,now,stateful, \
-      &cflow_type_instant,CMETA_ABI_AGGREGATE) \
-    X(I,F1,bool,advance,stateful, \
-      &cmeta_type_bool,CMETA_ABI_SCALAR, \
+    X(I,FR0,cflow_instant,now,stateful, \
+      &cflow_type_instant,CMETA_ABI_AGGREGATE,CMETA_RESULT_VALUE) \
+    X(I,FR1,bool,advance,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
       (cflow_duration,delta,CMETA_PARAM_IN, \
        &cflow_type_duration,CMETA_ABI_AGGREGATE)) \
     X(I,FV0,void,destroy,stateful, \

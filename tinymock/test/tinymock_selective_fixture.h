@@ -3,10 +3,10 @@
 
 #include <cmeta/function.h>
 
-FunctionDecl(value, int, tinymock_selective_mocked,
+FunctionDeclResult(value, int, CMETA_RESULT_VALUE, tinymock_selective_mocked,
     (int, value, CMETA_PARAM_IN));
 
-FunctionDecl(value, int, tinymock_selective_real,
+FunctionDeclResult(value, int, CMETA_RESULT_VALUE, tinymock_selective_real,
     (int, value, CMETA_PARAM_IN));
 
 Function0Decl(value, void, tinymock_selective_void);

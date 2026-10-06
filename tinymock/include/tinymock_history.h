@@ -45,6 +45,11 @@ bool tinymock_cmeta_history_record(
     size_t argc,
     const tinymock_cmeta_arg_view *args);
 
+/* Consumes the immutable function admitted by init/reset. Does not accept new
+ * foreign metadata; use record() at that boundary. */
+bool tinymock_cmeta_history_record_admitted(tinymock_cmeta_history *history,
+    size_t argc, const tinymock_cmeta_arg_view *args);
+
 size_t tinymock_cmeta_history_call_count(const tinymock_cmeta_history *history);
 
 const cmeta_param_desc *tinymock_cmeta_history_param(

@@ -3,7 +3,7 @@
 
 #include <cmeta/function.h>
 
-FunctionDecl(value, int, tinymock_selective_extra,
+FunctionDeclResult(value, int, CMETA_RESULT_VALUE, tinymock_selective_extra,
     (int, value, CMETA_PARAM_IN));
 
 #endif /* TINYMOCK_SELECTIVE_EXTRA_FIXTURE_H */

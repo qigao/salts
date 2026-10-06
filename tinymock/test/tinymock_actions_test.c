@@ -9,15 +9,24 @@ typedef struct tinymock_action_managed {
 
 static size_t action_copy_count;
 static size_t action_destroy_count;
+static size_t action_move_count;
+static size_t action_fail_copy_at;
 
 static bool action_managed_copy(void *destination, const void *source) {
   tinymock_action_managed *dst = (tinymock_action_managed *)destination;
   const tinymock_action_managed *src =
       (const tinymock_action_managed *)source;
   if (!dst || !src) return false;
-  *dst = *src;
   ++action_copy_count;
+  if (action_copy_count == action_fail_copy_at) return false;
+  *dst = *src;
   return true;
+}
+
+static void action_managed_move(void *destination, void *source) {
+  *(tinymock_action_managed *)destination = *(tinymock_action_managed *)source;
+  ((tinymock_action_managed *)source)->value = 0;
+  ++action_move_count;
 }
 
 static void action_managed_destroy(void *value) {
@@ -26,8 +35,9 @@ static void action_managed_destroy(void *value) {
 }
 
 static const cmeta_type_traits action_managed_traits = {
-  .flags = CMETA_TRAIT_COPY | CMETA_TRAIT_DESTROY,
+  .flags = CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY,
   .copy_construct = action_managed_copy,
+  .move_construct = action_managed_move,
   .destroy = action_managed_destroy
 };
 
@@ -92,6 +102,49 @@ static const cmeta_function_desc action_inout_function = {
 };
 
 suite("TinyMock reflected output actions") {
+  before_each() { action_fail_copy_at = action_move_count = 0; }
+  it("rolls back prepared outputs when a later copy fails before any INOUT mutation") {
+    cmeta_param_desc params[2] = {action_inout_params[0], action_inout_params[0]};
+    cmeta_function_desc function = action_inout_function;
+    tinymock_cmeta_actions actions;
+    tinymock_action_managed first = {3}, second = {4}, scripted = {17};
+    tinymock_action_managed *first_ptr = &first, *second_ptr = &second;
+    tinymock_cmeta_arg_view args[] = {{&first_ptr, true, first_ptr}, {&second_ptr, true, second_ptr}};
+    params[1].name = "second";
+    function.params = params; function.param_count = 2;
+    action_copy_count = action_destroy_count = 0;
+    tinymock_cmeta_actions_init(&actions, &function);
+    check_true(tinymock_cmeta_actions_set_output(&actions, &function, 0, &scripted));
+    check_true(tinymock_cmeta_actions_set_output(&actions, &function, 1, &scripted));
+    action_fail_copy_at = action_copy_count + 2;
+    check_false(tinymock_cmeta_actions_apply_admitted(&actions, 2, args));
+    check_equal(first.value, 3); check_equal(second.value, 4);
+    check_equal(action_move_count, (size_t)0);
+    check_equal(action_destroy_count, (size_t)1);
+    action_fail_copy_at = 0;
+    check_true(tinymock_cmeta_actions_apply_admitted(&actions, 2, args));
+    check_equal(first.value, 17); check_equal(second.value, 17);
+    check_equal(action_move_count, (size_t)2);
+    tinymock_cmeta_actions_destroy(&actions);
+    action_managed_destroy(&first); action_managed_destroy(&second);
+  }
+  it("rejects managed replacement without a no-fail move authority") {
+    cmeta_type_traits traits = action_managed_traits;
+    cmeta_type_desc type = action_managed_type, pointer = action_managed_ptr_type;
+    cmeta_param_desc param = action_inout_params[0];
+    cmeta_function_desc function = action_inout_function;
+    tinymock_cmeta_actions actions;
+    tinymock_action_managed original = {3}, scripted = {17};
+    tinymock_action_managed *target = &original;
+    tinymock_cmeta_arg_view arg = {&target, true, target};
+    traits.flags &= ~CMETA_TRAIT_MOVE; traits.move_construct = NULL;
+    type.traits = &traits; pointer.pointee = &type; param.type = &pointer; function.params = &param;
+    tinymock_cmeta_actions_init(&actions, &function);
+    check_true(tinymock_cmeta_actions_set_output(&actions, &function, 0, &scripted));
+    check_false(tinymock_cmeta_actions_apply_admitted(&actions, 1, &arg));
+    check_equal(original.value, 3);
+    tinymock_cmeta_actions_destroy(&actions);
+  }
   it("constructs nontrivial OUT values and releases scripted storage") {
     tinymock_cmeta_actions actions;
     tinymock_action_managed scripted = {17};
@@ -113,16 +166,17 @@ suite("TinyMock reflected output actions") {
         &actions, &action_out_function, 1u, args));
     check_equal(output.value, 17);
     check_equal(action_copy_count, (size_t)2);
-    check_equal(action_destroy_count, (size_t)0);
+    check_equal(action_destroy_count, (size_t)1);
+    check_equal(action_move_count, (size_t)1);
 
     tinymock_cmeta_actions_destroy(&actions);
-    check_equal(action_destroy_count, (size_t)1);
+    check_equal(action_destroy_count, (size_t)2);
 
     action_managed_destroy(&output);
-    check_equal(action_destroy_count, (size_t)2);
+    check_equal(action_destroy_count, (size_t)3);
   }
 
-  it("replaces nontrivial INOUT values with destroy then copy") {
+  it("prepares a nontrivial INOUT copy before destroying and moving into the destination") {
     tinymock_cmeta_actions actions;
     tinymock_action_managed scripted = {44};
     tinymock_action_managed value = {3};
@@ -143,13 +197,14 @@ suite("TinyMock reflected output actions") {
         &actions, &action_inout_function, 1u, args));
     check_equal(value.value, 44);
     check_equal(action_copy_count, (size_t)2);
-    check_equal(action_destroy_count, (size_t)1);
+    check_equal(action_destroy_count, (size_t)2);
+    check_equal(action_move_count, (size_t)1);
 
     tinymock_cmeta_actions_destroy(&actions);
-    check_equal(action_destroy_count, (size_t)2);
+    check_equal(action_destroy_count, (size_t)3);
 
     action_managed_destroy(&value);
-    check_equal(action_destroy_count, (size_t)3);
+    check_equal(action_destroy_count, (size_t)4);
   }
 
   it("reset releases the owned scripted value") {
