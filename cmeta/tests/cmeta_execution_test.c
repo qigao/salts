@@ -184,11 +184,11 @@ spec("CMeta execution primitives") {
         data.construct_ops = NULL;
         check_equal(cmeta_pool_init(&pool, &data, sizeof(ExecutionValue),
             _Alignof(ExecutionValue), 1), CMETA_TRAIT_MISSING);
-        check_null(pool.storage);
+        check_null(pool.owner.storage);
         data.construct_ops = &ops;
         check_equal(cmeta_pool_init(&pool, &data, sizeof(ExecutionValue) + 1,
             _Alignof(ExecutionValue), 1), CMETA_TYPE_MISMATCH);
-        check_null(pool.storage);
+        check_null(pool.owner.storage);
         ops.move = NULL;
         check_equal(cmeta_pool_init(&pool, &data, sizeof(ExecutionValue),
             _Alignof(ExecutionValue), 1), CMETA_OK);
