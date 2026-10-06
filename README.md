@@ -146,7 +146,7 @@ Configure, build, test and install presets inherit the matching environment;
 no `.env` loader or shell wrapper is required. Run Windows commands in a
 Visual Studio developer environment.
 
-CI uses the `win-release-ci`, `win-clang-release-ci`, `linux-release-ci`,
+CI uses the `win-release-ci`, `win-clang-release-ci`, `linux-dev-ci`, `linux-release-ci`,
 `mac-release-ci` and `android-arm64-v8a-release-ci` presets. These preserve
 the cache action's `VCPKG_CACHE_REPOSITORY_ROOT` and `VCPKG_BINARY_SOURCES`
 instead of using local paths. The repository's shared setup action adapts the

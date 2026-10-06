@@ -107,7 +107,7 @@ static cmeta_status scope_normal(void) {
     scope_reset(0u);
 
     cmeta_scope(normal, status,
-        cmeta_resources((ScopeProbe, first), (ScopeProbe, second)),
+        cmeta_autos(cmeta_auto(ScopeProbe, first) cmeta_auto(ScopeProbe, second)),
         cmeta_body(scope_normal_body(&first, &second))
     );
 
@@ -128,7 +128,7 @@ static cmeta_status scope_early_exit(void) {
     scope_reset(0u);
 
     cmeta_scope(early, status,
-        cmeta_resources((ScopeProbe, first), (ScopeProbe, second)),
+        cmeta_autos(cmeta_auto(ScopeProbe, first) cmeta_auto(ScopeProbe, second)),
         cmeta_body(scope_early_body(&first, &second))
     );
 
@@ -147,7 +147,7 @@ static cmeta_status scope_move_then_cleanup(void) {
     scope_reset(0u);
 
     cmeta_scope(moved, status,
-        cmeta_resources((ScopeProbe, source), (ScopeProbe, destination)),
+        cmeta_autos(cmeta_auto(ScopeProbe, source) cmeta_auto(ScopeProbe, destination)),
         cmeta_body(scope_move_body(&source, &destination))
     );
 
@@ -160,7 +160,7 @@ static cmeta_status scope_partial_init_failure(void) {
     scope_reset(2u);
 
     cmeta_scope(partial, status,
-        cmeta_resources((ScopeProbe, first), (ScopeProbe, second)),
+        cmeta_autos(cmeta_auto(ScopeProbe, first) cmeta_auto(ScopeProbe, second)),
         cmeta_body(scope_normal_body(&first, &second))
     );
 
@@ -179,7 +179,7 @@ static cmeta_status scope_outer_body(ScopeProbe *outer_value) {
     outer_value->active = 1;
     outer_value->id = 51;
     cmeta_scope(inner, inner_status,
-        cmeta_resources((ScopeProbe, inner_value)),
+        cmeta_autos(cmeta_auto(ScopeProbe, inner_value)),
         cmeta_body(scope_inner_body(&inner_value))
     );
     /* Propagating the inner error cannot bypass either scope's cleanup. */
@@ -191,7 +191,7 @@ static cmeta_status scope_nested(void) {
     scope_reset(0u);
 
     cmeta_scope(outer, status,
-        cmeta_resources((ScopeProbe, outer_value)),
+        cmeta_autos(cmeta_auto(ScopeProbe, outer_value)),
         cmeta_body(scope_outer_body(&outer_value))
     );
 
@@ -216,7 +216,7 @@ body_done:
 static cmeta_status scope_native_exit(enum ScopeBodyExit mode) {
     cmeta_status status;
     scope_reset(0u);
-    cmeta_scope(native, status, cmeta_resources((ScopeProbe, value)),
+    cmeta_scope(native, status, cmeta_autos(cmeta_auto(ScopeProbe, value)),
         cmeta_body(scope_native_exit_body(&value, mode)));
     return status;
 }

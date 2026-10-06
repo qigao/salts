@@ -275,6 +275,12 @@ cmeta_add_compile_failure_test(
   "cmeta_scope_exit is removed")
 
 cmeta_add_compile_failure_test(
+  cmeta_scope_leave_compile_fail
+  compile_fail/cmeta_scope_cross_exit.c
+  "cmeta_leave is removed")
+target_compile_definitions(cmeta_scope_leave_compile_fail PRIVATE CMETA_TEST_LEAVE=1)
+
+cmeta_add_compile_failure_test(
   cmeta_scope_cross_function_goto_compile_fail
   compile_fail/cmeta_scope_cross_function_goto.c
   "outer__cmeta_cleanup")

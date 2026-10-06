@@ -8,7 +8,7 @@ static cmeta_status rejected_body(ScopeValue *value) {
 
 int main(void) {
     cmeta_status status;
-    cmeta_scope(outer, status, cmeta_resources((ScopeValue, value)),
+    cmeta_scope(outer, status, cmeta_autos(cmeta_auto(ScopeValue, value)),
         cmeta_body(rejected_body(&value)));
     return status;
 }

@@ -119,8 +119,10 @@ callable traits.
 
 ### Structured scope
 
-`cmeta_scope(name, status, resources, body)` owns 1 through 16 explicit
-`(Type, local_name)` resource rows. Each type exposes `Type_cmeta_data()` with
+`cmeta_scope(name, status, autos, body)` owns 1 through 16 explicit
+`cmeta_auto(Type, local_name)` rows inside `cmeta_autos(...)`. The wrapper
+keeps the leading-comma row stream in one preprocessor argument and has no
+runtime representation. Each type exposes `Type_cmeta_data()` with
 canonical concrete `construct_ops`. The body is one ISO C expression returning
 `cmeta_status`, usually a typed function call borrowing the local values:
 
@@ -138,7 +140,7 @@ static cmeta_status fill_values(ScopeList *values) {
 int main(void) {
     cmeta_status status;
     cmeta_scope(request, status,
-        cmeta_resources((ScopeList, values)),
+        cmeta_autos(cmeta_auto(ScopeList, values)),
         cmeta_body(fill_values(&values)));
     return status == CMETA_OK ? 0 : 1;
 }
@@ -182,9 +184,9 @@ generic checked runtime lifecycle APIs retain their existing contracts.
 `cmeta_body(...)` could let native exits bypass cleanup. Pure C macros cannot
 intercept arbitrary `return/goto`, and compiler cleanup attributes do not provide
 an equivalent MSVC implementation. Move the block into a typed status-returning
-function and replace `cmeta_scope_exit(...)` with `return status` in that function.
-The old exit macro now fails compilation. Function boundaries prevent jumps to
-an outer scope's cleanup label. Nested body functions return the inner scope's
+function and replace `cmeta_leave(...)` or the earlier `cmeta_scope_exit(...)`
+with `return status` in that function. Both old exit macros now fail compilation.
+Function boundaries prevent jumps to an outer scope's cleanup label. Nested body functions return the inner scope's
 status only after inner cleanup, so outer cleanup follows automatically. Only
 code using the earlier scope body/exit syntax needs migration; field layout and
 container APIs are unaffected. Providers formerly using generic-only lifecycle

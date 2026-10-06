@@ -384,6 +384,13 @@
                 "vcpkg-cache-ci",
                 "android-arm64-v8a-release-user"
             ]
+        },
+        {
+            "name": "linux-dev-ci",
+            "inherits": [
+                "vcpkg-cache-ci",
+                "linux-dev-user"
+            ]
         }
     ],
     "buildPresets": [
@@ -571,6 +578,17 @@
         {
             "name": "android-arm64-v8a-release-ci",
             "configurePreset": "android-arm64-v8a-release-ci"
+        },
+        {
+            "name": "linux-dev-ci",
+            "configurePreset": "linux-dev-ci"
+        },
+        {
+            "name": "install-linux-dev-ci",
+            "configurePreset": "linux-dev-ci",
+            "targets": [
+                "install"
+            ]
         }
     ],
     "testPresets": [
@@ -618,6 +636,11 @@
             "name": "linux-release-ci",
             "inherits": "base-test",
             "configurePreset": "linux-release-ci"
+        },
+        {
+            "name": "linux-dev-ci",
+            "inherits": "base-test",
+            "configurePreset": "linux-dev-ci"
         }
     ]
 }

@@ -50,6 +50,12 @@ jobs:
             configure_preset: linux-release-ci
             build_preset: linux-release-ci
             build_dir: build/linux-gcc-release
+          - name: GCC ASan
+            runner: ubuntu-24.04
+            family: linux
+            configure_preset: linux-dev-ci
+            build_preset: linux-dev-ci
+            build_dir: build/linux-gcc-debug
           - name: MSVC
             runner: windows-2025
             family: windows

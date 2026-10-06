@@ -48,8 +48,7 @@ suite("CSTL typed public header") {
     it("cleans allocated and moved-from lists through canonical scope ops") {
         cmeta_status status;
         cmeta_scope(lists, status,
-            cmeta_resources((HeaderGenericList, source),
-                            (HeaderGenericList, destination)),
+            cmeta_autos(cmeta_auto(HeaderGenericList, source) cmeta_auto(HeaderGenericList, destination)),
             cmeta_body(scoped_move_body(&source, &destination)));
         check_equal(status, CMETA_OK);
     }

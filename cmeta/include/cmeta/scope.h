@@ -8,9 +8,9 @@
 #include <stdbool.h>
 
 /*
- * Portable structured lifetime reference.
+ * Portable structured lifetime facade.
  *
- * Resources are explicit finite (Type, name) rows. Their canonical DataDesc
+ * cmeta_auto rows in cmeta_autos are explicit finite resources. Their DataDesc
  * must expose concrete construct_ops. The same ops initialize semantic zero
  * and restore it in reverse declaration order, without Reflection queries.
  *
@@ -19,7 +19,8 @@
  * that function; labels cannot cross the function boundary. Block bodies and
  * cross-scope exits are intentionally rejected rather than leaking resources.
  */
-#define cmeta_resources(...) (__VA_ARGS__)
+#define cmeta_auto(type_, name_) , (type_, name_)
+#define cmeta_autos(...) (__VA_ARGS__)
 #define cmeta_body(expression_) (expression_)
 
 /* @internal Bind canonical concrete construction capability for one resource.
@@ -94,24 +95,44 @@ CMETA_INLINE cmeta_status cmeta_scope_construct_ops(
         }                                                                      \
     } while (0);
 
-#define CMETA_SCOPE_ROWS_(resources_) CMETA_SCOPE_ROWS_I_ resources_
-#define CMETA_SCOPE_ROWS_I_(...) __VA_ARGS__
+/* cmeta_auto deliberately emits a leading comma. Prefixing a sentinel turns
+ * the field stream into ordinary variadic arguments; this trampoline drops the
+ * sentinel and preserves the finite row list for forward/reverse replay. */
+#define CMETA_SCOPE_ROWS_(autos_) \
+    CMETA_SCOPE_ROWS_EXPAND_(cmeta_scope_auto_sentinel CMETA_PP_UNPAREN autos_)
+#define CMETA_SCOPE_ROWS_EXPAND_(...) CMETA_SCOPE_ROWS_DROP_(__VA_ARGS__)
+#define CMETA_SCOPE_ROWS_DROP_(sentinel_, ...) __VA_ARGS__
+
+#define CMETA_SCOPE_DECLARE_ALL_(scope_, autos_) \
+    CMETA_SCOPE_DECLARE_ALL_EXPAND_(scope_, CMETA_SCOPE_ROWS_(autos_))
+#define CMETA_SCOPE_DECLARE_ALL_EXPAND_(scope_, ...) \
+    CMETA_PP_FOR_EACH(CMETA_SCOPE_DECLARE_, scope_, __VA_ARGS__)
+
+#define CMETA_SCOPE_INIT_ALL_(scope_, status_, autos_) \
+    CMETA_SCOPE_INIT_ALL_EXPAND_(scope_, status_, CMETA_SCOPE_ROWS_(autos_))
+#define CMETA_SCOPE_INIT_ALL_EXPAND_(scope_, status_, ...) \
+    CMETA_PP_FOR_EACH(CMETA_SCOPE_INIT_, (scope_, status_), __VA_ARGS__)
+
+#define CMETA_SCOPE_DESTROY_ALL_(scope_, autos_) \
+    CMETA_SCOPE_DESTROY_ALL_EXPAND_(scope_, CMETA_SCOPE_ROWS_(autos_))
+#define CMETA_SCOPE_DESTROY_ALL_EXPAND_(scope_, ...) \
+    CMETA_PP_FOR_EACH_REVERSE(CMETA_SCOPE_DESTROY_, scope_, __VA_ARGS__)
 
 #define cmeta_scope_exit(scope_, status_, value_)                             \
     _Static_assert(0, "cmeta_scope_exit is removed; return from the body function")
 
-#define cmeta_scope(scope_, status_, resources_, body_)                       \
+#define cmeta_leave(scope_, status_, value_) \
+    _Static_assert(0, "cmeta_leave is removed; return from the body function")
+
+#define cmeta_scope(scope_, status_, autos_, body_)                           \
     do {                                                                       \
         (status_) = CMETA_OK;                                                  \
-        CMETA_PP_FOR_EACH(                                                     \
-            CMETA_SCOPE_DECLARE_, scope_, CMETA_SCOPE_ROWS_(resources_))      \
-        CMETA_PP_FOR_EACH(                                                     \
-            CMETA_SCOPE_INIT_, (scope_, status_), CMETA_SCOPE_ROWS_(resources_)) \
+        CMETA_SCOPE_DECLARE_ALL_(scope_, autos_)                              \
+        CMETA_SCOPE_INIT_ALL_(scope_, status_, autos_)                        \
         (status_) = (body_);                                                   \
         goto CMETA_SCOPE_LABEL_(scope_);                                      \
         CMETA_SCOPE_LABEL_(scope_):                                            \
-        CMETA_PP_FOR_EACH_REVERSE(                                             \
-            CMETA_SCOPE_DESTROY_, scope_, CMETA_SCOPE_ROWS_(resources_))      \
+        CMETA_SCOPE_DESTROY_ALL_(scope_, autos_)                              \
         ;                                                                      \
     } while (0)
 
