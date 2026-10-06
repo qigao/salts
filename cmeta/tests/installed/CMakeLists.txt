@@ -20,6 +20,11 @@ cmake_add_test(cmeta_installed_pp_test
 cmake_add_test(cmeta_installed_pp_cpp_test
   SOURCES ../cmeta_pp_cpp_test.cpp
   LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests/installed")
+cmake_add_test(cmeta_installed_pp_zero_cpp_test
+  SOURCES ../cmeta_pp_zero_cpp_test.cpp
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests/installed")
+set_target_properties(cmeta_installed_pp_zero_cpp_test PROPERTIES
+  CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 cmake_add_test(plugin_installed_declaration_test
   SOURCES ../../../plugin/tests/plugin_declaration_test.c
   LIBS Salts::Plugin Salts::TinyTest FOLDER "plugin/tests/installed")

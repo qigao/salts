@@ -7,6 +7,14 @@
 #endif
 #include "cmeta_compiler_type_cases.h"
 
+CMETA_STATIC_ASSERT(CMETA_HAS_VA_OPT == 0, "C11/C++17 keep explicit-count zero arity");
+#if defined(CMETA_PP_HAS_ARGS) || defined(CMETA_PP_PREFIX_COMMA) || \
+    defined(CMETA_PP_NARG_ZERO) || defined(CMETA_PP_MAP_ZERO) || \
+    defined(CMETA_PP_MAP_COMMA_ZERO) || defined(CMETA_PP_MAP_SEMI_ZERO) || \
+    defined(CMETA_PP_MAP_PREFIX_COMMA_ZERO)
+#error "Modern zero-argument helpers must not leak into baseline language modes"
+#endif
+
 #define PP_ALIAS 7
 #define PP_VOID_ALIAS void
 #define PP_VALUE(x,c) ((x) + (c))
@@ -20,6 +28,7 @@
 #define PP_SUM_PREFIX PP_SUM_
 #define PP_MAX_ITEMS 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
 #define PP_SUM_TUPLE(a,b) ((a)+(b))
+#define PP_SUM_TUPLE_ITEM(item,context) + CMETA_PP_TUPLE_APPLY(PP_SUM_TUPLE,item)
 
 #if CMETA_HAS_BUILTIN(cmeta_unregistered_builtin) || \
     CMETA_HAS_ATTRIBUTE(cmeta_unregistered_attribute) || \
@@ -55,6 +64,8 @@ CMETA_STATIC_ASSERT(CMETA_PP_TUPLE_GET_15((PP_MAX_ITEMS)) == 16, "max tuple inde
 CMETA_STATIC_ASSERT(CMETA_PP_TUPLE_HEAD((7)) == 7, "singleton tuple");
 CMETA_STATIC_ASSERT(CMETA_PP_TUPLE_HEAD(CMETA_PP_TUPLE_TAIL((1,7))) == 7, "tail");
 CMETA_STATIC_ASSERT(CMETA_PP_TUPLE_APPLY(PP_SUM_TUPLE,(3,4)) == 7, "tuple apply");
+CMETA_STATIC_ASSERT((0 CMETA_PP_MAP(PP_SUM_TUPLE_ITEM,~,(1,2),(1,3))) == 7,
+    "mappers can replay tuples");
 CMETA_STATIC_ASSERT(CMETA_PP_OVERLOAD(PP_SUM_PREFIX,3,4)(3,4) == 7, "overload expansion");
 
 static int pp_pair_sum(CMETA_PP_PAIR_MAP_COMMA_N(2,PP_DECL,~,int,a,int,b)) {

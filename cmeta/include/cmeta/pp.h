@@ -112,7 +112,11 @@
     CMETA_PP_TUPLE_GET_2(state)(index) \
     CMETA_PP_TUPLE_GET_0(state)(item, CMETA_PP_TUPLE_GET_1(state))
 #define CMETA_PP_FEI_0(M,C,ignored)
-#define CMETA_PP_MAP_I_N(N,M,C,...) CMETA_PP_CAT(CMETA_PP_FEI_,N)(M,C,__VA_ARGS__)
+/* Reparse expanded separators without suppressing the public TUPLE_APPLY
+ * while user mappers project tuple items. */
+#define CMETA_PP_MAP_APPLY_I(M,args) M args
+#define CMETA_PP_MAP_I_N(N,M,C,...) \
+    CMETA_PP_MAP_APPLY_I(CMETA_PP_CAT(CMETA_PP_FEI_,N),(M,C,__VA_ARGS__))
 #define CMETA_PP_MAP_N(N,M,C,...) \
     CMETA_PP_MAP_I_N(N,CMETA_PP_MAP_ITEM,(M,C,CMETA_PP_SEP_NONE),__VA_ARGS__)
 #define CMETA_PP_MAP(M,C,...) \
@@ -129,6 +133,27 @@
     CMETA_PP_MAP_I_N(N,CMETA_PP_MAP_ITEM,(M,C,CMETA_PP_SEP_PREFIX_COMMA),__VA_ARGS__)
 #define CMETA_PP_MAP_PREFIX_COMMA(M,C,...) \
     CMETA_PP_MAP_PREFIX_COMMA_N(CMETA_PP_NARG(__VA_ARGS__),M,C,__VA_ARGS__)
+
+/* Separate zero-safe entry points preserve the nonempty contract of NARG and
+ * MAP. Empty means no tokens after expansion; () is still one tuple item. */
+#if CMETA_HAS_VA_OPT
+#define CMETA_PP_HAS_ARGS(...) CMETA_PP_FIRST(__VA_OPT__(1,) 0)
+#define CMETA_PP_PREFIX_COMMA(...) __VA_OPT__(,) __VA_ARGS__
+/* Tuple replay preserves a lone comma between empty slots under Clang's
+ * Microsoft-compatible preprocessing. Keep its trampoline private so callers
+ * can also pass a tuple to this helper through the public TUPLE_APPLY. */
+#define CMETA_PP_NARG_ZERO_I(args) CMETA_PP_NARG_I args
+#define CMETA_PP_NARG_ZERO(...) \
+    CMETA_PP_NARG_ZERO_I((__VA_ARGS__ __VA_OPT__(,)16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0))
+#define CMETA_PP_MAP_ZERO(M,C,...) \
+    CMETA_PP_MAP_N(CMETA_PP_NARG_ZERO(__VA_ARGS__),M,C,__VA_ARGS__)
+#define CMETA_PP_MAP_COMMA_ZERO(M,C,...) \
+    CMETA_PP_MAP_COMMA_N(CMETA_PP_NARG_ZERO(__VA_ARGS__),M,C,__VA_ARGS__)
+#define CMETA_PP_MAP_SEMI_ZERO(M,C,...) \
+    CMETA_PP_MAP_SEMI_N(CMETA_PP_NARG_ZERO(__VA_ARGS__),M,C,__VA_ARGS__)
+#define CMETA_PP_MAP_PREFIX_COMMA_ZERO(M,C,...) \
+    CMETA_PP_MAP_PREFIX_COMMA_N(CMETA_PP_NARG_ZERO(__VA_ARGS__),M,C,__VA_ARGS__)
+#endif
 
 #define CMETA_PP_PAIR_MAP_ITEM(index, pair, state) \
     CMETA_PP_TUPLE_GET_2(state)(index) \

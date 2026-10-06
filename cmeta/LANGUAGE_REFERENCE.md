@@ -1189,7 +1189,46 @@ int main(void) {
 
 这些 map 复用同一有限 indexed 展开族，mapper 内不支持再次嵌套同一 map。
 需要已有多层乘积展开时仍使用 `FOR_EACH_A/B/C`。自然参数计数仍要求非空；
-严格 C11 的零项使用显式 `_N`，没有新增 `__VA_OPT__` 扩展或隐式回退。
+严格 C11 的零项使用显式 `_N`，不依赖 `__VA_OPT__` 扩展或隐式回退。
+
+`CMETA_HAS_VA_OPT` 是标准模式准入标志：C++20 及以后、声明
+`__STDC_VERSION__ >= 202311L` 的 C23 及以后为 1；MSVC 还要求一致性预处理器。
+MSVC 的语言模式同时识别 `_MSVC_LANG`，不依赖 `/Zc:__cplusplus`。
+C11/C++17、C23 草案模式及 MSVC 传统预处理器为 0，即使编译器接受扩展也不开放。
+只有该标志为 1 时，以下宏才有定义：
+
+| 原语 | 契约 |
+| --- | --- |
+| `CMETA_PP_HAS_ARGS(...)` | 展开后含 token 返回 1，否则为 0；`()` 和逗号本身也属于 token |
+| `CMETA_PP_NARG_ZERO(...)` | 计算 0–16 项；省略参数或展开为空的宏均为零，括号保护项内逗号 |
+| `CMETA_PP_PREFIX_COMMA(...)` | 非空时输出一个前导逗号及原参数；为空时不输出 |
+| `CMETA_PP_MAP_ZERO(M,C,...)` | 0–16 项，复用显式计数 map；零项不调用 mapper |
+| `CMETA_PP_MAP_COMMA_ZERO/SEMI_ZERO/PREFIX_COMMA_ZERO` | 同一零项规则，分别复用相应分隔符策略 |
+
+计数不推断语义：`CMETA_PP_NARG_ZERO(())` 为 1，`CMETA_PP_NARG_ZERO(,)` 为 2。
+多项中的空项仍由 mapper 解释。超过 16 项不支持；与既有 map 一样，mapper
+不能递归嵌套同一展开族。使用方必须先检查能力标志；未准入时应使用显式 `_N`
+或明确要求更高语言模式，不存在自动切换实现。现有 `NARG`、`MAP`、`FOR_EACH`
+和 Interface 零参数声明的契约不变。
+
+完整 C++20 示例：
+
+```cpp
+#include <cmeta/pp.h>
+#if !CMETA_HAS_VA_OPT
+#error "This example requires standard zero-argument variadics"
+#endif
+#define VALUE(item,context) ((item) + (context))
+int main() {
+    const int empty[] = { 7 CMETA_PP_MAP_PREFIX_COMMA_ZERO(VALUE,0) };
+    const int values[] = { CMETA_PP_MAP_COMMA_ZERO(VALUE,1,2,3) };
+    return empty[0] == 7 && values[0] == 3 && values[1] == 4 ? 0 : 1;
+}
+```
+
+语言依据：[GCC Variadic Macros](https://gcc.gnu.org/onlinedocs/cpp/Variadic-Macros.html)、
+[MSVC 一致性预处理器](https://learn.microsoft.com/en-us/cpp/preprocessor/preprocessor-experimental-overview)、
+[C23 草案 N3096 的 6.10.4 宏替换](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3096.pdf)。
 
 `CMETA_STATIC_ASSERT(condition,message)` 用于声明位置；
 `CMETA_CONST_REQUIRE(condition)` 用于表达式位置，成功值为整数零。

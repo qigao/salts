@@ -53,6 +53,21 @@ set_target_properties(cmeta_pp_test PROPERTIES C_EXTENSIONS OFF)
 set_target_properties(cmeta_pp_cpp_test PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 
+# Qualify the additive standard-mode APIs without raising the library baseline.
+cmake_add_test(cmeta_pp_zero_cpp_test
+  SOURCES cmeta_pp_zero_cpp_test.cpp
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+set_target_properties(cmeta_pp_zero_cpp_test PROPERTIES
+  CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+if("c_std_23" IN_LIST CMAKE_C_COMPILE_FEATURES)
+  cmake_add_test(cmeta_pp_zero_c23_test
+    SOURCES cmeta_pp_zero_c23_test.c
+    LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+  set_target_properties(cmeta_pp_zero_c23_test PROPERTIES
+    C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  set_tests_properties(cmeta_pp_zero_c23_test PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
 cmake_add_test(cmeta_trace_test
   SOURCES cmeta_trace_test.c
   LIBS Salts::CMeta Salts::TinyTest Salts::Platform

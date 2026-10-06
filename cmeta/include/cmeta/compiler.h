@@ -19,6 +19,18 @@
 #define CMETA_HAS_FEATURE(name) 0
 #endif
 
+/* Admit standard zero-argument variadics only. Older modes deliberately keep
+ * the explicit-count PP contract even when a vendor accepts an extension. */
+#if defined(_MSVC_TRADITIONAL) && _MSVC_TRADITIONAL
+#define CMETA_HAS_VA_OPT 0
+#elif (defined(__cplusplus) && __cplusplus >= 202002L) || \
+      (defined(_MSVC_LANG) && _MSVC_LANG >= 202002L) || \
+      (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L)
+#define CMETA_HAS_VA_OPT 1
+#else
+#define CMETA_HAS_VA_OPT 0
+#endif
+
 #if CMETA_HAS_ATTRIBUTE(unused)
 #define CMETA_UNUSED __attribute__((unused))
 #else
