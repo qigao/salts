@@ -44,7 +44,7 @@ suite("Plugin cross-TU publication and C lease scopes") {
         check_not_null(manifest);
         check_equal(salts_plugin_manifest_validate(manifest),SALTS_PLUGIN_OK);
         check_equal(manifest->export_count,(size_t)PLUGIN_LINKER_EXPORT_COUNT);
-        check_equal(salts_plugin_query(SALTS_PLUGIN_ABI_VERSION),manifest);
+        check_true(salts_plugin_query(SALTS_PLUGIN_ABI_VERSION) == manifest);
         check_null(salts_plugin_query(0u));
         check_null(salts_plugin_query(SALTS_PLUGIN_ABI_VERSION - 1u));
         check_null(salts_plugin_query(SALTS_PLUGIN_ABI_VERSION + 1u));
@@ -62,8 +62,8 @@ suite("Plugin cross-TU publication and C lease scopes") {
         check_equal(salts_plugin_registry_start(&registry,second),SALTS_PLUGIN_OK);
         check_equal(salts_plugin_registry_acquire(&registry,first,&first_lease,&first_manifest),SALTS_PLUGIN_OK);
         check_equal(salts_plugin_registry_acquire(&registry,second,&second_lease,&second_manifest),SALTS_PLUGIN_OK);
-        check_not_equal(first_manifest,second_manifest);
-        check_not_equal(first_manifest->exports,second_manifest->exports);
+        check_true(first_manifest != second_manifest);
+        check_true(first_manifest->exports != second_manifest->exports);
         check_equal(first_manifest->plugin_id,"test.plugin.linker.c");
         check_equal(second_manifest->plugin_id,"test.plugin.linker.cpp");
         check_equal(salts_plugin_registry_request_stop(&registry,first),SALTS_PLUGIN_OK);
