@@ -183,13 +183,17 @@ static cmeta_status scope_nested(void) {
     scope_fail_init_at = 0u;
 
     cmeta_scope(outer, status,
-        cmeta_auto(ScopeProbe, outer_value),
+        cmeta_autos(
+            cmeta_auto(ScopeProbe, outer_value)
+        ),
         cmeta_body(
             outer_value.active = 1;
             outer_value.id = 51;
 
             cmeta_scope(inner, inner_status,
-                cmeta_auto(ScopeProbe, inner_value),
+                cmeta_autos(
+                    cmeta_auto(ScopeProbe, inner_value)
+                ),
                 cmeta_body(
                     inner_value.active = 1;
                     inner_value.id = 52;
