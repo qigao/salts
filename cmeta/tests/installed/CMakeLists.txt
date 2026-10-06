@@ -122,3 +122,16 @@ set_target_properties(cmeta_installed_reflection_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 set_target_properties(cmeta_installed_reflection_cpp_test PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
+# Exercise the same formal mocks against installed headers and archives.
+add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../tinymock/test" tinymock)
+cmake_add_test(tinytest_installed_equality_test
+  SOURCES ../../../tinytest/test/equality_test.c
+  LIBS Salts::TinyTest FOLDER "tinytest/tests/installed")
+cmake_add_test(tinytest_installed_cpp_test
+  SOURCES ../../../tinytest/test/regression_cpp.cpp
+  LIBS Salts::TinyTest FOLDER "tinytest/tests/installed")
+set_target_properties(tinytest_installed_equality_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_target_properties(tinytest_installed_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)

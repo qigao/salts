@@ -20,12 +20,12 @@ static bool tinymock_cmeta_history_copy_arg(
   if (!arg || !arg->address)
     return false;
 
-  if (type && type->kind == CMETA_T_POINTER &&
-      arg->has_object_pointer_identity)
-    return tinymock_cmeta_value_copy_pointer(
-        value, type, arg->address, arg->object_pointer_identity);
-
-  return tinymock_cmeta_value_copy(value, type, arg->address);
+  if (!tinymock_cmeta_value_copy_admitted(value, type, arg->address)) return false;
+  if (type->kind == CMETA_T_POINTER && arg->has_object_pointer_identity) {
+    value->has_pointer_identity = true;
+    value->pointer_identity = arg->object_pointer_identity;
+  }
+  return true;
 }
 
 static void tinymock_cmeta_call_clear(tinymock_cmeta_recorded_call *call) {
@@ -40,7 +40,7 @@ void tinymock_cmeta_history_init(tinymock_cmeta_history *history,
                                  const cmeta_function_desc *function) {
   if (!history) return;
   memset(history, 0, sizeof(*history));
-  history->function = function;
+  history->function = cmeta_function_desc_valid(function) ? function : NULL;
 }
 
 void tinymock_cmeta_history_destroy(tinymock_cmeta_history *history) {
@@ -66,9 +66,6 @@ bool tinymock_cmeta_history_record(
     const cmeta_function_desc *function,
     size_t argc,
     const tinymock_cmeta_arg_view *args) {
-  tinymock_cmeta_recorded_call *call;
-  size_t index;
-
   if (!history || !function || !cmeta_function_desc_valid(function) ||
       argc != function->param_count || argc > TINYMOCk_MAX_ARGS ||
       (argc != 0u && !args))
@@ -78,6 +75,18 @@ bool tinymock_cmeta_history_record(
       !tinymock_cmeta_function_equal(history->function, function))
     return false;
   history->function = function;
+
+  return tinymock_cmeta_history_record_admitted(history, argc, args);
+}
+
+bool tinymock_cmeta_history_record_admitted(tinymock_cmeta_history *history,
+    size_t argc, const tinymock_cmeta_arg_view *args) {
+  tinymock_cmeta_recorded_call *call;
+  const cmeta_function_desc *function;
+  size_t index;
+  if (!history || !(function = history->function) || argc != function->param_count ||
+      argc > TINYMOCk_MAX_ARGS || (argc && !args) || history->call_count == SIZE_MAX)
+    return false;
 
   if (history->call_count >= TINYMOCk_MAX_CALLS) {
     ++history->call_count;

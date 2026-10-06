@@ -2,8 +2,13 @@
 #define TINYMOCK_VALUE_H
 
 #include <cmeta/function.h>
+#include <cmeta/cleanup.h>
 
 #include <stdbool.h>
+
+#ifndef TINYMOCk_MAX_VALUE_BYTES
+#define TINYMOCk_MAX_VALUE_BYTES (64u * 1024u)
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,6 +29,7 @@ typedef struct tinymock_cmeta_value {
   bool constructed;
   bool has_pointer_identity;
   const void *pointer_identity;
+  cmeta_lifecycle_binding lifecycle;
 } tinymock_cmeta_value;
 
 typedef struct tinymock_cmeta_arg_view {
@@ -39,6 +45,21 @@ bool tinymock_cmeta_value_copy(
     tinymock_cmeta_value *value,
     const cmeta_type_desc *type,
     const void *source);
+
+/* Only a previously validated immutable type may enter this path. The slot
+ * must be empty. Metadata and callbacks remain borrowed until reset. */
+bool tinymock_cmeta_value_copy_admitted(tinymock_cmeta_value *value,
+    const cmeta_type_desc *type, const void *source);
+
+/* Move an admitted Data value into an empty bounded slot. Failure preserves
+ * source ownership; success leaves it semantic zero. No provider is retained. */
+bool tinymock_cmeta_value_take_data(tinymock_cmeta_value *value,
+    const cmeta_lifecycle_binding *binding, void *source);
+
+/* Prepare before mutating a destination. Commit requires an admitted no-fail
+ * move/trivial copy and uninitialized destination storage after any teardown. */
+bool tinymock_cmeta_value_can_move(const tinymock_cmeta_value *value);
+bool tinymock_cmeta_value_move(tinymock_cmeta_value *value, void *destination);
 
 bool tinymock_cmeta_value_copy_pointer(
     tinymock_cmeta_value *value,

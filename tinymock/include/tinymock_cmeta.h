@@ -144,16 +144,16 @@
 
 #define TINYMOCk_INTERFACE_RECORD(I,N,argc,typed) \
   TINYMOCk_ASSERT( \
-      tinymock_cmeta_history_record( \
-          &mock->TINYMOCk_INTERFACE_HISTORY_NAME(N), I##_##N##_function(), \
+      tinymock_cmeta_history_record_admitted( \
+          &mock->TINYMOCk_INTERFACE_HISTORY_NAME(N), \
           (argc), (typed)), \
       "tinymock cannot snapshot reflected interface arguments for %s.%s", \
       #I, #N)
 
 #define TINYMOCk_INTERFACE_APPLY_ACTIONS(I,N,argc,typed) \
   TINYMOCk_ASSERT( \
-      tinymock_cmeta_actions_apply( \
-          &mock->TINYMOCk_INTERFACE_ACTIONS_NAME(N), I##_##N##_function(), \
+      tinymock_cmeta_actions_apply_admitted( \
+          &mock->TINYMOCk_INTERFACE_ACTIONS_NAME(N), \
           (argc), (typed)), \
       "tinymock cannot apply reflected interface output actions for %s.%s", \
       #I, #N)
@@ -161,9 +161,8 @@
 #define TINYMOCk_INTERFACE_RETURN_TYPED_ONLY(I,N,R) \
   do { \
     R typed_result__; \
-    bool ok__ = tinymock_cmeta_return_write( \
-        &mock->TINYMOCk_INTERFACE_RETURN_NAME(N), \
-        I##_##N##_function(), &typed_result__); \
+    bool ok__ = tinymock_cmeta_return_write_admitted( \
+        &mock->TINYMOCk_INTERFACE_RETURN_NAME(N), &typed_result__); \
     TINYMOCk_ASSERT(ok__, \
         "tinymock reflected interface return for %s.%s requires a typed return", \
         #I, #N); \

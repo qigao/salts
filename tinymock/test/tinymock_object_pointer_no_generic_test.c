@@ -40,16 +40,16 @@ static const cmeta_type_desc tinymock_pointer_handle_type = {
 #define TINYMOCk_VALUE_AS(type, value) \
   TINYMOCk_REFLECTED_GENERIC_UNBOXING_FORBIDDEN
 
-FunctionDeclAsAbi(value, tinymock_pointer_handle,
+FunctionDeclAsAbiResult(value, tinymock_pointer_handle,
                   &tinymock_pointer_handle_type,
-                  CMETA_ABI_OBJECT_POINTER,
+                  CMETA_ABI_OBJECT_POINTER, CMETA_RESULT_BORROWED,
                   tinymock_pointer_roundtrip,
     (tinymock_pointer_handle, input, CMETA_PARAM_IN,
      &tinymock_pointer_handle_type, CMETA_ABI_OBJECT_POINTER));
 
 #define TINYMOCK_POINTER_INTERFACE_METHODS(X, I) \
-  X(I,F1,tinymock_pointer_handle,echo,value, \
-    &tinymock_pointer_handle_type,CMETA_ABI_OBJECT_POINTER, \
+  X(I,FR1,tinymock_pointer_handle,echo,value, \
+    &tinymock_pointer_handle_type,CMETA_ABI_OBJECT_POINTER,CMETA_RESULT_BORROWED, \
     (tinymock_pointer_handle,input,CMETA_PARAM_IN, \
      &tinymock_pointer_handle_type,CMETA_ABI_OBJECT_POINTER))
 

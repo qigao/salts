@@ -277,8 +277,8 @@
 #define TINYMOCk_FUNCTION_RETURN_TYPED_ONLY(name, type) \
   do { \
     type typed_result__; \
-    bool typed_ok__ = tinymock_cmeta_return_write( \
-        TINYMOCk_FUNCTION_RETURN_STATE(name), FunctionMeta(name), \
+    bool typed_ok__ = tinymock_cmeta_return_write_admitted( \
+        TINYMOCk_FUNCTION_RETURN_STATE(name), \
         &typed_result__); \
     TINYMOCk_ASSERT(typed_ok__, \
                     "tinymock reflected return for %s requires a typed return", \
@@ -344,13 +344,13 @@
       CMETA_PP_FOR_EACH_I(TINYMOCk_FUNCTION_TYPED_ARG_ROW, ~, __VA_ARGS__) \
     }; \
     TINYMOCk_ASSERT( \
-        tinymock_cmeta_history_record( \
-            &TINYMOCk_FUNCTION_HISTORY_NAME(name), FunctionMeta(name), \
+        tinymock_cmeta_history_record_admitted( \
+            &TINYMOCk_FUNCTION_HISTORY_NAME(name), \
             CMETA_PP_NARG(__VA_ARGS__), typed_args__), \
         "tinymock cannot snapshot reflected arguments for %s", #name); \
     TINYMOCk_ASSERT( \
-        tinymock_cmeta_actions_apply( \
-            &TINYMOCk_FUNCTION_ACTIONS_NAME(name), FunctionMeta(name), \
+        tinymock_cmeta_actions_apply_admitted( \
+            &TINYMOCk_FUNCTION_ACTIONS_NAME(name), \
             CMETA_PP_NARG(__VA_ARGS__), typed_args__), \
         "tinymock cannot apply reflected output actions for %s", #name); \
     TINYMOCk_FUNCTION_RETURN_VALUE(return_abi_carrier, name, return_type); \
@@ -367,13 +367,13 @@
       CMETA_PP_FOR_EACH_I(TINYMOCk_FUNCTION_TYPED_ARG_ROW, ~, __VA_ARGS__) \
     }; \
     TINYMOCk_ASSERT( \
-        tinymock_cmeta_history_record( \
-            &TINYMOCk_FUNCTION_HISTORY_NAME(name), FunctionMeta(name), \
+        tinymock_cmeta_history_record_admitted( \
+            &TINYMOCk_FUNCTION_HISTORY_NAME(name), \
             CMETA_PP_NARG(__VA_ARGS__), typed_args__), \
         "tinymock cannot snapshot reflected arguments for %s", #name); \
     TINYMOCk_ASSERT( \
-        tinymock_cmeta_actions_apply( \
-            &TINYMOCk_FUNCTION_ACTIONS_NAME(name), FunctionMeta(name), \
+        tinymock_cmeta_actions_apply_admitted( \
+            &TINYMOCk_FUNCTION_ACTIONS_NAME(name), \
             CMETA_PP_NARG(__VA_ARGS__), typed_args__), \
         "tinymock cannot apply reflected output actions for %s", #name); \
     return; \
@@ -399,13 +399,13 @@
   TINYMOCk_FUNCTION_DEFINE_STATE(name) \
   return_type name(void) { \
     TINYMOCk_ASSERT( \
-        tinymock_cmeta_history_record( \
-            &TINYMOCk_FUNCTION_HISTORY_NAME(name), FunctionMeta(name), \
+        tinymock_cmeta_history_record_admitted( \
+            &TINYMOCk_FUNCTION_HISTORY_NAME(name), \
             0u, NULL), \
         "tinymock cannot snapshot reflected arguments for %s", #name); \
     TINYMOCk_ASSERT( \
-        tinymock_cmeta_actions_apply( \
-            &TINYMOCk_FUNCTION_ACTIONS_NAME(name), FunctionMeta(name), \
+        tinymock_cmeta_actions_apply_admitted( \
+            &TINYMOCk_FUNCTION_ACTIONS_NAME(name), \
             0u, NULL), \
         "tinymock cannot apply reflected output actions for %s", #name); \
     TINYMOCk_FUNCTION_RETURN_VALUE(return_abi_carrier, name, return_type); \
@@ -417,13 +417,13 @@
   TINYMOCk_FUNCTION_DEFINE_STATE(name) \
   return_type name(void) { \
     TINYMOCk_ASSERT( \
-        tinymock_cmeta_history_record( \
-            &TINYMOCk_FUNCTION_HISTORY_NAME(name), FunctionMeta(name), \
+        tinymock_cmeta_history_record_admitted( \
+            &TINYMOCk_FUNCTION_HISTORY_NAME(name), \
             0u, NULL), \
         "tinymock cannot snapshot reflected arguments for %s", #name); \
     TINYMOCk_ASSERT( \
-        tinymock_cmeta_actions_apply( \
-            &TINYMOCk_FUNCTION_ACTIONS_NAME(name), FunctionMeta(name), \
+        tinymock_cmeta_actions_apply_admitted( \
+            &TINYMOCk_FUNCTION_ACTIONS_NAME(name), \
             0u, NULL), \
         "tinymock cannot apply reflected output actions for %s", #name); \
     return; \

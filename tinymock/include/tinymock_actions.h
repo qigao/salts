@@ -55,6 +55,11 @@ bool tinymock_cmeta_actions_apply(
     size_t argc,
     const tinymock_cmeta_arg_view *args);
 
+/* Uses only the immutable function admitted by init/reset. Prepares every
+ * fallible copy before any output mutation; commit uses no-fail native moves. */
+bool tinymock_cmeta_actions_apply_admitted(tinymock_cmeta_actions *actions,
+    size_t argc, const tinymock_cmeta_arg_view *args);
+
 #ifdef __cplusplus
 }
 #endif

@@ -3,11 +3,11 @@
 #include "tinymock.h"
 
 #define TINYMOCK_CMETA_COUNTER_METHODS(X, I) \
-  X(I,F1,int,add,value, \
-    &cmeta_type_int,CMETA_ABI_SCALAR, \
+  X(I,FR1,int,add,value, \
+    &cmeta_type_int,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
     (int,delta,CMETA_PARAM_IN,&cmeta_type_int,CMETA_ABI_SCALAR)) \
-  X(I,F0,int,value,value, \
-    &cmeta_type_int,CMETA_ABI_SCALAR) \
+  X(I,FR0,int,value,value, \
+    &cmeta_type_int,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE) \
   X(I,FR0,int,result_value,value, \
     &cmeta_type_int,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE) \
   X(I,FR0,int *,owned_pointer,stateful, \

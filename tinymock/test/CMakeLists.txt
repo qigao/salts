@@ -1,3 +1,24 @@
+foreach(ownership_language IN ITEMS c cpp)
+  if(ownership_language STREQUAL "c")
+    set(ownership_source tinymock_ownership_test.c)
+  else()
+    set(ownership_source tinymock_ownership_cpp_test.cpp)
+  endif()
+  cmake_add_test(cmeta_tinymock_ownership_${ownership_language}_test
+    SOURCES ${ownership_source} LIBS Salts::TinyMock FOLDER "tinymock/tests")
+  set_target_properties(cmeta_tinymock_ownership_${ownership_language}_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+endforeach()
+
+cmake_add_test(cmeta_tinymock_plugin_lifetime_test
+  SOURCES tinymock_plugin_lifetime_test.cpp LIBS Salts::TinyMock Salts::Plugin
+  DEFS "TINYMOCK_PLUGIN_PATH=\"$<TARGET_FILE:cmeta_plugin_linker_fixture_cpp>\""
+  FOLDER "tinymock/tests")
+add_dependencies(cmeta_tinymock_plugin_lifetime_test cmeta_plugin_linker_fixture_cpp)
+set_target_properties(cmeta_tinymock_plugin_lifetime_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
 cmake_add_test(cmeta_tinymock_interface_test
   SOURCES tinymock_cmeta_interface_test.c
   LIBS Salts::TinyMock

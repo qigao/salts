@@ -5,6 +5,7 @@
 
 #include "tinymock_function_consumer.h"
 #include "tinymock_function_fixture.h"
+#include <cmeta/operation.h>
 
 static int tinymock_test_callback_a(int value) {
   return value + 3;
@@ -15,6 +16,7 @@ static int tinymock_test_callback_b(int value) {
 }
 
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_add);
+TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_receiver);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_answer);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_pointer);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_write_size);
@@ -30,6 +32,21 @@ TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_callback_answer);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_mode_echo);
 
 suite("TinyMock reflected free functions") {
+  it("mocks a receiver operation using its canonical complete Function ABI") {
+    const cmeta_receiver_operation operation = {"adjust", FunctionAbi(tinymock_fixture_receiver)};
+    const cmeta_function_desc *function = operation.abi->function;
+    int self = 3, scripted = 17, delta = 2;
+    check_true(cmeta_receiver_operation_reflection_valid(&operation));
+    check_equal(function->result_flags, (cmeta_result_flags)CMETA_RESULT_VALUE);
+    check_equal(function->effects, (cmeta_effects)CMETA_EFFECT_STATEFUL);
+    check_equal(function->params[1].flags, (cmeta_param_flags)CMETA_PARAM_IN);
+    TINYMOCk_FUNCTION_RESET(tinymock_fixture_receiver);
+    check_true(TINYMOCk_FUNCTION_SET_RETURN(tinymock_fixture_receiver, scripted));
+    check_equal(tinymock_fixture_receiver(&self, delta), scripted);
+    check_true(TINYMOCk_FUNCTION_ARG_EQUAL_TYPED(tinymock_fixture_receiver, 0, "delta", delta));
+    check_equal(self, 3);
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_receiver);
+  }
   it("generates replacement definitions without repeating signatures") {
     const cmeta_function_desc *add_meta;
 

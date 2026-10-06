@@ -2,6 +2,7 @@
 #include "tinymock_actions.h"
 
 #include <string.h>
+#include <stdlib.h>
 
 static bool tinymock_cmeta_actions_function_ok(
     const tinymock_cmeta_actions *actions,
@@ -37,7 +38,7 @@ void tinymock_cmeta_actions_init(
     const cmeta_function_desc *function) {
   if (!actions) return;
   memset(actions, 0, sizeof(*actions));
-  actions->function = function;
+  actions->function = cmeta_function_desc_valid(function) ? function : NULL;
 }
 
 void tinymock_cmeta_actions_destroy(tinymock_cmeta_actions *actions) {
@@ -147,14 +148,25 @@ bool tinymock_cmeta_actions_apply(
     const cmeta_function_desc *function,
     size_t argc,
     const tinymock_cmeta_arg_view *args) {
-  void *destinations[TINYMOCk_MAX_ARGS] = {0};
-  size_t index;
-
   if (!tinymock_cmeta_actions_function_ok(actions, function) ||
       argc != function->param_count ||
       argc > TINYMOCk_MAX_ARGS ||
       (argc != 0u && !args))
     return false;
+
+  actions->function = function;
+  return tinymock_cmeta_actions_apply_admitted(actions, argc, args);
+}
+
+bool tinymock_cmeta_actions_apply_admitted(tinymock_cmeta_actions *actions,
+    size_t argc, const tinymock_cmeta_arg_view *args) {
+  void *destinations[TINYMOCk_MAX_ARGS] = {0};
+  tinymock_cmeta_value prepared[TINYMOCk_MAX_ARGS] = {0};
+  const cmeta_function_desc *function;
+  size_t index, previous;
+  bool success = false;
+  if (!actions || !(function = actions->function) || argc != function->param_count ||
+      argc > TINYMOCk_MAX_ARGS || (argc && !args)) return false;
 
   /* Admission pass: validate every enabled output before mutating any target. */
   for (index = 0u; index < argc; ++index) {
@@ -162,12 +174,17 @@ bool tinymock_cmeta_actions_apply(
     const cmeta_param_desc *param;
 
     if (!action->enabled) continue;
-    param = cmeta_function_param(function, index);
-    if (!tinymock_cmeta_output_param_valid(param) ||
-        !cmeta_type_equal(action->value.type, param->type->pointee) ||
-        !tinymock_cmeta_output_destination(
+    param = &function->params[index];
+    if (!tinymock_cmeta_output_destination(
             action, param, &args[index], &destinations[index]))
-      return false;
+      goto cleanup;
+    if (!destinations[index]) continue;
+    /* Multiple outputs to the same object have no independent commit order. */
+    for (previous = 0; previous < index; ++previous)
+      if (destinations[previous] == destinations[index]) goto cleanup;
+    if (!tinymock_cmeta_value_can_move(&action->value) ||
+        !tinymock_cmeta_value_clone(&prepared[index], &action->value) ||
+        !tinymock_cmeta_value_can_move(&prepared[index])) goto cleanup;
   }
 
   for (index = 0u; index < argc; ++index) {
@@ -176,7 +193,7 @@ bool tinymock_cmeta_actions_apply(
     bool replace_existing;
 
     if (!action->enabled) continue;
-    param = cmeta_function_param(function, index);
+    param = &function->params[index];
 
     if (destinations[index] == NULL) {
       /* Nullable null output: explicit safe no-op. */
@@ -184,10 +201,16 @@ bool tinymock_cmeta_actions_apply(
     }
 
     replace_existing = (param->flags & CMETA_PARAM_IN) != 0u;
-    if (!tinymock_cmeta_value_write(
-            &action->value, destinations[index], replace_existing))
-      return false;
+    if (replace_existing && action->value.type->kind != CMETA_T_POINTER) {
+      const cmeta_type_traits *traits = action->value.type->traits;
+      if (!(traits->flags & CMETA_TRAIT_TRIVIAL_DESTROY)) traits->destroy(destinations[index]);
+    }
+    /* Capability was checked during prepare; a failure here is an invariant
+     * violation, not permission to publish only a prefix of the outputs. */
+    if (!tinymock_cmeta_value_move(&prepared[index], destinations[index])) abort();
   }
-
-  return true;
+  success = true;
+cleanup:
+  for (index = 0; index < argc; ++index) tinymock_cmeta_value_reset(&prepared[index]);
+  return success;
 }
