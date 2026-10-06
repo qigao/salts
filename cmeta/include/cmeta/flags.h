@@ -109,7 +109,7 @@
         name_##__assign, name_##__restore }; \
     CMETA_LOCAL const cmeta_data_construct_ops name_##__construct_ops = { \
         sizeof(cmeta_data_construct_ops), CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION, \
-        &name_##_cmeta_type, name_##__init, name_##__restore, name_##__move }; \
+        &name_##_cmeta_type, name_##__init, name_##__restore, name_##__move, 0 }; \
     CMETA_LOCAL const cmeta_data_desc name_##__data = { \
         sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION, id_ ".data", #name_, \
         CMETA_DATA_ENUM, &name_##_cmeta_type, NULL, NULL, NULL, NULL, NULL, \

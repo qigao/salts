@@ -177,7 +177,7 @@ void cmeta_data_fixed_array_collect_abort(
         &name_##_borrow_ops, (element_data_), name_##_collector_init, name_##_is_zero}; \
     static const cmeta_data_construct_ops name_##_construct_ops = {          \
         sizeof(cmeta_data_construct_ops), CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION, \
-        &name_##_cmeta_type, name_##_init_zero, name_##_restore_zero, name_##_move}; \
+        &name_##_cmeta_type, name_##_init_zero, name_##_restore_zero, name_##_move, 0}; \
     static const cmeta_data_desc name_##_cmeta_data = {                       \
         sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,                 \
         stable_id_ ".data", display_name_, CMETA_DATA_SEQUENCE,              \
