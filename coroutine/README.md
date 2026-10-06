@@ -2,30 +2,47 @@
 
 ## CMeta facade
 
-Application coroutine code should prefer the small CMeta execution facade:
+应用协程包含 `<cmeta/coroutine.h>` 并链接 `Salts::Coroutine`。该模块安装 facade
+头文件并导出 target；CMeta core 无需依赖 Coroutine。`cmeta_yield/cmeta_wait*`
+直接复用 `salts_coro_executor_*`，执行器仍拥有 frame、shard、wait slot 与 wake
+queue。minicoro 头文件和 executor 私有结构不属于应用接口。
 
-```c
-#include <cmeta/coroutine.h>
+| 入口 | 输入、结果与约束 |
+| --- | --- |
+| `cmeta_yield()` | 在当前协程的 owner shard 主动让出执行；协程外返回 `SALTS_EINVAL`。 |
+| `cmeta_wait_begin(&wait)` | 预留当前协程唯一的有界 slot；已有 reservation 返回 `SALTS_EBUSY`，容量不足返回 `SALTS_ENOBUFS`。失败清零输出。 |
+| `cmeta_wait(wait, &status)` | 由原协程消费结果，尚未完成则挂起；提前完成不会丢失。函数返回 `SALTS_OK` 表示协议成功，`status` 才是外部操作结果。 |
+| `cmeta_wait_for(wait, timeout_ms, &status)` | 正数超时从本次调用起算；超时返回 `SALTS_OK` 且 `status == SALTS_ETIMEDOUT`，并消费 token。零超时返回 `SALTS_EINVAL`，保留 reservation。 |
+| `cmeta_wait_abort(wait)` | 外部操作未成功 admission 时由原协程撤销 reservation；成功使 token 失效。若完成已先到达，返回 `SALTS_EALREADY`，仍须调用 wait 消费。 |
+| `cmeta_wait_complete(executor, wait, status)` | 任意线程发布一次完成；恢复仍由 owner shard 执行。重复完成返回 `SALTS_EALREADY`；已消费、已 abort 或 task 已返回的 token 返回 `SALTS_ENOENT`。 |
+| `cmeta_current_executor()` / `cmeta_current_shard(executor)` | 查询当前 worker context；executor shard 线程外分别返回 `NULL` / `SIZE_MAX`。worker context 不代表当前正在运行可挂起的协程。 |
 
-cmeta_wait_handle wait;
+wait handle 是可复制的借用同步 token，不拥有 payload。错误 executor、错误协程或
+shard 的调用返回 `SALTS_EINVAL`，旧 generation 返回 `SALTS_ENOENT`。wait 的非空
+结果输出在入口清零；空输出指针返回 `SALTS_EINVAL`。同一个 slot 复用后，旧 token
+不能完成、撤销或消费新的 reservation。
 
-if (cmeta_wait_begin(&wait) != SALTS_OK)
-    return;
-if (start_external_operation(wait) != SALTS_OK) {
-    (void)cmeta_wait_abort(wait);
-    return;
-}
+调用顺序为：预留 slot → 提交外部操作 → 等待并消费；外部 admission 失败时用
+abort 收尾。已 admission 的操作，其 payload 与资源仍归外部 owner 管理。
+**等待超时只结束同步等待，不会取消外部操作，也不能证明借用资源已无人访问。**
+外部 owner 必须保留资源，直到 terminal completion 或显式取消协议证明 quiescent；
+迟到的 token 完成会被拒绝。`shutdown` 关闭新 task admission，但仍接受已接收 wait
+的完成。所有完成调用者必须停止后才能 `destroy`，不可把失效 token 当作 executor
+销毁后仍可调用的许可。
 
-if (cmeta_wait(wait, &completion_status) != SALTS_OK)
-    return;
+完整、可编译的使用示例直接见正式测试
+[cmeta_coroutine_facade_test.c](tests/cmeta_coroutine_facade_test.c)：外部线程投递、
+确定性的提前完成、非零 owner shard 挂起恢复、timeout、abort 与单 slot generation
+复用。[C++ 头文件测试](tests/cmeta_coroutine_header_cpp_test.cpp) 调用全部 facade
+入口；两个应用测试均不包含 minicoro 或 executor 私有头文件。
 
-(void)cmeta_yield();
+本地验证沿用 user presets，例如 Windows 的 `VsDevCmd.bat` 环境下：
+
+```powershell
+cmake --preset win-dev-user
+cmake --build --preset win-dev-user --target cmeta_coroutine_facade_test cmeta_coroutine_header_cpp_test salts_coro_executor_test salts_coro_executor_header_cpp_test
+ctest --preset win-dev-user --output-on-failure -R '^(cmeta_coroutine|salts_coro_executor)'
 ```
-
-`cmeta_yield/cmeta_wait*` are thin ordinary-C wrappers over
-`salts_coro_executor_*`. They do not expose `mco_*`, create another
-scheduler, or change executor ownership/shard semantics. `vendor/minicoro`
-remains private behind `Salts::Coroutine`.
 
 `Salts::Coroutine` 是 `vendor/minicoro/minicoro.h` 的唯一编译封装，提供低层 coroutine primitive、单 owner 有界 frame pool，以及可选的多 shard Executor。它不依赖 CFlow、NativeIO 或 CNet；Executor 只复用 `Salts::Concurrency` 的线程池与 Disruptor，不把网络状态带入 coroutine core。
 
