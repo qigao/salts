@@ -8,8 +8,8 @@ cmeta_tracepoint(http_request, cmeta_field(uint64_t, request_id) cmeta_field(int
 cmeta_tracepoint(unbound_request, cmeta_field(int, status));
 cmeta_tracepoint(default_request, cmeta_field(unsigned, count));
 cmeta_tracepoint(effect_request, cmeta_field(unsigned, count));
-cmeta_fault_point(alloc_fail);
-cmeta_fault_point(default_fault);
+SALTS_FAST_KEY(alloc_fail, false);
+SALTS_FAST_KEY(default_fault, false);
 cmeta_registry(trace_manifest,
     cmeta_manifest_entry("http_request", CMETA_MANIFEST_TRACEPOINT,
         StructMeta(http_request_payload), UINT64_C(0), UINT32_C(0))
@@ -49,7 +49,7 @@ static void trace_reader(void *arg) {
     trace_worker_state *state = (trace_worker_state *)arg;
     for (int i = 0; i < TRACE_ROUNDS; ++i) {
         cmeta_trace_emit(http_request, (uint64_t)TRACE_REQUEST, TRACE_STATUS);
-        if (cmeta_fault_hit(&alloc_fail)) atomic_fetch_add(&state->fault_hits, 1u);
+        if (salts_fast_key_consume(&alloc_fail)) atomic_fetch_add(&state->fault_hits, 1u);
     }
 }
 
@@ -58,17 +58,17 @@ suite("CMeta typed trace and deterministic fault points") {
         check_equal(cmeta_trace_disable(http_request), CMETA_OK);
         check_equal(cmeta_trace_disable(unbound_request), CMETA_OK);
         check_equal(cmeta_trace_disable(effect_request), CMETA_OK);
-        check_equal(cmeta_fault_disarm(alloc_fail), CMETA_OK);
+        check_equal(salts_fast_disable(&alloc_fail), SALTS_OK);
         atomic_store(&backend_calls, 0u);
         atomic_store(&alternate_calls, 0u);
         atomic_store(&payload_errors, 0u);
     }
     it("starts new trace and fault points disabled") {
         unsigned effects = 0u;
-        check_false(cmeta_static_branch(&default_request_key));
+        check_false(salts_fast_branch(&default_request_key));
         cmeta_trace_emit(default_request, ++effects);
         check_equal(effects, 0u);
-        check_false(cmeta_fault_hit(&default_fault));
+        check_false(salts_fast_key_consume(&default_fault));
     }
     it("does not evaluate arguments while disabled and exposes canonical payload layout") {
         unsigned effects = 0u;
@@ -101,7 +101,7 @@ suite("CMeta typed trace and deterministic fault points") {
     it("fails fast when enabling an unbound point and skips unbound payload arguments") {
         unsigned effects = 0u;
         check_equal(cmeta_trace_enable(unbound_request), CMETA_INVALID_ARGUMENT);
-        check_equal(cmeta_static_enable(&unbound_request_key), CMETA_OK);
+        check_equal(salts_fast_enable(&unbound_request_key), SALTS_OK);
         cmeta_trace_emit(unbound_request, ++effects);
         check_equal(effects, 0u);
         check_equal(cmeta_trace_disable(unbound_request), CMETA_OK);
@@ -127,24 +127,24 @@ suite("CMeta typed trace and deterministic fault points") {
         check_equal(cmeta_trace_enable(http_request), CMETA_OK);
         cmeta_trace_emit(http_request, (uint64_t)TRACE_REQUEST, TRACE_STATUS);
         check_equal(callback_disable_status, CMETA_OK);
-        check_false(cmeta_static_branch(&http_request_key));
+        check_false(salts_fast_branch(&http_request_key));
         cmeta_trace_emit(http_request, ++effects, 0);
         check_equal(effects, 0u);
         check_equal(atomic_load(&backend_calls), 1u);
         check_equal(atomic_load(&payload_errors), 0u);
     }
     it("preserves normal behavior and consumes each armed fault once") {
-        check_false(cmeta_fault_hit(&alloc_fail));
-        check_equal(cmeta_fault_arm(alloc_fail), CMETA_OK);
-        check_equal(cmeta_fault_arm(alloc_fail), CMETA_OK);
-        check_true(cmeta_fault_hit(&alloc_fail));
-        check_false(cmeta_fault_hit(&alloc_fail));
-        check_equal(cmeta_fault_arm(alloc_fail), CMETA_OK);
-        check_true(cmeta_fault_consume(&alloc_fail));
-        check_false(cmeta_fault_hit(&alloc_fail));
-        check_equal(cmeta_fault_arm(alloc_fail), CMETA_OK);
-        check_equal(cmeta_fault_disarm(alloc_fail), CMETA_OK);
-        check_false(cmeta_fault_hit(&alloc_fail));
+        check_false(salts_fast_key_consume(&alloc_fail));
+        check_equal(salts_fast_enable(&alloc_fail), SALTS_OK);
+        check_equal(salts_fast_enable(&alloc_fail), SALTS_OK);
+        check_true(salts_fast_key_consume(&alloc_fail));
+        check_false(salts_fast_key_consume(&alloc_fail));
+        check_equal(salts_fast_enable(&alloc_fail), SALTS_OK);
+        check_true(salts_fast_key_consume(&alloc_fail));
+        check_false(salts_fast_key_consume(&alloc_fail));
+        check_equal(salts_fast_enable(&alloc_fail), SALTS_OK);
+        check_equal(salts_fast_disable(&alloc_fail), SALTS_OK);
+        check_false(salts_fast_key_consume(&alloc_fail));
     }
     it("publishes backends to concurrent readers and consumes one fault across readers") {
         trace_worker_state state = {0};
@@ -152,7 +152,7 @@ suite("CMeta typed trace and deterministic fault points") {
         int created = 0, joined = 0;
         check_equal(cmeta_trace_bind(http_request, capture_request), CMETA_OK);
         check_equal(cmeta_trace_enable(http_request), CMETA_OK);
-        check_equal(cmeta_fault_arm(alloc_fail), CMETA_OK);
+        check_equal(salts_fast_enable(&alloc_fail), SALTS_OK);
         for (int i = 0; i < TRACE_WORKERS; ++i) {
             if (salts_thread_create(&threads[i], i % 2 == 0 ? trace_writer : trace_reader, &state) != 0) break;
             ++created;

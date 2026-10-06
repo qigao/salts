@@ -1,84 +1,30 @@
-# CMeta header layering
+# CMeta public header layering (#957)
 
-CMeta public headers are intentionally split by semantic ownership.
+本表是公开 header 分类的事实源。Core 包括 canonical metadata、生命周期、
+metadata carrier/protocol，以及这些声明所需的有限编译期 machinery；这些协议
+本身不拥有 scheduler、allocator、thread 或 Plugin runtime。
 
-## Core CMeta
+| 层 | Header |
+|---|---|
+| Core：基础类型、身份、构造 kernel | `abi.h`, `cmeta.h`, `types.h`, `type_identity.h`, `type_select.h`, `type_traits.h`, `status.h`, `pp.h`, `signatures.h`, `generated/builtin_signature_manifest.h` |
+| Core：canonical metadata 与生命周期 | `data.h`, `data_select.h`, `declared_type.h`, `enum.h`, `flags.h`, `struct.h`, `variant.h`, `lifecycle.h`, `function.h`, `interface.h`, `method.h`, `object.h`, `object_interface.h`, `manifest.h`, `manifest_view.h`, `fingerprint.h`, `plugin.h` |
+| Core：typed carrier、projection 与协议 | `collector.h`, `compute.h`, `container.h`, `contract.h`, `entry.h`, `fixed_array.h`, `generic.h`, `infer.h`, `invokable.h`, `policy.h`, `range.h`, `relations.h`, `value.h`, `vector.h` |
+| Core aggregate | `meta.h` |
+| Structured-C | `scope.h`；`struct.h` 内的 intrusive projection 只增加静态 owner/member/type 检查，不拥有容器运行期 |
+| Optional metadata/type facade | `local.h`, `pool.h`, `fastpath.h`, `trace.h` |
 
-Core headers define canonical native metadata, type identity, lifecycle semantics
-and metadata-aware value contracts. Reflection-only consumers should prefer
-these headers or `<cmeta/meta.h>`.
 
-Core includes:
+`<cmeta/meta.h>` 聚合 Core；Structured-C scope 和四个 Optional adapter 必须显式
+include。Core archive 不链接 Platform、Concurrency、Coroutine、Core、CFlow 或 Plugin。
+`generated/builtin_signature_manifest.h` 是生成的 Core schema。
 
-- cmeta.h
-- data.h / data_select.h
-- declared_type.h
-- entry.h
-- enum.h
-- flags.h
-- function.h
-- interface.h
-- invokable.h
-- lifecycle.h
-- manifest.h
-- method.h
-- object.h / object_interface.h
-- status.h
-- struct.h
-- type_identity.h / type_select.h / type_traits.h
-- value.h
-- variant.h
+Atomic 与 RCU 直接属于 Concurrency，使用 `<salts/atomic.h>` 的
+`SALTS_ATOMIC_TYPE` 和 `<salts/rcu.h>` 的 `SALTS_RCU_TYPE`。
+Pool 的 storage/lease/BUSY 归 Core `object_pool_owner_state`；Local affinity/TLS
+归 Platform `salts_thread_affine_state`；CMeta 只增加 canonical DataDesc 生命周期 binding。
+Platform `<salts/fastpath.h>` 拥有 fast key、一次性消费与 native acquire-load，
+CMeta static-call/tracepoint 增加 Function ABI/typed payload metadata。
+纯 fault 控制直接使用 Platform API，不提供另一套 CMeta spelling。
 
-## Structured-C helpers
-
-These remain ordinary-C helpers built around CMeta metadata/lifecycle semantics:
-
-- scope.h
-- range.h
-- collector.h
-- compute.h
-- infer.h
-- pp.h
-- generic.h
-
-`meta.h` is the Core CMeta aggregate and does not promise Structured-C helpers.
-Consumers include these helpers explicitly. If one later acquires an external
-runtime owner, it must move to the optional layer.
-
-## Optional runtime/control-plane adapters
-
-These are not part of `<cmeta/meta.h>`:
-
-- fastpath.h
-- trace.h
-- pool.h
-- local.h
-
-Consumers must include optional adapters explicitly.
-
-The runtime mechanism behind an adapter remains owned by its canonical module.
-A cmeta-prefixed facade does not transfer ownership into CMeta.
-
-## Dependency rule
-
-```text
-Core CMeta
-   -/-> Concurrency
-   -/-> Coroutine
-   -/-> Plugin
-   -/-> CFlow
-```
-
-Optional adapters may depend outward when necessary, but aggregate Reflection
-headers must not make those dependencies implicit.
-
-Atomic and RCU helpers are owned directly by Salts::Concurrency and are not
-CMeta adapters. Use `<salts/atomic.h>` and `<salts/rcu.h>`.
-
-## No compatibility aggregate
-
-When an optional runtime facility is removed from `meta.h`, in-repository
-consumers must include its explicit header. Do not add forwarding aggregate
-headers or feature aliases solely to preserve accidental transitive inclusion.
-
-Tracked by #957, #959 and #960.
+迁移影响、所有权协议、验证与回滚见 [BOUNDARIES.md](BOUNDARIES.md)。
+不得添加 compatibility aggregate、forwarding alias、隐式 fallback 或第二个 runtime owner。

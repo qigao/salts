@@ -162,7 +162,16 @@ suite("ObjectPool") {
             copied = first;
             check_equal(object_pool_owner_release(&pool, &copied), SALTS_EINVAL);
             check_equal(object_pool_owner_destroy(&pool), SALTS_EBUSY);
+            check_equal(object_pool_owner_begin(&pool), SALTS_OK);
+            check_equal(object_pool_owner_begin(&pool), SALTS_EBUSY);
+            check_equal(object_pool_owner_release(&pool, &first), SALTS_EBUSY);
+            check_equal(object_pool_owner_end(&pool), SALTS_OK);
+            check_equal(object_pool_owner_end(&pool), SALTS_EINVAL);
+            check_equal(object_pool_owner_check_destination(&pool, &first, value), SALTS_EINVAL);
+            check_equal(object_pool_owner_check_destination(&pool, &first, (char *)value + 1), SALTS_EINVAL);
+            check_true(object_pool_contains(pool.storage, value));
             check_equal(object_pool_owner_release(&pool, &first), SALTS_OK);
+            check_true(object_pool_contains(pool.storage, value));
             check_equal(object_pool_owner_destroy(&pool), SALTS_OK);
         }
     }

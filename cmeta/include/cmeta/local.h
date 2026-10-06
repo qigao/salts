@@ -44,15 +44,20 @@ CMETA_INLINE cmeta_status cmeta_local_init(
         return CMETA_INVALID_ARGUMENT;
 
     state->ops = ops;
-    state->affinity.busy = true;
+    if (salts_thread_affine_set_busy(&state->affinity, owner, true) != SALTS_OK)
+        return CMETA_INVALID_ARGUMENT;
     status = ops->init_zero(value);
     if (status != CMETA_OK) {
         ops->restore_zero(value);
-        *state = (cmeta_local_state){0};
+        if (salts_thread_affine_set_busy(&state->affinity, owner, false) != SALTS_OK ||
+            salts_thread_affine_reset(&state->affinity, owner) != SALTS_OK)
+            return CMETA_INVALID_ARGUMENT;
+        state->ops = NULL;
         return status;
     }
 
-    state->affinity.busy = false;
+    if (salts_thread_affine_set_busy(&state->affinity, owner, false) != SALTS_OK)
+        return CMETA_INVALID_ARGUMENT;
     return CMETA_OK;
 }
 
@@ -64,9 +69,13 @@ CMETA_INLINE cmeta_status cmeta_local_destroy(
     if (value == NULL || state->ops == NULL)
         return CMETA_INVALID_ARGUMENT;
 
-    state->affinity.busy = true;
+    if (salts_thread_affine_set_busy(&state->affinity, owner, true) != SALTS_OK)
+        return CMETA_INVALID_ARGUMENT;
     state->ops->restore_zero(value);
-    *state = (cmeta_local_state){0};
+    if (salts_thread_affine_set_busy(&state->affinity, owner, false) != SALTS_OK ||
+        salts_thread_affine_reset(&state->affinity, owner) != SALTS_OK)
+        return CMETA_INVALID_ARGUMENT;
+    state->ops = NULL;
     return CMETA_OK;
 }
 

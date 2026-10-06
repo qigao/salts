@@ -1,3 +1,36 @@
+cmake_add_test(cmeta_fingerprint_test
+  SOURCES cmeta_fingerprint_test.c cmeta_fingerprint_peer.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+cmake_add_test(cmeta_fingerprint_cpp_test
+  SOURCES cmeta_fingerprint_cpp_test.cpp cmeta_fingerprint_peer.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+set_target_properties(cmeta_fingerprint_test cmeta_fingerprint_cpp_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_target_properties(cmeta_fingerprint_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
+if(NOT BUILD_SHARED_LIBS AND NOT CMAKE_CROSSCOMPILING)
+  add_library(cmeta_fingerprint_dso_fixture SHARED
+    cmeta_fingerprint_dso_fixture.cpp cmeta_fingerprint_peer.c)
+  target_link_libraries(cmeta_fingerprint_dso_fixture PRIVATE Salts::CMeta)
+  target_compile_definitions(cmeta_fingerprint_dso_fixture PRIVATE
+    CMETA_FINGERPRINT_DSO_TEST=1 CMETA_FINGERPRINT_DSO_BUILD=1)
+  cmake_config_target(cmeta_fingerprint_dso_fixture FOLDER "cmeta/tests")
+  set_target_properties(cmeta_fingerprint_dso_fixture PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+  cmake_add_test(cmeta_fingerprint_dso_test SOURCES cmeta_fingerprint_dso_test.c
+    LIBS cmeta_fingerprint_dso_fixture Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+  target_compile_definitions(cmeta_fingerprint_dso_test PRIVATE CMETA_FINGERPRINT_DSO_TEST=1)
+  set_target_properties(cmeta_fingerprint_dso_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+endif()
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_fingerprint_cpp_test PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:-Werror=old-style-cast>")
+endif()
+
+
 # CMeta public API regression tests.
 
 cmake_add_test(cmeta_trace_test
@@ -6,7 +39,7 @@ cmake_add_test(cmeta_trace_test
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_trace_cpp_test
   SOURCES cmeta_trace_cpp_test.cpp cmeta_trace_peer.c
-  LIBS Salts::CMeta Salts::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest Salts::Platform
   FOLDER "cmeta/tests")
 set_target_properties(cmeta_trace_test cmeta_trace_cpp_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -40,11 +73,11 @@ cmake_add_test(cmeta_fastpath_test
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_cpp_test
   SOURCES cmeta_fastpath_cpp_test.cpp cmeta_fastpath_peer.c
-  LIBS Salts::CMeta Salts::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest Salts::Platform
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_coroutine_test
   SOURCES cmeta_fastpath_coroutine_test.c cmeta_fastpath_peer.c
-  LIBS Salts::CMeta Salts::TinyTest Salts::Coroutine
+  LIBS Salts::CMeta Salts::TinyTest Salts::Coroutine Salts::Platform
   FOLDER "cmeta/tests")
 set_target_properties(cmeta_fastpath_test cmeta_fastpath_cpp_test cmeta_fastpath_coroutine_test
   PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -317,15 +350,18 @@ cmeta_add_compile_failure_test(
   cmeta_trace_wrong_backend_compile_fail
   compile_fail/cmeta_trace_wrong_backend.c
   "generic association|compatible type|controlling expression|C11 generic|not compatible with any association")
+target_link_libraries(cmeta_trace_wrong_backend_compile_fail PRIVATE Salts::Platform)
 
 cmeta_add_compile_failure_test(
   cmeta_fastpath_wrong_target_compile_fail
   compile_fail/cmeta_fastpath_wrong_target.c
   "generic association|compatible type|controlling expression|C11 generic|not compatible with any association")
+target_link_libraries(cmeta_fastpath_wrong_target_compile_fail PRIVATE Salts::Platform)
 cmeta_add_compile_failure_test(
   cmeta_fastpath_missing_decl_compile_fail
   compile_fail/cmeta_fastpath_missing_decl.c
   "undeclared_target_function_type|syntax error: identifier 'slot_target_type'")
+target_link_libraries(cmeta_fastpath_missing_decl_compile_fail PRIVATE Salts::Platform)
 
 cmeta_add_compile_failure_test(
   cmeta_compute_missing_type_compile_fail
@@ -450,3 +486,53 @@ set_target_properties(cmeta_function_reflection_test cmeta_method_test cmeta_obj
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+
+cmake_add_test(cmeta_manifest_view_test
+  SOURCES cmeta_manifest_view_test.c cmeta_manifest_view_peer.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+cmake_add_test(cmeta_manifest_view_cpp_test
+  SOURCES cmeta_manifest_view_cpp_test.cpp cmeta_manifest_view_peer.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+set_target_properties(cmeta_manifest_view_test cmeta_manifest_view_cpp_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_target_properties(cmeta_manifest_view_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_manifest_view_cpp_test PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:-Werror=old-style-cast>")
+endif()
+cmeta_add_compile_failure_test(cmeta_manifest_wrong_descriptor_compile_fail
+  compile_fail/cmeta_manifest_wrong_descriptor.c
+  "generic association|compatible type|controlling expression|C11 generic|not compatible with any association")
+
+cmeta_add_compile_failure_test(cmeta_manifest_wrong_descriptor_cpp_compile_fail
+  compile_fail/cmeta_manifest_wrong_descriptor.cpp "cmeta_type_desc")
+set_target_properties(cmeta_manifest_wrong_descriptor_cpp_compile_fail PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
+cmake_add_test(cmeta_plugin_test SOURCES cmeta_plugin_test.c cmeta_plugin_peer.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+cmake_add_test(cmeta_plugin_cpp_test SOURCES cmeta_plugin_cpp_test.cpp cmeta_plugin_peer.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+set_target_properties(cmeta_plugin_test cmeta_plugin_cpp_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_target_properties(cmeta_plugin_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_plugin_cpp_test PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:-Werror=old-style-cast>")
+endif()
+
+cmeta_add_compile_failure_test(cmeta_plugin_wrong_descriptor_compile_fail
+  compile_fail/cmeta_plugin_wrong_descriptor.c
+  "generic association|compatible type|controlling expression|C11 generic|not compatible with any association")
+cmeta_add_compile_failure_test(cmeta_plugin_wrong_descriptor_cpp_compile_fail
+  compile_fail/cmeta_plugin_wrong_descriptor.cpp "cmeta_interface_desc")
+set_target_properties(cmeta_plugin_wrong_descriptor_cpp_compile_fail PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
+cmake_add_test(cmeta_pool_cpp_test SOURCES cmeta_pool_cpp_test.cpp
+  LIBS Salts::CMeta Salts::Core Salts::TinyTest FOLDER "cmeta/tests")
+set_target_properties(cmeta_pool_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+set_tests_properties(cmeta_pool_cpp_test PROPERTIES TIMEOUT 60)

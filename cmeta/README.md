@@ -444,3 +444,9 @@ Prefer composing existing CMeta mechanisms and ordinary C over adding new
 language vocabulary prematurely.
 
 Typed tracepoint、一次性 fault point 和 disabled fast path 的使用与生命周期见 [TRACEPOINTS.md](TRACEPOINTS.md)。
+
+
+Portable discovery and ABI contracts are documented in
+[STATIC_MANIFESTS.md](STATIC_MANIFESTS.md), [FINGERPRINTS.md](FINGERPRINTS.md)
+and [PLUGIN_MANIFESTS.md](PLUGIN_MANIFESTS.md). Runtime ownership and installed
+Reflection-only qualification follow [BOUNDARIES.md](BOUNDARIES.md).

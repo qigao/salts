@@ -104,3 +104,13 @@ else()
       SALTS_TEST_EXPECT_POLL_UNSUPPORTED=1)
   endif()
 endif()
+
+cmake_add_test(platform_fastpath_test SOURCES platform_fastpath_test.c
+  LIBS Salts::Platform Salts::TinyTest FOLDER "platform/tests")
+cmake_add_test(platform_fastpath_cpp_test
+  SOURCES platform_fastpath_cpp_test.cpp platform_fastpath_peer.c
+  LIBS Salts::Platform Salts::TinyTest FOLDER "platform/tests")
+set_target_properties(platform_fastpath_test platform_fastpath_cpp_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_target_properties(platform_fastpath_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)

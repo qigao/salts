@@ -3,7 +3,7 @@
 #include <salts_coro.h>
 
 enum { FASTPATH_YIELDS = 8, FASTPATH_CORO_ARGUMENT = 5 };
-cmeta_static_key(fastpath_coro_key, false);
+SALTS_FAST_KEY(fastpath_coro_key, false);
 cmeta_static_call(fastpath_coro_slot, fastpath_add);
 cmeta_static_call(fastpath_coro_pair_slot, fastpath_aggregate);
 typedef struct fastpath_coro_state { int rounds; int errors; } fastpath_coro_state;
@@ -15,11 +15,11 @@ static void fastpath_coro_entry(coro_t *co, void *arg) {
     for (int round = 0; round < FASTPATH_YIELDS; ++round) {
         int before = cmeta_static_invoke(fastpath_coro_slot, FASTPATH_CORO_ARGUMENT);
         fastpath_pair reference = cmeta_static_invoke(fastpath_coro_pair_slot, retained, 0.5);
-#if CMETA_NATIVE_FASTPATH
+#if SALTS_PLATFORM_NATIVE_FASTPATH
         fastpath_pair native = cmeta_static_native_invoke(fastpath_coro_pair_slot, retained, 0.5);
         if (native.value != reference.value || native.count != reference.count ||
             cmeta_static_native_invoke(fastpath_coro_slot, FASTPATH_CORO_ARGUMENT) != before ||
-            cmeta_static_branch_native(&fastpath_coro_key) != cmeta_static_branch(&fastpath_coro_key))
+            salts_fast_key_read_native(&fastpath_coro_key) != salts_fast_branch(&fastpath_coro_key))
             ++state->errors;
 #endif
         if (coro_yield() != 0) { ++state->errors; return; }
@@ -41,12 +41,12 @@ suite("CMeta fastpath coroutine ABI") {
         check_not_null(co);
         for (int generation = 0; generation < 2; ++generation) {
             check_equal(cmeta_static_update(fastpath_coro_slot, fastpath_add), CMETA_OK);
-            check_equal(cmeta_static_disable(&fastpath_coro_key), CMETA_OK);
+            check_equal(salts_fast_disable(&fastpath_coro_key), SALTS_OK);
             for (int round = 0; round <= FASTPATH_YIELDS; ++round) {
                 check_equal(coro_resume(co), 0);
                 if (round == FASTPATH_YIELDS) break;
                 check_equal(coro_state(co), coro_SUSPENDED);
-                check_equal(cmeta_static_key_set(&fastpath_coro_key, round % 2 == 0), CMETA_OK);
+                check_equal(salts_fast_key_set(&fastpath_coro_key, round % 2 == 0), SALTS_OK);
                 check_equal(round % 2 == 0
                     ? cmeta_static_update(fastpath_coro_slot, fastpath_other)
                     : cmeta_static_update(fastpath_coro_slot, fastpath_add), CMETA_OK);
