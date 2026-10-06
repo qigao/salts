@@ -62,6 +62,11 @@ SALTS_C_API size_t object_pool_max_alignment(void);
  * Does not dereference obj. It shares the pool's mutation/lifetime constraints. */
 SALTS_C_API bool object_pool_is_allocated(const object_pool_t *pool, const void *obj);
 
+SALTS_C_API void object_pool_destroy(object_pool_t *pool);
+SALTS_C_API void *object_pool_alloc(object_pool_t *pool);
+SALTS_C_API void object_pool_free(object_pool_t *pool, void *obj);
+SALTS_C_API size_t object_pool_allocated_count(const object_pool_t *pool);
+
 
 /*
  * Address-stable, thread-affine checked-out-slot facade owned by Salts::Core.
