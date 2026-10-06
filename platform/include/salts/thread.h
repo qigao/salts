@@ -65,9 +65,9 @@ static inline int salts_thread_affine_check(
 
 static inline int salts_thread_affine_set_busy(
     salts_thread_affine_state *state, const void *owner, bool busy) {
-  int status = salts_thread_affine_check(state, owner);
-  if (status != SALTS_OK)
-    return status;
+  if (state == NULL || owner == NULL || state->owner != owner ||
+      state->thread != salts_thread_current_token())
+    return SALTS_EINVAL;
   state->busy = busy;
   return SALTS_OK;
 }
