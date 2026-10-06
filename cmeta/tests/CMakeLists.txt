@@ -25,6 +25,13 @@ cmake_add_test(cmeta_execution_test
 set_target_properties(cmeta_execution_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 set_tests_properties(cmeta_execution_test PROPERTIES TIMEOUT 60)
+cmake_add_test(cmeta_pool_cpp_test
+  SOURCES cmeta_pool_cpp_test.cpp
+  LIBS Salts::CMeta Salts::Core Salts::TinyTest
+  FOLDER "cmeta/tests")
+set_target_properties(cmeta_pool_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+set_tests_properties(cmeta_pool_cpp_test PROPERTIES TIMEOUT 60)
 cmake_add_test(cmeta_capabilities_test
   SOURCES cmeta_capabilities_test.c cmeta_capabilities_peer.c cmeta_capabilities_owned.c
   LIBS Salts::CMeta Salts::TinyTest

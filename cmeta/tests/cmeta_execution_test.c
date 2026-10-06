@@ -10,14 +10,18 @@ typedef struct ExecutionValue { cmeta_capture_storage alignment; int *owned; int
 static atomic_uint destroyed;
 static bool fail_init;
 static cmeta_pool_state *reentry_pool;
-static cmeta_status reentry_status;
+static cmeta_status reentry_status, pool_restore_reentry, pool_move_reentry;
+static int pool_init_native_status, pool_restore_native_status, pool_move_native_status;
 static cmeta_local_state *reentry_local;
 static void *reentry_local_owner;
 static cmeta_status local_init_reentry, local_restore_reentry;
 static cmeta_status value_init(void *object) {
     ExecutionValue *value = object;
     memset(value, 0, sizeof(*value));
-    if (reentry_pool != NULL) reentry_status = cmeta_pool_destroy(reentry_pool);
+    if (reentry_pool != NULL) {
+        reentry_status = cmeta_pool_destroy(reentry_pool);
+        pool_init_native_status = object_pool_managed_check(&reentry_pool->owner);
+    }
     if (reentry_local != NULL)
         local_init_reentry = cmeta_local_destroy(reentry_local, reentry_local_owner, object);
     if (!fail_init) return CMETA_OK;
@@ -26,12 +30,20 @@ static cmeta_status value_init(void *object) {
 }
 static void value_restore(void *object) {
     ExecutionValue *value = object;
+    if (reentry_pool != NULL) {
+        pool_restore_reentry = cmeta_pool_destroy(reentry_pool);
+        pool_restore_native_status = object_pool_managed_check(&reentry_pool->owner);
+    }
     if (reentry_local != NULL)
         local_restore_reentry = cmeta_local_destroy(reentry_local, reentry_local_owner, object);
     if (value->owned != NULL) { free(value->owned); atomic_fetch_add(&destroyed, 1); }
     memset(value, 0, sizeof(*value));
 }
 static void value_move(void *destination, void *source) {
+    if (reentry_pool != NULL) {
+        pool_move_reentry = cmeta_pool_destroy(reentry_pool);
+        pool_move_native_status = object_pool_managed_check(&reentry_pool->owner);
+    }
     *(ExecutionValue *)destination = *(ExecutionValue *)source;
     memset(source, 0, sizeof(ExecutionValue));
 }
@@ -122,6 +134,48 @@ spec("CMeta execution primitives") {
         check_equal(local.state.binding.phase, SALTS_LOCAL_ZERO);
         check_null(local.state.ops);
     }
+    it("keeps canonical Pool callbacks inside Core's active lease transaction") {
+        ValuePool pool = {0}; ValuePool_lease lease = {0};
+        ExecutionValue destination = {0};
+        ExecutionValue *value;
+        atomic_store(&destroyed, 0u);
+        check_equal(ValuePool_init(&pool, 1), CMETA_OK);
+        check_true(pool.state.ops == &value_ops);
+        reentry_pool = &pool.state;
+        fail_init = true;
+        check_equal(ValuePool_acquire(&pool, &lease), CMETA_CALLBACK_ERROR);
+        check_equal(reentry_status, CMETA_BUSY);
+        check_equal(pool_init_native_status, SALTS_EBUSY);
+        check_equal(pool_restore_reentry, CMETA_BUSY);
+        check_equal(pool_restore_native_status, SALTS_EBUSY);
+        check_equal(atomic_load(&destroyed), 1u);
+        check_null(lease.state.self); check_null(pool.state.owner.active);
+        check_equal(object_pool_allocated_count(pool.state.owner.storage), (size_t)0);
+        check_equal(object_pool_managed_check(&pool.state.owner), SALTS_OK);
+        fail_init = false;
+        check_equal(ValuePool_acquire(&pool, &lease), CMETA_OK);
+        check_true(lease.state.owner == &pool.state.owner);
+        value = ValuePool_get(&pool, &lease);
+        value->owned = malloc(sizeof(*value->owned));
+        check_not_null(value->owned);
+        value->value = 11;
+        check_equal(ValuePool_move_out(&pool, &lease, &destination), CMETA_OK);
+        check_equal(pool_move_reentry, CMETA_BUSY);
+        check_equal(pool_move_native_status, SALTS_EBUSY);
+        check_true(ValuePool_get(&pool, &lease) == value);
+        check_null(value->owned);
+        check_equal(destination.value, 11);
+        check_equal(ValuePool_release(&pool, &lease), CMETA_OK);
+        check_equal(pool_restore_reentry, CMETA_BUSY);
+        check_equal(pool_restore_native_status, SALTS_EBUSY);
+        check_equal(object_pool_managed_check(&pool.state.owner), SALTS_OK);
+        reentry_pool = NULL;
+        check_equal(ValuePool_destroy(&pool), CMETA_OK);
+        check_null(pool.state.ops);
+        check_equal(pool.state.owner.binding.phase, SALTS_LOCAL_ZERO);
+        value_restore(&destination);
+        check_equal(atomic_load(&destroyed), 2u);
+    }
     it("reuses slots holding a real CSTL owned vector through canonical lifecycle") {
         VecPool pool = {0}; VecPool_lease lease = {0};
         ExecutionVec destination = {0}; ExecutionVec *value;
@@ -160,7 +214,7 @@ spec("CMeta execution primitives") {
         check_equal(ValuePool_acquire(&pool, &first), CMETA_OK);
         check_equal(ValuePool_acquire(&pool, &second), CMETA_OK);
         check_equal(ValuePool_acquire(&pool, &extra), CMETA_CAPACITY_EXCEEDED);
-        check_equal(object_pool_capacity(pool.state.storage), (size_t)2);
+        check_equal(object_pool_capacity(pool.state.owner.storage), (size_t)2);
         value = ValuePool_get(&pool, &first);
         check_not_null(value);
         check_equal((uintptr_t)value % _Alignof(ExecutionValue), (uintptr_t)0);
@@ -196,7 +250,7 @@ spec("CMeta execution primitives") {
         fail_init = true;
         check_equal(ValuePool_acquire(&pool, &lease), CMETA_CALLBACK_ERROR);
         check_equal(atomic_load(&destroyed), 1u);
-        check_equal(object_pool_allocated_count(pool.state.storage), (size_t)0);
+        check_equal(object_pool_allocated_count(pool.state.owner.storage), (size_t)0);
         check_equal(ValueLocal_init(&local), CMETA_CALLBACK_ERROR);
         check_null(ValueLocal_get(&local));
         check_equal(atomic_load(&destroyed), 2u);
@@ -211,18 +265,18 @@ spec("CMeta execution primitives") {
         check_equal(ValueLocal_destroy(&local), CMETA_OK);
     }
     it("rejects missing or mismatched canonical lifecycle without allocating slots") {
-        cmeta_pool_state pool = {0}; cmeta_pool_lease lease = {0};
+        cmeta_pool_state pool = {0}; object_pool_managed_lease lease = {0};
         cmeta_data_desc data = value_data;
         cmeta_data_construct_ops ops = value_ops;
         ExecutionValue destination = {0};
         data.construct_ops = NULL;
         check_equal(cmeta_pool_init(&pool, &data, sizeof(ExecutionValue),
             _Alignof(ExecutionValue), 1), CMETA_TRAIT_MISSING);
-        check_null(pool.storage);
+        check_null(pool.owner.storage);
         data.construct_ops = &ops;
         check_equal(cmeta_pool_init(&pool, &data, sizeof(ExecutionValue) + 1,
             _Alignof(ExecutionValue), 1), CMETA_TYPE_MISMATCH);
-        check_null(pool.storage);
+        check_null(pool.owner.storage);
         ops.move = NULL;
         check_equal(cmeta_pool_init(&pool, &data, sizeof(ExecutionValue),
             _Alignof(ExecutionValue), 1), CMETA_OK);

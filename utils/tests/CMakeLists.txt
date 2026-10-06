@@ -34,6 +34,13 @@ foreach(test_source ${TEST_SOURCES} ${CXX_TEST_SOURCES})
     LIBS ${COMMON_LIBS})
 endforeach()
 
+set_target_properties(test_object_pool_managed PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_target_properties(test_object_pool_managed_cpp PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+set_tests_properties(test_object_pool_managed test_object_pool_managed_cpp
+  PROPERTIES TIMEOUT 60)
+
 # Seed a parent-only variable so the process clean-environment contract can be
 # tested without relying on PATH, which command interpreters may synthesize.
 if(TARGET test_salts_process)

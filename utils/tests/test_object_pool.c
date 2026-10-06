@@ -100,6 +100,29 @@ static void benchmark_randomized(size_t count) {
 }
 
 suite("ObjectPool") {
+    group("Storage membership") {
+        it("distinguishes all pool storage from checked-out slots") {
+            object_pool_config_t config = {sizeof(test_object_t), 1, 1, false};
+            object_pool_t *pool = object_pool_create(&config);
+            test_object_t external = {0};
+            void *value;
+            check_not_null(pool);
+            if (pool == NULL) return;
+            value = object_pool_alloc(pool);
+            check_not_null(value);
+            if (value == NULL) { object_pool_destroy(pool); return; }
+            check_true(object_pool_contains(pool, value));
+            check_true(object_pool_contains(pool, (char *)value + 1));
+            check_false(object_pool_is_allocated(pool, (char *)value + 1));
+            object_pool_free(pool, value);
+            check_true(object_pool_contains(pool, value));
+            check_false(object_pool_is_allocated(pool, value));
+            check_false(object_pool_contains(pool, &external));
+            check_false(object_pool_contains(NULL, value));
+            check_false(object_pool_contains(pool, NULL));
+            object_pool_destroy(pool);
+        }
+    }
     group("Aligned bounded storage") {
         it("aligns every slot and validates allocated membership before cleanup") {
             enum { ALIGNED_POOL_CAPACITY = 3 };

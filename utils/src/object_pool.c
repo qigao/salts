@@ -196,6 +196,19 @@ bool object_pool_is_allocated(const object_pool_t *pool, const void *obj) {
          object_pool_slot_is_allocated(chunk, slot);
 }
 
+bool object_pool_contains(const object_pool_t *pool, const void *obj) {
+  const object_pool_chunk_t *chunk;
+  uintptr_t address;
+  if (pool == NULL || obj == NULL) return false;
+  address = (uintptr_t)obj;
+  for (chunk = pool->chunks; chunk != NULL; chunk = chunk->next) {
+    uintptr_t start = (uintptr_t)chunk->memory;
+    if (address >= start && address - start < chunk->capacity * pool->object_size)
+      return true;
+  }
+  return false;
+}
+
 void object_pool_destroy(object_pool_t *pool) {
   if (!pool) {
     return;

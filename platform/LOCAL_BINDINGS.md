@@ -81,4 +81,5 @@ cmake --build --preset win-dev-user --target platform_local_test platform_local_
 ctest --preset win-dev-user --output-on-failure -R '^(platform_local_|cmeta_execution_test$)'
 ```
 
-Core object_pool 的 allocation/lease policy 分离仍由 #957 后续跟踪。
+Core object_pool 的 allocation/lease policy 已由 managed owner 承载，见
+[`OBJECT_POOL_MANAGED.md`](../utils/OBJECT_POOL_MANAGED.md)。

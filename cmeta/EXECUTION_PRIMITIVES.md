@@ -10,7 +10,8 @@ Atomic 和 typed RCU 已迁移至 Concurrency；声明、错误码、容量和�
 ## 类型化有界对象池
 
 `cmeta_type(Pool, Name, Type)` 生成 facade。init 验证 canonical construct ops、
-native size/alignment，一次预分配全部容量；capacity 不能为零。不支持的扩展对齐
+native size/alignment；Core managed owner 一次预分配全部容量并管理 lease/事务，见
+[`OBJECT_POOL_MANAGED.md`](../utils/OBJECT_POOL_MANAGED.md)。capacity 不能为零。不支持的扩展对齐
 直接失败。对象内部 payload 的容量仍由 Type 自己的契约限制。
 
 - 一个池固定属于创建线程，所有操作为单 owner；不引入锁或隐式 TLS 全局池。
@@ -39,7 +40,8 @@ shard 生命周期继续由 executor/shard owner 管理，不能把 OS TLS 当�
 候选方案包括 CMeta 自带 allocator/线程 runtime、在 Core 中复用全部机制，及上述薄 facade。
 选择薄 facade 可避免 CMeta → Core → CMeta 循环依赖，也不复制 allocator 或同步原语。
 可选头文件明确要求相应 runtime target；基础 `cmeta/meta.h` 不引入这些依赖。
-Pool/Local 是 additive lifecycle adapters；object_pool 配置结构和已有函数语义保持不变。
+Pool/Local 的 runtime 状态已按 #957 迁移至 Core/Platform；facade/lease 布局改变，需全量重编译。
+生成 typed 生命周期接口保持一致；object_pool 配置结构和已有函数语义保持不变。
 `CMETA_BUSY` 追加到现有 status 枚举尾部，不重编号已有值。Collector 保留该错误，
 CFlow 同步 collect 将其分类为 `CFLOW_STATUS_WOULD_BLOCK` 并照常 abort；不新增等待或重试。
 Pool/Local 由 consumer 显式选择，不自动改变插件注册表或 CNet 数据路径。
@@ -76,8 +78,8 @@ typed acquire/get/move/release 和 TLS 退出清理。
 
 ```powershell
 cmake --preset win-dev-user
-cmake --build --preset win-dev-user --target cmeta_execution_test concurrency_typed_primitives_test concurrency_typed_rcu_cpp_test concurrency_rcu_test cmeta_scope_test cmeta_collector_test concurrency_header_cpp_test test_object_pool
-ctest --preset win-dev-user --output-on-failure -R '^(cmeta_scope_|cmeta_execution_test$|cmeta_collector_test$|concurrency_rcu_test$|concurrency_typed_|concurrency_header_cpp_test$|test_object_pool$)'
+cmake --build --preset win-dev-user --target cmeta_execution_test cmeta_pool_cpp_test test_object_pool_managed test_object_pool_managed_cpp concurrency_typed_primitives_test concurrency_typed_rcu_cpp_test concurrency_rcu_test cmeta_scope_test cmeta_collector_test concurrency_header_cpp_test test_object_pool
+ctest --preset win-dev-user --output-on-failure -R '^(cmeta_scope_|cmeta_execution_test$|cmeta_pool_cpp_test$|test_object_pool_managed|cmeta_collector_test$|concurrency_rcu_test$|concurrency_typed_|concurrency_header_cpp_test$|test_object_pool$)'
 ```
 
 需先进入 VS 开发者环境并提供 user preset 所需的 vcpkg 环境，见
