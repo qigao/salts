@@ -16,7 +16,6 @@
 #include <cmeta/flags.h>
 #include <cmeta/pp.h>
 #include <cmeta/status.h>
-#include <cmeta/scope.h>
 #include <cmeta/struct.h>
 #include <cmeta/type_select.h>
 #include <cmeta/type_traits.h>
