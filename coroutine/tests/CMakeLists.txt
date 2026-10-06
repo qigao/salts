@@ -21,3 +21,4 @@ cmake_add_test(cmeta_coroutine_header_cpp_test
   LIBS Salts::Coroutine
   FOLDER "coroutine/tests")
 
+set_tests_properties(cmeta_coroutine_facade_test PROPERTIES TIMEOUT 60)
