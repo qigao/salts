@@ -174,6 +174,9 @@ cmake_add_test(cmeta_core_test
   SOURCES cmeta_core_test.c cmeta_traits_peer.c
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
+if(UNIX)
+  target_link_libraries(cmeta_core_test PRIVATE m)
+endif()
 
 cmake_add_test(cmeta_type_identity_test
   SOURCES cmeta_type_identity_test.c cmeta_type_identity_peer.c

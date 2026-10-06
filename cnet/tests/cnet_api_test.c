@@ -1,5 +1,11 @@
 /* The interrupted-poll regression needs pthread_kill before libc is included. */
 #ifndef _WIN32
+#ifdef __APPLE__
+/* Keep Darwin socket constants visible alongside the POSIX signal APIs. */
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE 1
+#endif
+#endif
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #endif
