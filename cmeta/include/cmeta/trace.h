@@ -15,7 +15,7 @@
     cmeta_struct(name_##_payload, __VA_ARGS__); \
     typedef void (*name_##_backend_type)(const name_##_payload *); \
     SALTS_FAST_KEY(name_##_key, false); \
-    static _Atomic(name_##_backend_type) name_##_backend = NULL; \
+    static _Atomic(name_##_backend_type) name_##_backend = (name_##_backend_type)0; \
     CMETA_INLINE cmeta_status name_##_bind(name_##_backend_type target_) { \
         if (target_ == NULL) return CMETA_INVALID_ARGUMENT; \
         atomic_store_explicit(&name_##_backend, target_, memory_order_release); \
