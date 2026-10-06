@@ -20,6 +20,8 @@
  * to a typed body function borrowing the resources. Native returns stay in
  * that function; labels cannot cross the function boundary. Block bodies and
  * cross-scope exits are intentionally rejected rather than leaking resources.
+ * C++ body exceptions restore live resources in the same reverse order before
+ * rethrowing. Provider restore callbacks must not throw.
  */
 #define cmeta_autos(...) (__VA_ARGS__)
 #define cmeta_body(expression_) (expression_)
@@ -146,12 +148,22 @@ CMETA_INLINE cmeta_status cmeta_scope_construct_ops(
         CMETA_PP_UNIQUE(cmeta_scope_), status_, autos_, body_)
 #endif
 
+#ifdef __cplusplus
+#define CMETA_SCOPE_BODY_(scope_, status_, autos_, body_) \
+    try { (status_) = (body_); } catch (...) { \
+        CMETA_SCOPE_DESTROY_ALL_(scope_, autos_) \
+        throw; \
+    }
+#else
+#define CMETA_SCOPE_BODY_(scope_, status_, autos_, body_) (status_) = (body_);
+#endif
+
 #define CMETA_SCOPE_WITH_ID_(bind_, scope_, status_, autos_, body_)          \
     do {                                                                       \
         (status_) = CMETA_OK;                                                  \
         CMETA_SCOPE_DECLARE_ALL_(scope_, autos_)                              \
         CMETA_SCOPE_INIT_ALL_(bind_, scope_, status_, autos_)                 \
-        (status_) = (body_);                                                   \
+        CMETA_SCOPE_BODY_(scope_, status_, autos_, body_)                     \
         goto CMETA_SCOPE_LABEL_(scope_);                                      \
         CMETA_SCOPE_LABEL_(scope_):                                            \
         CMETA_SCOPE_DESTROY_ALL_(scope_, autos_)                              \
