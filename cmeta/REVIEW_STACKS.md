@@ -4,7 +4,7 @@
 核心 PR [#986](https://github.com/qigao/salts/pull/986) 使用新分支
 `review/cmeta-core-984`，通过隔离提交区分 A–D/G、公共命名迁移和 F；它不包含 #981
 的 native thunk 实现、构建选项或 installed native 测试。可选 E 使用其上的
-`review/cmeta-native-981`，单独审查、构建与验收。以下表格定义语义依赖；网络、runner
+[`review/cmeta-native-981` / PR #987](https://github.com/qigao/salts/pull/987)，单独审查、构建与验收。以下表格定义语义依赖；网络、runner
 与 benchmark 的成功不能替代 CMeta 语义验收。
 
 | 单元 | 契约与主要文件 | 依赖 | 正式验收面 |
@@ -78,11 +78,31 @@ Clang 的通过都不能替代 macOS Mach-O qualification。远端 Linux 的单�
 
 ## 隔离资格与历史证据
 
-事实：核心代码提交 `3f28ce9a` 已在全新 Windows MSVC Release build tree 完整构建，
-`cmeta-semantic` **190/190** 通过；日志为隔离 worktree 下
-`build/issue984-isolated-msvc-{configure,build,semantic}.log`。
-核心 PR #986 记录同一核心文件树的 GCC/Clang、消费者和 installed SDK 复验结果，
-E 的独立 PR 记录 native qualification；不得把原分支或其他平台的通过替代这些验收。
+事实：2026-10-07，核心代码 `3f28ce9a` 与 native 实现 `c50a4996` 的资格如下。
+其后本文件更新不改变被验证的源码、测试或构建文件。
+
+| 合并单元与环境 | 完整构建及实际 CTest 结果 |
+|---|---|
+| Core，Windows MSVC Release，全新 build tree | 全量 405/405；其中 `cmeta-semantic` 190/190 |
+| Core，root@eu GCC 12.2，fastpath OFF | 完整 build graph 通过；语义 189 通过、1 跳过；消费者 29/29 |
+| Core，root@eu Clang 14.0.6，fastpath OFF | 完整 build graph 通过；语义 189 通过、1 跳过；消费者 29/29；installed SDK 50/50 |
+| E，Windows MSVC，native/fastpath ON | 完整 build graph 通过；native/fastpath 测试及相关 benchmark 17/17 |
+| E，root@eu Clang 14.0.6，native/fastpath ON | 完整 build graph 通过；native/fastpath 测试及相关 benchmark 17/17；installed SDK 54/54 |
+
+Linux 跳过项为 `cmeta_pp_zero_c23_test`，由编译器能力决定。Windows E 使用原分支
+`9d506b96` 的相同源码树构建，通过前述 Git diff 核对与 `c50a4996` 一致。
+Core 和 E 的 Linux SDK 使用不同的新安装前缀 `stage/issue984-core/clang` 与
+`stage/issue984-native/clang`，没有让残留 native SDK 产物参与核心验收。
+
+日志：核心隔离 worktree 的 `build/issue984-isolated-msvc-{configure,build,semantic,regression}.log`；
+原 Windows worktree 的 `build/issue984-native-msvc-{configure,build,tests}.log`；
+远端隔离 worktree `/root/dev/salts-clang-976-977` 的
+`build/issue984-isolated-{gcc,clang}-{configure,build,semantic,consumers}.log`、
+`build/issue984-isolated-sdk-tests.log`、`build/issue984-native-clang-{configure,build,tests}.log`
+及 `build/issue984-native-sdk-tests.log`。
+
+这不是新分支全平台 CI 全部通过的声明。#986 / #987 的 macOS 和其他矩阵仍以各自
+运行结果为准，不得以 Windows/Linux 或原历史提交的通过替代。
 
 复验使用正式 preset，核心不传不存在的 native thunk 开关：
 
