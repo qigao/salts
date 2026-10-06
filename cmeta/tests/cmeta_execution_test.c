@@ -1,7 +1,7 @@
 #include <cmeta/pool.h>
 #include <cmeta/local.h>
-#include <cmeta/atomic.h>
-#include <cmeta/rcu.h>
+#include <salts/atomic.h>
+#include <salts/rcu.h>
 #include <cstl/typed.h>
 #include "tinytest.h"
 #include <stdlib.h>
@@ -45,10 +45,10 @@ static const cmeta_data_desc value_data = {
 static const cmeta_data_desc *ExecutionValue_cmeta_data(void) { return &value_data; }
 cmeta_type(Pool, ValuePool, ExecutionValue);
 cmeta_type(Local, ValueLocal, ExecutionValue);
-cmeta_type(Atomic, IntAtomic, int);
+SALTS_ATOMIC_TYPE(IntAtomic, int);
 typedef int *IntPointer;
-cmeta_type(Atomic, PointerAtomic, IntPointer);
-cmeta_type(Rcu, IntRcu, int);
+SALTS_ATOMIC_TYPE(PointerAtomic, IntPointer);
+SALTS_RCU_TYPE(IntRcu, int);
 cmeta_type(Vec, ExecutionVec, int);
 cmeta_type(Pool, VecPool, ExecutionVec);
 static cmeta_thread_local(ValueLocal, tls_value);
@@ -225,38 +225,38 @@ spec("CMeta execution primitives") {
         int out = 77, expected = 3, first = 1, second = 2;
         IntPointer pointer_expected = &first, pointer_out = NULL;
         bool exchanged = false, lock_free;
-        check_equal(IntAtomic_init(&value, 4), CMETA_OK);
-        check_equal(IntAtomic_load(&value, memory_order_release, &out), CMETA_INVALID_ARGUMENT);
+        check_equal(IntAtomic_init(&value, 4), SALTS_OK);
+        check_equal(IntAtomic_load(&value, memory_order_release, &out), SALTS_EINVAL);
         check_equal(out, 77);
-        check_equal(IntAtomic_store(&value, 9, memory_order_acquire), CMETA_INVALID_ARGUMENT);
-        check_equal(IntAtomic_exchange(&value, 9, (memory_order)99, &out), CMETA_INVALID_ARGUMENT);
+        check_equal(IntAtomic_store(&value, 9, memory_order_acquire), SALTS_EINVAL);
+        check_equal(IntAtomic_exchange(&value, 9, (memory_order)99, &out), SALTS_EINVAL);
         check_equal(IntAtomic_compare_exchange(&value, &expected, 5,
-            memory_order_release, memory_order_acquire, &exchanged), CMETA_INVALID_ARGUMENT);
+            memory_order_release, memory_order_acquire, &exchanged), SALTS_EINVAL);
         check_equal(expected, 3);
         check_equal(IntAtomic_compare_exchange(&value, &expected, 5,
-            memory_order_acq_rel, memory_order_acquire, &exchanged), CMETA_OK);
+            memory_order_acq_rel, memory_order_acquire, &exchanged), SALTS_OK);
         check_false(exchanged); check_equal(expected, 4);
         check_equal(IntAtomic_compare_exchange(&value, &expected, 5,
-            memory_order_acq_rel, memory_order_acquire, &exchanged), CMETA_OK);
+            memory_order_acq_rel, memory_order_acquire, &exchanged), SALTS_OK);
         check_true(exchanged);
-        check_equal(IntAtomic_exchange(&value, 6, memory_order_relaxed, &out), CMETA_OK);
+        check_equal(IntAtomic_exchange(&value, 6, memory_order_relaxed, &out), SALTS_OK);
         check_equal(out, 5);
-        check_equal(IntAtomic_is_lock_free(&value, &lock_free), CMETA_OK);
-        check_equal(PointerAtomic_init(&pointer, &first), CMETA_OK);
+        check_equal(IntAtomic_is_lock_free(&value, &lock_free), SALTS_OK);
+        check_equal(PointerAtomic_init(&pointer, &first), SALTS_OK);
         check_equal(PointerAtomic_compare_exchange(&pointer, &pointer_expected, &second,
-            memory_order_release, memory_order_relaxed, &exchanged), CMETA_OK);
+            memory_order_release, memory_order_relaxed, &exchanged), SALTS_OK);
         check_true(exchanged);
-        check_equal(PointerAtomic_load(&pointer, memory_order_acquire, &pointer_out), CMETA_OK);
+        check_equal(PointerAtomic_load(&pointer, memory_order_acquire, &pointer_out), SALTS_OK);
         check_true(pointer_out == &second);
     }
     it("publishes payload through explicit release/acquire and exposes typed RCU ownership") {
         publication ctx = {0}; salts_thread_t thread = NULL;
         IntRcu domain = {0}; IntRcu_guard guard = {0};
         int first = 1, second = 2; int *out = NULL;
-        check_equal(IntAtomic_init(&ctx.ready, 0), CMETA_OK);
+        check_equal(IntAtomic_init(&ctx.ready, 0), SALTS_OK);
         check_equal(salts_thread_create(&thread, acquire_payload, &ctx), 0);
         ctx.payload = 42;
-        check_equal(IntAtomic_store(&ctx.ready, 1, memory_order_release), CMETA_OK);
+        check_equal(IntAtomic_store(&ctx.ready, 1, memory_order_release), SALTS_OK);
         if (thread != NULL) check_equal(salts_thread_join(&thread), 0);
         check_equal(ctx.seen, 42);
         check_equal(IntRcu_init(&domain, &first, 1), SALTS_OK);
@@ -291,10 +291,10 @@ spec("CMeta execution primitives") {
                 IntAtomic value;
                 int expected = 1;
                 bool exchanged = false;
-                check_equal(IntAtomic_init(&value, 1), CMETA_OK);
+                check_equal(IntAtomic_init(&value, 1), SALTS_OK);
                 check_equal(IntAtomic_compare_exchange(&value, &expected, 2,
                     orders[success], orders[failure], &exchanged),
-                    admitted[success][failure] ? CMETA_OK : CMETA_INVALID_ARGUMENT);
+                    admitted[success][failure] ? SALTS_OK : SALTS_EINVAL);
                 check_equal(exchanged, admitted[success][failure]);
             }
         }

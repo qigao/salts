@@ -51,8 +51,6 @@ These are not part of `<cmeta/meta.h>`:
 
 - fastpath.h
 - trace.h
-- atomic.h
-- rcu.h
 - pool.h
 - local.h
 
@@ -73,6 +71,9 @@ Core CMeta
 
 Optional adapters may depend outward when necessary, but aggregate Reflection
 headers must not make those dependencies implicit.
+
+Atomic and RCU helpers are owned directly by Salts::Concurrency and are not
+CMeta adapters. Use `<salts/atomic.h>` and `<salts/rcu.h>`.
 
 ## No compatibility aggregate
 
