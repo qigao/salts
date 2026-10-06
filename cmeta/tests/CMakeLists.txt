@@ -708,7 +708,3 @@ cmake_add_test(cmeta_pool_cpp_test SOURCES cmeta_pool_cpp_test.cpp
 set_target_properties(cmeta_pool_cpp_test PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 set_tests_properties(cmeta_pool_cpp_test PROPERTIES TIMEOUT 60)
-
-get_property(cmeta_semantic_tests DIRECTORY PROPERTY TESTS)
-list(FILTER cmeta_semantic_tests EXCLUDE REGEX "^cmeta_(native_|trace_|fastpath_|coroutine)")
-set_property(TEST ${cmeta_semantic_tests} APPEND PROPERTY LABELS cmeta-semantic)

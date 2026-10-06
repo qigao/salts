@@ -62,14 +62,14 @@ jobs:
           $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) { throw "Visual Studio with the x64 C++ toolchain was not found" }
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
-      - name: Run Unix native and capability contracts
+      - name: Run Unix native and plugin contracts
         if: matrix.family != 'windows' && matrix.native
         shell: bash
         run: |
           set -euo pipefail
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V \
-            -R '^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_(test|cpp_test|wrong_descriptor.*|manifest_test)$|cmeta_fingerprint_|cmeta_manifest_)'
-      - name: Run Windows native and capability contracts
+            -R '^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_|cmeta_(pp|const|flags|layout|container)_|cmeta_fingerprint_|cmeta_manifest_)'
+      - name: Run Windows native and plugin contracts
         if: matrix.family == 'windows' && matrix.native
         shell: cmd
         run: |
@@ -77,24 +77,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V -R "^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_(test|cpp_test|wrong_descriptor.*|manifest_test)$|cmeta_fingerprint_|cmeta_manifest_|cflow_execution_test$|cflow_interface_reflection_test$|cflow_executor_dso_test$)"
-          if errorlevel 1 exit /b 1
-      - name: Run CMeta semantic contracts on Unix
-        if: matrix.family != 'windows' && matrix.semantic
-        shell: bash
-        run: |
-          set -euo pipefail
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 \
-            -L '^cmeta-semantic$'
-      - name: Run CMeta semantic contracts on Windows
-        if: matrix.family == 'windows' && matrix.semantic
-        shell: cmd
-        run: |
-          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -L "^cmeta-semantic$"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V -R "^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_|cmeta_(pp|const|flags|layout|container)_|cmeta_fingerprint_|cmeta_manifest_|cflow_execution_test$|cflow_interface_reflection_test$|cflow_executor_dso_test$)"
           if errorlevel 1 exit /b 1
       - name: Run POSIX scope, execution and nested CSTL contracts
         if: matrix.family != 'windows' && matrix.execution
@@ -109,23 +92,6 @@ jobs:
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cnet_api_test$|cmeta_scope_|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_execution_test$|cmeta_pool_cpp_test$|cmeta_collector_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_semantic_projection_test$|cstl_typed_decl_cpp_test$)"
-      - name: Run Plugin contracts on Unix
-        if: matrix.family != 'windows' && matrix.plugin
-        shell: bash
-        run: |
-          set -euo pipefail
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 \
-            -R '^(cmeta_plugin_|cmeta_(pp|const|flags|layout|container)_.*)'
-      - name: Run Plugin contracts on Windows
-        if: matrix.family == 'windows' && matrix.plugin
-        shell: cmd
-        run: |
-          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -R "^(cmeta_plugin_|cmeta_(pp|const|flags|layout|container)_.*)"
-          if errorlevel 1 exit /b 1
       - name: Run reflected CFlow contracts
         if: matrix.projection
         shell: bash

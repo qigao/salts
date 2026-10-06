@@ -43,16 +43,12 @@ $utilsRuntime = Test-Changed '^utils/(include/|src/|CMakeLists\.txt$)'
 $harness = Test-Changed '^(tinytest|tinymock)/'
 $nativeCommon = $shared -or $contractsChanged -or $cmetaRuntime -or $platformRuntime -or $harness
 $native = $nativeCommon -or $concurrencyRuntime -or $pluginRuntime -or $utilsRuntime -or
-  (Test-Changed '^(coroutine/|platform/tests/|cmeta/(tests/|benchmarks/))')
+  (Test-Changed '^(coroutine/|platform/tests/|plugin/|cmeta/(tests/|benchmarks/))')
 $execution = $nativeCommon -or $utilsRuntime -or $cflowRuntime -or $coroutineRuntime -or
   (Test-Changed '^(cstl/|concurrency/|cnet/(include/|src/|tests/|CMakeLists\.txt$)|utils/tests/test_object_pool\.c$|cmeta/tests/cmeta_(scope|execution|pool|collector)|cflow/tests/cflow_stream_terminal_test\.c$)')
 $projection = $nativeCommon -or $pluginRuntime -or $concurrencyRuntime -or $coroutineRuntime -or $utilsRuntime -or
   (Test-Changed '^(cflow/|cstl/(include/|src/|CMakeLists\.txt$)|cmeta/tests/installed/)')
 $lean = $full -or $contractsChanged -or (Test-Changed '^(\.github/workflows/ci\.yml|cmake/ci/select-ci-scope\.ps1|formal/cmeta_cflow_calculus/|cmeta/include/cmeta/generated/builtin_signature_manifest\.h$|cflow/include/cflow/generated/(builtin_operator_policy|machine_schema)\.h$)')
-$plugin = $shared -or $cmetaRuntime -or $platformRuntime -or $concurrencyRuntime -or $utilsRuntime -or $harness -or
-  (Test-Changed '^(plugin/|cmeta/tests/cmeta_(pp|const|flags|layout)_)')
-$semantic = $shared -or $harness -or $cmetaRuntime -or $pluginRuntime -or $cflowRuntime -or
-  (Test-Changed '^(cmeta/tests/|plugin/tests/|cstl/)')
 
 $benchmarkCommon = $shared -or $cmetaRuntime -or $utilsRuntime -or $harness -or
   (Test-Changed '^(\.github/workflows/native-io-benchmarks\.yml$|cmake/ci/(?!select-ci-scope\.ps1)|cstl/(include/|src/|CMakeLists\.txt$))')
@@ -97,8 +93,6 @@ $checks = [ordered]@{
   execution = $execution
   projection = $projection
   lean = $lean
-  plugin = $plugin
-  semantic = $semantic
   mobile = $mobile
   work = $work
   evidence = $work
@@ -152,21 +146,18 @@ foreach ($profile in $profiles) {
   $entry.native = $native -and -not $entry.cross -and $entry.id -ne 'linux-arm64-release'
   $entry.execution = $execution -and -not $entry.cross -and $entry.id -ne 'linux-arm64-release'
   $entry.armheaders = $entry.id -eq 'linux-arm64-release'
-  $entry.portable = $false
-  $entry.plugin = $plugin -and $entry.id -in @('linux-release', 'linux-clang-release', 'windows-release', 'macos-release', 'macos-clang-release')
-  $entry.semantic = $semantic -and $entry.id -in @('linux-release', 'linux-clang-release', 'windows-release', 'macos-release', 'macos-clang-release')
   $entry.projection = $projection -and $entry.id -in @('linux-release', 'linux-clang-release', 'macos-clang-release')
   $entry.benchmarks = if ($entry.id -in @('linux-release', 'windows-release', 'macos-release')) { 'ON' } else { 'OFF' }
   $entry.package = $PrepareRelease -and [bool]$entry.sdk
   $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
   $entry.artifact = if ($entry.cross) { $mobile } else { $work -and [bool]$entry.sdk }
-  if ($entry.native -or $entry.execution -or $entry.plugin -or $entry.semantic -or $entry.projection -or $entry.package -or $entry.artifact) {
+  if ($entry.native -or $entry.execution -or $entry.projection -or $entry.package -or $entry.artifact) {
     $builds += $entry
   }
 }
 $matrix = ConvertTo-Json -InputObject @{ include = $builds } -Depth 5 -Compress
 $testRuns = @()
-$suites = @('native', 'portable', 'execution', 'plugin', 'semantic', 'projection', 'armheaders')
+$suites = @('native', 'execution', 'projection', 'armheaders')
 foreach ($build in $builds) {
   foreach ($suite in $suites) {
     if (-not $build[$suite]) { continue }
