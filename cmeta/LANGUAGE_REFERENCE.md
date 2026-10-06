@@ -1068,3 +1068,75 @@ Runtime Protocol
 
 Do not add a new keyword when an existing declaration, schema mapper, descriptor,
 interface, or ordinary C function composes cleanly enough.
+
+## 有限宏与精确调用声明
+
+`<cmeta/pp.h>` 维护有限宏展开；`<cmeta/compiler.h>` 维护编译器与语言差异。
+`<cmeta/invoke_decl.h>` 在 canonical Function 声明上增加显式选择的精确 thunk。
+现有 `FunctionDecl` 的描述用途、Interface 的源行语法与运行时 ABI 保持不变。
+
+| 原语 | 契约 |
+| --- | --- |
+| `CMETA_PP_MAP(M,C,...)` | 1–16 项，调用 `M(item,C)`，不插分隔符 |
+| `CMETA_PP_MAP_COMMA/SEMI/PREFIX_COMMA` | 同上，分别在项间插逗号、分号，或每项前插逗号；分号形式不追加末尾分号 |
+| 上述各形式的 `_N(N,M,C,...)` | 显式 0–16 项；例如零项写成 `CMETA_PP_MAP_N(0,M,C,)`；不调用 mapper、不输出分隔符 |
+| `CMETA_PP_MAP_I_N(N,M,C,...)` | `M(index,item,C)`，下标从零起；0–16 项 |
+| `CMETA_PP_PAIR_MAP_N` / `PAIR_MAP_COMMA_N` / `PAIR_MAP_PREFIX_COMMA_N` | 恰好 N 组平铺 `type,name`，0–16 组，调用 `M(type,name,C)`；零组最后保留一个空实参 |
+| `CMETA_PP_BOOL/NOT/AND/OR/IF/WHEN` | 输入是单个 token，只有 `0` 为假；不是预处理整数表达式求值器 |
+| `CMETA_PP_IIF(c)(t,f)` | c 必须为 0 或 1；`IF` 会先用 BOOL 归一化 |
+| `CMETA_PP_WHEN(c)(...)` | 条件为真时输出可变参数，否则不输出 |
+| `CMETA_PP_IS_VOID(x)` | 只识别展开后的单个 `void` token，不识别 typedef 或任意 C 类型拼写 |
+| `CMETA_PP_STRINGIFY(x)` | 先展开再字符串化；`STRINGIFY_I` 保留原 token 拼写 |
+| `CMETA_PP_OVERLOAD(prefix,...)` | 1–16 项，返回拼接了参数数目的宏名，由调用点继续传参 |
+| `CMETA_PP_TUPLE_GET_0..15` / `HEAD` / `TAIL` / `APPLY` | 有界 tuple 投影；索引必须存在，TAIL 的输入至少两项，APPLY 调用 `M tuple` |
+| `CMETA_PP_UNIQUE(prefix)` | 当前编译器提供 `__COUNTER__` 时可用；同一 TU 内唯一，不承诺跨 TU 名字唯一 |
+
+这些 map 复用同一有限 indexed 展开族，mapper 内不支持再次嵌套同一 map。
+需要已有多层乘积展开时仍使用 `FOR_EACH_A/B/C`。自然参数计数仍要求非空；
+严格 C11 的零项使用显式 `_N`，没有新增 `__VA_OPT__` 扩展或隐式回退。
+
+`CMETA_STATIC_ASSERT(condition,message)` 用于声明位置；
+`CMETA_CONST_REQUIRE(condition)` 用于表达式位置，成功值为整数零。
+条件必须是编译期常量，假值使编译失败。`CMETA_TYPE_MATCHES(expr,T)` 不求值：
+C11 使用 generic selection 的转换后类型，C++17 使用 `decltype`；
+`CMETA_TYPE_IS_VALUE(T)` 要求 T 在参数退化前后是同一无顶层限定的值类型。
+
+完整的 C 函数声明示例（定义放在同一 TU）：
+
+```c
+#include <cmeta/invoke_decl.h>
+FunctionInvokeDecl(value, int, increment, (int, input, CMETA_PARAM_IN));
+int increment(int input) { return input + 1; }
+
+int main(void) {
+    int input = 4, output = 0;
+    void *params[] = { &input };
+    return FunctionInvoke(increment)(&output, params, 1) && output == 5 ? 0 : 1;
+}
+```
+
+`FunctionInvokeDecl` / `Function0InvokeDecl` 对应既有 inferred 声明。
+`FunctionInvokeDeclAsAbi[Result]` / `Function0InvokeDeclAsAbi[Result]`
+与同名去掉 `Invoke` 的既有声明使用相同实参顺序，生成同一份 FunctionDesc/FunctionAbi。
+C++17 使用显式 `AsAbi` 形式及五字段参数行。返回 ABI carrier 必须是 canonical
+`CMETA_ABI_VOID/SCALAR/OBJECT_POINTER/AGGREGATE/FUNCTION_POINTER/OPAQUE/ENUM`
+token（允许宏别名）；不接受任意 carrier 表达式或 UNSPECIFIED。
+
+`FunctionInvoke(name)(return_storage, params, param_count)` 返回 bool。
+错误数量、缺失参数数组、任一缺失参数对象、非 void 缺失返回对象时返回 false，
+不执行 native 函数；成功恰好执行一次，void 返回不要求返回存储。
+参数数量为 0 时允许 params 为 NULL。参数与返回对象必须具有声明中的精确类型、
+对齐和有效生命周期；普通 `void *` 不能检查这些调用方前置条件。
+指针参数也需要一个指针对象的地址，允许该对象保存 NULL。
+数组、函数 typedef 和顶层 const/volatile 参数不能直接作为 carrier；
+使用其精确的无顶层限定值类型或显式指针类型。受指针指向的 const/volatile 不受影响。
+
+生成器只借用存储，不分配、不 retain、不转移所有权。Function 的 result flags
+仍是语义事实源，Plugin 描述符和 thunk 的有效期仍受 live lease 约束。
+外来描述符继续完整 admission；生成 thunk 不解释 Reflection，不执行 ABI 猜测。
+
+Interface 的 R/V/F/FR/FV/D/FD 行先归一化为参数 tuple、arity、结果动作和 Reflection
+属性，再由公共生成器输出 vtable、wrapper、验证与 metadata。析构仍先调用再清空 handle。
+验证覆盖 C/C++ 的所有 0–4 参数行、16 项 PP 上界、零项、错误展开和精确 native 调用。
+迁移只需要显式选择新声明；撤回声明层时可恢复手写 thunk，无数据迁移或运行时格式变化。
+Linker 聚合、通用 capture/bind、生命周期和 lease RAII 属于后续阶段。

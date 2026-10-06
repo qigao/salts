@@ -1,20 +1,7 @@
 #ifndef CMETA_PP_H
 #define CMETA_PP_H
 
-#if defined(__GNUC__) || defined(__clang__)
-#define CMETA_UNUSED __attribute__((unused))
-#else
-#define CMETA_UNUSED
-#endif
-
-#define CMETA_INLINE static inline CMETA_UNUSED
-#define CMETA_LOCAL static CMETA_UNUSED
-
-#ifdef __cplusplus
-#define CMETA_ALIGNOF(type) alignof(type)
-#else
-#define CMETA_ALIGNOF(type) _Alignof(type)
-#endif
+#include <cmeta/compiler.h>
 
 /* Small probe layer used by tagged schema tokens such as TYPE(...). */
 #define CMETA_PP_PROBE() ~, 1
@@ -38,6 +25,141 @@
 
 #define CMETA_PP_NARG_I(_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,N,...) N
 #define CMETA_PP_NARG(...) CMETA_PP_NARG_I(__VA_ARGS__,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0)
+
+/* Finite mechanics: BOOL accepts a single token (0 is false); predicates
+ * recognize registered tokens only. MAP's inferred forms require 1..16 items.
+ * Explicit _N forms accept 0..16; pass an empty final argument for N=0.
+ * Pair maps require exactly N flat (type,name) pairs. No recursive expansion. */
+#define CMETA_PP_STRINGIFY_I(x) #x
+#define CMETA_PP_STRINGIFY(x) CMETA_PP_STRINGIFY_I(x)
+#ifdef CMETA_COMPILER_COUNTER
+#define CMETA_PP_UNIQUE(prefix) CMETA_PP_CAT(prefix, CMETA_COMPILER_COUNTER)
+#endif
+#define CMETA_PP_ZERO_0 CMETA_PP_PROBE()
+#define CMETA_PP_NOT(x) CMETA_PP_IS_PROBE(CMETA_PP_CAT(CMETA_PP_ZERO_, x))
+#define CMETA_PP_BOOL(x) CMETA_PP_NOT(CMETA_PP_NOT(x))
+#define CMETA_PP_IIF_0(t, f) f
+#define CMETA_PP_IIF_1(t, f) t
+#define CMETA_PP_IIF(c) CMETA_PP_CAT(CMETA_PP_IIF_, c)
+#define CMETA_PP_IF(c) CMETA_PP_IIF(CMETA_PP_BOOL(c))
+#define CMETA_PP_AND(a, b) CMETA_PP_IF(a)(CMETA_PP_BOOL(b), 0)
+#define CMETA_PP_OR(a, b) CMETA_PP_IF(a)(1, CMETA_PP_BOOL(b))
+#define CMETA_PP_EMPTY(...)
+#define CMETA_PP_IDENTITY(...) __VA_ARGS__
+#define CMETA_PP_WHEN(c) CMETA_PP_IF(c)(CMETA_PP_IDENTITY, CMETA_PP_EMPTY)
+#define CMETA_PP_VOID_void CMETA_PP_PROBE()
+#define CMETA_PP_IS_VOID(x) CMETA_PP_IS_PROBE(CMETA_PP_CAT(CMETA_PP_VOID_, x))
+#define CMETA_PP_OVERLOAD(prefix, ...) CMETA_PP_CAT(prefix, CMETA_PP_NARG(__VA_ARGS__))
+
+#define CMETA_PP_TUPLE_APPLY(M, tuple) M tuple
+#define CMETA_PP_TUPLE_HEAD(tuple) CMETA_PP_TUPLE_GET_0(tuple)
+#define CMETA_PP_TUPLE_TAIL_I(first, ...) (__VA_ARGS__)
+#define CMETA_PP_TUPLE_TAIL(tuple) CMETA_PP_TUPLE_TAIL_I tuple
+#define CMETA_PP_TUPLE_GET_0_I(a0,...) a0
+#define CMETA_PP_TUPLE_GET_0(tuple) CMETA_PP_TUPLE_GET_0_APPLY tuple
+#define CMETA_PP_TUPLE_GET_0_APPLY(...) CMETA_PP_TUPLE_GET_0_I(__VA_ARGS__, ~)
+#define CMETA_PP_TUPLE_GET_1_I(a0,a1,...) a1
+#define CMETA_PP_TUPLE_GET_1(tuple) CMETA_PP_TUPLE_GET_1_APPLY tuple
+#define CMETA_PP_TUPLE_GET_1_APPLY(...) CMETA_PP_TUPLE_GET_1_I(__VA_ARGS__, ~)
+#define CMETA_PP_TUPLE_GET_2_I(a0,a1,a2,...) a2
+#define CMETA_PP_TUPLE_GET_2(tuple) CMETA_PP_TUPLE_GET_2_APPLY tuple
+#define CMETA_PP_TUPLE_GET_2_APPLY(...) CMETA_PP_TUPLE_GET_2_I(__VA_ARGS__, ~)
+#define CMETA_PP_TUPLE_GET_3_I(a0,a1,a2,a3,...) a3
+#define CMETA_PP_TUPLE_GET_3(tuple) CMETA_PP_TUPLE_GET_3_APPLY tuple
+#define CMETA_PP_TUPLE_GET_3_APPLY(...) CMETA_PP_TUPLE_GET_3_I(__VA_ARGS__, ~)
+#define CMETA_PP_TUPLE_GET_4_I(a0,a1,a2,a3,a4,...) a4
+#define CMETA_PP_TUPLE_GET_4(tuple) CMETA_PP_TUPLE_GET_4_APPLY tuple
+#define CMETA_PP_TUPLE_GET_4_APPLY(...) CMETA_PP_TUPLE_GET_4_I(__VA_ARGS__, ~)
+#define CMETA_PP_TUPLE_GET_5_I(a0,a1,a2,a3,a4,a5,...) a5
+#define CMETA_PP_TUPLE_GET_5(tuple) CMETA_PP_TUPLE_GET_5_APPLY tuple
+#define CMETA_PP_TUPLE_GET_5_APPLY(...) CMETA_PP_TUPLE_GET_5_I(__VA_ARGS__, ~)
+#define CMETA_PP_TUPLE_GET_6_I(a0,a1,a2,a3,a4,a5,a6,...) a6
+#define CMETA_PP_TUPLE_GET_6(tuple) CMETA_PP_TUPLE_GET_6_APPLY tuple
+#define CMETA_PP_TUPLE_GET_6_APPLY(...) CMETA_PP_TUPLE_GET_6_I(__VA_ARGS__, ~)
+#define CMETA_PP_TUPLE_GET_7_I(a0,a1,a2,a3,a4,a5,a6,a7,...) a7
+#define CMETA_PP_TUPLE_GET_7(tuple) CMETA_PP_TUPLE_GET_7_APPLY tuple
+#define CMETA_PP_TUPLE_GET_7_APPLY(...) CMETA_PP_TUPLE_GET_7_I(__VA_ARGS__, ~)
+#define CMETA_PP_TUPLE_GET_8_I(a0,a1,a2,a3,a4,a5,a6,a7,a8,...) a8
+#define CMETA_PP_TUPLE_GET_8(tuple) CMETA_PP_TUPLE_GET_8_APPLY tuple
+#define CMETA_PP_TUPLE_GET_8_APPLY(...) CMETA_PP_TUPLE_GET_8_I(__VA_ARGS__, ~)
+#define CMETA_PP_TUPLE_GET_9_I(a0,a1,a2,a3,a4,a5,a6,a7,a8,a9,...) a9
+#define CMETA_PP_TUPLE_GET_9(tuple) CMETA_PP_TUPLE_GET_9_APPLY tuple
+#define CMETA_PP_TUPLE_GET_9_APPLY(...) CMETA_PP_TUPLE_GET_9_I(__VA_ARGS__, ~)
+#define CMETA_PP_TUPLE_GET_10_I(a0,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,...) a10
+#define CMETA_PP_TUPLE_GET_10(tuple) CMETA_PP_TUPLE_GET_10_APPLY tuple
+#define CMETA_PP_TUPLE_GET_10_APPLY(...) CMETA_PP_TUPLE_GET_10_I(__VA_ARGS__, ~)
+#define CMETA_PP_TUPLE_GET_11_I(a0,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,...) a11
+#define CMETA_PP_TUPLE_GET_11(tuple) CMETA_PP_TUPLE_GET_11_APPLY tuple
+#define CMETA_PP_TUPLE_GET_11_APPLY(...) CMETA_PP_TUPLE_GET_11_I(__VA_ARGS__, ~)
+#define CMETA_PP_TUPLE_GET_12_I(a0,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,...) a12
+#define CMETA_PP_TUPLE_GET_12(tuple) CMETA_PP_TUPLE_GET_12_APPLY tuple
+#define CMETA_PP_TUPLE_GET_12_APPLY(...) CMETA_PP_TUPLE_GET_12_I(__VA_ARGS__, ~)
+#define CMETA_PP_TUPLE_GET_13_I(a0,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,...) a13
+#define CMETA_PP_TUPLE_GET_13(tuple) CMETA_PP_TUPLE_GET_13_APPLY tuple
+#define CMETA_PP_TUPLE_GET_13_APPLY(...) CMETA_PP_TUPLE_GET_13_I(__VA_ARGS__, ~)
+#define CMETA_PP_TUPLE_GET_14_I(a0,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,...) a14
+#define CMETA_PP_TUPLE_GET_14(tuple) CMETA_PP_TUPLE_GET_14_APPLY tuple
+#define CMETA_PP_TUPLE_GET_14_APPLY(...) CMETA_PP_TUPLE_GET_14_I(__VA_ARGS__, ~)
+#define CMETA_PP_TUPLE_GET_15_I(a0,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15,...) a15
+#define CMETA_PP_TUPLE_GET_15(tuple) CMETA_PP_TUPLE_GET_15_APPLY tuple
+#define CMETA_PP_TUPLE_GET_15_APPLY(...) CMETA_PP_TUPLE_GET_15_I(__VA_ARGS__, ~)
+
+#define CMETA_PP_SEP_NONE(index)
+#define CMETA_PP_SEP_COMMA(index) CMETA_PP_WHEN(index)(,)
+#define CMETA_PP_SEP_SEMI(index) CMETA_PP_WHEN(index)(;)
+#define CMETA_PP_SEP_PREFIX_COMMA(index) ,
+#define CMETA_PP_MAP_ITEM(index, item, state) \
+    CMETA_PP_TUPLE_GET_2(state)(index) \
+    CMETA_PP_TUPLE_GET_0(state)(item, CMETA_PP_TUPLE_GET_1(state))
+#define CMETA_PP_FEI_0(M,C,ignored)
+#define CMETA_PP_MAP_I_N(N,M,C,...) CMETA_PP_CAT(CMETA_PP_FEI_,N)(M,C,__VA_ARGS__)
+#define CMETA_PP_MAP_N(N,M,C,...) \
+    CMETA_PP_MAP_I_N(N,CMETA_PP_MAP_ITEM,(M,C,CMETA_PP_SEP_NONE),__VA_ARGS__)
+#define CMETA_PP_MAP(M,C,...) \
+    CMETA_PP_MAP_N(CMETA_PP_NARG(__VA_ARGS__),M,C,__VA_ARGS__)
+#define CMETA_PP_MAP_COMMA_N(N,M,C,...) \
+    CMETA_PP_MAP_I_N(N,CMETA_PP_MAP_ITEM,(M,C,CMETA_PP_SEP_COMMA),__VA_ARGS__)
+#define CMETA_PP_MAP_COMMA(M,C,...) \
+    CMETA_PP_MAP_COMMA_N(CMETA_PP_NARG(__VA_ARGS__),M,C,__VA_ARGS__)
+#define CMETA_PP_MAP_SEMI_N(N,M,C,...) \
+    CMETA_PP_MAP_I_N(N,CMETA_PP_MAP_ITEM,(M,C,CMETA_PP_SEP_SEMI),__VA_ARGS__)
+#define CMETA_PP_MAP_SEMI(M,C,...) \
+    CMETA_PP_MAP_SEMI_N(CMETA_PP_NARG(__VA_ARGS__),M,C,__VA_ARGS__)
+#define CMETA_PP_MAP_PREFIX_COMMA_N(N,M,C,...) \
+    CMETA_PP_MAP_I_N(N,CMETA_PP_MAP_ITEM,(M,C,CMETA_PP_SEP_PREFIX_COMMA),__VA_ARGS__)
+#define CMETA_PP_MAP_PREFIX_COMMA(M,C,...) \
+    CMETA_PP_MAP_PREFIX_COMMA_N(CMETA_PP_NARG(__VA_ARGS__),M,C,__VA_ARGS__)
+
+#define CMETA_PP_PAIR_MAP_ITEM(index, pair, state) \
+    CMETA_PP_TUPLE_GET_2(state)(index) \
+    CMETA_PP_TUPLE_GET_0(state)(CMETA_PP_TUPLE_GET_0(pair), \
+        CMETA_PP_TUPLE_GET_1(pair), CMETA_PP_TUPLE_GET_1(state))
+#define CMETA_PP_PAIRS_0(ignored)
+#define CMETA_PP_PAIRS_1(T0,A0) (T0,A0)
+#define CMETA_PP_PAIRS_2(T0,A0,T1,A1) (T0,A0),(T1,A1)
+#define CMETA_PP_PAIRS_3(T0,A0,T1,A1,T2,A2) (T0,A0),(T1,A1),(T2,A2)
+#define CMETA_PP_PAIRS_4(T0,A0,T1,A1,T2,A2,T3,A3) (T0,A0),(T1,A1),(T2,A2),(T3,A3)
+#define CMETA_PP_PAIRS_5(T0,A0,T1,A1,T2,A2,T3,A3,T4,A4) (T0,A0),(T1,A1),(T2,A2),(T3,A3),(T4,A4)
+#define CMETA_PP_PAIRS_6(T0,A0,T1,A1,T2,A2,T3,A3,T4,A4,T5,A5) (T0,A0),(T1,A1),(T2,A2),(T3,A3),(T4,A4),(T5,A5)
+#define CMETA_PP_PAIRS_7(T0,A0,T1,A1,T2,A2,T3,A3,T4,A4,T5,A5,T6,A6) (T0,A0),(T1,A1),(T2,A2),(T3,A3),(T4,A4),(T5,A5),(T6,A6)
+#define CMETA_PP_PAIRS_8(T0,A0,T1,A1,T2,A2,T3,A3,T4,A4,T5,A5,T6,A6,T7,A7) (T0,A0),(T1,A1),(T2,A2),(T3,A3),(T4,A4),(T5,A5),(T6,A6),(T7,A7)
+#define CMETA_PP_PAIRS_9(T0,A0,T1,A1,T2,A2,T3,A3,T4,A4,T5,A5,T6,A6,T7,A7,T8,A8) (T0,A0),(T1,A1),(T2,A2),(T3,A3),(T4,A4),(T5,A5),(T6,A6),(T7,A7),(T8,A8)
+#define CMETA_PP_PAIRS_10(T0,A0,T1,A1,T2,A2,T3,A3,T4,A4,T5,A5,T6,A6,T7,A7,T8,A8,T9,A9) (T0,A0),(T1,A1),(T2,A2),(T3,A3),(T4,A4),(T5,A5),(T6,A6),(T7,A7),(T8,A8),(T9,A9)
+#define CMETA_PP_PAIRS_11(T0,A0,T1,A1,T2,A2,T3,A3,T4,A4,T5,A5,T6,A6,T7,A7,T8,A8,T9,A9,T10,A10) (T0,A0),(T1,A1),(T2,A2),(T3,A3),(T4,A4),(T5,A5),(T6,A6),(T7,A7),(T8,A8),(T9,A9),(T10,A10)
+#define CMETA_PP_PAIRS_12(T0,A0,T1,A1,T2,A2,T3,A3,T4,A4,T5,A5,T6,A6,T7,A7,T8,A8,T9,A9,T10,A10,T11,A11) (T0,A0),(T1,A1),(T2,A2),(T3,A3),(T4,A4),(T5,A5),(T6,A6),(T7,A7),(T8,A8),(T9,A9),(T10,A10),(T11,A11)
+#define CMETA_PP_PAIRS_13(T0,A0,T1,A1,T2,A2,T3,A3,T4,A4,T5,A5,T6,A6,T7,A7,T8,A8,T9,A9,T10,A10,T11,A11,T12,A12) (T0,A0),(T1,A1),(T2,A2),(T3,A3),(T4,A4),(T5,A5),(T6,A6),(T7,A7),(T8,A8),(T9,A9),(T10,A10),(T11,A11),(T12,A12)
+#define CMETA_PP_PAIRS_14(T0,A0,T1,A1,T2,A2,T3,A3,T4,A4,T5,A5,T6,A6,T7,A7,T8,A8,T9,A9,T10,A10,T11,A11,T12,A12,T13,A13) (T0,A0),(T1,A1),(T2,A2),(T3,A3),(T4,A4),(T5,A5),(T6,A6),(T7,A7),(T8,A8),(T9,A9),(T10,A10),(T11,A11),(T12,A12),(T13,A13)
+#define CMETA_PP_PAIRS_15(T0,A0,T1,A1,T2,A2,T3,A3,T4,A4,T5,A5,T6,A6,T7,A7,T8,A8,T9,A9,T10,A10,T11,A11,T12,A12,T13,A13,T14,A14) (T0,A0),(T1,A1),(T2,A2),(T3,A3),(T4,A4),(T5,A5),(T6,A6),(T7,A7),(T8,A8),(T9,A9),(T10,A10),(T11,A11),(T12,A12),(T13,A13),(T14,A14)
+#define CMETA_PP_PAIRS_16(T0,A0,T1,A1,T2,A2,T3,A3,T4,A4,T5,A5,T6,A6,T7,A7,T8,A8,T9,A9,T10,A10,T11,A11,T12,A12,T13,A13,T14,A14,T15,A15) (T0,A0),(T1,A1),(T2,A2),(T3,A3),(T4,A4),(T5,A5),(T6,A6),(T7,A7),(T8,A8),(T9,A9),(T10,A10),(T11,A11),(T12,A12),(T13,A13),(T14,A14),(T15,A15)
+#define CMETA_PP_PAIR_MAP_N(N,M,C,...) \
+    CMETA_PP_MAP_I_N(N,CMETA_PP_PAIR_MAP_ITEM,(M,C,CMETA_PP_SEP_NONE), \
+        CMETA_PP_CAT(CMETA_PP_PAIRS_,N)(__VA_ARGS__))
+#define CMETA_PP_PAIR_MAP_COMMA_N(N,M,C,...) \
+    CMETA_PP_MAP_I_N(N,CMETA_PP_PAIR_MAP_ITEM,(M,C,CMETA_PP_SEP_COMMA), \
+        CMETA_PP_CAT(CMETA_PP_PAIRS_,N)(__VA_ARGS__))
+#define CMETA_PP_PAIR_MAP_PREFIX_COMMA_N(N,M,C,...) \
+    CMETA_PP_MAP_I_N(N,CMETA_PP_PAIR_MAP_ITEM,(M,C,CMETA_PP_SEP_PREFIX_COMMA), \
+        CMETA_PP_CAT(CMETA_PP_PAIRS_,N)(__VA_ARGS__))
 
 /* A finite relation row contains one through three inputs followed by one
  * result. These helpers let semantic frontends infer the public arity from

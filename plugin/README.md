@@ -7,6 +7,71 @@ Plugin and CFlow are independent capabilities. Plugin owns module publication,
 loading, registry, leases and quiescent unload; it does not own graph/execution
 semantics and does not link CFlow.
 
+## 显式生成 Plugin 声明
+
+`<salts/plugin_decl.h>` 复用 CMeta 精确 Function 声明和 Interface carrier。
+普通反射声明不会自动发布任何 export。完整 C provider 示例：
+
+```c
+#include <salts/plugin_decl.h>
+
+FunctionInvokeDecl(value, int, twice, (int, input, CMETA_PARAM_IN));
+int twice(int input) { return input * 2; }
+
+#define MATH_EXPORTS(X) \
+    X(function, twice, "math.twice", "math", 1u, 1u)
+
+SALTS_PLUGIN_DECLARE(math_plugin, "example.math", (1u,0u,0u),
+    MATH_EXPORTS, SALTS_PLUGIN_PASSIVE());
+```
+
+以普通 DSO target 编译该源文件并链接 `Salts::PluginABI`。安装 SDK 与 in-tree
+使用相同头文件和声明。每个 DSO 在一个 TU 中声明一次 query。
+
+`SALTS_PLUGIN_DECLARE(name,id,version,exports,lifecycle)` 的参数为：本地符号前缀、
+Plugin ID、`(major,minor,patch)` 三元组、非空 X-list、生命周期 tuple。
+函数行是 `X(function,native_symbol,export_id,contract_id,contract_version,capabilities)`；
+Interface 行是 `X(interface,(InterfaceType,&instance),export_id,contract_id,contract_version,capabilities)`。
+Interface instance 必须是静态存储期的可变精确 `{self,vtable}` carrier。
+同一个 native function 每个列表出现一次；不同导出别名使用显式 wrapper。
+ID、版本、capabilities 均为显式声明，不从 Reflection 推断。
+
+`SALTS_PLUGIN_PASSIVE()` 将 self 与四个回调设为 NULL。
+Managed provider 使用 `SALTS_PLUGIN_LIFECYCLE(&state,start,request_stop,is_quiescent,destroy)`，
+四个回调填写具有 `SALTS_PLUGIN_CALL` 和现有精确签名的函数标识符。
+生成层检查非零 uint32 contract version、Interface carrier 类型、callback 类型与 export 上限；
+缺字段、错误行形状或缺失精确 thunk 也在编译期失败。
+ID 格式、capability admission、重复 ID、state 指针与其余外来数据约束仍由
+`salts_plugin_manifest_validate()` 校验，不能绕过。
+
+函数入口拒绝非 NULL context，使用无 capture 的精确 native thunk；
+其存储、错误与所有权契约见 [CMeta 声明说明](../cmeta/LANGUAGE_REFERENCE.md#有限宏与精确调用声明)。
+生成的 `salts_plugin_query()` 仅在 ABI 完全相等时返回 const manifest，否则返回 NULL。
+ABI epoch、struct_size、lease/generation、STARTED admission、停止、quiescence 与 unload 规则不变。
+
+C 使用静态初始化的 const export 表。C++17 使用显式 CMeta `AsAbi` 声明；
+由于 C++17 无法以 designated initializer 选择 union 的非首成员，函数 export 的 const 表项
+通过 TU-local 值构造辅助函数初始化。该初始化不注册对象，不改写 manifest，不持有 lease；
+不得在其他 TU 的静态初始化期间提前消费此表。
+没有 constructor 驱动的注册表、全局可变发现列表或 linker 失败回退。
+可选 linker 聚合和 lease RAII 留到后续阶段，本阶段以显式数组为事实源。
+
+正式验证包含 `salts_plugin_declaration_test`、C++ 同源用例、编译失败用例、已有 loader/lifecycle
+回归，以及 `cmeta/tests/installed` 内的已安装 SDK 声明测试。
+
+本地复验使用仓库 preset。在 VS x64 开发环境中设置 README 要求的两个 Windows triplet
+环境变量后执行以下命令；将 `win-dev-user` 替换为 `win-clang-user` 可复验 Clang：
+
+```powershell
+cmake --preset win-dev-user
+cmake --build --preset win-dev-user --target cmeta_pp_test cmeta_pp_cpp_test cmeta_interface_arity_test cmeta_interface_arity_cpp_test cmeta_interface_header_test cmeta_interface_function_test cmeta_header_cpp_test cmeta_function_admission_test cmeta_function_reflection_test cmeta_function_header_test cmeta_tinymock_interface_test cmeta_tinymock_function_auto_mock_test cmeta_tinymock_cflow_clock_interface_test cflow_interface_reflection_test salts_plugin_declaration_test salts_plugin_declaration_cpp_test salts_plugin_loader_test salts_plugin_lifecycle_test salts_plugin_contract_test salts_plugin_header_cpp_test
+ctest --preset win-dev-user -R "(^(cmeta_pp|cmeta_const_require|cmeta_interface_|salts_plugin_declaration)|^salts_plugin_(loader|lifecycle|contract|header_cpp)_test$|^cmeta_(header_cpp|function_(admission|reflection|header)|tinymock_(interface|function_auto_mock|cflow_clock_interface))_test$|^cflow_interface_reflection_test$)" --output-on-failure
+```
+
+安装验证先使用 `install-win-release-user` 构建 preset，再令 `CMETA_PACKAGE_ROOT` 指向
+该 profile 的安装前缀，在 `cmeta/tests/installed` 中依次执行 configure、build、test
+的 `installed-win-release` preset。负例属于 CTest 的正式编译失败测试，预期诊断出现才算通过。
+
 ## Targets
 
 ```text

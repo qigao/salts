@@ -12,6 +12,25 @@ include("${CMAKE_CURRENT_LIST_DIR}/../../../cmake/CmakeUtils.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/../../../cmake/Sanitizers.cmake")
 enable_testing()
 
+# Reuse the declaration regressions against imported SDK targets. No source-tree
+# public include directories are added to these consumers.
+cmake_add_test(cmeta_installed_pp_test
+  SOURCES ../cmeta_pp_test.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests/installed")
+cmake_add_test(cmeta_installed_pp_cpp_test
+  SOURCES ../cmeta_pp_cpp_test.cpp
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests/installed")
+cmake_add_test(plugin_installed_declaration_test
+  SOURCES ../../../plugin/tests/plugin_declaration_test.c
+  LIBS Salts::Plugin Salts::TinyTest FOLDER "plugin/tests/installed")
+cmake_add_test(plugin_installed_declaration_cpp_test
+  SOURCES ../../../plugin/tests/plugin_declaration_cpp_test.cpp
+  LIBS Salts::Plugin Salts::TinyTest FOLDER "plugin/tests/installed")
+set_target_properties(cmeta_installed_pp_test plugin_installed_declaration_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_target_properties(cmeta_installed_pp_cpp_test plugin_installed_declaration_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
 cmake_add_test(cmeta_installed_reflection_test
   SOURCES cmeta_installed_reflection_test.c
   LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests/installed")

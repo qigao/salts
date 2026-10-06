@@ -235,7 +235,7 @@
   TINYMOCk_FUNCTION_ARG_VIEW_APPLY_I row
 
 #define TINYMOCk_FUNCTION_TYPED_ARG_ROW(index, row, ignored) \
-  CMETA_PP_CAT(CMETA_FUNCTION_COMMA_, index) \
+  CMETA_PP_SEP_COMMA(index) \
   TINYMOCk_FUNCTION_ARG_VIEW_APPLY(row)
 
 #define TINYMOCk_FUNCTION_PARAM_ADMIT_3(function_name, type, name, flags) \

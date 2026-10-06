@@ -1,7 +1,7 @@
 #ifndef SALTS_PLUGIN_GENERIC_GRAPH_FIXTURE_H
 #define SALTS_PLUGIN_GENERIC_GRAPH_FIXTURE_H
 
-#include <cmeta/function.h>
+#include <cmeta/invoke_decl.h>
 
 typedef struct plugin_generic_graph_value {
     int value;
@@ -38,13 +38,13 @@ static const cmeta_type_desc plugin_generic_graph_value_type = {
     .identity = &plugin_generic_graph_value_identity
 };
 
-CMETA_FUNCTION_METADATA_AS_ABI_RESULT(
-    plugin_generic_graph_probe,
-    "test.plugin.generic.probe",
+FunctionInvokeDeclAsAbiResult(
     value,
+    int,
     &cmeta_type_int,
     CMETA_ABI_SCALAR,
     CMETA_RESULT_VALUE,
+    plugin_generic_graph_probe,
     (plugin_generic_graph_value, value, CMETA_PARAM_IN,
      &plugin_generic_graph_value_type, CMETA_ABI_AGGREGATE));
 

@@ -33,6 +33,26 @@ endif()
 
 # CMeta public API regression tests.
 
+cmake_add_test(cmeta_interface_arity_test
+  SOURCES cmeta_interface_arity_test.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+cmake_add_test(cmeta_interface_arity_cpp_test
+  SOURCES cmeta_interface_arity_cpp_test.cpp
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+set_target_properties(cmeta_interface_arity_test PROPERTIES C_EXTENSIONS OFF)
+set_target_properties(cmeta_interface_arity_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
+cmake_add_test(cmeta_pp_test
+  SOURCES cmeta_pp_test.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+cmake_add_test(cmeta_pp_cpp_test
+  SOURCES cmeta_pp_cpp_test.cpp
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+set_target_properties(cmeta_pp_test PROPERTIES C_EXTENSIONS OFF)
+set_target_properties(cmeta_pp_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
 cmake_add_test(cmeta_trace_test
   SOURCES cmeta_trace_test.c
   LIBS Salts::CMeta Salts::TinyTest Salts::Platform
@@ -326,6 +346,13 @@ function(cmeta_add_compile_failure_test target_name source expected_diagnostic)
     PASS_REGULAR_EXPRESSION "${expected_diagnostic}"
     RUN_SERIAL TRUE)
 endfunction()
+
+cmeta_add_compile_failure_test(cmeta_pp_pair_count_compile_fail
+  compile_fail/cmeta_pp_pair_count.c "CMETA_PP_PAIRS_2")
+cmeta_add_compile_failure_test(cmeta_const_require_compile_fail
+  compile_fail/cmeta_const_require.c "cmeta_required")
+cmeta_add_compile_failure_test(cmeta_pp_tuple_width_compile_fail
+  compile_fail/cmeta_pp_tuple_width.c "CMETA_PP_TUPLE_GET_4_I")
 
 cmeta_add_compile_failure_test(cmeta_capabilities_missing_trait_compile_fail
   compile_fail/cmeta_capabilities_missing_trait.c "CMeta required trait is missing")

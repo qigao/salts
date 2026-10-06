@@ -1,4 +1,4 @@
-#include <salts/plugin.h>
+#include <salts/plugin_decl.h>
 
 #include "plugin_lifecycle_test_interface.h"
 
@@ -40,9 +40,9 @@ CMETA_IMPLEMENTS(plugin_lifecycle_test_api, lifecycle_fixture_api_impl, 1u,
     .send = fixture_send,
     .accepted = fixture_accepted);
 
-static plugin_lifecycle_test_api fixture_api;
-static salts_plugin_export fixture_export;
-static bool fixture_initialized;
+static plugin_lifecycle_test_api fixture_api = {
+    &fixture_state, &lifecycle_fixture_api_impl_vtable
+};
 
 static salts_plugin_status SALTS_PLUGIN_CALL
 fixture_start(void *self) {
@@ -76,44 +76,10 @@ fixture_destroy(void *self) {
     atomic_fetch_add(&state->destroy_calls, 1u);
 }
 
-static salts_plugin_manifest fixture_manifest = {
-    .struct_size = SALTS_PLUGIN_MANIFEST_SIZE,
-    .abi_version = SALTS_PLUGIN_ABI_VERSION,
-    .plugin_id = "test.loader.lifecycle",
-    .version = {1u, 0u, 0u},
-    .self = &fixture_state,
-    .start = fixture_start,
-    .request_stop = fixture_request_stop,
-    .is_quiescent = fixture_is_quiescent,
-    .destroy = fixture_destroy,
-};
+#define FIXTURE_EXPORTS(X) \
+    X(interface, (plugin_lifecycle_test_api, &fixture_api), "service", \
+      "test.lifecycle.service", 1u, 1u)
 
-SALTS_PLUGIN_QUERY_EXPORT
-const salts_plugin_manifest *SALTS_PLUGIN_CALL
-salts_plugin_query(uint32_t host_abi) {
-    if (host_abi != SALTS_PLUGIN_ABI_VERSION)
-        return NULL;
-
-    if (!fixture_initialized) {
-        fixture_api =
-            lifecycle_fixture_api_impl_as_plugin_lifecycle_test_api(
-                &fixture_state);
-        fixture_export = (salts_plugin_export){
-            .struct_size = SALTS_PLUGIN_EXPORT_SIZE,
-            .kind = SALTS_PLUGIN_EXPORT_INTERFACE,
-            .contract_version = 1u,
-            .capabilities = 1u,
-            .export_id = "service",
-            .contract_id = "test.lifecycle.service",
-            .value.interface = {
-                .desc = plugin_lifecycle_test_api_interface(),
-                .value = &fixture_api,
-            },
-        };
-        fixture_manifest.exports = &fixture_export;
-        fixture_manifest.export_count = 1u;
-        fixture_initialized = true;
-    }
-
-    return &fixture_manifest;
-}
+SALTS_PLUGIN_DECLARE(fixture, "test.loader.lifecycle", (1u,0u,0u),
+    FIXTURE_EXPORTS, SALTS_PLUGIN_LIFECYCLE(&fixture_state,
+        fixture_start, fixture_request_stop, fixture_is_quiescent, fixture_destroy));

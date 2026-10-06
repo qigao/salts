@@ -1,5 +1,10 @@
 # CMeta v50
 
+声明生成新增入口：有限 PP 原语见 [`pp.h`](include/cmeta/pp.h)，编译器约束见
+[`compiler.h`](include/cmeta/compiler.h)，精确函数 thunk 见
+[`invoke_decl.h`](include/cmeta/invoke_decl.h)。使用与边界详见
+[`LANGUAGE_REFERENCE.md`](LANGUAGE_REFERENCE.md#有限宏与精确调用声明)。
+
 **Finite generic programming, typed metadata, and semantic code generation for strict C11.**
 
 CMeta is the semantic foundation of Salts. It uses standard C11 techniques such

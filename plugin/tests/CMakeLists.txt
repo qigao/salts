@@ -23,6 +23,36 @@ set_target_properties(salts_plugin_manifest_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 set_tests_properties(salts_plugin_manifest_test PROPERTIES TIMEOUT 60)
 
+cmake_add_test(salts_plugin_declaration_test
+  SOURCES plugin_declaration_test.c
+  LIBS Salts::Plugin Salts::TinyTest FOLDER "plugin/tests")
+cmake_add_test(salts_plugin_declaration_cpp_test
+  SOURCES plugin_declaration_cpp_test.cpp
+  LIBS Salts::Plugin Salts::TinyTest FOLDER "plugin/tests")
+set_target_properties(salts_plugin_declaration_test PROPERTIES C_EXTENSIONS OFF)
+set_target_properties(salts_plugin_declaration_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
+set(plugin_declaration_version_diagnostic "Plugin contract version must fit")
+set(plugin_declaration_carrier_diagnostic "Plugin interface carrier type mismatch")
+set(plugin_declaration_callback_diagnostic "Plugin start callback type mismatch")
+set(plugin_declaration_parameter_diagnostic "CMeta exact invoke requires explicit parameter ABI carriers")
+set(plugin_declaration_result_diagnostic "CMeta exact invoke result carrier mismatch")
+set(plugin_declaration_array_diagnostic "CMeta exact invoke requires an unqualified value parameter carrier")
+foreach(declaration_case IN ITEMS version carrier callback parameter result array)
+  set(declaration_target "salts_plugin_declaration_${declaration_case}_compile_fail")
+  add_executable(${declaration_target} EXCLUDE_FROM_ALL
+    "compile_fail/plugin_declaration_${declaration_case}.c")
+  target_link_libraries(${declaration_target} PRIVATE Salts::PluginABI)
+  set_target_properties(${declaration_target} PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "plugin/tests/compile_fail")
+  add_test(NAME ${declaration_target}
+    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+      --config $<CONFIG> --target ${declaration_target})
+  set_tests_properties(${declaration_target} PROPERTIES RUN_SERIAL TRUE
+    PASS_REGULAR_EXPRESSION "${plugin_declaration_${declaration_case}_diagnostic}")
+endforeach()
+
 add_library(salts_plugin_interface_representation_a SHARED
   interface_representation_a.c)
 add_library(salts_plugin_interface_representation_b SHARED

@@ -133,8 +133,9 @@ cmeta_function_receiver(const cmeta_function_desc *desc);
 
 /*
  * Parameter semantic/ABI rows and canonical metadata emitters are shared by
- * C FunctionDecl and C/C++ interface reflection. Only declaration syntax that
- * depends on C11 _Generic remains in the C-only section below.
+ * C/C++ explicit declarations and interface reflection. Inferred descriptors
+ * (three-field parameters and inferred returns) require C11 _Generic; C++
+ * declarations use explicit descriptor/ABI rows.
  */
 #define CMETA_FUNCTION_PARAM_META_3(type, name, flags) \
     { sizeof(cmeta_param_desc), #name, CMETA_TYPEOF(type), \
@@ -146,8 +147,7 @@ cmeta_function_receiver(const cmeta_function_desc *desc);
     { sizeof(cmeta_param_desc), #name, (descriptor), \
       CMETA_FUNCTION_PARAM_FLAGS_CAST(flags) },
 #define CMETA_FUNCTION_PARAM_META_APPLY_I(...) \
-    CMETA_PP_CAT(CMETA_FUNCTION_PARAM_META_, \
-                 CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+    CMETA_PP_OVERLOAD(CMETA_FUNCTION_PARAM_META_,__VA_ARGS__)(__VA_ARGS__)
 #define CMETA_FUNCTION_PARAM_META_APPLY(row) \
     CMETA_FUNCTION_PARAM_META_APPLY_I row
 #define CMETA_FUNCTION_PARAM_META(row, ignored) \
@@ -159,8 +159,7 @@ cmeta_function_receiver(const cmeta_function_desc *desc);
 #define CMETA_FUNCTION_PARAM_ABI_5(type, name, flags, descriptor, abi_carrier) \
     (abi_carrier)
 #define CMETA_FUNCTION_PARAM_ABI_APPLY_I(...) \
-    CMETA_PP_CAT(CMETA_FUNCTION_PARAM_ABI_, \
-                 CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+    CMETA_PP_OVERLOAD(CMETA_FUNCTION_PARAM_ABI_,__VA_ARGS__)(__VA_ARGS__)
 #define CMETA_FUNCTION_PARAM_ABI_APPLY(row) \
     CMETA_FUNCTION_PARAM_ABI_APPLY_I row
 #define CMETA_FUNCTION_PARAM_ABI_ROW(row, ignored) \
@@ -217,8 +216,6 @@ cmeta_function_receiver(const cmeta_function_desc *desc);
         symbol, display_name, contract, return_desc, return_abi_carrier, \
         CMETA_RESULT_UNKNOWN)
 
-#ifndef __cplusplus
-
 /*
  * Function reflection is descriptive only. The declaration macros below emit
  * a normal C prototype plus immutable TU-local metadata and a static-inline
@@ -258,7 +255,7 @@ cmeta_function_receiver(const cmeta_function_desc *desc);
 #define CMETA_FUNCTION_PARAM_ADMIT_4(type, name, flags, descriptor)
 #define CMETA_FUNCTION_PARAM_ADMIT_5(type, name, flags, descriptor, carrier)
 #define CMETA_FUNCTION_PARAM_ADMIT_I(...) \
-    CMETA_PP_CAT(CMETA_FUNCTION_PARAM_ADMIT_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+    CMETA_PP_OVERLOAD(CMETA_FUNCTION_PARAM_ADMIT_,__VA_ARGS__)(__VA_ARGS__)
 #define CMETA_FUNCTION_PARAM_ADMIT(row, ignored) CMETA_FUNCTION_PARAM_ADMIT_I row
 #define CMETA_FUNCTION_RETURN_ADMIT(type) \
     _Static_assert(_Generic((type *)0, \
@@ -267,48 +264,24 @@ cmeta_function_receiver(const cmeta_function_desc *desc);
         default: 0), \
         "CMeta inferred return requires literal void or a registered scalar; use FunctionDeclAsAbi or Function0DeclAsAbi");
 
-#define CMETA_FUNCTION_ABI_SECOND_(a, b, ...) b
-#define CMETA_FUNCTION_ABI_PROBE_() ~, 1
-#define CMETA_FUNCTION_ABI_IS_PROBE_(...) \
-    CMETA_FUNCTION_ABI_SECOND_(__VA_ARGS__, 0, 0)
-#define CMETA_FUNCTION_ABI_VOID_MARK_void CMETA_FUNCTION_ABI_PROBE_()
-#define CMETA_FUNCTION_RETURN_IS_VOID_(type) \
-    CMETA_FUNCTION_ABI_IS_PROBE_( \
-        CMETA_PP_CAT(CMETA_FUNCTION_ABI_VOID_MARK_, type))
+#define CMETA_FUNCTION_RETURN_IS_VOID_(type) CMETA_PP_IS_VOID(type)
 #define CMETA_FUNCTION_RETURN_ABI_0 CMETA_ABI_SCALAR
 #define CMETA_FUNCTION_RETURN_ABI_1 CMETA_ABI_VOID
 #define CMETA_FUNCTION_RETURN_ABI(type) \
     CMETA_PP_CAT(CMETA_FUNCTION_RETURN_ABI_, \
                  CMETA_FUNCTION_RETURN_IS_VOID_(type))
 
-#define CMETA_FUNCTION_COMMA_0
-#define CMETA_FUNCTION_COMMA_1 ,
-#define CMETA_FUNCTION_COMMA_2 ,
-#define CMETA_FUNCTION_COMMA_3 ,
-#define CMETA_FUNCTION_COMMA_4 ,
-#define CMETA_FUNCTION_COMMA_5 ,
-#define CMETA_FUNCTION_COMMA_6 ,
-#define CMETA_FUNCTION_COMMA_7 ,
-#define CMETA_FUNCTION_COMMA_8 ,
-#define CMETA_FUNCTION_COMMA_9 ,
-#define CMETA_FUNCTION_COMMA_10 ,
-#define CMETA_FUNCTION_COMMA_11 ,
-#define CMETA_FUNCTION_COMMA_12 ,
-#define CMETA_FUNCTION_COMMA_13 ,
-#define CMETA_FUNCTION_COMMA_14 ,
-#define CMETA_FUNCTION_COMMA_15 ,
 
 #define CMETA_FUNCTION_PARAM_DECL_3(type, name, flags) type name
 #define CMETA_FUNCTION_PARAM_DECL_4(type, name, flags, descriptor) type name
 #define CMETA_FUNCTION_PARAM_DECL_5(type, name, flags, descriptor, abi_carrier) \
     type name
 #define CMETA_FUNCTION_PARAM_DECL_APPLY_I(...) \
-    CMETA_PP_CAT(CMETA_FUNCTION_PARAM_DECL_, \
-                 CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+    CMETA_PP_OVERLOAD(CMETA_FUNCTION_PARAM_DECL_,__VA_ARGS__)(__VA_ARGS__)
 #define CMETA_FUNCTION_PARAM_DECL_APPLY(row) \
     CMETA_FUNCTION_PARAM_DECL_APPLY_I row
 #define CMETA_FUNCTION_PARAM_DECL(index, row, ignored) \
-    CMETA_PP_CAT(CMETA_FUNCTION_COMMA_, index) \
+    CMETA_PP_SEP_COMMA(index) \
     CMETA_FUNCTION_PARAM_DECL_APPLY(row)
 
 /*
@@ -495,8 +468,6 @@ cmeta_function_receiver(const cmeta_function_desc *desc);
 #ifndef FunctionAbi
 #define FunctionAbi(name) CMETA_FUNCTION_ABI(name)
 #endif
-
-#endif /* !__cplusplus */
 
 /*
  * Preserve the historical transitive interface surface only after the complete
