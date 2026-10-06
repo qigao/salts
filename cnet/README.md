@@ -712,6 +712,14 @@ CI 保存 CSV，不把所有样本灌入 step summary，并运行
 copied stream API 一起移除。NativeIO 自身仍可保留 flatten-vs-SG 诊断，用于隔离
 payload memcpy 与 vectored submit 成本，但这不代表 CNet 存在 copied data plane。
 
+Linux `cnet_scaling_benchmark` 每个场景保留 5 次配对测量。
+`verify_scaling_benchmark.ps1` 对 16 连接、32/64 KiB 场景的 owner residual、
+observer framework 和 client poll wrapper，分别以 5 次中位数检查
+`2/1/1 us/op` 上限，并报告 MAD 和最大值。单次超限保留警告，持续超限仍失败；
+该门禁衡量典型开销，不保证每次运行都低于上限。墙钟计时可能包含调度停顿，
+仅凭单个尖峰不能归因于框架回归。非有限值、负耗时和嵌套区间错误仍逐行拒绝，
+不参与中位数聚合。NativeIO 配对吞吐/延迟的 MAD 稳定性门禁独立保留。
+
 ### Linux 系统调用证据
 
 `CNET_IO_BENCHMARK_TRACE=<driver>:<protocol>:<bytes>` 单独运行一个未插桩 workload，

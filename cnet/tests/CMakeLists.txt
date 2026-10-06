@@ -491,6 +491,11 @@ if(CNET_POWERSHELL_EXECUTABLE)
     COMMAND ${CNET_POWERSHELL_EXECUTABLE}
             -NoProfile
             -File ${CMAKE_CURRENT_SOURCE_DIR}/cnet_io_trace_test.ps1)
+  add_test(
+    NAME cnet_scaling_verifier_test
+    COMMAND ${CNET_POWERSHELL_EXECUTABLE}
+            -NoProfile
+            -File ${CMAKE_CURRENT_SOURCE_DIR}/cnet_scaling_verifier_test.ps1)
 endif()
 
 cmake_add_test(
