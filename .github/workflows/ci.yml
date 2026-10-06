@@ -1,0 +1,75 @@
+name: Salts CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: salts-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scope:
+    name: Select affected checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      checks: ${{ steps.select.outputs.checks }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify changes
+        id: select
+        shell: pwsh
+        env:
+          CI_EVENT: ${{ github.event_name }}
+          CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: ./cmake/ci/select-ci-scope.ps1 -EventName $env:CI_EVENT -BaseRef $env:CI_BASE -HeadRef $env:CI_HEAD
+
+  contracts:
+    needs: scope
+    if: fromJSON(needs.scope.outputs.checks).contracts == 'true'
+    uses: ./.github/workflows/cmeta-cflow-calculus.yml
+    with:
+      scope: ${{ needs.scope.outputs.checks }}
+    secrets: inherit
+
+  plugin:
+    needs: scope
+    if: fromJSON(needs.scope.outputs.checks).plugin == 'true'
+    uses: ./.github/workflows/plugin-lifecycle-contract.yml
+    secrets: inherit
+
+  benchmarks:
+    needs: scope
+    if: fromJSON(needs.scope.outputs.checks).work == 'true'
+    uses: ./.github/workflows/native-io-benchmarks.yml
+    with:
+      scope: ${{ needs.scope.outputs.checks }}
+    secrets: inherit
+
+  result:
+    name: CI result
+    needs: [scope, contracts, plugin, benchmarks]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require successful selected checks
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          SELECTED_RESULTS: ${{ join(needs.*.result, ',') }}
+        run: |
+          test "$SCOPE_RESULT" = success
+          case ",$SELECTED_RESULTS," in
+            *,failure,*|*,cancelled,*) exit 1 ;;
+          esac

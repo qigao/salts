@@ -1,26 +1,11 @@
 name: Plugin lifecycle contract
 
 on:
-  pull_request:
-    paths:
-      - "plugin/**"
-      - "cmeta/**"
-      - ".github/workflows/plugin-lifecycle-contract.yml"
-  push:
-    branches: [master]
-    paths:
-      - "plugin/**"
-      - "cmeta/**"
-      - ".github/workflows/plugin-lifecycle-contract.yml"
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
   packages: read
-
-concurrency:
-  group: plugin-lifecycle-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   plugin:
@@ -43,8 +28,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up shared build dependencies
-        uses: ./.github/actions/setup-re2c-tools
+      - name: Restore shared re2c binary
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - name: Configure shared vcpkg cache
+        id: shared_deps
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - name: Prepare build host
+        uses: ./.github/actions/setup-build-host
 
       - name: Discover Visual Studio
         if: matrix.family == 'windows'

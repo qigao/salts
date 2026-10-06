@@ -137,9 +137,27 @@ variable and contains no token. The platform presets select
 Clone the shared cache repository into the matching directory before configuring.
 Linux also requires Mono for NuGet binary restore. Local presets do not read
 `VCPKG_CACHE_REPOSITORY_ROOT` from the parent environment or load `.env` files.
-Windows presets require `VCPKG_WINDOWS_TRIPLET` and `VCPKG_WINDOWS_HOST_TRIPLET`
-to select the installed target and host triplets; both can be `x64-windows`
-for a standard local MSVC toolchain.
+Windows presets require `VCPKG_WINDOWS_TRIPLET` to select the target libraries;
+use `x64-windows` for a standard local MSVC toolchain.
+`VCPKG_HOST_TRIPLET` is fixed in the presets and requires no user environment variable:
+
+| Host profile | Host triplet |
+| --- | --- |
+| Windows x64 (MSVC, Clang, Android cross builds) | `x64-windows` |
+| Linux x64 (GCC, Android cross builds) | `x64-linux` |
+| Linux ARM64 (`linux-arm64-release-user`, native GCC) | `arm64-linux` |
+| macOS Intel (`mac-x64-release-user`) | `x64-osx` |
+| macOS Apple Silicon (`mac-arm64-release-user`) | `arm64-osx` |
+
+Host triplets select tools that run during the build; Android target triplets
+continue to select libraries for the requested Android ABI.
+The macOS presets are native host profiles: select the one matching your machine.
+They replace `mac-release-user`, fix the matching target triplet and
+`CMAKE_OSX_ARCHITECTURES`, and provide configure/build/test plus
+`install-mac-x64-release-user` / `install-mac-arm64-release-user` build presets.
+Their build directories are `build/mac-x64-clang-release` and
+`build/mac-arm64-clang-release`; installation roots are
+`$PKG_ROOT/salts-macos-x64/release` and `$PKG_ROOT/salts-macos-arm64/release`.
 
 Cache configuration belongs to the hidden presets in `CMakeUserPresets.json`.
 Configure, build, test and install presets inherit the matching environment;
@@ -147,12 +165,27 @@ no `.env` loader or shell wrapper is required. Run Windows commands in a
 Visual Studio developer environment.
 
 CI uses the `win-release-ci`, `win-clang-release-ci`, `linux-dev-ci`, `linux-release-ci`,
-`mac-release-ci` and `android-arm64-v8a-release-ci` presets. These preserve
+`mac-arm64-release-ci` and `android-arm64-v8a-release-ci` presets. An Intel macOS
+runner uses `mac-x64-release-ci`. These replace `mac-release-ci` and preserve
 the cache action's `VCPKG_CACHE_REPOSITORY_ROOT` and `VCPKG_BINARY_SOURCES`
-instead of using local paths. The repository's shared setup action adapts the
-upstream action's legacy Windows triplet environment names to
-`VCPKG_WINDOWS_TRIPLET` and `VCPKG_WINDOWS_HOST_TRIPLET`, and exports
-`VCPKG_TOOLCHAIN_FILE` for builds that pass the toolchain explicitly.
+instead of using local paths. Workflows call the upstream
+[re2c setup](https://github.com/qigao/vcpkg-cache/tree/master/.github/actions/setup-re2c-tools)
+and [vcpkg cache setup](https://github.com/qigao/vcpkg-cache/tree/master/.github/actions/setup-vcpkg-cache)
+actions directly, with the shared cache in read mode. Cache keys and package
+metadata consume the upstream outputs directly. The local `setup-build-host`
+action only installs platform build prerequisites and maps the upstream Windows
+target triplet to `VCPKG_WINDOWS_TRIPLET` for Salts presets. Explicit toolchain
+arguments use the upstream `QIGAO_VCPKG_TOOLCHAIN_FILE` environment variable.
+
+Native Linux ARM64 uses `linux-arm64-release-user`, with both host and target
+triplets fixed to `arm64-linux`. Its build directory is `build/linux-arm64-release`
+and its installation root is `$PKG_ROOT/salts-linux-arm64/release`. Use the same
+name for configure/build/test, and `install-linux-arm64-release-user` to install.
+This is a native ARM64 profile, not an x64-to-ARM64 cross toolchain.
+The ARM64 release job uses `linux-arm64-release-ci` and `linux-arm64-test-ci` on
+an ARM64 runner, with manifest mode enabled and cache-only dependency restore.
+SDK installation still targets `stage/sdk/linux-arm64` and strips the binaries
+through `install-strip-linux-arm64-release-ci`.
 
 ### Windows Release
 
@@ -173,6 +206,65 @@ cmake --build --preset install-linux-release-user
 ```
 
 The installed CMake package is placed under `<prefix>/lib/cmake/Salts`.
+
+## CI scope and job responsibilities
+
+`Salts CI` (`.github/workflows/ci.yml`) is the entry point for pull requests,
+pushes to `master`, and manual validation. It cancels superseded runs on the
+same PR/ref and calls the CMeta, Plugin, and benchmark reusable workflows only
+when selected by `cmake/ci/select-ci-scope.ps1`. Path classification has one
+owner; the reusable workflows own their platform matrices and test execution.
+The SDK release workflow runs only through its explicit manual release inputs.
+Neither ordinary pushes nor `v*` tag pushes start SDK builds or publication.
+To publish, run `Salts native SDK release` from Actions with the existing `tag`
+and its exact `release_sha`; the workflow verifies the tag, commit and package
+versions before starting the release jobs. A manual `Salts CI` run performs
+validation only and does not invoke the release workflow.
+
+| Change | Checks |
+| --- | --- |
+| Only Markdown/reStructuredText documentation | Scope and final result only |
+| CMeta/runtime dependencies | Affected native, execution, projection and Plugin suites |
+| CSTL tests | Execution suite |
+| Lean package or checked-in generated formal outputs | Lean checks (plus native consumers for generated headers) |
+| NativeIO/CNet/Coroutine runtime or benchmarks | Affected benchmark families and native dependants |
+| Shared CMake, presets, vcpkg, vendor or CI dispatcher | Native suites and benchmarks |
+| Manual `Salts CI` run | All suites and benchmark families |
+
+PR classification uses the merge-base-to-head diff, not the last commit;
+a documentation follow-up on a PR containing code still validates that code.
+Push classification uses the delivered `before..sha` range. A missing or
+unreadable comparison base fails scope selection instead of skipping checks.
+Benchmark family selection also applies to pushes; the existing reduced PR
+and full push/manual workload sizes are preserved. Documentation-only changes
+still report the stable `CI result` check without starting native builds.
+
+Native CI builds all modules supported by the selected platform. With
+`BUILD_TESTS=ON`, it also builds every module's tests; CTest name/label filters
+select what each validation job runs. For example, in a Visual Studio developer
+shell:
+
+```powershell
+cmake --preset win-release-user -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF
+cmake --build --preset win-release-user
+ctest --preset win-release-user --output-on-failure -R "^(salts_plugin_|cmeta_(pp|const|flags|layout)_.*)"
+```
+
+CI builds the complete configured graph without selecting individual build
+targets or restricting test modules. Configure options separate tests,
+benchmarks and SDK packaging according to each job's purpose. Lean jobs build
+and validate the formal package; release jobs build all supported SDK modules
+and install/package the results.
+
+This replaces three independent event/path filters with one dispatcher rather
+than extending duplicated filters. It trades a small scope/result job on each
+event for consistent dependency coverage and fewer heavy builds. Manual runs
+now use `Salts CI`; callers of the former individual workflow dispatch endpoints
+must migrate. If required checks are configured, use the new `CI result` name.
+To roll back, restore the dispatcher, classification script, reusable workflow
+triggers together; no source API or package format
+changes are involved. Validate updates with `actionlint` and the relevant
+configure/build/CTest presets; Linux/macOS and runner behavior need CI execution.
 
 ## Using Salts from CMake
 

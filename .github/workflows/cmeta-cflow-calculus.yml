@@ -1,80 +1,11 @@
 name: CMeta-CFlow calculus
 
 on:
-  pull_request:
-    paths:
-      - "cmeta/**"
-      - "cstl/**"
-      - "coroutine/**"
-      - "concurrency/**"
-      - "platform/**"
-      - "CMakeOptions.cmake"
-      - "utils/include/object_pool.h"
-      - "utils/src/object_pool.c"
-      - "utils/tests/test_object_pool.c"
-      - "CMakeUserPresets.json"
-      - "formal/cmeta_cflow_calculus/**"
-      - "cmeta/include/cmeta/generated/builtin_signature_manifest.h"
-      - "cmeta/include/cmeta/types.h"
-      - "cmeta/include/cmeta/relations.h"
-      - "cflow/include/cflow/generated/builtin_operator_policy.h"
-      - "cflow/include/cflow/generated/machine_schema.h"
-      - "cflow/include/cflow/operator_policy.h"
-      - "cflow/include/cflow/function_projection.h"
-      - "cflow/src/function_projection.c"
-      - "cflow/tests/cflow_function_projection_test.c"
-      - "cflow/src/adapters.c"
-      - "cflow/tests/cflow_stream_terminal_test.c"
-      - "cflow/CMakeLists.txt"
-      - "cflow/include/cflow/executor.h"
-      - "cflow/src/executor.c"
-      - "cflow/src/executor_internal.h"
-      - "cflow/tests/CMakeLists.txt"
-      - "cflow/tests/cflow_execution_test.c"
-      - "cflow/tests/cflow_executor_dso_fixture.c"
-      - "cflow/tests/cflow_executor_dso_fixture.h"
-      - "cflow/tests/cflow_executor_dso_test.c"
-      - "cflow/tests/cflow_interface_reflection_test.c"
-      - "cflow/tests/cflow_parallel_reduce_test.c"
-      - ".github/workflows/cmeta-cflow-calculus.yml"
-  push:
-    branches: [master]
-    paths:
-      - "cmeta/**"
-      - "cstl/**"
-      - "coroutine/**"
-      - "concurrency/**"
-      - "platform/**"
-      - "CMakeOptions.cmake"
-      - "utils/include/object_pool.h"
-      - "utils/src/object_pool.c"
-      - "utils/tests/test_object_pool.c"
-      - "CMakeUserPresets.json"
-      - "formal/cmeta_cflow_calculus/**"
-      - "cmeta/include/cmeta/generated/builtin_signature_manifest.h"
-      - "cmeta/include/cmeta/types.h"
-      - "cmeta/include/cmeta/relations.h"
-      - "cflow/include/cflow/generated/builtin_operator_policy.h"
-      - "cflow/include/cflow/generated/machine_schema.h"
-      - "cflow/include/cflow/operator_policy.h"
-      - "cflow/include/cflow/function_projection.h"
-      - "cflow/src/function_projection.c"
-      - "cflow/tests/cflow_function_projection_test.c"
-      - "cflow/src/adapters.c"
-      - "cflow/tests/cflow_stream_terminal_test.c"
-      - "cflow/CMakeLists.txt"
-      - "cflow/include/cflow/executor.h"
-      - "cflow/src/executor.c"
-      - "cflow/src/executor_internal.h"
-      - "cflow/tests/CMakeLists.txt"
-      - "cflow/tests/cflow_execution_test.c"
-      - "cflow/tests/cflow_executor_dso_fixture.c"
-      - "cflow/tests/cflow_executor_dso_fixture.h"
-      - "cflow/tests/cflow_executor_dso_test.c"
-      - "cflow/tests/cflow_interface_reflection_test.c"
-      - "cflow/tests/cflow_parallel_reduce_test.c"
-      - ".github/workflows/cmeta-cflow-calculus.yml"
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      scope:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -82,6 +13,7 @@ permissions:
 
 jobs:
   coroutine:
+    if: fromJSON(inputs.scope).native == 'true'
     name: CMeta native fastpath, capabilities and manifests / ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -108,11 +40,18 @@ jobs:
           - name: AppleClang
             runner: macos-15
             family: unix
-            preset: mac-release-ci
+            preset: mac-arm64-release-ci
     steps:
       - uses: actions/checkout@v7
-      - name: Set up shared build dependencies
-        uses: ./.github/actions/setup-re2c-tools
+      - name: Restore shared re2c binary
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - name: Configure shared vcpkg cache
+        id: shared_deps
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - name: Prepare build host
+        uses: ./.github/actions/setup-build-host
       - name: Discover Visual Studio
         if: matrix.family == 'windows'
         shell: pwsh
@@ -130,11 +69,7 @@ jobs:
         run: |
           set -euo pipefail
           cmake --preset "${{ matrix.preset }}" -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DSALTS_PLATFORM_NATIVE_FASTPATH=ON -DCMETA_BUILD_BENCHMARKS=ON
-          cmake --build --preset "${{ matrix.preset }}" --parallel 2 --target \
-            cmeta_coroutine_facade_test cmeta_coroutine_header_cpp_test \
-            salts_coro_executor_test salts_coro_executor_header_cpp_test \
-            cmeta_capabilities_test cmeta_capabilities_header_cpp_test \
-            cmeta_core_test cmeta_data_test cmeta_enum_bits_test cmeta_header_cpp_test platform_fastpath_test platform_fastpath_cpp_test cmeta_meta_header_test cmeta_fastpath_test cmeta_fastpath_cpp_test cmeta_fastpath_coroutine_test cmeta_fastpath_benchmark cmeta_function_reflection_test cmeta_abi_test cmeta_plugin_test cmeta_plugin_cpp_test salts_plugin_manifest_test cmeta_fingerprint_test cmeta_fingerprint_cpp_test cmeta_fingerprint_dso_test cmeta_manifest_test cmeta_manifest_view_test cmeta_manifest_view_cpp_test cmeta_trace_test cmeta_trace_cpp_test cmeta_trace_benchmark
+          cmake --build --preset "${{ matrix.preset }}" --parallel 2
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V \
             -R '^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|salts_coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_|salts_plugin_manifest_test$|cmeta_fingerprint_|cmeta_manifest_)'
       - name: Configure, build and test Windows native fastpath and capability contracts
@@ -149,20 +84,28 @@ jobs:
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           cmake --preset "${{ matrix.preset }}" -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DSALTS_PLATFORM_NATIVE_FASTPATH=ON -DCMETA_BUILD_BENCHMARKS=ON
           if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.preset }}" --parallel 2 --target cmeta_coroutine_facade_test cmeta_coroutine_header_cpp_test salts_coro_executor_test salts_coro_executor_header_cpp_test cmeta_capabilities_test cmeta_capabilities_header_cpp_test cmeta_core_test cmeta_data_test cmeta_enum_bits_test cmeta_header_cpp_test platform_fastpath_test platform_fastpath_cpp_test cmeta_meta_header_test cmeta_fastpath_test cmeta_fastpath_cpp_test cmeta_fastpath_coroutine_test cmeta_fastpath_benchmark cmeta_function_reflection_test cmeta_abi_test cmeta_plugin_test cmeta_plugin_cpp_test salts_plugin_manifest_test cmeta_fingerprint_test cmeta_fingerprint_cpp_test cmeta_fingerprint_dso_test cmeta_manifest_test cmeta_manifest_view_test cmeta_manifest_view_cpp_test cmeta_trace_test cmeta_trace_cpp_test cmeta_trace_benchmark cflow_execution_test cflow_interface_reflection_test cflow_executor_dso_test
+          cmake --build --preset "${{ matrix.preset }}" --parallel 2
           if errorlevel 1 exit /b 1
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V -R "^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|salts_coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_|salts_plugin_manifest_test$|cmeta_fingerprint_|cmeta_manifest_|cflow_execution_test$|cflow_interface_reflection_test$|cflow_executor_dso_test$)"
           if errorlevel 1 exit /b 1
 
 
   fastpath-reference-tsan:
+    if: fromJSON(inputs.scope).native == 'true'
     name: CMeta portable fastpath / GCC TSan
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - name: Set up shared build dependencies
-        uses: ./.github/actions/setup-re2c-tools
+      - name: Restore shared re2c binary
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - name: Configure shared vcpkg cache
+        id: shared_deps
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - name: Prepare build host
+        uses: ./.github/actions/setup-build-host
       - name: Configure and validate instrumented portable atomics
         shell: bash
         env:
@@ -171,12 +114,12 @@ jobs:
           set -euo pipefail
           cmake --preset linux-dev-ci -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
             -DSALTS_PLATFORM_NATIVE_FASTPATH=OFF -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_THREAD=ON
-          cmake --build --preset linux-dev-ci --parallel 2 --target \
-            platform_fastpath_test platform_fastpath_cpp_test cmeta_meta_header_test cmeta_fastpath_test cmeta_fastpath_cpp_test cmeta_function_reflection_test cmeta_abi_test cmeta_trace_test cmeta_trace_cpp_test
+          cmake --build --preset linux-dev-ci --parallel 2
           ctest --preset linux-dev-ci --no-tests=error --output-on-failure --timeout 60 \
             -R '^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_(test|cpp_test|.*compile_fail)$|cmeta_function_reflection_test$|cmeta_abi_test$)'
 
   cmeta:
+    if: fromJSON(inputs.scope).execution == 'true'
     name: CMeta scope and execution / ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -204,9 +147,9 @@ jobs:
           - name: AppleClang
             runner: macos-15
             family: macos
-            configure_preset: mac-release-ci
-            build_preset: mac-release-ci
-            build_dir: build/mac-clang-release
+            configure_preset: mac-arm64-release-ci
+            build_preset: mac-arm64-release-ci
+            build_dir: build/mac-arm64-clang-release
           - name: MSVC
             runner: windows-2025
             family: windows
@@ -222,16 +165,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up shared build dependencies
-        uses: ./.github/actions/setup-re2c-tools
-
-      - name: Install Linux native build prerequisite
-        if: matrix.family == 'linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y nasm
+      - name: Restore shared re2c binary
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - name: Configure shared vcpkg cache
+        id: shared_deps
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - name: Prepare build host
+        uses: ./.github/actions/setup-build-host
 
       - name: Discover Visual Studio
         if: matrix.family == 'windows'
@@ -257,7 +199,7 @@ jobs:
             -DBUILD_BENCHMARKS=OFF \
             -DBUILD_EXAMPLES=OFF \
             '-DVCPKG_INSTALL_OPTIONS=--only-binarycaching'
-          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target cmeta_scope_test cmeta_execution_test cmeta_pool_cpp_test cmeta_collector_test concurrency_rcu_test concurrency_typed_primitives_test concurrency_typed_rcu_cpp_test concurrency_header_cpp_test platform_header_cpp_test platform_thread_test test_object_pool cflow_stream_terminal_test cstl_generic_identity_test cstl_semantic_projection_test cstl_typed_decl_cpp_test
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
 
       - name: Configure and build Windows CMeta contracts
         if: matrix.family == 'windows'
@@ -269,7 +211,7 @@ jobs:
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           cmake --preset "${{ matrix.configure_preset }}" -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
           if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target cmeta_scope_test cmeta_execution_test cmeta_pool_cpp_test cmeta_collector_test concurrency_rcu_test concurrency_typed_primitives_test concurrency_typed_rcu_cpp_test concurrency_header_cpp_test platform_header_cpp_test platform_thread_test test_object_pool cflow_stream_terminal_test cstl_generic_identity_test cstl_semantic_projection_test cstl_typed_decl_cpp_test
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
           if errorlevel 1 exit /b 1
 
       - name: Run POSIX scope, execution and nested CSTL contracts
@@ -292,22 +234,23 @@ jobs:
         run: git diff --check
 
   projection:
+    if: fromJSON(inputs.scope).projection == 'true'
     name: CFlow reflected function projection
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up shared build dependencies
-        uses: ./.github/actions/setup-re2c-tools
+      - name: Restore shared re2c binary
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - name: Configure shared vcpkg cache
+        id: shared_deps
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - name: Prepare build host
+        uses: ./.github/actions/setup-build-host
 
-      - name: Install native build prerequisite
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y nasm
-
-      - name: Configure focused CFlow build
+      - name: Configure full build for CFlow validation
         shell: bash
         env:
           PROJECT_ROOT: ${{ github.workspace }}
@@ -347,6 +290,7 @@ jobs:
           ctest --preset installed-linux-release
 
   lean:
+    if: fromJSON(inputs.scope).lean == 'true'
     name: Lean build and test
     runs-on: ubuntu-latest
     steps:
