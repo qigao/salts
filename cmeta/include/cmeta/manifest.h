@@ -7,7 +7,16 @@
 #include <stdint.h>
 
 #ifdef __cplusplus
+#define CMETA_MANIFEST_U64(value_) static_cast<uint64_t>(value_)
+#define CMETA_MANIFEST_U8(value_) static_cast<uint8_t>(value_)
+#define CMETA_MANIFEST_BYTES(value_) reinterpret_cast<const uint8_t *>(value_)
+#define CMETA_MANIFEST_VOID_PTR(value_) static_cast<const void *>(value_)
 extern "C" {
+#else
+#define CMETA_MANIFEST_U64(value_) ((uint64_t)(value_))
+#define CMETA_MANIFEST_U8(value_) ((uint8_t)(value_))
+#define CMETA_MANIFEST_BYTES(value_) ((const uint8_t *)(value_))
+#define CMETA_MANIFEST_VOID_PTR(value_) ((const void *)(value_))
 #endif
 
 #define CMETA_MANIFEST_FORMAT_VERSION UINT32_C(1)
@@ -43,10 +52,10 @@ typedef struct cmeta_manifest {
  * but section syntax is deliberately not part of the public API.
  */
 #define cmeta_entry(symbol) \
-    { #symbol, CMETA_MANIFEST_GENERIC, (const void *)&(symbol), UINT64_C(0), UINT32_C(0) },
+    { #symbol, CMETA_MANIFEST_GENERIC, CMETA_MANIFEST_VOID_PTR(&(symbol)), UINT64_C(0), UINT32_C(0) },
 
 #define cmeta_manifest_entry(name_, kind_, descriptor_, fingerprint_, flags_) \
-    { (name_), (kind_), (const void *)(descriptor_), (fingerprint_), (flags_) },
+    { (name_), (kind_), CMETA_MANIFEST_VOID_PTR(descriptor_), (fingerprint_), (flags_) },
 
 #define cmeta_registry(name, entries_) \
     static const cmeta_manifest_entry name##_cmeta_entries[] = { entries_ }; \
@@ -69,13 +78,13 @@ static inline void cmeta_abi_fingerprint_byte(cmeta_abi_fingerprint_builder *bui
                                               uint8_t byte) {
     if (builder == NULL)
         return;
-    builder->value ^= (uint64_t)byte;
+    builder->value ^= CMETA_MANIFEST_U64(byte);
     builder->value *= UINT64_C(1099511628211);
 }
 
 static inline void cmeta_abi_fingerprint_bytes(cmeta_abi_fingerprint_builder *builder,
                                                const void *data, size_t size) {
-    const uint8_t *bytes = (const uint8_t *)data;
+    const uint8_t *bytes = CMETA_MANIFEST_BYTES(data);
     size_t i;
     if (builder == NULL || (data == NULL && size != 0u))
         return;
@@ -87,7 +96,7 @@ static inline void cmeta_abi_fingerprint_u64(cmeta_abi_fingerprint_builder *buil
                                              uint64_t value) {
     unsigned shift;
     for (shift = 0u; shift < 64u; shift += 8u)
-        cmeta_abi_fingerprint_byte(builder, (uint8_t)((value >> shift) & UINT64_C(0xff)));
+        cmeta_abi_fingerprint_byte(builder, CMETA_MANIFEST_U8((value >> shift) & UINT64_C(0xff)));
 }
 
 static inline void cmeta_abi_fingerprint_string(cmeta_abi_fingerprint_builder *builder,
@@ -97,7 +106,7 @@ static inline void cmeta_abi_fingerprint_string(cmeta_abi_fingerprint_builder *b
         while (text[size] != '\0')
             ++size;
     }
-    cmeta_abi_fingerprint_u64(builder, (uint64_t)size);
+    cmeta_abi_fingerprint_u64(builder, CMETA_MANIFEST_U64(size));
     cmeta_abi_fingerprint_bytes(builder, text, size);
 }
 
@@ -115,7 +124,7 @@ static inline void cmeta_abi_fingerprint_identity(
         return;
     }
 
-    cmeta_abi_fingerprint_u64(builder, (uint64_t)identity->form + UINT64_C(1));
+    cmeta_abi_fingerprint_u64(builder, CMETA_MANIFEST_U64(identity->form) + UINT64_C(1));
     switch (identity->form) {
         case CMETA_TYPE_ATOM:
             cmeta_abi_fingerprint_string(builder, identity->stable_atom_id);
@@ -128,7 +137,7 @@ static inline void cmeta_abi_fingerprint_identity(
             cmeta_abi_fingerprint_string(
                 builder,
                 identity->constructor == NULL ? NULL : identity->constructor->stable_id);
-            cmeta_abi_fingerprint_u64(builder, (uint64_t)identity->arity);
+            cmeta_abi_fingerprint_u64(builder, CMETA_MANIFEST_U64(identity->arity));
             for (i = 0u; i < identity->arity; ++i)
                 cmeta_abi_fingerprint_identity(builder, identity->args[i]);
             break;
@@ -146,11 +155,11 @@ static inline uint64_t cmeta_abi_fingerprint_type(const cmeta_type_desc *type) {
         return cmeta_abi_fingerprint_finish(&builder);
 
     cmeta_abi_fingerprint_string(&builder, type->name);
-    cmeta_abi_fingerprint_u64(&builder, (uint64_t)type->size);
-    cmeta_abi_fingerprint_u64(&builder, (uint64_t)type->align);
-    cmeta_abi_fingerprint_u64(&builder, (uint64_t)type->kind);
+    cmeta_abi_fingerprint_u64(&builder, CMETA_MANIFEST_U64(type->size));
+    cmeta_abi_fingerprint_u64(&builder, CMETA_MANIFEST_U64(type->align));
+    cmeta_abi_fingerprint_u64(&builder, CMETA_MANIFEST_U64(type->kind));
     cmeta_abi_fingerprint_u64(
-        &builder, type->traits == NULL ? UINT64_C(0) : (uint64_t)type->traits->flags);
+        &builder, type->traits == NULL ? UINT64_C(0) : CMETA_MANIFEST_U64(type->traits->flags));
     cmeta_abi_fingerprint_identity(&builder, type->identity);
 
     if (type->pointee == NULL) {
@@ -158,9 +167,9 @@ static inline uint64_t cmeta_abi_fingerprint_type(const cmeta_type_desc *type) {
     } else {
         cmeta_abi_fingerprint_u64(&builder, UINT64_C(1));
         cmeta_abi_fingerprint_string(&builder, type->pointee->name);
-        cmeta_abi_fingerprint_u64(&builder, (uint64_t)type->pointee->size);
-        cmeta_abi_fingerprint_u64(&builder, (uint64_t)type->pointee->align);
-        cmeta_abi_fingerprint_u64(&builder, (uint64_t)type->pointee->kind);
+        cmeta_abi_fingerprint_u64(&builder, CMETA_MANIFEST_U64(type->pointee->size));
+        cmeta_abi_fingerprint_u64(&builder, CMETA_MANIFEST_U64(type->pointee->align));
+        cmeta_abi_fingerprint_u64(&builder, CMETA_MANIFEST_U64(type->pointee->kind));
         cmeta_abi_fingerprint_identity(&builder, type->pointee->identity);
     }
 
@@ -170,5 +179,10 @@ static inline uint64_t cmeta_abi_fingerprint_type(const cmeta_type_desc *type) {
 #ifdef __cplusplus
 }
 #endif
+
+#undef CMETA_MANIFEST_U64
+#undef CMETA_MANIFEST_U8
+#undef CMETA_MANIFEST_BYTES
+#undef CMETA_MANIFEST_VOID_PTR
 
 #endif /* CMETA_MANIFEST_H */
