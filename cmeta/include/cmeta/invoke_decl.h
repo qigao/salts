@@ -15,7 +15,7 @@ typedef bool (*cmeta_exact_invoke_fn)(void *return_storage,
  * Count/storage rejection occurs before the native function is called. */
 #define CMETA_INVOKE_PARAM_TYPE(index) CMETA_PP_CAT(cmeta_invoke_param_,index)
 #define CMETA_INVOKE_PARAM(index,row,ignored) \
-    typedef CMETA_PP_TUPLE_GET_0(row) CMETA_INVOKE_PARAM_TYPE(index); \
+    typedef CMETA_FUNCTION_PARAM_TYPE(row) CMETA_INVOKE_PARAM_TYPE(index); \
     CMETA_STATIC_ASSERT(CMETA_TYPE_IS_VALUE(CMETA_INVOKE_PARAM_TYPE(index)), \
         "CMeta exact invoke requires an unqualified value parameter carrier"); \
     CMETA_STATIC_ASSERT(CMETA_FUNCTION_PARAM_ABI_APPLY(row) != CMETA_ABI_UNSPECIFIED && \

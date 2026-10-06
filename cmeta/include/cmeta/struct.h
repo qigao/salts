@@ -123,11 +123,13 @@ cmeta_struct_find_field(const cmeta_struct_desc *desc, const char *name) {
     CMETA_PP_CAT(CMETA_STRUCT_FIELD_DESC_, CMETA_TYPE_SPEC_IS(type))( \
         owner, type, name)
 #define CMETA_STRUCT_FIELD_DESC_0(owner, type, name) \
-    { #name, #type, offsetof(owner, name), CMETA_STRUCT_FIELD_SIZE(owner, name), \
+    { CMETA_PP_STRINGIFY(name), CMETA_PP_STRINGIFY(type), \
+      offsetof(owner, name), CMETA_STRUCT_FIELD_SIZE(owner, name), \
       CMETA_ALIGNOF(type), CMETA_TYPEOF_OR(type, CMETA_STRUCT_TYPE_NULL), \
       NULL },
 #define CMETA_STRUCT_FIELD_DESC_1(owner, spec, name) \
-    { #name, #spec, offsetof(owner, name), CMETA_STRUCT_FIELD_SIZE(owner, name), \
+    { CMETA_PP_STRINGIFY(name), CMETA_PP_STRINGIFY(spec), \
+      offsetof(owner, name), CMETA_STRUCT_FIELD_SIZE(owner, name), \
       CMETA_ALIGNOF(CMETA_STRUCT_STORAGE(spec)), \
       CMETA_TYPE_SPEC_STORAGE_DESC(spec), \
       &CMETA_STRUCT_FIELD_DECLARED_NAME(owner, name) },
@@ -154,7 +156,8 @@ cmeta_struct_find_field(const cmeta_struct_desc *desc, const char *name) {
  *       cmeta_field(TYPE(Vec, int), values)
  *   );
  */
-#define CMETA_STRUCT(type, ...) \
+#define CMETA_STRUCT(...) CMETA_STRUCT_I(__VA_ARGS__)
+#define CMETA_STRUCT_I(type, ...) \
     typedef struct type { \
         Schema(CMETA_STRUCT_FIELD_DECL, __VA_ARGS__) \
     } type; \
@@ -163,7 +166,7 @@ cmeta_struct_find_field(const cmeta_struct_desc *desc, const char *name) {
         CMETA_SCHEMA_ROWS(CMETA_STRUCT_FIELD_DESC, type, __VA_ARGS__) \
     }; \
     CMETA_LOCAL const cmeta_struct_desc type##__struct_meta = { \
-        #type, sizeof(type), CMETA_ALIGNOF(type), type##__struct_fields, \
+        CMETA_PP_STRINGIFY(type), sizeof(type), CMETA_ALIGNOF(type), type##__struct_fields, \
         sizeof(type##__struct_fields) / sizeof(type##__struct_fields[0]) \
     }; \
     CMETA_INLINE const cmeta_struct_desc *type##_meta(void) { \
@@ -204,7 +207,7 @@ cmeta_struct_find_field(const cmeta_struct_desc *desc, const char *name) {
 #endif
 
 #ifndef StructMeta
-#define StructMeta(type) (&type##__struct_meta)
+#define StructMeta(type) (&CMETA_PP_CAT(type,__struct_meta))
 #endif
 
 /* Linux-style intrusive owner projection with ordinary C11 type checking.

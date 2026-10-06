@@ -137,31 +137,33 @@ cmeta_function_receiver(const cmeta_function_desc *desc);
  * (three-field parameters and inferred returns) require C11 _Generic; C++
  * declarations use explicit descriptor/ABI rows.
  */
-#define CMETA_FUNCTION_PARAM_META_3(type, name, flags) \
-    { sizeof(cmeta_param_desc), #name, CMETA_TYPEOF(type), \
-      CMETA_FUNCTION_PARAM_FLAGS_CAST(flags) },
-#define CMETA_FUNCTION_PARAM_META_4(type, name, flags, descriptor) \
-    { sizeof(cmeta_param_desc), #name, (descriptor), \
-      CMETA_FUNCTION_PARAM_FLAGS_CAST(flags) },
-#define CMETA_FUNCTION_PARAM_META_5(type, name, flags, descriptor, abi_carrier) \
-    { sizeof(cmeta_param_desc), #name, (descriptor), \
-      CMETA_FUNCTION_PARAM_FLAGS_CAST(flags) },
-#define CMETA_FUNCTION_PARAM_META_APPLY_I(...) \
-    CMETA_PP_OVERLOAD(CMETA_FUNCTION_PARAM_META_,__VA_ARGS__)(__VA_ARGS__)
+/* Normalize source syntax once per projection. Admission stays source-aware:
+ * only the three-field form is inferred; four fields never infer an ABI. */
+#define CMETA_FUNCTION_PARAM_NORMALIZE_3(type,name,flags) \
+    (type,name,flags,CMETA_TYPEOF(type),CMETA_ABI_SCALAR)
+#define CMETA_FUNCTION_PARAM_NORMALIZE_4(type,name,flags,descriptor) \
+    (type,name,flags,descriptor,CMETA_ABI_UNSPECIFIED)
+#define CMETA_FUNCTION_PARAM_NORMALIZE_5(type,name,flags,descriptor,carrier) \
+    (type,name,flags,descriptor,carrier)
+#define CMETA_FUNCTION_PARAM_NORMALIZE_I(...) \
+    CMETA_PP_OVERLOAD(CMETA_FUNCTION_PARAM_NORMALIZE_,__VA_ARGS__)(__VA_ARGS__)
+#define CMETA_FUNCTION_PARAM_NORMALIZE(row) CMETA_FUNCTION_PARAM_NORMALIZE_I row
+#define CMETA_FUNCTION_PARAM_TYPE(row) CMETA_PP_TUPLE_GET_0(row)
+#define CMETA_FUNCTION_PARAM_NAME(row) CMETA_PP_TUPLE_GET_1(row)
+#define CMETA_FUNCTION_PARAM_FLAGS(row) CMETA_PP_TUPLE_GET_2(row)
+#define CMETA_FUNCTION_PARAM_DESCRIPTOR(row) \
+    CMETA_PP_TUPLE_GET_3(CMETA_FUNCTION_PARAM_NORMALIZE(row))
+#define CMETA_FUNCTION_PARAM_CARRIER(row) \
+    CMETA_PP_TUPLE_GET_4(CMETA_FUNCTION_PARAM_NORMALIZE(row))
 #define CMETA_FUNCTION_PARAM_META_APPLY(row) \
-    CMETA_FUNCTION_PARAM_META_APPLY_I row
+    { sizeof(cmeta_param_desc), CMETA_PP_STRINGIFY(CMETA_FUNCTION_PARAM_NAME(row)), \
+      (CMETA_FUNCTION_PARAM_DESCRIPTOR(row)), \
+      CMETA_FUNCTION_PARAM_FLAGS_CAST(CMETA_FUNCTION_PARAM_FLAGS(row)) },
 #define CMETA_FUNCTION_PARAM_META(row, ignored) \
     CMETA_FUNCTION_PARAM_META_APPLY(row)
 
-#define CMETA_FUNCTION_PARAM_ABI_3(type, name, flags) CMETA_ABI_SCALAR
-#define CMETA_FUNCTION_PARAM_ABI_4(type, name, flags, descriptor) \
-    CMETA_ABI_UNSPECIFIED
-#define CMETA_FUNCTION_PARAM_ABI_5(type, name, flags, descriptor, abi_carrier) \
-    (abi_carrier)
-#define CMETA_FUNCTION_PARAM_ABI_APPLY_I(...) \
-    CMETA_PP_OVERLOAD(CMETA_FUNCTION_PARAM_ABI_,__VA_ARGS__)(__VA_ARGS__)
 #define CMETA_FUNCTION_PARAM_ABI_APPLY(row) \
-    CMETA_FUNCTION_PARAM_ABI_APPLY_I row
+    (CMETA_FUNCTION_PARAM_CARRIER(row))
 #define CMETA_FUNCTION_PARAM_ABI_ROW(row, ignored) \
     CMETA_FUNCTION_PARAM_ABI_APPLY(row),
 
@@ -272,14 +274,8 @@ cmeta_function_receiver(const cmeta_function_desc *desc);
                  CMETA_FUNCTION_RETURN_IS_VOID_(type))
 
 
-#define CMETA_FUNCTION_PARAM_DECL_3(type, name, flags) type name
-#define CMETA_FUNCTION_PARAM_DECL_4(type, name, flags, descriptor) type name
-#define CMETA_FUNCTION_PARAM_DECL_5(type, name, flags, descriptor, abi_carrier) \
-    type name
-#define CMETA_FUNCTION_PARAM_DECL_APPLY_I(...) \
-    CMETA_PP_OVERLOAD(CMETA_FUNCTION_PARAM_DECL_,__VA_ARGS__)(__VA_ARGS__)
 #define CMETA_FUNCTION_PARAM_DECL_APPLY(row) \
-    CMETA_FUNCTION_PARAM_DECL_APPLY_I row
+    CMETA_FUNCTION_PARAM_TYPE(row) CMETA_FUNCTION_PARAM_NAME(row)
 #define CMETA_FUNCTION_PARAM_DECL(index, row, ignored) \
     CMETA_PP_SEP_COMMA(index) \
     CMETA_FUNCTION_PARAM_DECL_APPLY(row)

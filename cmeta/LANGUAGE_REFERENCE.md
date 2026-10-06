@@ -1088,6 +1088,18 @@ interface, or ordinary C function composes cleanly enough.
 置位都包含在显式 mask 中。失败必须导致编译错误，运行时值也不能充当条件或 flag 输入。
 两者复用 `CMETA_CONST_REQUIRE`，不进行运行时检查，不从类型拼写推断业务允许位。
 
+Function、Interface、精确 thunk 与 TinyMock 的参数投影共用五字段内部行：
+`(type,name,flags,descriptor,carrier)`。三字段输入仍先进行标量准入，descriptor 来自
+注册类型且 carrier 为 `CMETA_ABI_SCALAR`；四字段输入保留显式 descriptor 和
+`CMETA_ABI_UNSPECIFIED`；五字段输入保留全部显式语义。归一化不会让描述性元数据
+自动获得可调用资格，未指定 ABI 的声明仍不能用于精确 thunk 或 ABI 替换。
+
+`CMETA_STRUCT`、`CMETA_ENUM` 及 `StructMeta`、`EnumMeta`、`EnumParse` 现在统一先展开
+宏别名再生成符号和反射名称。普通标识符、字段布局、枚举显式值及自动递增规则不变。
+兼容性边界：过去直接向底层声明宏传类型别名宏时，元数据可能保留别名 token 名称；
+现在记录展开后的实际类型名，与 `Struct`/`Enum` 前端一致。依赖旧别名字符串的查询需
+改用实际类型名；descriptor 的二进制布局及生命周期没有变化。
+
 | 原语 | 契约 |
 | --- | --- |
 | `CMETA_PP_MAP(M,C,...)` | 1–16 项，调用 `M(item,C)`，不插分隔符 |

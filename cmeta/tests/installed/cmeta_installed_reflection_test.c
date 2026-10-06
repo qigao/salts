@@ -1,6 +1,7 @@
 #include <cmeta/meta.h>
 #include <cmeta/manifest_view.h>
 #include "tinytest.h"
+#include "../cmeta_declaration_rows_cases.h"
 
 #if defined(SALTS_FASTPATH_H) || defined(CMETA_TRACE_H) || defined(CMETA_SCOPE_H) || \
     defined(CMETA_POOL_H) || defined(CMETA_LOCAL_H) || defined(SALTS_THREAD_PRIMITIVES_H) || \

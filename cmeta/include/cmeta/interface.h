@@ -258,8 +258,8 @@ cmeta_interface_desc_has_owning_method(const cmeta_interface_desc *desc) {
 #define CMETA_IFACE_DECODE(M,I,K,R,N,...) \
     CMETA_PP_CAT(CMETA_IFACE_DECODE_,K)(M,I,R,N,__VA_ARGS__)
 #define CMETA_IFACE_PARAM_DECL(row) \
-    CMETA_PP_TUPLE_GET_0(row) CMETA_PP_TUPLE_GET_1(row)
-#define CMETA_IFACE_PARAM_NAME(row) CMETA_PP_TUPLE_GET_1(row)
+    CMETA_FUNCTION_PARAM_DECL_APPLY(row)
+#define CMETA_IFACE_PARAM_NAME(row) CMETA_FUNCTION_PARAM_NAME(row)
 #define CMETA_IFACE_DECL_ROW(row,C) CMETA_IFACE_PARAM_DECL(row)
 #define CMETA_IFACE_ARG_ROW(row,C) CMETA_IFACE_PARAM_NAME(row)
 
