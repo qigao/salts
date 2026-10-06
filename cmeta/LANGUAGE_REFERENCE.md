@@ -1270,6 +1270,36 @@ token（允许宏别名）；不接受任意 carrier 表达式或 UNSPECIFIED。
 仍是语义事实源，Plugin 描述符和 thunk 的有效期仍受 live lease 约束。
 外来描述符继续完整 admission；生成 thunk 不解释 Reflection，不执行 ABI 猜测。
 
+### 固定布局的 container_of 与 cleanup 能力（#976）
+
+`<cmeta/container_of.h>` 的 `cmeta_container_of_as(ptr,Owner,MemberType,member)`
+从成员地址恢复 `Owner *`。它同时检查 `Owner.member` 和传入指针的精确原生类型，
+包括 cv 限定与数组范围；`ptr` 只求值一次。C11（包括 MSVC C）使用这个显式类型入口。
+`CMETA_HAS_CONTAINER_OF` 为 1 时还提供 `cmeta_container_of(ptr,Owner,member)`，
+通过已有原生 typeof 推导 MemberType，复用同一检查与地址计算。
+不支持推导的编译器不定义三参数入口，不提供无检查替代。
+
+Owner 必须是实际存活、固定地址的外围对象类型；C++ 要求 standard-layout。
+ptr 必须非 NULL，且恰好指向这个对象中指定成员；类型相同不代表成员来源正确。
+位域、柔性数组、动态字段和过期指针不在契约内。数组成员须使用数组 typedef 并传整个数组的地址。
+只读或 volatile 对象显式传 `const Owner` / `volatile Owner`，MemberType 带相应限定；
+仅有 const 成员的指针不能证明整个对象可写，调用者不能借此声明一个不真实的可写 Owner。
+没有分配、引用计数、状态迁移或线程同步，时间和额外空间均为 O(1)，借用在原对象移动或销毁时失效。
+错误原生类型在编译期拒绝；对象来源和生命周期属于调用前置条件，不进行运行时猜测。
+可编译的 C/C++ 用例见 [container_of 回归](tests/cmeta_container_of_cases.h)。
+
+`CMETA_HAS_CLEANUP` / `CMETA_ATTR_CLEANUP(function)` 只探测和封装原生 cleanup attribute。
+函数接收自动变量的地址，负责该资源自己的清理；没有隐含 free、retain 或返回值处理。
+不支持的编译器令能力值为 0，且不定义 attribute 宏。普通返回和块退出可用于 lexical cleanup；
+longjmp 等非局部退出不属于此入口的保证，异常清理还取决于后端和异常编译选项。
+MSVC 的结构化 scope 入口继续保持相同资源语义，不将缺失 attribute 解释为不清理。
+行为用例见 [cleanup 回归](tests/cmeta_compiler_cleanup_cases.h)，平台机制参见
+[GCC cleanup 文档](https://gcc.gnu.org/onlinedocs/gcc/Common-Variable-Attributes.html)。
+
+这些入口均为增量能力，不改变 Reflection ABI；既有 descriptor 与 scope 不会隐式改用它们。
+成员地址布局基于标准 offsetof，编译器机制见
+[GCC offsetof 文档](https://gcc.gnu.org/onlinedocs/gcc/Offsetof.html)。
+
 Interface 的 R/V/F/FR/FV/D/FD 行先归一化为参数 tuple、arity、结果动作和 Reflection
 属性，再由公共生成器输出 vtable、wrapper、验证与 metadata。析构仍先调用再清空 handle。
 验证覆盖 C/C++ 的所有 0–4 参数行、16 项 PP 上界、零项、错误展开和精确 native 调用。

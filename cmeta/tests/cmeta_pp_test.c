@@ -6,6 +6,8 @@
 #include "tinytest.h"
 #endif
 #include "cmeta_compiler_type_cases.h"
+#include "cmeta_container_of_cases.h"
+#include "cmeta_compiler_cleanup_cases.h"
 
 CMETA_STATIC_ASSERT(CMETA_HAS_VA_OPT == 0, "C11/C++17 keep explicit-count zero arity");
 #if defined(CMETA_PP_HAS_ARGS) || defined(CMETA_PP_PREFIX_COMMA) || \

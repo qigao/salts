@@ -39,6 +39,15 @@
 #define CMETA_INLINE static inline CMETA_UNUSED
 #define CMETA_LOCAL static CMETA_UNUSED
 
+/* This attribute supplies lexical lowering, not resource ownership semantics.
+ * Unsupported backends must use an explicit structured scope contract. */
+#if CMETA_HAS_ATTRIBUTE(cleanup)
+#define CMETA_HAS_CLEANUP 1
+#define CMETA_ATTR_CLEANUP(function) __attribute__((cleanup(function)))
+#else
+#define CMETA_HAS_CLEANUP 0
+#endif
+
 /* Section storage is an opt-in backend, not a promise of discovery semantics.
  * ELF requires retain, since used alone does not survive linker GC. */
 #define CMETA_SECTION_NONE 0

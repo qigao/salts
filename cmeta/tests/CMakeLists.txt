@@ -366,7 +366,8 @@ cmeta_add_compile_failure_test(cmeta_pp_pair_count_compile_fail
   compile_fail/cmeta_pp_pair_count.c "CMETA_PP_PAIRS_2")
 cmeta_add_compile_failure_test(cmeta_const_require_compile_fail
   compile_fail/cmeta_const_require.c "cmeta_required")
-foreach(requirement IN ITEMS flags_require flags_negative layout_require const_runtime)
+foreach(requirement IN ITEMS flags_require flags_negative layout_require const_runtime
+    container_member container_pointer container_const)
   cmeta_add_compile_failure_test(cmeta_${requirement}_compile_fail
     compile_fail/cmeta_${requirement}.c "cmeta_required|constant expression")
   cmeta_add_compile_failure_test(cmeta_${requirement}_cpp_compile_fail
