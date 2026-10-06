@@ -3,9 +3,9 @@
 
 suite("CMeta C++ opaque trace and fault controls") {
     it("consumes C-owned faults and dispatches through the owning C facade") {
-        check_equal(cmeta_static_disable(&cmeta_shared_fault), CMETA_OK);
+        check_equal(salts_fast_disable(&cmeta_shared_fault), CMETA_OK);
         check_false(cmeta_fault_hit(&cmeta_shared_fault));
-        check_equal(cmeta_static_enable(&cmeta_shared_fault), CMETA_OK);
+        check_equal(salts_fast_enable(&cmeta_shared_fault), CMETA_OK);
         check_true(cmeta_fault_hit(&cmeta_shared_fault));
         check_false(cmeta_fault_hit(&cmeta_shared_fault));
         check_equal(cmeta_trace_fixture_enable(), CMETA_OK);
