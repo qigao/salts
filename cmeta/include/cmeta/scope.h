@@ -8,16 +8,28 @@
 #include <stdbool.h>
 
 /*
- * Portable structured lifetime reference.
+ * Portable structured lifetime facade.
  *
- * Resources are explicit finite (Type, name) rows. Each value is initialized
- * through its canonical DataDesc and destroyed in reverse declaration order.
- * Managed exits route to one generated cleanup epilogue.
+ * Managed resources stay statically visible to the preprocessor:
  *
- * Native return/goto/break that escape the macro body are not managed exits;
- * callers must use cmeta_scope_exit for this reference backend.
+ *   cmeta_scope(request, status,
+ *       cmeta_auto(Buffer, buffer)
+ *       cmeta_auto(Socket, socket),
+ *       cmeta_body(
+ *           ...
+ *           if (failed)
+ *               cmeta_leave(request, status, CMETA_CALLBACK_ERROR);
+ *       )
+ *   );
+ *
+ * cmeta_auto emits one finite (Type, name) row. cmeta_scope lowers the row
+ * stream to ordinary-C declarations, DataDesc-backed initialization, one
+ * generated cleanup epilogue, and reverse-order destruction.
+ *
+ * Native return/goto/break that escape the macro body are not managed exits.
+ * Use cmeta_leave for exits that must run the generated cleanup epilogue.
  */
-#define cmeta_resources(...) (__VA_ARGS__)
+#define cmeta_auto(type_, name_) , (type_, name_)
 #define cmeta_body(...) (__VA_ARGS__)
 
 #define CMETA_SCOPE_LABEL_I_(scope_) scope_##__cmeta_cleanup
@@ -55,27 +67,44 @@
         }                                                                      \
     } while (0);
 
-#define CMETA_SCOPE_ROWS_(resources_) CMETA_SCOPE_ROWS_I_ resources_
-#define CMETA_SCOPE_ROWS_I_(...) __VA_ARGS__
+/* cmeta_auto deliberately emits a leading comma. Prefixing a sentinel turns
+ * the field stream into ordinary variadic arguments; this trampoline drops the
+ * sentinel and preserves the finite row list for forward/reverse replay. */
+#define CMETA_SCOPE_ROWS_(autos_) \
+    CMETA_SCOPE_ROWS_EXPAND_(cmeta_scope_auto_sentinel autos_)
+#define CMETA_SCOPE_ROWS_EXPAND_(...) CMETA_SCOPE_ROWS_DROP_(__VA_ARGS__)
+#define CMETA_SCOPE_ROWS_DROP_(sentinel_, ...) __VA_ARGS__
 
-#define cmeta_scope_exit(scope_, status_, value_)                             \
+#define CMETA_SCOPE_DECLARE_ALL_(scope_, autos_) \
+    CMETA_SCOPE_DECLARE_ALL_EXPAND_(scope_, CMETA_SCOPE_ROWS_(autos_))
+#define CMETA_SCOPE_DECLARE_ALL_EXPAND_(scope_, ...) \
+    CMETA_PP_FOR_EACH(CMETA_SCOPE_DECLARE_, scope_, __VA_ARGS__)
+
+#define CMETA_SCOPE_INIT_ALL_(scope_, status_, autos_) \
+    CMETA_SCOPE_INIT_ALL_EXPAND_(scope_, status_, CMETA_SCOPE_ROWS_(autos_))
+#define CMETA_SCOPE_INIT_ALL_EXPAND_(scope_, status_, ...) \
+    CMETA_PP_FOR_EACH(CMETA_SCOPE_INIT_, (scope_, status_), __VA_ARGS__)
+
+#define CMETA_SCOPE_DESTROY_ALL_(scope_, autos_) \
+    CMETA_SCOPE_DESTROY_ALL_EXPAND_(scope_, CMETA_SCOPE_ROWS_(autos_))
+#define CMETA_SCOPE_DESTROY_ALL_EXPAND_(scope_, ...) \
+    CMETA_PP_FOR_EACH_REVERSE(CMETA_SCOPE_DESTROY_, scope_, __VA_ARGS__)
+
+#define cmeta_leave(scope_, status_, value_)                                  \
     do {                                                                       \
         (status_) = (value_);                                                  \
         goto CMETA_SCOPE_LABEL_(scope_);                                      \
     } while (0)
 
-#define cmeta_scope(scope_, status_, resources_, body_)                       \
+#define cmeta_scope(scope_, status_, autos_, body_)                           \
     do {                                                                       \
         (status_) = CMETA_OK;                                                  \
-        CMETA_PP_FOR_EACH(                                                     \
-            CMETA_SCOPE_DECLARE_, scope_, CMETA_SCOPE_ROWS_(resources_))      \
-        CMETA_PP_FOR_EACH(                                                     \
-            CMETA_SCOPE_INIT_, (scope_, status_), CMETA_SCOPE_ROWS_(resources_)) \
+        CMETA_SCOPE_DECLARE_ALL_(scope_, autos_)                              \
+        CMETA_SCOPE_INIT_ALL_(scope_, status_, autos_)                        \
         CMETA_PP_UNPAREN body_                                                 \
         goto CMETA_SCOPE_LABEL_(scope_);                                      \
         CMETA_SCOPE_LABEL_(scope_):                                            \
-        CMETA_PP_FOR_EACH_REVERSE(                                             \
-            CMETA_SCOPE_DESTROY_, scope_, CMETA_SCOPE_ROWS_(resources_))      \
+        CMETA_SCOPE_DESTROY_ALL_(scope_, autos_)                              \
         ;                                                                      \
     } while (0)
 
