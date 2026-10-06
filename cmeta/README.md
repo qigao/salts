@@ -19,7 +19,10 @@ The authoritative syntax and layering contract is
 inspection follows [`INSPECTION.md`](INSPECTION.md): immutable descriptors plus
 canonical semantic queries, without a second meta object model or runtime RTTI.
 
-[`FASTPATH.md`](FASTPATH.md) specifies bounded C11 static keys and typed static
+[`BOUNDARIES.md`](BOUNDARIES.md) classifies core, structured-C and optional
+facades. Core aggregate headers remain independent of runtime adapters.
+
+[`FASTPATH.md`](FASTPATH.md) specifies Platform-owned C11 static keys and CMeta typed static
 calls, their publication/provider lifetimes, and explicitly enabled x86_64 /
 AArch64 assembly backends. Portable atomics remain the default implementation.
 

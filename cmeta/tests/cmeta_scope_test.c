@@ -1,3 +1,4 @@
+#include <cmeta/scope.h>
 #include <cmeta/meta.h>
 #include "tinytest.h"
 

@@ -1,3 +1,4 @@
+#include <cmeta/scope.h>
 #include <cstl/typed.h>
 #include "tinytest.h"
 

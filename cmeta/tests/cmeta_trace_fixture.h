@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-extern cmeta_static_key_state cmeta_shared_fault;
+extern salts_static_key_state cmeta_shared_fault;
 void cmeta_trace_fixture_emit(uint64_t request_id, int status);
 cmeta_status cmeta_trace_fixture_enable(void);
 cmeta_status cmeta_trace_fixture_disable(void);

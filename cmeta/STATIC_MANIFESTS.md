@@ -131,3 +131,31 @@ generated/static manifest representation instead of a reduced-safety fallback.
   a second public registry model.
 
 Typed tracepoint 和默认关闭的 fault point 使用 #923 的 static key；payload metadata 可直接作为 manifest entry 借用。声明、控制、并发与 provider 生命周期见 [TRACEPOINTS.md](TRACEPOINTS.md)。Plugin/capability manifest 和更完整的 ABI fingerprint 仍由 #926 后续工作完成。
+
+## Typed consumption（#926 / #957）
+
+`<cmeta/manifest_view.h>` 提供 type、struct、Function ABI、interface、trace payload、capability 的 typed entry 与 getter。布局仍为 v1 的 generic manifest ABI；新增 kind 值只规定 descriptor 的类型契约。Generic、Plugin、fault 与未支持的 descriptor 不会被推断或自动降级到另一种 kind。
+
+`cmeta_manifest_type_entry` / `struct_entry` / `function_entry` / `interface_entry` / `trace_entry` / `capability_entry` 在 C11 用 `_Generic`、C++17 用 typed constexpr pointer conversion 拒绝错误 descriptor 类型。它们不执行 constructor 或注册；fingerprint/flags 初始为零。高级显式 entry 可继续使用既有 `cmeta_manifest_entry`，但 provider 必须如实遵守 kind 契约。`FunctionMeta` / `FunctionAbi` 现在直接投影同一 canonical static descriptor，因此可用于静态初始化；生成的函数 getter 与 descriptor 内容不变。
+
+```c
+#include <cmeta/manifest_view.h>
+cmeta_struct(ManifestRecord, cmeta_field(int, value));
+cmeta_registry(records,
+    cmeta_manifest_struct_entry("record", StructMeta(ManifestRecord))
+);
+int main(void) {
+    const cmeta_manifest_limits limits = {CMETA_MANIFEST_DEFAULT_ITEMS,
+        CMETA_MANIFEST_DEFAULT_DEPTH, CMETA_MANIFEST_DEFAULT_NODES};
+    const cmeta_struct_desc *record = NULL;
+    cmeta_status status = cmeta_manifest_get_struct(&records, 0u, &limits, &record);
+    if (status != CMETA_OK) return 1;
+    return record == StructMeta(ManifestRecord) ? 0 : 1;
+}
+```
+
+链接 `Salts::CMeta`。该场景由 `cmeta_manifest_view_test` 和 installed Reflection 测试覆盖。Getter 先验证格式、索引、exact kind 与 metadata，再发布原 descriptor 的 const 借用；失败保留输出。`CMETA_INVALID_ARGUMENT` 表示参数/descriptor 无效，`CMETA_TYPE_MISMATCH` 表示格式版本或 kind 不匹配，`CMETA_CAPACITY_EXCEEDED` 表示显式预算不足。Trace getter 验证 payload schema；capability getter 验证 interface schema，不授予接口 handle 或 Plugin lease。
+
+查询限额由调用方显式传入：`max_items` 同时限制 manifest membership、字段/方法/参数/泛型 arity，`max_identity_depth` 与 `max_identity_nodes` 限制递归工作；depth 不能超过可配置的 `CMETA_MANIFEST_DEPTH_LIMIT`。Cycle 在 canonical recursive validator 执行前消耗预算并失败。没有动态分配、对象回调、模块 retain 或缓存。调用方须提供可读且 live 的 ABI-compatible descriptor/数组及 NUL-terminated 字符串；kind 校验不能证明一个任意裸指针的真实存储类型。跨 DSO 消费须先协商 Reflection ABI，并由 Plugin owner 保持 provider lease。这里只验证已知 C metadata，不解析不可信字节流。
+
+`field.type_name` 仍仅用于显示；typed query 不把该字符串当作身份，也不通过全局字符串 lookup 找类型。Legacy ABI-only interface rows 仍按既有 validator 保留 dispatch shape，不伪造 Function metadata。完整 struct/enum/function/plugin fingerprint、Plugin service declaration 与可选 linker aggregation 仍由 #926 后续推进。

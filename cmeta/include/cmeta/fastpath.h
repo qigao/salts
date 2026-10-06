@@ -2,50 +2,10 @@
 #define CMETA_FASTPATH_H
 
 #include <cmeta/function.h>
+#include <salts/fastpath.h>
 
-#ifndef CMETA_NATIVE_FASTPATH
-#define CMETA_NATIVE_FASTPATH 0
-#endif
-
-/* C owns atomic storage. C++ consumers borrow opaque C objects rather than
- * relying on std::atomic/_Atomic layout equivalence. */
-typedef struct cmeta_static_key_state cmeta_static_key_state;
-#ifdef __cplusplus
-extern "C" {
-#endif
-/** key must be live and non-NULL; acquire read of its published state. */
-bool cmeta_static_key_read(const cmeta_static_key_state *key);
-/** Release publication; NULL returns INVALID_ARGUMENT without mutation. */
-cmeta_status cmeta_static_key_set(cmeta_static_key_state *key, bool enabled);
-#if CMETA_NATIVE_FASTPATH
-/** Qualified native acquire read; same key lifetime contract as reference. */
-bool cmeta_static_branch_native(const cmeta_static_key_state *key);
-/* Backend ABI for generated typed slots; applications use the typed facade. */
-typedef void (*cmeta_static_native_target_type)(void);
-cmeta_static_native_target_type cmeta_static_native_target(const void *slot);
-#endif
-#ifdef __cplusplus
-}
-#define cmeta_static_branch(key_) cmeta_static_key_read(key_)
-#else
-#include <stdatomic.h>
-struct cmeta_static_key_state { atomic_bool enabled; };
-#define cmeta_static_key(name_, initial_) \
-    cmeta_static_key_state name_ = {(initial_)}
-CMETA_INLINE bool cmeta_static_branch(const cmeta_static_key_state *key) {
-    return atomic_load_explicit(&key->enabled, memory_order_acquire);
-}
-#if CMETA_NATIVE_FASTPATH
-#if !defined(_MSC_VER) || defined(__clang__)
-_Static_assert(ATOMIC_BOOL_LOCK_FREE == 2 && ATOMIC_POINTER_LOCK_FREE == 2,
-               "CMeta native loads require always-lock-free atomic storage");
-#endif
-/* MSVC's C header reports 1 for every lock-free macro, but its supported
- * _Atomic_is_lock_free implementation guarantees power-of-two sizes <= 8.
- * The one/eight-byte size and alignment assertions qualify that ABI below. */
-_Static_assert(sizeof(atomic_bool) == 1u &&
-               offsetof(cmeta_static_key_state, enabled) == 0u,
-               "CMeta native key requires one-byte atomic bool at offset zero");
+#ifndef __cplusplus
+#if SALTS_NATIVE_FASTPATH
 #define CMETA_STATIC_NATIVE_SLOT_(name_) \
     _Static_assert(sizeof(name_##_target_type) == sizeof(uint64_t) && \
                    sizeof(_Atomic(name_##_target_type)) == sizeof(uint64_t) && \
@@ -53,7 +13,7 @@ _Static_assert(sizeof(atomic_bool) == 1u &&
                    offsetof(name_##_slot_type, target) == 0u, \
                    "CMeta native call requires aligned 64-bit atomic target"); \
     CMETA_INLINE name_##_target_type name_##_load_native(const name_##_slot_type *slot_) { \
-        return (name_##_target_type)cmeta_static_native_target(slot_); \
+        return (name_##_target_type)salts_static_native_target(slot_); \
     }
 #define cmeta_static_native_invoke(name_, ...) name_##_load_native(&(name_))(__VA_ARGS__)
 #define cmeta_static_native_invoke0(name_) name_##_load_native(&(name_))()
@@ -93,11 +53,5 @@ _Static_assert(sizeof(atomic_bool) == 1u &&
 #define cmeta_static_invoke0(name_) name_##_load(&(name_))()
 #endif
 
-CMETA_INLINE cmeta_status cmeta_static_enable(cmeta_static_key_state *key) {
-    return cmeta_static_key_set(key, true);
-}
-CMETA_INLINE cmeta_status cmeta_static_disable(cmeta_static_key_state *key) {
-    return cmeta_static_key_set(key, false);
-}
 
 #endif

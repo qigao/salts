@@ -1,5 +1,5 @@
 #include "cmeta_trace_fixture.h"
-cmeta_fault_point(cmeta_shared_fault);
+salts_fault_point(cmeta_shared_fault);
 cmeta_tracepoint(peer_request, cmeta_field(uint64_t, request_id) cmeta_field(int, status));
 static uint64_t peer_last_id;
 static void peer_backend(const peer_request_payload *event) {

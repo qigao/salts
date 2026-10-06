@@ -27,7 +27,11 @@ typedef enum cmeta_manifest_kind {
     CMETA_MANIFEST_PLUGIN = 1,
     CMETA_MANIFEST_CAPABILITY = 2,
     CMETA_MANIFEST_TRACEPOINT = 3,
-    CMETA_MANIFEST_FAULT_POINT = 4
+    CMETA_MANIFEST_FAULT_POINT = 4,
+    CMETA_MANIFEST_TYPE = 5,
+    CMETA_MANIFEST_STRUCT = 6,
+    CMETA_MANIFEST_FUNCTION = 7,
+    CMETA_MANIFEST_INTERFACE = 8
 } cmeta_manifest_kind;
 
 typedef struct cmeta_manifest_entry {

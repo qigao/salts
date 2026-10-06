@@ -2,11 +2,11 @@
 
 cmake_add_test(cmeta_trace_test
   SOURCES cmeta_trace_test.c
-  LIBS Salts::CMeta Salts::TinyTest Salts::Platform
+  LIBS Salts::CMetaFastpath Salts::TinyTest Salts::Platform
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_trace_cpp_test
   SOURCES cmeta_trace_cpp_test.cpp cmeta_trace_peer.c
-  LIBS Salts::CMeta Salts::TinyTest
+  LIBS Salts::CMetaFastpath Salts::TinyTest
   FOLDER "cmeta/tests")
 set_target_properties(cmeta_trace_test cmeta_trace_cpp_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -36,15 +36,15 @@ cmake_add_test(cmeta_capabilities_header_cpp_test
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_test
   SOURCES cmeta_fastpath_test.c cmeta_fastpath_peer.c
-  LIBS Salts::CMeta Salts::TinyTest Salts::Platform
+  LIBS Salts::CMetaFastpath Salts::TinyTest Salts::Platform
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_cpp_test
   SOURCES cmeta_fastpath_cpp_test.cpp cmeta_fastpath_peer.c
-  LIBS Salts::CMeta Salts::TinyTest
+  LIBS Salts::CMetaFastpath Salts::TinyTest
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_coroutine_test
   SOURCES cmeta_fastpath_coroutine_test.c cmeta_fastpath_peer.c
-  LIBS Salts::CMeta Salts::TinyTest Salts::Coroutine
+  LIBS Salts::CMetaFastpath Salts::TinyTest Salts::Coroutine
   FOLDER "cmeta/tests")
 set_target_properties(cmeta_fastpath_test cmeta_fastpath_cpp_test cmeta_fastpath_coroutine_test
   PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -327,6 +327,11 @@ cmeta_add_compile_failure_test(
   compile_fail/cmeta_fastpath_missing_decl.c
   "undeclared_target_function_type|syntax error: identifier 'slot_target_type'")
 
+foreach(fastpath_compile_case IN ITEMS cmeta_trace_wrong_backend_compile_fail
+    cmeta_fastpath_wrong_target_compile_fail cmeta_fastpath_missing_decl_compile_fail)
+  target_link_libraries(${fastpath_compile_case} PRIVATE Salts::CMetaFastpath)
+endforeach()
+
 cmeta_add_compile_failure_test(
   cmeta_compute_missing_type_compile_fail
   compile_fail/cmeta_compute_missing_type.c
@@ -450,3 +455,26 @@ set_target_properties(cmeta_function_reflection_test cmeta_method_test cmeta_obj
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+
+cmake_add_test(cmeta_manifest_view_test
+  SOURCES cmeta_manifest_view_test.c cmeta_manifest_view_peer.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+cmake_add_test(cmeta_manifest_view_cpp_test
+  SOURCES cmeta_manifest_view_cpp_test.cpp cmeta_manifest_view_peer.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+set_target_properties(cmeta_manifest_view_test cmeta_manifest_view_cpp_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_target_properties(cmeta_manifest_view_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_manifest_view_cpp_test PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:-Werror=old-style-cast>")
+endif()
+cmeta_add_compile_failure_test(cmeta_manifest_wrong_descriptor_compile_fail
+  compile_fail/cmeta_manifest_wrong_descriptor.c
+  "generic association|compatible type|controlling expression|C11 generic|not compatible with any association")
+
+cmeta_add_compile_failure_test(cmeta_manifest_wrong_descriptor_cpp_compile_fail
+  compile_fail/cmeta_manifest_wrong_descriptor.cpp "cmeta_type_desc")
+set_target_properties(cmeta_manifest_wrong_descriptor_cpp_compile_fail PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)

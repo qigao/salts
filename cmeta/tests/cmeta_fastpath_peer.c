@@ -1,7 +1,7 @@
 #include "cmeta_fastpath_fixture.h"
 
 enum { FASTPATH_ADDEND = 3, FASTPATH_MULTIPLIER = 2, FASTPATH_ANSWER = 42 };
-cmeta_static_key(fastpath_shared_key, false);
+salts_static_key(fastpath_shared_key, false);
 int fastpath_void_sink;
 int fastpath_target_payload;
 

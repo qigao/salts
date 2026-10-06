@@ -1,6 +1,10 @@
 #include <cmeta/meta.h>
 #include "tinytest.h"
 
+#if defined(CMETA_FASTPATH_H) || defined(CMETA_TRACE_H) || defined(CMETA_SCOPE_H) || defined(SALTS_FASTPATH_H)
+#error "core aggregate must not include structured or optional runtime facades"
+#endif
+
 #ifdef Containers
 #error "cmeta/meta.h must not expose the Containers batch macro"
 #endif

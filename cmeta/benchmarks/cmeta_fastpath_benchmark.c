@@ -4,7 +4,7 @@
 enum { FASTPATH_BENCH_SAMPLES = 25, FASTPATH_BENCH_OPERATIONS = 1000000 };
 static volatile bool fastpath_plain_enabled;
 static volatile uint64_t fastpath_benchmark_sink;
-cmeta_static_key(fastpath_benchmark_key, false);
+salts_static_key(fastpath_benchmark_key, false);
 cmeta_static_call(fastpath_benchmark_slot, fastpath_benchmark_target);
 
 suite("CMeta fastpath Release benchmarks") {
@@ -13,7 +13,7 @@ suite("CMeta fastpath Release benchmarks") {
             ((uint64_t)FASTPATH_BENCH_OPERATIONS + 1u) / 2u;
         for (int enabled = 0; enabled <= 1; ++enabled) {
             fastpath_plain_enabled = enabled != 0;
-            check_equal(cmeta_static_key_set(&fastpath_benchmark_key, enabled != 0), CMETA_OK);
+            check_equal(salts_static_key_set(&fastpath_benchmark_key, enabled != 0), SALTS_OK);
             benchmark_ops(enabled ? "plain branch / enabled" : "plain branch / disabled",
                           FASTPATH_BENCH_SAMPLES, FASTPATH_BENCH_OPERATIONS) {
                 uint64_t sum = 0u;
@@ -26,17 +26,17 @@ suite("CMeta fastpath Release benchmarks") {
                           FASTPATH_BENCH_SAMPLES, FASTPATH_BENCH_OPERATIONS) {
                 uint64_t sum = 0u;
                 for (uint64_t index = 0u; index < FASTPATH_BENCH_OPERATIONS; ++index)
-                    if (cmeta_static_branch(&fastpath_benchmark_key))
+                    if (salts_static_branch(&fastpath_benchmark_key))
                         sum += fastpath_benchmark_target(index);
                 fastpath_benchmark_sink = sum;
             }
             check_equal(fastpath_benchmark_sink, enabled ? enabled_sum : UINT64_C(0));
-#if CMETA_NATIVE_FASTPATH
+#if SALTS_NATIVE_FASTPATH
             benchmark_ops(enabled ? "native key / enabled" : "native key / disabled",
                           FASTPATH_BENCH_SAMPLES, FASTPATH_BENCH_OPERATIONS) {
                 uint64_t sum = 0u;
                 for (uint64_t index = 0u; index < FASTPATH_BENCH_OPERATIONS; ++index)
-                    if (cmeta_static_branch_native(&fastpath_benchmark_key))
+                    if (salts_static_branch_native(&fastpath_benchmark_key))
                         sum += fastpath_benchmark_target(index);
                 fastpath_benchmark_sink = sum;
             }
@@ -61,7 +61,7 @@ suite("CMeta fastpath Release benchmarks") {
             fastpath_benchmark_sink = sum;
         }
         check_equal(fastpath_benchmark_sink, expected);
-#if CMETA_NATIVE_FASTPATH
+#if SALTS_NATIVE_FASTPATH
         benchmark_ops("native static call", FASTPATH_BENCH_SAMPLES, FASTPATH_BENCH_OPERATIONS) {
             uint64_t sum = 0u;
             for (uint64_t index = 0u; index < FASTPATH_BENCH_OPERATIONS; ++index)

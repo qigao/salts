@@ -138,6 +138,8 @@ signatures, provider admission, ownership, failure cleanup and compatibility.
 
 ### Structured scope
 
+Include `<cmeta/scope.h>` explicitly; core `<cmeta/meta.h>` does not aggregate structured or optional runtime facades.
+
 `cmeta_scope(name, status, autos, body)` owns 1 through 16 explicit
 `cmeta_auto(Type, local_name)` rows inside `cmeta_autos(...)`. The wrapper
 keeps the leading-comma row stream in one preprocessor argument and has no
@@ -572,15 +574,15 @@ the host environment leaves them available.
 
 ### Static key / typed static call
 
-`<cmeta/fastpath.h>` 的 C11 `cmeta_static_key(name, initial)` 定义原子 bool，
-`cmeta_static_branch(&name)` acquire 读取；enable/disable 在控制面 release 发布。
+`<salts/fastpath.h>` 的 C11 `salts_static_key(name, initial)` 定义原子 bool，
+`salts_static_branch(&name)` acquire 读取；enable/disable 在控制面 release 发布。
 `cmeta_static_call(slot, default_function)` 从 FunctionDecl 生成精确类型原子槽，
 `cmeta_static_update(slot, function)` 检查签名与完整 ABI 契约后替换。
 `cmeta_static_invoke(slot, args...)` 直接调用该次读取的目标，零参数用
 `cmeta_static_invoke0(slot)`。
 call 声明要求文件作用域、每槽一个 TU；热路径无 Reflection 查询。
 
-默认使用可移植 C 原子；`CMETA_NATIVE_FASTPATH=ON` 才暴露显式 native 读取/调用。
+默认使用可移植 C 原子；`SALTS_NATIVE_FASTPATH=ON` 才暴露显式 native 读取/调用。
 C++17 借用 C-owned opaque key。更新失败不改变目标；更新不 retain 或 drain 旧
 提供者，所有旧代码目标必须活到在途调用结束。完整契约、边界、benchmark
 和可编译测试示例见 [FASTPATH.md](FASTPATH.md)。

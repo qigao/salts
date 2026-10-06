@@ -1,6 +1,6 @@
 # Typed tracepoint 与 fault point（#926）
 
-`cmeta/trace.h` 在 #923 的 static key 上提供 C11 声明和控制入口。Payload 的布局与字段 metadata 由既有 `cmeta_struct` 生成；manifest 可以直接借用 `StructMeta`，不建立另一份类型或所有权 registry。C++17 消费方通过所属 C 模块的 typed wrapper 和 opaque key 使用这些入口。
+`cmeta/trace.h` 在 Platform-owned static key 上提供 C11 声明和控制入口。Payload 的布局与字段 metadata 由既有 `cmeta_struct` 生成；manifest 可以直接借用 `StructMeta`，不建立另一份类型或所有权 registry。C++17 消费方通过所属 C 模块的 typed wrapper 和 opaque key 使用这些入口。
 
 ## 状态与生命周期协议
 
@@ -20,17 +20,16 @@ Backend 同步借用 `const payload *`，指针在 callback 返回时失效。Pa
 ## C11 示例
 
 ```c
-#include <cmeta/manifest.h>
+#include <cmeta/manifest_view.h>
 #include <cmeta/trace.h>
 
 cmeta_tracepoint(http_request,
     cmeta_field(uint64_t, request_id)
     cmeta_field(int, status));
-cmeta_fault_point(alloc_fail);
+salts_fault_point(alloc_fail);
 
 cmeta_registry(telemetry_manifest,
-    cmeta_manifest_entry("http_request", CMETA_MANIFEST_TRACEPOINT,
-        StructMeta(http_request_payload), UINT64_C(0), UINT32_C(0))
+    cmeta_manifest_trace_entry("http_request", StructMeta(http_request_payload))
 );
 
 static uint64_t last_request;
@@ -45,15 +44,15 @@ int main(void) {
         return 1;
     cmeta_trace_emit(http_request, (uint64_t)EXAMPLE_REQUEST_ID, EXAMPLE_STATUS);
     if (cmeta_trace_disable(http_request) != CMETA_OK ||
-        cmeta_fault_arm(alloc_fail) != CMETA_OK)
+        salts_fault_arm(alloc_fail) != SALTS_OK)
         return 1;
-    if (!cmeta_fault_hit(&alloc_fail) || cmeta_fault_hit(&alloc_fail))
+    if (!salts_fault_hit(&alloc_fail) || salts_fault_hit(&alloc_fail))
         return 1;
     return last_request == EXAMPLE_REQUEST_ID && telemetry_manifest.count == 1u ? 0 : 1;
 }
 ```
 
-示例行为由 `cmeta_trace_test` 的正式 TinyTest 用例验证，另外覆盖失败和并发边界。独立示例需链接 `Salts::CMeta`。Manifest 的零 fingerprint 表示未声明 fingerprint，不是新的算法或有效性检查。
+示例行为由 `cmeta_trace_test` 的正式 TinyTest 用例验证，另外覆盖失败和并发边界。独立示例需链接 `Salts::CMetaFastpath`，其依赖为 CMeta + Platform。Manifest 的零 fingerprint 表示未声明 fingerprint，不是新的算法或有效性检查。
 
 ## 控制入口
 
@@ -61,14 +60,14 @@ int main(void) {
 - `cmeta_trace_bind(name, callback)` 要求 `void (*)(const name_payload *)`，不兼容签名在编译时拒绝；成功返回 `CMETA_OK`。生成的 `name_bind(NULL)` 返回 `CMETA_INVALID_ARGUMENT`，不改变现有 backend。
 - `cmeta_trace_enable(name)` 成功返回 `CMETA_OK`，未绑定返回 `CMETA_INVALID_ARGUMENT`；`cmeta_trace_disable(name)` 关闭 key 并返回 `CMETA_OK`，保留 backend。
 - `cmeta_trace_emit(name, values...)` 无返回值；关闭时无参数副作用，启用时同步调用 exact typed backend，不查询 Reflection。
-- `cmeta_fault_point(name)` 声明默认关闭的 key；`cmeta_fault_arm(name)` / `cmeta_fault_disarm(name)` 返回既有 static-key 状态码。
-- `cmeta_fault_hit(key)` 要求 live、非 NULL 的 key，返回是否消费了许可；C++ 通过 `cmeta_fault_consume(key)` 使用 C-owned opaque 原子存储。它不是事件计数器，重复 arm 不累积次数。
+- `salts_fault_point(name)` 声明默认关闭的 key；`salts_fault_arm(name)` / `salts_fault_disarm(name)` 返回 Platform 的 `SALTS_OK` / `SALTS_EINVAL`。
+- `salts_fault_hit(key)` 要求 live、非 NULL 的 key，返回是否消费了许可；C++ 通过 `salts_fault_consume(key)` 使用 C-owned opaque 原子存储。它不是事件计数器，重复 arm 不累积次数。
 
 ## 兼容性与验证
 
-新增 facade 不改变既有 descriptor 布局、manifest 格式、fingerprint 版本或 Plugin ABI，也不增加依赖。Disabled 路径保持调用方原有行为，开启 fault 后如何注入失败由所属模块显式决定。
+Descriptor 布局、manifest 格式、fingerprint 版本与 Plugin ABI 不变。#957 将 key/fault 机制迁移至 Platform，删除旧 `cmeta_*` spelling；消费方需更新名称、状态码、native option，并显式链接 `Salts::CMetaFastpath`。Core CMeta 保持独立。Disabled 路径保持调用方原有行为，开启 fault 后如何注入失败由所属模块显式决定。
 
-采用已有 portable atomic gate，而不是在这里增加汇编、JIT 或全局注册器。替换 backend 所需的一次 typed 间接调用由 enabled-path benchmark 测量；disabled 路径在 backend load、payload 初始化和调用前返回。只新增 CMeta 入口、测试和文档，移除新增入口即可回滚，不迁移数据。
+采用已有 portable atomic gate，而不是在这里增加汇编、JIT 或全局注册器。替换 backend 所需的一次 typed 间接调用由 enabled-path benchmark 测量；disabled 路径在 backend load、payload 初始化和调用前返回。Typed payload facade 不拥有 key 机制。回滚须同时恢复 owner 与消费方，不引入转发 alias；不迁移运行期数据。
 
 正式测试覆盖默认关闭、参数不求值/只求值一次、精确 payload metadata、immutable manifest 借用、未绑定 enable、NULL bind 保留原后端、替换/关闭、并发发布与一次性 fault、C++ opaque 消费以及错误签名编译拒绝。五平台 gate 和 portable TSan 使用这些正式测试；Release benchmark 比较 plain branch、static key、tracepoint 和 fault point，不设置机器相关阈值。Plugin/capability manifest 和完整 ABI fingerprint 投影仍属于 #926 的后续范围。
 
@@ -80,6 +79,6 @@ cmake --build --preset win-dev-user --target cmeta_trace_test cmeta_trace_cpp_te
 ctest --preset win-dev-user --output-on-failure -R "^(cmeta_trace_|cmeta_fastpath_(test|cpp_test|.*compile_fail)$|cmeta_manifest_test$|cmeta_header_cpp_test$)"
 ```
 
-`win-clang-user` 使用同一 target/filter 验证 portable 路径。Release 使用 `win-release-user`，configure 增加 `-DCMETA_NATIVE_FASTPATH=ON -DCMETA_BUILD_BENCHMARKS=ON`，build 增加 `cmeta_trace_benchmark`，并使用 `ctest --preset win-release-user -V -R '^cmeta_trace_benchmark$'` 查看 TinyTest benchmark。
+`win-clang-user` 使用同一 target/filter 验证 portable 路径。Release 使用 `win-release-user`，configure 增加 `-DSALTS_NATIVE_FASTPATH=ON -DCMETA_BUILD_BENCHMARKS=ON`，build 增加 `cmeta_trace_benchmark`，并使用 `ctest --preset win-release-user -V -R '^cmeta_trace_benchmark$'` 查看 TinyTest benchmark。
 
 2026-10-06 本地结果（事实）：MSVC 19.44 + ASan 与 Clang 21.1 各 9/9 通过；额外 C11 aggregate header/core/capabilities ASan 回归 3/3 通过；Release/native 正式测试与 benchmark 通过。MSVC Release `/O2 /Ob2`，25 × 1,000,000 ops 的 plain disabled branch/static key/tracepoint/fault point 均值为 0.468/0.475/0.472/0.474 ns，enabled tracepoint 为 1.271 ns。推论：该负载下 disabled facade 与 baseline 成本接近；此结果不构成跨机器的零开销保证。
