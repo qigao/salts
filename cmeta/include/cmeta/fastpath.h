@@ -12,7 +12,7 @@
 #include <stdatomic.h>
 
 #if SALTS_PLATFORM_NATIVE_FASTPATH
-#if !defined(_MSC_VER) || defined(__clang__)
+#if CMETA_HAS_ATOMIC_POINTER_LOCK_FREE_CONSTANT
 _Static_assert(ATOMIC_POINTER_LOCK_FREE == 2,
                "CMeta native static call requires always-lock-free atomic pointer storage");
 #endif
