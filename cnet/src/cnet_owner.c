@@ -74,13 +74,19 @@ typedef struct cnet_owner_request {
   bool close_after_send;
   bool vector_write;
   salts_deadline_id deadline;
+#if defined(CNET_INTERNAL_PROFILING)
+  uint64_t profile_submitted_ns;
+#endif
 } cnet_owner_request;
 
 typedef struct cnet_owner_pending_event {
   cnet_event event;
 } cnet_owner_pending_event;
 
-enum { CNET_OWNER_RESOLVER_POLL_INTERVAL_MS = 1u };
+enum {
+  CNET_OWNER_RESOLVER_POLL_INTERVAL_MS = 1u,
+  CNET_OWNER_DEFERRED_CONTINUATION_MAX_PASSES = 8u
+};
 
 struct cnet_owner_impl {
   native_io_backend backend;
@@ -116,6 +122,8 @@ struct cnet_owner_impl {
   void *clock_context;
 #if defined(CNET_INTERNAL_PROFILING)
   cnet_owner_profile profile;
+  cnet_owner_trace_event *profile_trace_events;
+  size_t profile_trace_capacity;
   bool profile_active;
 #endif
 #if defined(CNET_INTERNAL_TESTING)
@@ -202,6 +210,41 @@ static void cnet_owner_profile_add(cnet_owner_impl *impl, uint64_t *counter,
                                    uint64_t value) {
   if (!impl->profile_active || counter == NULL || value == 0u) return;
   *counter = value > UINT64_MAX - *counter ? UINT64_MAX : *counter + value;
+}
+
+static void cnet_owner_profile_trace_at(cnet_owner_impl *impl,
+                                        cnet_owner_trace_kind kind,
+                                        cnet_session_handle session,
+                                        native_io_request request,
+                                        native_io_endpoint endpoint,
+                                        size_t bytes,
+                                        uint64_t timestamp_ns) {
+  size_t index;
+  if (!impl->profile_active || impl->profile_trace_events == NULL)
+    return;
+  if (impl->profile.trace_event_count >= impl->profile_trace_capacity) {
+    if (impl->profile.trace_dropped != UINT64_MAX)
+      ++impl->profile.trace_dropped;
+    return;
+  }
+  index = (size_t)impl->profile.trace_event_count++;
+  impl->profile_trace_events[index] =
+      (cnet_owner_trace_event){.timestamp_ns = timestamp_ns,
+                               .session = session,
+                               .request = request,
+                               .endpoint = endpoint,
+                               .bytes = (uint64_t)bytes,
+                               .kind = kind};
+}
+
+static void cnet_owner_profile_trace(cnet_owner_impl *impl,
+                                     cnet_owner_trace_kind kind,
+                                     cnet_session_handle session,
+                                     native_io_request request,
+                                     native_io_endpoint endpoint,
+                                     size_t bytes) {
+  cnet_owner_profile_trace_at(impl, kind, session, request, endpoint,
+                              bytes, salts_hrtime());
 }
 #endif
 
@@ -930,7 +973,28 @@ static int cnet_owner_submit_request(cnet_owner_impl *impl, cnet_owner_request *
   status = native_io_backend_prepare(&impl->backend, &submitted, &native_request);
   (void)first_submit;
 #endif
-  if (status == SALTS_OK) request->native_request = native_request;
+  if (status == SALTS_OK) {
+    request->native_request = native_request;
+#if defined(CNET_INTERNAL_PROFILING)
+    if (request->role == CNET_OWNER_REQUEST_TLS_READ ||
+        request->role == CNET_OWNER_REQUEST_TLS_WRITE) {
+      request->profile_submitted_ns =
+          !impl->profile_active || impl->profile_trace_events != NULL
+              ? salts_hrtime()
+              : 0u;
+      if (request->profile_submitted_ns != 0u) {
+        const cnet_owner_trace_kind kind =
+            request->role == CNET_OWNER_REQUEST_TLS_READ
+                ? CNET_OWNER_TRACE_TLS_READ_ARM
+                : CNET_OWNER_TRACE_TLS_WRITE_SUBMIT;
+        cnet_owner_profile_trace_at(
+            impl, kind, request->session, native_request,
+            request->operation.endpoint, request->submitted_size,
+            request->profile_submitted_ns);
+      }
+    }
+#endif
+  }
   return status;
 }
 
@@ -1237,6 +1301,13 @@ static int cnet_owner_tls_pump_impl(cnet_owner_impl *impl, cnet_owner_session *s
     status = cnet_tls_read(&session->tls, mem_buffer_data(session->receive_buffer),
                            impl->receive_buffer_bytes, &plaintext_size, &peer_closed);
     if (status != SALTS_OK) return status;
+#if defined(CNET_INTERNAL_PROFILING)
+    if (plaintext_size != 0u)
+      cnet_owner_profile_trace(impl, CNET_OWNER_TRACE_TLS_DECRYPT,
+                               session->handle, (native_io_request){0},
+                               cnet_transport_read_endpoint(&session->transport),
+                               plaintext_size);
+#endif
     status = cnet_owner_tls_start_write(impl, session, &started);
     if (status != SALTS_OK) return status;
     if (plaintext_size != 0u) {
@@ -1265,6 +1336,14 @@ static int cnet_owner_tls_pump_impl(cnet_owner_impl *impl, cnet_owner_session *s
         if (status != SALTS_OK) return status;
       }
       status = cnet_owner_publish_event(impl, &event);
+#if defined(CNET_INTERNAL_PROFILING)
+      if (status == SALTS_OK)
+        cnet_owner_profile_trace(
+            impl, CNET_OWNER_TRACE_PLAINTEXT_PUBLISH, session->handle,
+            (native_io_request){0},
+            cnet_transport_read_endpoint(&session->transport),
+            plaintext_size);
+#endif
       if (status == SALTS_ENOBUFS) {
         if (impl->pending_event_count == impl->pending_event_capacity) return SALTS_ENOBUFS;
         impl->pending_events[impl->pending_event_count++].event = event;
@@ -2053,6 +2132,19 @@ static int cnet_owner_route_completion(cnet_owner_impl *impl,
   index = (size_t)completion->user_data - 1u;
   request = &impl->request_records[index];
 
+#if defined(CNET_INTERNAL_PROFILING)
+  if (completion->kind == NATIVE_IO_COMPLETION_OK) {
+    if (request->role == CNET_OWNER_REQUEST_TLS_READ)
+      cnet_owner_profile_trace(impl, CNET_OWNER_TRACE_TLS_READ_COMPLETION,
+                               request->session, completion->request,
+                               completion->endpoint, completion->bytes);
+    else if (request->role == CNET_OWNER_REQUEST_TLS_WRITE)
+      cnet_owner_profile_trace(impl, CNET_OWNER_TRACE_TLS_WRITE_COMPLETION,
+                               request->session, completion->request,
+                               completion->endpoint, completion->bytes);
+  }
+#endif
+
   if ((request->role == CNET_OWNER_REQUEST_SEND ||
        request->role == CNET_OWNER_REQUEST_TLS_WRITE) &&
       completion->kind == NATIVE_IO_COMPLETION_OK) {
@@ -2651,8 +2743,8 @@ int cnet_owner_wake(cnet_owner *owner) {
 
 int cnet_owner_flush_deferred(cnet_owner *owner) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
-  size_t processed = 0u;
-  int status;
+  size_t pass;
+  int status = SALTS_OK;
 #if defined(CNET_INTERNAL_PROFILING)
   uint64_t owner_started;
 #endif
@@ -2661,52 +2753,73 @@ int cnet_owner_flush_deferred(cnet_owner *owner) {
 
 #if defined(CNET_INTERNAL_PROFILING)
   owner_started = cnet_owner_profile_start(impl);
-  {
-    const bool profile_active = impl->profile_active;
-    const uint64_t request_ns_before = impl->profile.request_lifecycle_ns;
-    const uint64_t request_calls_before = impl->profile.request_lifecycle_calls;
-    const uint64_t profile_started = cnet_owner_profile_start(impl);
-    status = cnet_owner_process_commands(impl, &processed);
-    cnet_owner_profile_finish(impl, profile_started, &impl->profile.command_stage_ns,
-                              &impl->profile.command_stage_calls);
-    if (profile_active) {
-      impl->profile.command_request_lifecycle_ns +=
-          impl->profile.request_lifecycle_ns - request_ns_before;
-      impl->profile.command_request_lifecycle_calls +=
-          impl->profile.request_lifecycle_calls - request_calls_before;
-    }
-  }
-#else
-  status = cnet_owner_process_commands(impl, &processed);
 #endif
-  if (status != SALTS_OK) {
+
+  /*
+   * A callback can publish a deferred receive command while session work from
+   * the previous deferred command is being progressed. A single
+   * commands->session-work pass therefore leaves multi-record TLS receive
+   * chains artificially split across outer polls.
+   *
+   * Drive a small bounded fixed point instead: consume deferred commands,
+   * progress the session work they schedule, then repeat only while that pass
+   * actually had owner-local work. This never observes NativeIO and callbacks
+   * are never recursive: each publication returns before the next pass starts.
+   * The hard pass bound preserves fairness even if a callback continuously
+   * republishes work.
+   */
+  for (pass = 0u; pass < CNET_OWNER_DEFERRED_CONTINUATION_MAX_PASSES; ++pass) {
+    size_t processed = 0u;
+    const bool had_session_work = impl->session_work_count != 0u;
+
 #if defined(CNET_INTERNAL_PROFILING)
-    cnet_owner_profile_finish(impl, owner_started, &impl->profile.owner_drive_ns,
-                              &impl->profile.owner_drive_calls);
+    {
+      const bool profile_active = impl->profile_active;
+      const uint64_t request_ns_before = impl->profile.request_lifecycle_ns;
+      const uint64_t request_calls_before = impl->profile.request_lifecycle_calls;
+      const uint64_t profile_started = cnet_owner_profile_start(impl);
+      status = cnet_owner_process_commands(impl, &processed);
+      cnet_owner_profile_finish(impl, profile_started, &impl->profile.command_stage_ns,
+                                &impl->profile.command_stage_calls);
+      if (profile_active) {
+        impl->profile.command_request_lifecycle_ns +=
+            impl->profile.request_lifecycle_ns - request_ns_before;
+        impl->profile.command_request_lifecycle_calls +=
+            impl->profile.request_lifecycle_calls - request_calls_before;
+      }
+    }
+#else
+    status = cnet_owner_process_commands(impl, &processed);
 #endif
-    return status;
+    if (status != SALTS_OK) break;
+
+#if defined(CNET_INTERNAL_PROFILING)
+    {
+      const bool profile_active = impl->profile_active;
+      const uint64_t request_ns_before = impl->profile.request_lifecycle_ns;
+      const uint64_t request_calls_before = impl->profile.request_lifecycle_calls;
+      const uint64_t profile_started = cnet_owner_profile_start(impl);
+      status = cnet_owner_process_session_work(impl);
+      cnet_owner_profile_finish(impl, profile_started, &impl->profile.receive_rearm_stage_ns,
+                                &impl->profile.receive_rearm_stage_calls);
+      if (profile_active) {
+        impl->profile.receive_rearm_request_lifecycle_ns +=
+            impl->profile.request_lifecycle_ns - request_ns_before;
+        impl->profile.receive_rearm_request_lifecycle_calls +=
+            impl->profile.request_lifecycle_calls - request_calls_before;
+      }
+    }
+#else
+    status = cnet_owner_process_session_work(impl);
+#endif
+    if (status != SALTS_OK) break;
+
+    if (processed == 0u && !had_session_work) break;
   }
 
 #if defined(CNET_INTERNAL_PROFILING)
-  {
-    const bool profile_active = impl->profile_active;
-    const uint64_t request_ns_before = impl->profile.request_lifecycle_ns;
-    const uint64_t request_calls_before = impl->profile.request_lifecycle_calls;
-    const uint64_t profile_started = cnet_owner_profile_start(impl);
-    status = cnet_owner_process_session_work(impl);
-    cnet_owner_profile_finish(impl, profile_started, &impl->profile.receive_rearm_stage_ns,
-                              &impl->profile.receive_rearm_stage_calls);
-    if (profile_active) {
-      impl->profile.receive_rearm_request_lifecycle_ns +=
-          impl->profile.request_lifecycle_ns - request_ns_before;
-      impl->profile.receive_rearm_request_lifecycle_calls +=
-          impl->profile.request_lifecycle_calls - request_calls_before;
-    }
-  }
   cnet_owner_profile_finish(impl, owner_started, &impl->profile.owner_drive_ns,
                             &impl->profile.owner_drive_calls);
-#else
-  status = cnet_owner_process_session_work(impl);
 #endif
   return status;
 }
@@ -2926,7 +3039,41 @@ int cnet_owner_profile_begin(cnet_owner *owner) {
   if (impl == NULL || impl->closed) return SALTS_EINVAL;
   if (impl->profile_active) return SALTS_EALREADY;
   memset(&impl->profile, 0, sizeof(impl->profile));
+  impl->profile_trace_events = NULL;
+  impl->profile_trace_capacity = 0u;
   impl->profile_active = true;
+  return SALTS_OK;
+}
+
+int cnet_owner_profile_trace_bind(cnet_owner *owner,
+                                  cnet_owner_trace_event *events,
+                                  size_t capacity) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  size_t index;
+  if (impl == NULL || impl->closed || events == NULL || capacity == 0u)
+    return SALTS_EINVAL;
+  if (!impl->profile_active || impl->profile_trace_events != NULL)
+    return SALTS_EBUSY;
+  impl->profile_trace_events = events;
+  impl->profile_trace_capacity = capacity;
+  impl->profile.trace_event_count = 0u;
+  impl->profile.trace_dropped = 0u;
+  for (index = 0u; index < impl->request_capacity; ++index) {
+    cnet_owner_request *request = &impl->request_records[index];
+    cnet_owner_trace_kind kind;
+    if (!request->active || request->profile_submitted_ns == 0u)
+      continue;
+    if (request->role == CNET_OWNER_REQUEST_TLS_READ)
+      kind = CNET_OWNER_TRACE_TLS_READ_ARM;
+    else if (request->role == CNET_OWNER_REQUEST_TLS_WRITE)
+      kind = CNET_OWNER_TRACE_TLS_WRITE_SUBMIT;
+    else
+      continue;
+    cnet_owner_profile_trace_at(
+        impl, kind, request->session, request->native_request,
+        request->operation.endpoint, request->submitted_size,
+        request->profile_submitted_ns);
+  }
   return SALTS_OK;
 }
 
@@ -2938,6 +3085,8 @@ int cnet_owner_profile_take(cnet_owner *owner, cnet_owner_profile *out_profile) 
   if (!impl->profile_active) return SALTS_EBUSY;
   *out_profile = impl->profile;
   impl->profile_active = false;
+  impl->profile_trace_events = NULL;
+  impl->profile_trace_capacity = 0u;
   return SALTS_OK;
 }
 #endif

@@ -743,6 +743,29 @@ CNET_IO_BENCHMARK_BACKEND=epoll CNET_IO_BENCHMARK_TRACE=native:tcp:32768 \
 更换驱动重复同一 workload。只有 syscall 次数、CPU/调度证据与未插桩复测相互印证后，
 才把候选原因升级为根因；否则报告保留“未解释”，不凭阶段表直接优化生产路径。
 
+### TLS receive cadence attribution
+
+Linux `cnet_tls_public_owner_benchmark` 的私有 profiling 构建可对一次精确 echo
+记录有界事件时间线。trace 模式要求 `echo`、`owners=1`、`fresh` 和一次 operation，
+避免把多个逻辑操作混入同一 session/request 时间线：
+
+```sh
+CNET_TLS_PUBLIC_TRACE=1 \
+CNET_TLS_PUBLIC_OWNER_OPS=1 \
+CNET_TLS_PUBLIC_NODELAY=1 \
+CNET_TLS_PUBLIC_RECEIVE_DEMAND=single \
+  build/linux-gcc-release/bin/cnet_tls_public_owner_benchmark \
+  echo 32768 1 fresh
+```
+
+stderr 的 JSON lines 按统一单调时钟合并 client/server 事件，包含 TLS ciphertext
+write submit、socket write completion、NativeIO read arm/completion、TLS record decrypt、
+plaintext publish、completion bytes 以及 session/request/endpoint identity。已经在 trace
+启用前 arm 的 TLS read 使用 request record 保存的原始 submit 时间，不把 trace 启用时间
+误当成 read-arm 时间。固定 trace buffer 满额会令 benchmark 失败，不静默丢事件。
+正常 benchmark 未设置 `CNET_TLS_PUBLIC_TRACE` 时不记录逐事件时间线；安装的
+`Salts::CNet` target 也不包含该私有 profiling 路径。
+
 
 ### TLS logical write ownership
 
