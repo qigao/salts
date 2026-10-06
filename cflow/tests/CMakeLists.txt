@@ -257,8 +257,6 @@ if(WIN32 AND NOT BUILD_SHARED_LIBS)
     cflow_executor_dso_fixture.h)
   target_link_libraries(cflow_executor_dso_fixture
     PRIVATE Salts::CFlow Salts::Platform)
-  target_include_directories(cflow_executor_dso_fixture
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
   target_compile_definitions(cflow_executor_dso_fixture
     PRIVATE CFLOW_EXECUTOR_DSO_FIXTURE_BUILD=1)
   cmake_config_target(cflow_executor_dso_fixture FOLDER "cflow/tests")
