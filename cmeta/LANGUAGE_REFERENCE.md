@@ -945,3 +945,88 @@ Runtime Protocol
 
 Do not add a new keyword when an existing declaration, schema mapper, descriptor,
 interface, or ordinary C function composes cleanly enough.
+
+
+## Structured lifetime scopes
+
+The canonical portable lifetime surface is:
+
+```c
+cmeta_status status;
+
+cmeta_scope(request, status,
+    cmeta_autos(
+        cmeta_auto(Buffer, buffer)
+        cmeta_auto(Socket, socket)
+    ),
+    cmeta_body(
+        if (start_request(&buffer, &socket) != CMETA_OK)
+            cmeta_leave(request, status, CMETA_CALLBACK_ERROR);
+    )
+);
+```
+
+`cmeta_auto(Type, name)` declares a managed value whose lifecycle authority is
+`Type_cmeta_data()`. The `cmeta_autos(...)` wrapper is required only to keep
+the leading-comma row stream as one standard preprocessor argument. It has no
+runtime representation.
+
+A two-resource scope is semantically equivalent to ordinary C shaped like this:
+
+```c
+do {
+    status = CMETA_OK;
+
+    Buffer buffer = {0};
+    bool request__cmeta_live_buffer = false;
+    Socket socket = {0};
+    bool request__cmeta_live_socket = false;
+
+    status = cmeta_data_value_init_zero(Buffer_cmeta_data(), &buffer);
+    if (status != CMETA_OK)
+        goto request__cmeta_cleanup;
+    request__cmeta_live_buffer = true;
+
+    status = cmeta_data_value_init_zero(Socket_cmeta_data(), &socket);
+    if (status != CMETA_OK)
+        goto request__cmeta_cleanup;
+    request__cmeta_live_socket = true;
+
+    /* body */
+    if (start_request(&buffer, &socket) != CMETA_OK) {
+        status = CMETA_CALLBACK_ERROR;
+        goto request__cmeta_cleanup;
+    }
+
+request__cmeta_cleanup:
+    if (request__cmeta_live_socket) {
+        cmeta_data_value_destroy(Socket_cmeta_data(), &socket);
+        request__cmeta_live_socket = false;
+    }
+    if (request__cmeta_live_buffer) {
+        cmeta_data_value_destroy(Buffer_cmeta_data(), &buffer);
+        request__cmeta_live_buffer = false;
+    }
+} while (0);
+```
+
+The generated control-flow graph is the semantic reference on GCC, ClangCL and
+MSVC. Cleanup is LIFO, bounded, stack-local, and contains no runtime cleanup
+registry, hidden heap allocation, source lowering, SEH requirement, or assembly
+dependency.
+
+### Exit contract
+
+`cmeta_leave(scope, status, value)` is the only managed early-exit primitive
+for this scope. It records the result and branches to the generated cleanup
+epilogue.
+
+Native `return`, escaping `goto`, or escaping `break` inside
+`cmeta_body(...)` are contract violations because ISO C macros cannot
+intercept those control-flow tokens portably. CMeta deliberately does not claim
+automatic C++-style RAII for such exits. Code that needs to leave the managed
+scope must use `cmeta_leave`, then return from the enclosing function after
+the scope has completed.
+
+This restriction is part of the portable semantics rather than a reduced MSVC
+fallback: all supported compilers execute the same ordinary-C cleanup CFG.
