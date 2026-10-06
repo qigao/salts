@@ -1,0 +1,88 @@
+name: Plugin lifecycle contract
+
+on:
+  pull_request:
+    paths:
+      - "plugin/**"
+      - ".github/workflows/plugin-lifecycle-contract.yml"
+  push:
+    branches: [master]
+    paths:
+      - "plugin/**"
+      - ".github/workflows/plugin-lifecycle-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: plugin-lifecycle-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plugin:
+    name: Plugin lifecycle / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux GCC
+            runner: ubuntu-24.04
+            family: unix
+            preset: linux-release-ci
+          - name: Windows MSVC
+            runner: windows-2025
+            family: windows
+            preset: win-release-ci
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Discover Visual Studio
+        if: matrix.family == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) {
+            throw "Visual Studio with the x64 C++ toolchain was not found"
+          }
+          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+
+      - name: Configure, build and test Plugin contracts on Unix
+        if: matrix.family == 'unix'
+        shell: bash
+        env:
+          PROJECT_ROOT: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          cmake --preset "${{ matrix.preset }}" -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+          cmake --build --preset "${{ matrix.preset }}" --parallel 2 --target \
+            salts_plugin_contract_test salts_plugin_header_cpp_test \
+            salts_plugin_loader_test salts_plugin_lifecycle_test
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 \
+            -R '^salts_plugin_'
+
+      - name: Configure, build and test Plugin contracts on Windows
+        if: matrix.family == 'windows'
+        shell: cmd
+        env:
+          PROJECT_ROOT: ${{ github.workspace }}
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          cmake --preset "${{ matrix.preset }}" -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+          if errorlevel 1 exit /b 1
+          cmake --build --preset "${{ matrix.preset }}" --parallel 2 --target salts_plugin_contract_test salts_plugin_header_cpp_test salts_plugin_loader_test salts_plugin_lifecycle_test salts_plugin_windows_dependency_test
+          if errorlevel 1 exit /b 1
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -R "^salts_plugin_"
+          if errorlevel 1 exit /b 1
