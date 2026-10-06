@@ -219,7 +219,7 @@ typedef union cmeta_raw_call {
 #undef CMETA_UNION_G
 } cmeta_raw_call;
 
-/* Low-level signature descriptor used by the C11 type registry.  User-facing
+/* Low-level signature descriptor used by the C11 builtin type catalog.  User-facing
  * Graph APIs use cmeta_callable below; this raw descriptor remains the typed
  * adapter substrate. */
 typedef struct cmeta_fn {
