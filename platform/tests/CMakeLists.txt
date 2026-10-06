@@ -1,3 +1,13 @@
+cmake_add_test(platform_local_test SOURCES platform_local_test.c
+  LIBS Salts::Platform Salts::TinyTest FOLDER "platform/tests")
+cmake_add_test(platform_local_cpp_test SOURCES platform_local_cpp_test.cpp
+  LIBS Salts::Platform Salts::TinyTest FOLDER "platform/tests")
+set_target_properties(platform_local_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_target_properties(platform_local_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+set_tests_properties(platform_local_test platform_local_cpp_test PROPERTIES TIMEOUT 60)
+
 cmake_add_test(platform_clock_test
   SOURCES platform_clock_test.c
   LIBS Salts::Platform Salts::TinyTest

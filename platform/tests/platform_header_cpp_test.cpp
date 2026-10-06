@@ -2,6 +2,7 @@
 #include <salts/random.h>
 #include <salts/readiness.h>
 #include <salts/thread.h>
+#include <salts/local.h>
 #include <type_traits>
 
 static_assert(std::is_same_v<decltype(salts_hrtime()), uint64_t>);

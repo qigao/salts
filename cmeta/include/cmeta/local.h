@@ -2,8 +2,7 @@
 #define CMETA_LOCAL_H
 #include <cmeta/generic.h>
 #include <cmeta/lifecycle.h>
-#include <salts/thread.h>
-#include <stdbool.h>
+#include <salts/local.h>
 
 /* Zero-initialize before first use. Explicit construction/destruction;
  * TLS declarations do not run callbacks. Init/destroy require quiescence.
@@ -11,41 +10,50 @@
  * keep their original address. Destroy before owner thread exit. A borrow may
  * not cross suspension which can migrate execution to another thread.
  * Shard-local ownership belongs to the executor and is not emulated by TLS. */
+/* The only CMeta-owned state is the borrowed canonical lifecycle binding.
+ * Platform is the sole authority for address/thread/phase transitions. */
 typedef struct cmeta_local_state {
-    const void *owner;
-    const void *thread;
+    salts_local_state binding;
     const cmeta_data_construct_ops *ops;
-    bool busy;
 } cmeta_local_state;
+CMETA_INLINE cmeta_status cmeta_local_native_status_(int status) {
+    if (status == SALTS_OK) return CMETA_OK;
+    return status == SALTS_EBUSY ? CMETA_BUSY : CMETA_INVALID_ARGUMENT;
+}
 CMETA_INLINE cmeta_status cmeta_local_check(cmeta_local_state *state, const void *owner) {
-    if (state == NULL || state->owner != owner || owner == NULL ||
-        state->thread != salts_thread_current_token()) return CMETA_INVALID_ARGUMENT;
-    return state->busy ? CMETA_BUSY : CMETA_OK;
+    return state != NULL && state->ops != NULL ?
+        cmeta_local_native_status_(salts_local_check(&state->binding, owner)) : CMETA_INVALID_ARGUMENT;
 }
 CMETA_INLINE cmeta_status cmeta_local_init(
     cmeta_local_state *state, void *owner, void *value, const cmeta_data_desc *data,
     size_t size, size_t align) {
     const cmeta_data_construct_ops *ops;
-    cmeta_status status;
-    if (state == NULL || owner == NULL || state->owner != NULL) return CMETA_INVALID_ARGUMENT;
-    status = cmeta_lifecycle_bind(data, size, align, &ops);
+    if (state == NULL || owner == NULL || value == NULL || state->ops != NULL)
+        return CMETA_INVALID_ARGUMENT;
+    cmeta_status status = cmeta_lifecycle_bind(data, size, align, &ops);
     if (status != CMETA_OK) return status;
-    state->owner = owner; state->thread = salts_thread_current_token();
-    state->ops = ops; state->busy = true;
+    status = cmeta_local_native_status_(salts_local_begin(&state->binding, owner));
+    if (status != CMETA_OK) return status;
+    state->ops = ops;
     status = ops->init_zero(value);
-    if (status != CMETA_OK) { ops->restore_zero(value); *state = (cmeta_local_state){0}; }
-    else state->busy = false;
-    return status;
+    if (status != CMETA_OK) {
+        ops->restore_zero(value);
+        cmeta_status reset = cmeta_local_native_status_(salts_local_reset(&state->binding, owner));
+        if (reset != CMETA_OK) return reset;
+        state->ops = NULL;
+        return status;
+    }
+    return cmeta_local_native_status_(salts_local_publish(&state->binding, owner));
 }
 CMETA_INLINE cmeta_status cmeta_local_destroy(cmeta_local_state *state, void *owner, void *value) {
-    cmeta_status status = cmeta_local_check(state, owner);
+    if (state == NULL || value == NULL || state->ops == NULL) return CMETA_INVALID_ARGUMENT;
+    cmeta_status status = cmeta_local_native_status_(salts_local_enter(&state->binding, owner));
     if (status != CMETA_OK) return status;
-    state->busy = true;
     state->ops->restore_zero(value);
-    *state = (cmeta_local_state){0};
-    return CMETA_OK;
+    status = cmeta_local_native_status_(salts_local_reset(&state->binding, owner));
+    if (status == CMETA_OK) state->ops = NULL;
+    return status;
 }
-#define cmeta_thread_local(type_, name_) SALTS_THREAD_LOCAL type_ name_ = {0}
 #define CMETA_GENERIC_KIND_Local CMETA_GENERIC_PROBE()
 #define CMETA_TYPED_Local(name_, type_) \
     typedef struct name_ { cmeta_local_state state; type_ value; } name_; \

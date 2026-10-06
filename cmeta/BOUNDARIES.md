@@ -31,7 +31,7 @@
 |---|---|---|
 | Atomic（已移出） | 不消费 metadata/lifecycle | `Salts::Concurrency` 的 `<salts/atomic.h>`；声明、order validator 和 SALTS 错误语义由同一 owner 提供 |
 | RCU（已移出） | native Type/guard projection 不需 CMeta | `Salts::Concurrency` 的 `<salts/typed_rcu.h>`；只调用 salts_rcu，不增加回收算法或析构语义 |
-| Local | DataDesc 生命周期 binding | `Salts::Platform` thread identity；TLS 不运行构造/析构，owner 在退出前显式销毁 |
+| Local | DataDesc 生命周期 binding | `Salts::Platform` local binding 独占地址/线程/phase；CMeta 仅持 canonical ops 并执行 lifecycle projection |
 | Pool | typed DataDesc 初始化/清理与借用 | Core `object_pool`；分配、lease/thread policy 的进一步分离仍由 #957 跟踪 |
 | Static call | FunctionAbi exact contract validation | `Salts::Platform` key/atomic/native acquire-load；无 JIT、patch、runtime Reflection 查找 |
 | Trace | exact typed payload 与 canonical Struct metadata | `Salts::Platform` gate；backend 生命周期及同步归调用方 |
@@ -43,7 +43,13 @@ consumer 改用 Concurrency 原生声明，Atomic 状态改为 SALTS_OK/SALTS_EI
 机制、native 存储、RCU 容量/锁/回收与发布顺序不变。正式 owner 测试只链接
 Concurrency/TinyTest；C/C++、完整 memory-order 矩阵、原 RCU 并发测试及 CMeta
 Pool/Local 相邻回归验证迁移。具体协议见
-[`TYPED_PRIMITIVES.md`](../concurrency/TYPED_PRIMITIVES.md)。Local/Pool 的 owner 拆分仍待完成。
+[`TYPED_PRIMITIVES.md`](../concurrency/TYPED_PRIMITIVES.md)。Pool 的 owner 拆分仍待完成；Local 的 binding 已迁移至 Platform。
+
+Local 迁移（HIGH）：CMeta facade 布局改为 Platform binding + canonical ops，需全量重编译；
+移除纯 TLS alias cmeta_thread_local，直接复用 SALTS_THREAD_LOCAL。Typed init/get/destroy
+仍返回 CMeta 状态；Platform 的构造/独占/发布/reset 转换没有 callbacks 或 metadata。
+失败恢复仍调用原 canonical ops，回调重入不能绕过 owner 的 BUSY phase。
+协议、候选方案、回滚与验证见 [`LOCAL_BINDINGS.md`](../platform/LOCAL_BINDINGS.md)。
 
 ## 安装包的正式 Reflection 验证
 

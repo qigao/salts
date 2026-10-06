@@ -9,6 +9,7 @@ endif()
 add_library(${TARGET_NAME} STATIC
   src/clock.c
   src/fastpath.c
+  src/local.c
   src/random.c
   src/readiness.c
   ${SALTS_PLATFORM_THREAD_SOURCE})

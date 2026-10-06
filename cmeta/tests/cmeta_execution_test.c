@@ -11,16 +11,23 @@ static atomic_uint destroyed;
 static bool fail_init;
 static cmeta_pool_state *reentry_pool;
 static cmeta_status reentry_status;
+static cmeta_local_state *reentry_local;
+static void *reentry_local_owner;
+static cmeta_status local_init_reentry, local_restore_reentry;
 static cmeta_status value_init(void *object) {
     ExecutionValue *value = object;
     memset(value, 0, sizeof(*value));
     if (reentry_pool != NULL) reentry_status = cmeta_pool_destroy(reentry_pool);
+    if (reentry_local != NULL)
+        local_init_reentry = cmeta_local_destroy(reentry_local, reentry_local_owner, object);
     if (!fail_init) return CMETA_OK;
     value->owned = malloc(sizeof(*value->owned));
     return value->owned != NULL ? CMETA_CALLBACK_ERROR : CMETA_OUT_OF_MEMORY;
 }
 static void value_restore(void *object) {
     ExecutionValue *value = object;
+    if (reentry_local != NULL)
+        local_restore_reentry = cmeta_local_destroy(reentry_local, reentry_local_owner, object);
     if (value->owned != NULL) { free(value->owned); atomic_fetch_add(&destroyed, 1); }
     memset(value, 0, sizeof(*value));
 }
@@ -46,7 +53,7 @@ cmeta_type(Pool, ValuePool, ExecutionValue);
 cmeta_type(Local, ValueLocal, ExecutionValue);
 cmeta_type(Vec, ExecutionVec, int);
 cmeta_type(Pool, VecPool, ExecutionVec);
-static cmeta_thread_local(ValueLocal, tls_value);
+static SALTS_THREAD_LOCAL ValueLocal tls_value = {0};
 
 typedef struct local_worker {
     ValueLocal *foreign;
@@ -72,6 +79,49 @@ static void exercise_local(void *arg) {
     }
 }
 spec("CMeta execution primitives") {
+    after_each() {
+        reentry_local = NULL;
+        reentry_local_owner = NULL;
+        reentry_pool = NULL;
+        fail_init = false;
+    }
+    it("projects canonical Local callbacks through the Platform-owned busy transitions") {
+        ValueLocal local = {0};
+        reentry_local = &local.state;
+        reentry_local_owner = &local;
+        atomic_store(&destroyed, 0u);
+        fail_init = true;
+        check_equal(ValueLocal_init(&local), CMETA_CALLBACK_ERROR);
+        check_equal(local_init_reentry, CMETA_BUSY);
+        check_equal(local_restore_reentry, CMETA_BUSY);
+        check_equal(atomic_load(&destroyed), 1u);
+        check_equal(local.state.binding.phase, SALTS_LOCAL_ZERO);
+        check_null(local.state.ops);
+        check_null(ValueLocal_get(&local));
+        fail_init = false;
+        check_equal(ValueLocal_init(&local), CMETA_OK);
+        check_equal(local_init_reentry, CMETA_BUSY);
+        check_equal(salts_local_check(&local.state.binding, &local), SALTS_OK);
+        check_true(ValueLocal_get(&local) == &local.value);
+        check_equal(ValueLocal_destroy(&local), CMETA_OK);
+        check_equal(local_restore_reentry, CMETA_BUSY);
+        check_equal(local.state.binding.phase, SALTS_LOCAL_ZERO);
+        check_null(local.state.ops);
+    }
+    it("rejects missing or mismatched Local metadata before starting the owner binding") {
+        ValueLocal local = {0};
+        cmeta_data_desc data = value_data;
+        data.construct_ops = NULL;
+        check_equal(cmeta_local_init(&local.state, &local, &local.value, &data,
+            sizeof(ExecutionValue), _Alignof(ExecutionValue)), CMETA_TRAIT_MISSING);
+        check_equal(local.state.binding.phase, SALTS_LOCAL_ZERO);
+        check_equal(cmeta_local_init(&local.state, &local, &local.value, &value_data,
+            sizeof(ExecutionValue) + 1u, _Alignof(ExecutionValue)), CMETA_TYPE_MISMATCH);
+        check_equal(cmeta_local_init(&local.state, &local, NULL, &value_data,
+            sizeof(ExecutionValue), _Alignof(ExecutionValue)), CMETA_INVALID_ARGUMENT);
+        check_equal(local.state.binding.phase, SALTS_LOCAL_ZERO);
+        check_null(local.state.ops);
+    }
     it("reuses slots holding a real CSTL owned vector through canonical lifecycle") {
         VecPool pool = {0}; VecPool_lease lease = {0};
         ExecutionVec destination = {0}; ExecutionVec *value;

@@ -28,9 +28,10 @@ native size/alignment，一次预分配全部容量；capacity 不能为零。�
 ## Thread-local
 
 `cmeta_type(Local, Name, Type)` 提供显式 init/get/destroy 的线程绑定值；
-`cmeta_thread_local(Name, variable)` 只选择每线程存储，不自动构造或清理资源。
+`SALTS_THREAD_LOCAL Name variable = {0};` 由 Platform 选择每线程存储，不自动构造或清理资源。
 线程退出前必须 destroy；借用不得越过 destroy、线程退出或可能迁移线程的挂起。
-普通 Local 实例同样检查创建线程。这不构成 executor shard-local registry；
+普通 Local 实例同样检查创建线程；地址、线程和 busy phase 由 Platform 的单一 binding 管理，
+CMeta 仅绑定 canonical ops，见 [`LOCAL_BINDINGS.md`](../platform/LOCAL_BINDINGS.md)。这不构成 executor shard-local registry；
 shard 生命周期继续由 executor/shard owner 管理，不能把 OS TLS 当作 shard 状态。
 
 ## 架构选择与兼容性
@@ -58,7 +59,7 @@ descriptor 和 canonical ops 必须活到池或 Local 销毁，不能提供短�
 |---|---|---|
 | `cmeta/pool.h` / CMeta + Core | `Name_init(pool, capacity)`、`Name_acquire(pool, Name_lease *lease)`、`Name_get(pool, lease)` | 容量必须非零；没有 canonical ops 为 `CMETA_TRAIT_MISSING`；布局不符为 `CMETA_TYPE_MISMATCH`；超限为 `CMETA_CAPACITY_EXCEEDED`；初始化分配失败为 `CMETA_OUT_OF_MEMORY`；get 无效时返回 NULL |
 | 同上 | `Name_move_out(pool, lease, Type *zero_destination)`、`Name_release(pool, lease)`、`Name_destroy(pool)` | move 缺失为 `CMETA_TRAIT_MISSING`；目的存储必须位于池外；活跃 lease 或回调重入时 destroy 为 `CMETA_BUSY`；其他 owner/地址/线程错误为 `CMETA_INVALID_ARGUMENT` |
-| `cmeta/local.h` / CMeta + Platform | `Name_init(local)`、`Name_get(local)`、`Name_destroy(local)`；`cmeta_thread_local(Name, variable)` | canonical 初始化错误原样传播且恢复失败对象；get 失败返回 NULL；线程、复制、重复 init/destroy 错误为 `CMETA_INVALID_ARGUMENT`；回调重入为 `CMETA_BUSY` |
+| `cmeta/local.h` / CMeta + Platform | `Name_init(local)`、`Name_get(local)`、`Name_destroy(local)`；`SALTS_THREAD_LOCAL` | canonical 初始化错误原样传播且恢复失败对象；get 失败返回 NULL；线程、复制、重复 init/destroy 错误为 `CMETA_INVALID_ARGUMENT`；回调重入为 `CMETA_BUSY` |
 
 池存储预算可复算：令 `a = max(alignof(Type), sizeof(void *))`，
 `stride = round_up(max(sizeof(Type), sizeof(void *)), a)`，则 slot 占用为
