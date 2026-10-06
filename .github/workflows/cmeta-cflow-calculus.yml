@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "cmeta/**"
+      - "cstl/**"
       - "formal/cmeta_cflow_calculus/**"
       - "cmeta/include/cmeta/generated/builtin_signature_manifest.h"
       - "cmeta/include/cmeta/types.h"
@@ -19,6 +20,7 @@ on:
     branches: [master]
     paths:
       - "cmeta/**"
+      - "cstl/**"
       - "formal/cmeta_cflow_calculus/**"
       - "cmeta/include/cmeta/generated/builtin_signature_manifest.h"
       - "cmeta/include/cmeta/types.h"
@@ -120,12 +122,12 @@ jobs:
           cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
           if errorlevel 1 exit /b 1
 
-      - name: Run Linux structured scope contracts
+      - name: Run Linux scope and nested CSTL contracts
         if: matrix.family == 'linux'
         shell: bash
         run: ctest --preset "${{ matrix.configure_preset }}" --output-on-failure -R "^(cmeta_scope_|cstl_generic_identity_test$|cstl_semantic_projection_test$|cstl_typed_decl_cpp_test$)"
 
-      - name: Run Windows structured scope contracts
+      - name: Run Windows scope and nested CSTL contracts
         if: matrix.family == 'windows'
         shell: cmd
         run: |
