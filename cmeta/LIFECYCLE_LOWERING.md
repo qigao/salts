@@ -14,6 +14,11 @@ canonical construct ops；`cmeta_scope_checked` 明确通过 `Type_cmeta_data()`
 声明缺失；额外维护另一套生命周期回调会产生两个事实源。因此使用显式静态声明和
 checked 入口，共享初始化、回滚、清理展开。
 
+自动分类采用编译器常量条件和有限词法嵌套。继续要求调用点选择分类会重复事实；另建
+分类 registry 会引入第二份 authority；在每项保存 live/ops 则保留了可消除的状态。
+嵌套控制流以程序位置表示成功前缀，代价是最多 16 层词法结构和对应 C++ unwind 路径。
+不据此宣称未经 benchmark 的吞吐或代码尺寸收益。
+
 ## 声明与证明边界
 
 `CMETA_DEFINE_STATIC_LIFECYCLE(Type, ops, facts)` 只用于拥有 native Type 和 canonical ops
@@ -54,6 +59,9 @@ MED：手写类型只提供 `Type_cmeta_data()` 时，原 scope 调用须迁移�
 DataDesc、既有 construct ops 前缀、回调和 native 容器算法保持不变。
 construct ops 末尾追加 size-versioned flags；旧前缀仍可 admission，分类为未知。
 回滚只需一起恢复 scope 入口和消费者，持久化数据无迁移。
+MED：此前手写 `Type_cmeta_lifecycle_flags` 再调用两个参数静态声明的 provider，应把
+同一 facts 常量传给三个参数的声明入口，并移除重复枚举定义；生成器现在统一发布该常量。
+原本未声明分类的两个参数调用保持保守路径。应用的普通两字段 scope 调用无需改动。
 
 ## Admitted binding 的信任契约（#980 P4）
 

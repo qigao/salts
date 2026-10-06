@@ -117,6 +117,8 @@ CMETA_DEFINE_LIFECYCLE(AutoNofail, &cmeta_type_int, auto_init, auto_restore, aut
 CMETA_DEFINE_LIFECYCLE(AutoTrivial, &cmeta_type_int, auto_trivial_init, auto_trivial_restore,
     auto_move, CMETA_LIFECYCLE_INIT_NOFAIL | CMETA_LIFECYCLE_TRIVIAL_ZERO |
         CMETA_LIFECYCLE_TRIVIAL_CLEANUP | CMETA_LIFECYCLE_MOVABLE)
+typedef int AutoUnclassified;
+CMETA_DEFINE_STATIC_LIFECYCLE(AutoUnclassified, AutoTrivial_construct_ops)
 /* A runtime-only declaration has no static classification to accidentally use. */
 typedef int AutoForeign;
 static cmeta_data_desc auto_foreign_data;
@@ -142,6 +144,14 @@ suite("Automatic canonical lifecycle lowering") {
     before_each() {
         auto_inits = auto_restores = auto_fail_at = auto_body_calls = 0;
         auto_trivial_calls = auto_foreign_reads = 0;
+    }
+    it("keeps an unclassified static declaration conservative even with the same canonical ops") {
+        cmeta_status status;
+        cmeta_scope(status, cmeta_autos((AutoUnclassified, value)),
+            cmeta_body(value == 0 ? CMETA_OK : CMETA_INVALID_ARGUMENT));
+        check_equal(status, CMETA_OK);
+        check_equal(AutoUnclassified_cmeta_lifecycle_flags, 0);
+        check_equal(auto_trivial_calls, (size_t)2);
     }
     it("elides trivial callbacks across the full sixteen-row scope bound") {
         cmeta_status status;
