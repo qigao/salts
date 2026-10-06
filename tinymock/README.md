@@ -9,7 +9,8 @@ output action 和 scripted return。FunctionDesc/FunctionAbi、Data lifecycle、
 - 默认单线程；init/reset/destroy 要求调用已经停止。元数据不可变，外层 provider/Plugin
   lease 必须晚于全部 mock 状态、captor、结果及回调借用释放。描述符地址不是语义身份。
 - checked API 验证外来描述符；admitted API 只消费成功初始化且未修改的状态，不能接受
-  手工伪造的 capability。生成 wrapper 在 reset/init 时 admission，调用时复用该结果。
+  手工伪造的 binding。它是调用方遵守契约的已验证借用记录，不是不可伪造的安全能力；
+  不加 cookie/magic，也不隐式保活。生成 wrapper 在 reset/init 时 admission，调用时复用结果。
 - history 有 `TINYMOCk_MAX_CALLS` 个槽，每槽最多 `TINYMOCk_MAX_ARGS` 个快照；达到上限
   保留原槽并只累计调用数。单值存储有 `TINYMOCk_MAX_VALUE_BYTES` 上限，超限或 OOM
   返回 false，不截断。borrowed view 在 reset/destroy/替换后失效。

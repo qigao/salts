@@ -58,7 +58,7 @@ static cmeta_status nofail_body(NofailInt *first, NofailInt *second) {
     cmeta_status nested;
     *first = 1;
     *second = 2;
-    cmeta_scope_nofail(nested, cmeta_autos((NofailInt, inner)), cmeta_body(
+    cmeta_scope(nested, cmeta_autos((NofailInt, inner)), cmeta_body(
         (inner = 3, CMETA_OK)));
     return nested == CMETA_OK ? CMETA_CALLBACK_ERROR : nested;
 }
@@ -90,6 +90,135 @@ static void release_finalize_probe(void *authority, void *resource) {
 }
 CMETA_STATIC_ASSERT(!CMETA_TYPE_MATCHES(&explicit_finalize, cmeta_cleanup_fn),
     "A fallible finalize callback must not be accepted as automatic discharge");
+
+enum { AUTO_SCOPE_MANAGED_COUNT = 4 };
+typedef int AutoFallible;
+typedef int AutoNofail;
+typedef int AutoTrivial;
+static size_t auto_inits, auto_restores, auto_fail_at, auto_body_calls;
+static size_t auto_trivial_calls;
+static int auto_restore_log[AUTO_SCOPE_MANAGED_COUNT];
+static cmeta_status auto_init(int *value) {
+    *value = (int)++auto_inits;
+    return auto_inits == auto_fail_at ? CMETA_CALLBACK_ERROR : CMETA_OK;
+}
+static void auto_restore(int *value) {
+    if (auto_restores < AUTO_SCOPE_MANAGED_COUNT) auto_restore_log[auto_restores] = *value;
+    ++auto_restores;
+    *value = 0;
+}
+static void auto_move(int *destination, int *source) { *destination = *source; *source = 0; }
+static cmeta_status auto_trivial_init(int *value) { ++auto_trivial_calls; *value = 0; return CMETA_OK; }
+static void auto_trivial_restore(int *value) { ++auto_trivial_calls; *value = 0; }
+CMETA_DEFINE_LIFECYCLE(AutoFallible, &cmeta_type_int, auto_init, auto_restore, auto_move,
+    CMETA_LIFECYCLE_MOVABLE)
+CMETA_DEFINE_LIFECYCLE(AutoNofail, &cmeta_type_int, auto_init, auto_restore, auto_move,
+    CMETA_LIFECYCLE_INIT_NOFAIL | CMETA_LIFECYCLE_MOVABLE)
+CMETA_DEFINE_LIFECYCLE(AutoTrivial, &cmeta_type_int, auto_trivial_init, auto_trivial_restore,
+    auto_move, CMETA_LIFECYCLE_INIT_NOFAIL | CMETA_LIFECYCLE_TRIVIAL_ZERO |
+        CMETA_LIFECYCLE_TRIVIAL_CLEANUP | CMETA_LIFECYCLE_MOVABLE)
+/* A runtime-only declaration has no static classification to accidentally use. */
+typedef int AutoForeign;
+static cmeta_data_desc auto_foreign_data;
+static size_t auto_foreign_reads;
+static const cmeta_data_desc *AutoForeign_cmeta_data(void) {
+    ++auto_foreign_reads;
+    return &auto_foreign_data;
+}
+static cmeta_status auto_mixed_body(int first, int trivial, int second, int third, int fourth) {
+    ++auto_body_calls;
+    return first == 1 && trivial == 0 && second == 2 && third == 3 && fourth == 4
+        ? CMETA_BUSY : CMETA_INVALID_ARGUMENT;
+}
+static cmeta_status auto_mixed_scope(void) {
+    cmeta_status status;
+    cmeta_scope(status, cmeta_autos((AutoNofail, first), (AutoTrivial, trivial),
+        (AutoFallible, second), (AutoNofail, third), (AutoFallible, fourth)),
+        cmeta_body(auto_mixed_body(first, trivial, second, third, fourth)));
+    return status;
+}
+
+suite("Automatic canonical lifecycle lowering") {
+    before_each() {
+        auto_inits = auto_restores = auto_fail_at = auto_body_calls = 0;
+        auto_trivial_calls = auto_foreign_reads = 0;
+    }
+    it("elides trivial callbacks across the full sixteen-row scope bound") {
+        cmeta_status status;
+        cmeta_scope(status, cmeta_autos((AutoTrivial, a), (AutoTrivial, b),
+            (AutoTrivial, c), (AutoTrivial, d), (AutoTrivial, e), (AutoTrivial, f),
+            (AutoTrivial, g), (AutoTrivial, h), (AutoTrivial, i), (AutoTrivial, j),
+            (AutoTrivial, k), (AutoTrivial, l), (AutoTrivial, m), (AutoTrivial, n),
+            (AutoTrivial, o), (AutoTrivial, p)),
+            cmeta_body((a+b+c+d+e+f+g+h+i+j+k+l+m+n+o+p) == 0 ? CMETA_OK : CMETA_INVALID_ARGUMENT));
+        check_equal(status, CMETA_OK);
+        check_equal(auto_trivial_calls, (size_t)0);
+    }
+    it("selects all three classes in ordinary two-field rows and preserves body status") {
+        check_equal(auto_mixed_scope(), CMETA_BUSY);
+        check_equal(auto_inits, (size_t)AUTO_SCOPE_MANAGED_COUNT);
+        check_equal(auto_restores, (size_t)AUTO_SCOPE_MANAGED_COUNT);
+        check_equal(auto_body_calls, (size_t)1);
+        check_equal(auto_trivial_calls, (size_t)0);
+        for (size_t index = 0; index < AUTO_SCOPE_MANAGED_COUNT; ++index)
+            check_equal(auto_restore_log[index], (int)(AUTO_SCOPE_MANAGED_COUNT - index));
+    }
+    it("restores each failed partial slot and only the previously entered prefix") {
+        for (size_t failure = 2; failure <= AUTO_SCOPE_MANAGED_COUNT; failure += 2) {
+            auto_inits = auto_restores = auto_body_calls = 0;
+            auto_fail_at = failure;
+            check_equal(auto_mixed_scope(), CMETA_CALLBACK_ERROR);
+            check_equal(auto_inits, failure);
+            check_equal(auto_restores, failure);
+            check_equal(auto_body_calls, (size_t)0);
+            for (size_t index = 0; index < failure; ++index)
+                check_equal(auto_restore_log[index], (int)(failure - index));
+        }
+        check_equal(auto_trivial_calls, (size_t)0);
+    }
+    it("uses admitted runtime facts for foreign rows and rejects invalid metadata before callbacks") {
+        cmeta_status status;
+        auto_foreign_data = cmeta_data_int;
+        auto_foreign_data.struct_size = sizeof(auto_foreign_data);
+        auto_foreign_data.construct_ops = &AutoTrivial_construct_ops;
+        cmeta_scope_checked(status, cmeta_autos((AutoForeign, value)),
+            cmeta_body(value == 0 ? CMETA_OK : CMETA_INVALID_ARGUMENT));
+        check_equal(status, CMETA_OK);
+        check_equal(auto_trivial_calls, (size_t)0);
+        auto_foreign_data.construct_ops = &AutoNofail_construct_ops;
+        cmeta_scope_checked(status, cmeta_autos((AutoForeign, value)),
+            cmeta_body(value == 1 ? CMETA_OK : CMETA_INVALID_ARGUMENT));
+        check_equal(status, CMETA_OK);
+        check_equal(auto_restores, (size_t)1);
+        auto_foreign_data.construct_ops = &AutoFallible_construct_ops;
+        auto_fail_at = 2;
+        cmeta_scope_checked(status, cmeta_autos((AutoForeign, value)), cmeta_body(CMETA_BUSY));
+        check_equal(status, CMETA_CALLBACK_ERROR);
+        check_equal(auto_restores, (size_t)2);
+        auto_foreign_data.abi_version = 0;
+        cmeta_scope_checked(status, cmeta_autos((AutoForeign, value)), cmeta_body(CMETA_BUSY));
+        check_equal(status, CMETA_INVALID_ARGUMENT);
+        check_equal(auto_inits, (size_t)2);
+        check_equal(auto_restores, (size_t)2);
+        check_equal(auto_foreign_reads, (size_t)4);
+    }
+#ifdef __cplusplus
+    it("unwinds automatically selected mixed classes once after a body exception") {
+        auto run = [] {
+            cmeta_status status;
+            cmeta_scope(status, cmeta_autos((AutoNofail, first), (AutoTrivial, trivial),
+                (AutoFallible, second), (AutoNofail, third), (AutoFallible, fourth)),
+                cmeta_body((throw std::runtime_error("automatic mixed scope"), CMETA_OK)));
+            return status;
+        };
+        check_throws_as(run(), std::runtime_error);
+        check_equal(auto_restores, (size_t)AUTO_SCOPE_MANAGED_COUNT);
+        check_equal(auto_trivial_calls, (size_t)0);
+        for (size_t index = 0; index < AUTO_SCOPE_MANAGED_COUNT; ++index)
+            check_equal(auto_restore_log[index], (int)(AUTO_SCOPE_MANAGED_COUNT - index));
+    }
+#endif
+}
 
 spec("CMeta admitted lifecycle and cleanup obligations") {
     it("keeps fallible finalization explicit and releases only local ownership automatically") {
@@ -130,7 +259,7 @@ spec("CMeta admitted lifecycle and cleanup obligations") {
         cleanup_count = 0;
         auto run = []() {
             cmeta_status status;
-            cmeta_scope_nofail(status, cmeta_autos((NofailInt, first), (NofailInt, second)),
+            cmeta_scope(status, cmeta_autos((NofailInt, first), (NofailInt, second)),
                 cmeta_body(nofail_throw(&first, &second)));
             return status;
         };
@@ -142,7 +271,7 @@ spec("CMeta admitted lifecycle and cleanup obligations") {
     it("lowers nofail providers without per-resource state and preserves nested LIFO on body error") {
         cmeta_status status;
         cleanup_count = 0;
-        cmeta_scope_nofail(status, cmeta_autos((NofailInt, first), (NofailInt, second)),
+        cmeta_scope(status, cmeta_autos((NofailInt, first), (NofailInt, second)),
             cmeta_body(nofail_body(&first, &second)));
         check_equal(status, CMETA_CALLBACK_ERROR);
         check_equal(cleanup_count, (size_t)CLEANUP_TEST_COUNT);
@@ -209,7 +338,7 @@ spec("CMeta admitted lifecycle and cleanup obligations") {
     }
     it("lowers declared trivial storage without a lifecycle callback or live slot") {
         cmeta_status status;
-        cmeta_scope(status,cmeta_autos((TrivialInt,value,trivial)),cmeta_body(trivial_body(&value)));
+        cmeta_scope(status,cmeta_autos((TrivialInt,value)),cmeta_body(trivial_body(&value)));
         check_equal(status,CMETA_OK);
         check_equal(cmeta_lifecycle_flags_of(&TrivialInt_construct_ops),
             (cmeta_lifecycle_flags)TrivialInt_cmeta_lifecycle_flags);
@@ -233,14 +362,14 @@ spec("CMeta admitted lifecycle and cleanup obligations") {
         cmeta_status status;
         managed_restores = 0;
         managed_fail = false;
-        cmeta_scope(status,cmeta_autos((TrivialInt,first,trivial),(ManagedInt,middle),
-            (TrivialInt,last,trivial)),cmeta_body(
+        cmeta_scope(status,cmeta_autos((TrivialInt,first),(ManagedInt,middle),
+            (TrivialInt,last)),cmeta_body(
                 first == 0 && middle == 0 && last == 0 ? CMETA_OK : CMETA_INVALID_ARGUMENT));
         check_equal(status,CMETA_OK);
         check_equal(managed_restores,(size_t)1);
         managed_fail = true;
-        cmeta_scope(status,cmeta_autos((TrivialInt,first,trivial),(ManagedInt,middle),
-            (TrivialInt,last,trivial)),cmeta_body(CMETA_INVALID_ARGUMENT));
+        cmeta_scope(status,cmeta_autos((TrivialInt,first),(ManagedInt,middle),
+            (TrivialInt,last)),cmeta_body(CMETA_INVALID_ARGUMENT));
         check_equal(status,CMETA_CALLBACK_ERROR);
         check_equal(managed_restores,(size_t)2);
     }

@@ -16,10 +16,13 @@ checked 入口，共享初始化、回滚、清理展开。
 
 ## 声明与证明边界
 
-`CMETA_DEFINE_STATIC_LIFECYCLE(Type, ops)` 只用于拥有 native Type 和 canonical ops
+`CMETA_DEFINE_STATIC_LIFECYCLE(Type, ops, facts)` 只用于拥有 native Type 和 canonical ops
 定义的本地声明/generator。它生成带 native type witness 的 accessor，校验 ops 的
 精确 const 类型；scope 在编译期检查 accessor 的完整函数类型。ops 必须具有静态存储期，
 与同一声明的 DataDesc.construct_ops 指向同一对象。CSTL 从同一生成器输出这个关联。
+facts 必须来自初始化 ops.flags 的同一声明常量，不能在调用点重述。两个参数的形式发布
+未知分类（零），保守执行 fallible lowering；不从 ops 地址或 callback 身份猜测分类。
+缺少整个静态声明时编译失败，不回退到运行时查找。
 
 这些证明覆盖 native 类型和声明关联，不推断回调的行为，也不证明任意手写描述符的
 成员值正确。手写声明的所有者必须保证 ops 的 ABI、storage identity/layout、init/restore
@@ -52,22 +55,32 @@ DataDesc、既有 construct ops 前缀、回调和 native 容器算法保持不�
 construct ops 末尾追加 size-versioned flags；旧前缀仍可 admission，分类为未知。
 回滚只需一起恢复 scope 入口和消费者，持久化数据无迁移。
 
-## Admitted capability、分类与清理义务（#976: 18、20–25）
+## Admitted binding 的信任契约（#980 P4）
+
+这里的 admitted/validated binding 是经对应 `*_admit()` / `*_bind()` 验证的借用记录。
+公开 C struct 不构成不可伪造的 security capability。调用方只可使用成功 admission 后
+仍有效、未修改的记录，禁止伪造或修改后依赖 admitted fast path。
+描述符/provider 仍是类型、语义和执行 authority；binding 或其地址不成为类型身份。
+binding 不暗中持有对象、provider、回调或模块。外层 Plugin/provider lease 必须覆盖
+全部调用及依赖清理；只有 owning subsystem 显式提供的 retain/release 才延长生命期。
+不加入无法改变 C 信任模型的 cookie、magic 或伪 opaque 字段。
+
+## 分类与清理义务（#976: 18、20–25）
 
 `cmeta_lifecycle_admit(data, sizeof(Type), alignof(Type), &binding)` 完整验证
 storage identity、布局、ABI 和回调；失败清空 binding。成功后的 `cmeta_lifecycle_init`、
 `cmeta_lifecycle_move`、`cmeta_lifecycle_restore` 只做参数检查，不重新遍历描述符图。
 init 失败自动 restore 部分对象一次，调用方不能再按成功对象登记清理；move 要求不同地址
 且目标为已初始化 semantic zero，源在成功后保持可清理的 semantic zero。
-binding 不拥有值、元数据或 provider，不可伪造、修改或超过外层 Plugin lease 的寿命。
+binding 不拥有值、元数据或 provider；调用方不得伪造、修改或超过外层 Plugin lease 的寿命。
 
-`cmeta_invokable_invoke_admitted()` 同样只接受成功 bind 后未修改的 capability。
+`cmeta_invokable_invoke_admitted()` 同样只接受成功 bind 后未修改的 borrowed binding。
 它仍检查输出/参数 storage，保留 CALLBACK_ERROR；原 `cmeta_invokable_invoke()` 继续
 完整检查手工组装/外来对象。原始 CFlow、Plugin、ObjectRef admission 没有因新增快入口而
 被省略；它们仍是各自子系统的信任边界。
 
 ObjectRef 的 `cmeta_object_field_bind(ref, name, &binding)` 验证对象/provider、字段及固定
-布局后发布借用 capability；`read_admitted` 每次调用动态 read provider，不缓存会失效的
+布局后发布借用 binding；`read_admitted` 每次调用动态 read provider，不缓存会失效的
 动态字段指针；`assign_admitted` 只接受与 `binding.field->value` 相同的 native storage，
 只调用已有 assignment authority，缺失时返回 TRAIT_MISSING。固定布局地址由 admission
 计算。binding 不能超过 object/provider/module 生命周期，旧按名字读写入口仍完整验证。
@@ -82,18 +95,30 @@ CSTL 生成器声明 nofail 初始化和 movable，payload 清理由原容器 de
 
 `CMETA_DEFINE_TRIVIAL_LIFECYCLE(Type, descriptor)` 生成 native zero/reset/move 及上述
 四个事实；只能用于不持有资源的平凡 native 值，C++ 还要求 `std::is_trivial`。
-`cmeta_autos((Type, value, trivial))` 静态检查该分类，只生成 native 自动变量，
-不生成 ops 指针、live 标志或清理回调。两字段项仍走 managed 路径，可与 trivial 项混用。
-checked scope 的 trivial 项依然 admission，并核对 runtime 分类，不允许静默降级。
+普通 `cmeta_scope(status, cmeta_autos((Type, value), ...), cmeta_body(expr))`
+从 `Type_cmeta_lifecycle_flags` 自动选择，不要求应用再写 trivial/managed/nofail：
 
-`cmeta_scope_nofail(status, cmeta_autos((Type, value), ...), cmeta_body(expr))`
-适用于全部资源具有静态 INIT_NOFAIL 承诺的有限集合。入口检查 canonical lifecycle
-accessor 的精确类型与声明分类，按顺序初始化，body 后逆序调用原 restore authority；
-不保存每项 live 标志或 ops 指针。CSTL 的 semantic-zero 初始化满足此契约，body 中的
-payload 分配仍可能失败，返回的错误不影响清理。mixed/fallible 集合继续使用 `cmeta_scope`。
+| canonical 分类 | 静态 lowering |
+|---|---|
+| TRIVIAL_ZERO + TRIVIAL_CLEANUP | native `{0}` 自动存储，无 ops/live 状态，无 init/restore 调用 |
+| managed + INIT_NOFAIL | 直接 canonical ops，无逐值 partial-init 状态；违反 nofail 承诺立即终止 |
+| managed + fallible / 未声明分类 | 直接 canonical ops，以现有 status 与嵌套控制流记录成功前缀；失败项及前缀逆序 restore |
 
-INIT_NOFAIL 是本地 provider 的行为承诺；init 返回失败或在 C++ 抛出异常说明该承诺
-被破坏，立即终止，不转入另一种 lowering。C++ body 抛异常时先逆序 restore 再传播；
+生成器用有限 forward/reverse replay 打开和关闭词法块，不保存逐值 live 布尔量，也不在
+静态路径缓存 ops 指针。所有 native 变量仍声明在同一 scope，重复变量名继续编译失败。
+回滚不需要第二份状态数组、counter 或堆记录。C++ 同样按嵌套块逆序处理异常。
+checked 路径必须先验证 descriptor/layout/flags；成功后才用 runtime facts 自动选路，
+每项只保留已验证 ops 的借用指针，没有额外 live 状态。无效 metadata 不调用 lifecycle。
+同一 native 拼写可有不同 provider 分类，不根据拼写、地址或命名推断。
+
+显式 `trivial` 行和 `cmeta_scope_nofail` 仅保留为分类断言及资格测试入口，与普通 scope
+共享 lowering；它们不再是应用获得简化路径的前提。显式断言不符仍失败，不能静默降级。
+CSTL 的 semantic-zero nofail 初始化由容器声明发布一次，普通 scope 自动采用；body 中
+payload 分配仍可能失败，返回的错误不影响清理。
+
+INIT_NOFAIL 是本地 provider 的行为承诺；init 返回失败说明该承诺被破坏，立即终止。
+初始化回调通过 status 报告可恢复失败，不得抛 C++ 异常；异常属于 provider 契约违例，
+同样立即终止，不转入另一种 lowering。C++ body 抛异常时先逆序 restore 再传播；
 restore 按既有生命周期契约不得失败或抛异常。body 同样必须使用函数表达式，不能用
 跨作用域跳转或 longjmp 绕过清理。嵌套、body 错误、C++ 异常和已移动资源分别由
 `cmeta_cleanup_test`、`cmeta_cleanup_cpp_test` 与 `cstl_header_typed_test` 验证。
@@ -148,7 +173,14 @@ MED：新声明会在编译期拒绝不匹配的 callback、packed Struct 布局
 验证覆盖 C11/C++17、部分初始化回滚、move、旧 ABI 前缀、逆序/重入/异常清理、Plugin
 依赖顺序，以及每类声明错误的 compile-fail CTest；SDK 消费者复用同一批行为测试。
 
-managed setup/cleanup 为 O(N) 次回调、O(N) 有界自动状态；checked 路径另加原描述符校验。
+managed setup/cleanup 为 O(N) 次回调、O(N) 有界词法嵌套。静态路径除 native value 和
+调用方 status 外无逐值运行时 bookkeeping；checked 路径另加原描述符校验和借用 ops 指针。
 本阶段验证移除重复 admission，不声明未经测量的吞吐或延迟收益。
 正式测试覆盖静态/checked 同一 ops 身份及行为、失败回滚、拒绝错误 accessor、动态坏元数据、
 CSTL 资源释放、C++ 头文件和 installed SDK。
+
+本次 P2/P4 验收复用正式 C/C++ cleanup/scope、CSTL 和 installed SDK 测试，新增全部
+三类混合、16 项边界、trivial 回调消除、不同位置 partial failure、body status、异常展开、
+runtime-only metadata 自动分类及坏 metadata 拒绝。公开 binding 布局和函数 ABI 不变。
+回滚时同时恢复 lifecycle 声明生成器、scope lowering 和 CSTL facts 发布，避免声明与消费
+不一致；不改变持久化数据，也不添加 ABI 兼容路径。

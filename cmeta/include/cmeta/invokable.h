@@ -26,6 +26,12 @@ typedef struct cmeta_function_data_desc {
 bool cmeta_function_data_desc_valid(
     const cmeta_function_data_desc *desc);
 
+/** Borrowed binding produced by a successful *_invokable_bind() or
+ * cmeta_invokable_bind[_data](). This public C record is caller-trusted, not
+ * an unforgeable security capability. Do not forge or mutate an admitted
+ * binding. Canonical descriptors/providers remain authoritative; no descriptor,
+ * capture dependency, provider or Plugin/module lease is implicitly retained.
+ * Their authoritative outer lifetime must cover every call and cleanup. */
 typedef struct cmeta_invokable {
     size_t size;
     const cmeta_function_desc *function;
@@ -83,7 +89,7 @@ cmeta_status cmeta_receiver_operation_invokable_bind(
  * cmeta_receiver_operation_invokable_bind().
  *
  * operation must be the exact entry resolved from object->operations. This pointer is
- * a provider capability token, not a replacement for semantic type identity.
+ * a borrowed provider entry, not semantic type identity or a security token.
  */
 cmeta_status cmeta_object_operation_invokable_bind(
     const cmeta_object_ref *object,

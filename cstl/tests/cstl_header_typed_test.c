@@ -67,7 +67,7 @@ suite("CSTL typed public header") {
 
     it("cleans managed nofail lists after allocation and ownership transfer") {
         cmeta_status status;
-        cmeta_scope_nofail(status,
+        cmeta_scope(status,
             cmeta_autos((HeaderGenericList, source), (HeaderGenericList, destination)),
             cmeta_body(scoped_move_body(&source, &destination)));
         check_equal(status, CMETA_OK);

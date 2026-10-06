@@ -251,9 +251,13 @@ replace adjacent `cmeta_auto(Type, name)` entries with comma-separated
 are removed. Generated identifiers are unique even for two expansions on the
 same source line. The common PP tuple replay replaces the sentinel/drop layer;
 resource ownership, error status, partial rollback and LIFO cleanup are unchanged.
-Managed/fallible rows retain per-resource live/ops state. Explicit trivial rows
-omit it; all-nofail resource sets use `cmeta_scope_nofail` without per-resource
-bookkeeping. See [lifecycle classification](LIFECYCLE_LOWERING.md).
+Ordinary two-field rows automatically select lowering from canonical lifecycle
+facts. Trivial rows have no callbacks/ops/live state; managed nofail rows have no
+partial-init state. Fallible rows use the caller's status and nested control flow
+for rollback, without per-value live flags or cached static ops. Checked scopes
+retain borrowed ops only after full admission. Explicit `trivial`/nofail spellings
+are assertions, not required application annotations. See
+[lifecycle classification and binding trust](LIFECYCLE_LOWERING.md).
 Types that only expose a DataDesc accessor must explicitly use
 `cmeta_scope_checked` or publish an authoritative static lifecycle declaration.
 No descriptor layout or binary ABI changes follow from this source migration.
