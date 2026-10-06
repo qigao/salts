@@ -6,7 +6,7 @@ cmake_add_test(cmeta_trace_test
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_trace_cpp_test
   SOURCES cmeta_trace_cpp_test.cpp cmeta_trace_peer.c
-  LIBS Salts::CMeta Salts::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest Salts::Platform
   FOLDER "cmeta/tests")
 set_target_properties(cmeta_trace_test cmeta_trace_cpp_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -40,11 +40,11 @@ cmake_add_test(cmeta_fastpath_test
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_cpp_test
   SOURCES cmeta_fastpath_cpp_test.cpp cmeta_fastpath_peer.c
-  LIBS Salts::CMeta Salts::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest Salts::Platform
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_coroutine_test
   SOURCES cmeta_fastpath_coroutine_test.c cmeta_fastpath_peer.c
-  LIBS Salts::CMeta Salts::TinyTest Salts::Coroutine
+  LIBS Salts::CMeta Salts::TinyTest Salts::Coroutine Salts::Platform
   FOLDER "cmeta/tests")
 set_target_properties(cmeta_fastpath_test cmeta_fastpath_cpp_test cmeta_fastpath_coroutine_test
   PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
