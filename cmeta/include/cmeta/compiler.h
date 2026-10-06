@@ -45,6 +45,63 @@
 #define CMETA_TYPE_IS_VALUE(type) _Generic(((type *)0)[0], type: 1, default: 0)
 #endif
 
+/* Native type syntax is distinct from CMETA_TYPEOF's semantic descriptor.
+ * Query fixed types only: GNU typeof may evaluate variably modified operands.
+ * C++ references are removed, but cv qualifiers, arrays and functions remain. */
+#ifdef __cplusplus
+#define CMETA_HAS_NATIVE_TYPEOF 1
+#define CMETA_NATIVE_TYPEOF(expression) \
+    typename std::remove_reference<decltype((expression))>::type
+#elif defined(__clang__)
+#if defined(__is_identifier)
+#define CMETA_HAS_NATIVE_TYPEOF (!__is_identifier(__typeof__))
+#else
+#define CMETA_HAS_NATIVE_TYPEOF 0
+#endif
+#elif defined(__GNUC__)
+#define CMETA_HAS_NATIVE_TYPEOF 1
+#else
+#define CMETA_HAS_NATIVE_TYPEOF 0
+#endif
+#if !defined(__cplusplus) && CMETA_HAS_NATIVE_TYPEOF
+#define CMETA_NATIVE_TYPEOF(expression) __typeof__(expression)
+#endif
+
+/* Compare native expression types, including top-level qualifiers. Wrapping
+ * each C type in a pointer prevents types_compatible_p from dropping those
+ * qualifiers. C compatibility and C++ identity retain their language rules. */
+#ifdef __cplusplus
+#define CMETA_HAS_SAME_TYPE 1
+#define CMETA_SAME_TYPE(a,b) \
+    (std::is_same<CMETA_NATIVE_TYPEOF(a),CMETA_NATIVE_TYPEOF(b)>::value)
+#elif CMETA_HAS_NATIVE_TYPEOF && CMETA_HAS_BUILTIN(__builtin_types_compatible_p)
+#define CMETA_HAS_SAME_TYPE 1
+#define CMETA_SAME_TYPE(a,b) \
+    __builtin_types_compatible_p(CMETA_NATIVE_TYPEOF(a) *,CMETA_NATIVE_TYPEOF(b) *)
+#else
+#define CMETA_HAS_SAME_TYPE 0
+#endif
+
+/* A named local value initialized exactly once. Do not emulate __auto_type
+ * with typeof(expr) name = expr: variably modified operands can run twice. */
+#ifdef __cplusplus
+#define CMETA_HAS_AUTO 1
+#define CMETA_AUTO(name,expression) auto name = (expression)
+#elif defined(__clang__)
+#if defined(__is_identifier)
+#define CMETA_HAS_AUTO (!__is_identifier(__auto_type))
+#else
+#define CMETA_HAS_AUTO 0
+#endif
+#elif defined(__GNUC__) && (__GNUC__ * 100 + __GNUC_MINOR__ >= 409)
+#define CMETA_HAS_AUTO 1
+#else
+#define CMETA_HAS_AUTO 0
+#endif
+#if !defined(__cplusplus) && CMETA_HAS_AUTO
+#define CMETA_AUTO(name,expression) __extension__ __auto_type name = (expression)
+#endif
+
 /* Require a constant expression in both languages, including GNU VLA modes. */
 #ifdef __cplusplus
 #define CMETA_CONST_REQUIRE(condition) \

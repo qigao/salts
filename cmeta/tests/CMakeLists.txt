@@ -364,6 +364,22 @@ endforeach()
 cmeta_add_compile_failure_test(cmeta_pp_tuple_width_compile_fail
   compile_fail/cmeta_pp_tuple_width.c "CMETA_PP_TUPLE_GET_4_I")
 
+foreach(native_requirement IN ITEMS native_type auto_initializer)
+  if(native_requirement STREQUAL "native_type")
+    set(native_diagnostic "native type mismatch|CMETA_SAME_TYPE unavailable")
+  else()
+    set(native_diagnostic "cmeta_auto_missing_initializer|CMETA_AUTO unavailable")
+  endif()
+  cmeta_add_compile_failure_test(cmeta_pp_${native_requirement}_compile_fail
+    compile_fail/cmeta_pp_${native_requirement}.c "${native_diagnostic}")
+  cmeta_add_compile_failure_test(cmeta_pp_${native_requirement}_cpp_compile_fail
+    compile_fail/cmeta_requirement_cpp.cpp "${native_diagnostic}")
+  target_compile_definitions(cmeta_pp_${native_requirement}_cpp_compile_fail PRIVATE
+    "CMETA_REQUIREMENT_SOURCE=\"cmeta_pp_${native_requirement}.c\"")
+  set_target_properties(cmeta_pp_${native_requirement}_cpp_compile_fail PROPERTIES
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+endforeach()
+
 cmeta_add_compile_failure_test(cmeta_capabilities_missing_trait_compile_fail
   compile_fail/cmeta_capabilities_missing_trait.c "CMeta required trait is missing")
 cmeta_add_compile_failure_test(cmeta_capabilities_callback_compile_fail

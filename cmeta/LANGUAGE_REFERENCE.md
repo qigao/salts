@@ -1083,6 +1083,42 @@ interface, or ordinary C function composes cleanly enough.
 `CMETA_HAS_COUNTER` 表示唯一名称生成能力；不支持时不提供 `CMETA_PP_UNIQUE`，不会以行号代替。
 唯一编号只用于命名，不定义声明次序、资源顺序或跨 TU 身份；顺序由 schema 和 indexed/reverse replay 决定。
 
+原生类型助手也归属 `compiler.h`，与返回反射 descriptor 的既有 `CMETA_TYPEOF(type)` 分离：
+
+| 入口 | 参数与结果 | 能力与边界 |
+| --- | --- | --- |
+| `CMETA_NATIVE_TYPEOF(expr)` | 产生原生类型，可用于 typedef 或声明；保留 cv、数组边界和函数类型；C++ 去掉引用 | 先检查 `CMETA_HAS_NATIVE_TYPEOF`；只对非变长类型保证不求值 |
+| `CMETA_SAME_TYPE(a,b)` | 两个表达式的原生类型比较，返回编译期 0/1；顶层及指针目标的 cv 限定参与比较 | 先检查 `CMETA_HAS_SAME_TYPE`；C 使用类型兼容规则，C++ 使用去引用后的类型相等；不比较反射身份、所有权或 ABI |
+| `CMETA_AUTO(name,expr)` | 声明一个局部值，初始化表达式恰好求值一次；类型按原生 `auto` / `__auto_type` 规则推导，数组/函数初始化器退化 | 先检查 `CMETA_HAS_AUTO`；name 是新的局部标识符，expr 必须可推导、可初始化，不接受裸花括号初始化列表 |
+
+三个能力宏均可在 `#if` 中使用。不支持时不定义对应操作宏，调用方必须明确要求能力，
+不能用转换或 `typeof(expr) name = expr` 模拟单次求值。当前支持 C++17（含 MSVC）、
+GCC C 和 Clang C；MSVC C 不声明支持。C++ 沿用普通值初始化的复制、移动和析构规则，
+不从声明推导 CMeta 资源所有权；这些助手不改变 descriptor、Plugin 生命周期或运行时分派。
+
+`CMETA_NATIVE_TYPEOF` / `CMETA_SAME_TYPE` 的可移植查询域是固定类型、非 void 的非位域表达式。
+不要将变长数组或变长数组指针作为类型查询操作数；GNU `typeof` 可能求值这类表达式。
+`CMETA_AUTO` 使用独立的原生推导设施，对变长数组指针初始化器也只求值一次。
+原生查询沿用编译器的语言规则，不修复编译器自身的表达式推导差异：本地 MSVC 19.44
+对直接 `*&function_name` 的 `decltype` 得到函数指针类型，而命名函数指针变量的解引用
+得到函数类型。跨编译器查询应使用函数名或命名指针的解引用，避免直接 `*&function_name`。
+实现依据见 [GCC typeof / auto type](https://gcc.gnu.org/onlinedocs/gcc/Typeof.html)
+与 [Clang auto type](https://clang.llvm.org/docs/LanguageExtensions.html#auto-type)。
+
+```c
+#include <cmeta/compiler.h>
+#if !CMETA_HAS_AUTO || !CMETA_HAS_NATIVE_TYPEOF
+#error "This example requires native type deduction"
+#endif
+int main(void) {
+    int calls = 0;
+    CMETA_AUTO(value, ++calls);
+    typedef CMETA_NATIVE_TYPEOF(value) value_type;
+    value_type copy = value;
+    return calls == 1 && copy == 1 ? 0 : 1;
+}
+```
+
 `CMETA_LAYOUT_REQUIRE(condition)` 和 `CMETA_FLAGS_REQUIRE(value,mask)` 均为表达式级编译期约束，
 成功贡献整数零，可放入静态初始化器。前者要求常量条件为真；后者要求非负整数常量的全部
 置位都包含在显式 mask 中。失败必须导致编译错误，运行时值也不能充当条件或 flag 输入。

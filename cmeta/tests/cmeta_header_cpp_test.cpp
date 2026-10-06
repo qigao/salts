@@ -10,6 +10,7 @@
 #include <cmeta/object_interface.h>
 #include "tinytest.hpp"
 #include "cmeta_declaration_rows_cases.h"
+#include "cmeta_compiler_type_cases.h"
 
 #include <cstddef>
 #include <type_traits>

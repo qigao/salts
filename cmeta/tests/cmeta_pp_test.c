@@ -5,6 +5,7 @@
 #else
 #include "tinytest.h"
 #endif
+#include "cmeta_compiler_type_cases.h"
 
 #define PP_ALIAS 7
 #define PP_VOID_ALIAS void
