@@ -288,6 +288,12 @@ salts_plugin_status salts_plugin_registry_acquire(
     salts_plugin_lease *out_lease,
     const salts_plugin_manifest **out_manifest);
 
+/*
+ * Releases one live lease. On SALTS_PLUGIN_OK the lease is consumed and reset
+ * to canonical zero. On any non-OK result the caller-supplied lease value is
+ * left unchanged; callers may correct the failure cause and retry when the
+ * lease is otherwise still authoritative.
+ */
 salts_plugin_status salts_plugin_registry_release(
     salts_plugin_registry *registry,
     salts_plugin_lease *lease);
