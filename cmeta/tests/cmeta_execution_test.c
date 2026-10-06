@@ -11,6 +11,7 @@
 
 typedef struct ExecutionValue { cmeta_capture_storage alignment; int *owned; int value; } ExecutionValue;
 static atomic_uint destroyed;
+static atomic_uint value_init_calls;
 static bool fail_init;
 static cmeta_pool_state *reentry_pool;
 static cmeta_status reentry_status, pool_restore_reentry, pool_move_reentry;
@@ -20,6 +21,7 @@ static void *reentry_local_owner;
 static cmeta_status local_init_reentry, local_restore_reentry;
 static cmeta_status value_init(void *object) {
     ExecutionValue *value = object;
+    atomic_fetch_add(&value_init_calls, 1u);
     memset(value, 0, sizeof(*value));
     if (reentry_pool != NULL) {
         reentry_status = cmeta_pool_destroy(reentry_pool);
@@ -60,10 +62,12 @@ static const cmeta_data_construct_ops value_ops = {
     .struct_size = sizeof(cmeta_data_construct_ops), .abi_version = CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,
     .storage_type = &value_type, .init_zero = value_init, .restore_zero = value_restore, .move = value_move
 };
+static const unsigned char value_shape = 0u;
 static const cmeta_data_desc value_data = {
     .struct_size = sizeof(cmeta_data_desc), .abi_version = CMETA_DATA_DESC_ABI_VERSION,
     .stable_id = "test.ExecutionValue", .display_name = "ExecutionValue",
-    .kind = CMETA_DATA_CUSTOM, .storage_type = &value_type, .construct_ops = &value_ops
+    .kind = CMETA_DATA_CUSTOM, .storage_type = &value_type,
+    .shape = &value_shape, .construct_ops = &value_ops
 };
 cmeta_registry(execution_metadata,
     cmeta_manifest_type_entry("value", &value_type));
@@ -116,6 +120,54 @@ spec("CMeta execution primitives") {
     after_each() {
         reentry_local = NULL; reentry_local_owner = NULL;
         reentry_pool = NULL; fail_init = false;
+    }
+    it("rejects same-layout foreign lifecycle before Pool or Local callbacks") {
+        const cmeta_type_identity foreign_identity =
+            CMETA_TYPE_ID_ATOM_INIT("test.OtherExecutionValue");
+        cmeta_type_desc provider = value_type;
+        cmeta_data_construct_ops ops = value_ops;
+        cmeta_data_desc data = value_data;
+        const cmeta_data_construct_ops *bound = &value_ops;
+        cmeta_pool_state pool = {0};
+        ValueLocal local = {0};
+        provider.identity = &foreign_identity;
+        ops.storage_type = &provider;
+        data.construct_ops = &ops;
+        atomic_store(&value_init_calls, 0u);
+        check_equal(cmeta_lifecycle_bind(&data, sizeof(ExecutionValue),
+            _Alignof(ExecutionValue), &bound), CMETA_TYPE_MISMATCH);
+        check_null(bound);
+        check_equal(cmeta_pool_init(&pool, &data, sizeof(ExecutionValue),
+            _Alignof(ExecutionValue), 1), CMETA_TYPE_MISMATCH);
+        check_null(pool.owner.storage);
+        check_equal(cmeta_local_init(&local.state, &local, &local.value, &data,
+            sizeof(ExecutionValue), _Alignof(ExecutionValue)), CMETA_TYPE_MISMATCH);
+        check_null(local.state.affinity.owner);
+        check_equal(atomic_load(&value_init_calls), 0u);
+        /* Also clean the resources when this regression runs against the old binder. */
+        if (local.state.ops != NULL) check_equal(ValueLocal_destroy(&local), CMETA_OK);
+        if (pool.ops != NULL) check_equal(cmeta_pool_destroy(&pool), CMETA_OK);
+    }
+    it("accepts renamed canonical lifecycle but rejects kind and invalid DataDesc") {
+        cmeta_type_desc provider = value_type;
+        cmeta_data_construct_ops ops = value_ops;
+        cmeta_data_desc data = value_data;
+        const cmeta_data_construct_ops *bound = NULL;
+        provider.name = "RenamedExecutionValue";
+        ops.storage_type = &provider;
+        data.construct_ops = &ops;
+        check_equal(cmeta_lifecycle_bind(&data, sizeof(ExecutionValue),
+            _Alignof(ExecutionValue), &bound), CMETA_OK);
+        check_true(bound == &ops);
+        provider.kind = CMETA_T_INTEGER;
+        check_equal(cmeta_lifecycle_bind(&data, sizeof(ExecutionValue),
+            _Alignof(ExecutionValue), &bound), CMETA_TYPE_MISMATCH);
+        check_null(bound);
+        provider.kind = value_type.kind;
+        data.shape = NULL;
+        check_equal(cmeta_lifecycle_bind(&data, sizeof(ExecutionValue),
+            _Alignof(ExecutionValue), &bound), CMETA_INVALID_ARGUMENT);
+        check_null(bound);
     }
     it("moves a canonical value from Core Pool to Platform Local without changing metadata ownership") {
         const cmeta_manifest_limits views = {CMETA_MANIFEST_DEFAULT_ITEMS,

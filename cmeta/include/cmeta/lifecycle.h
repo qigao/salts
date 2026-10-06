@@ -2,7 +2,11 @@
 #define CMETA_LIFECYCLE_H
 #include <cmeta/data.h>
 
-/* Bind the same concrete lifecycle for lexical, pool and local storage. */
+/** Bind borrowed canonical lifecycle operations to the requested native layout.
+ * No allocation or callbacks; move remains an optional capability. Invalid
+ * metadata returns INVALID_ARGUMENT, missing operations return TRAIT_MISSING,
+ * identity/kind/layout disagreement returns TYPE_MISMATCH. Failure clears *out.
+ */
 CMETA_INLINE cmeta_status cmeta_lifecycle_bind(
     const cmeta_data_desc *data, size_t size, size_t align,
     const cmeta_data_construct_ops **out) {
@@ -11,16 +15,22 @@ CMETA_INLINE cmeta_status cmeta_lifecycle_bind(
     *out = NULL;
     if (data == NULL ||
         data->struct_size < offsetof(cmeta_data_desc, construct_ops) + sizeof(data->construct_ops) ||
-        data->abi_version != CMETA_DATA_DESC_ABI_VERSION)
+        !cmeta_data_desc_valid(data))
         return CMETA_INVALID_ARGUMENT;
     ops = data->construct_ops;
     if (ops == NULL) return CMETA_TRAIT_MISSING;
     if (ops->struct_size < sizeof(*ops) ||
         ops->abi_version != CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION ||
         ops->init_zero == NULL || ops->restore_zero == NULL ||
-        data->storage_type == NULL || ops->storage_type == NULL)
+        data->storage_type == NULL || !cmeta_type_desc_valid(ops->storage_type) ||
+        ops->storage_type->size == 0u ||
+        (ops->storage_type->align & (ops->storage_type->align - 1u)) != 0u ||
+        ops->storage_type->size % ops->storage_type->align != 0u)
         return CMETA_INVALID_ARGUMENT;
-    if (data->storage_type->size != size || data->storage_type->align != align ||
+    /* Native layout alone cannot authorize another type's lifecycle callbacks. */
+    if (!cmeta_type_equal(data->storage_type, ops->storage_type) ||
+        data->storage_type->kind != ops->storage_type->kind ||
+        data->storage_type->size != size || data->storage_type->align != align ||
         ops->storage_type->size != size || ops->storage_type->align != align)
         return CMETA_TYPE_MISMATCH;
     *out = ops;
