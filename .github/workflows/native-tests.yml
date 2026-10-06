@@ -89,7 +89,7 @@ jobs:
       - name: Run POSIX scope, execution and nested CSTL contracts
         if: matrix.family != 'windows' && matrix.execution
         shell: bash
-        run: ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cmeta_scope_|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_execution_test$|cmeta_pool_cpp_test$|cmeta_collector_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_semantic_projection_test$|cstl_typed_decl_cpp_test$)"
+        run: ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cnet_api_test$|cmeta_scope_|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_execution_test$|cmeta_pool_cpp_test$|cmeta_collector_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_semantic_projection_test$|cstl_typed_decl_cpp_test$)"
       - name: Run Windows scope, execution and nested CSTL contracts
         if: matrix.family == 'windows' && matrix.execution
         shell: cmd
@@ -98,7 +98,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cmeta_scope_|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_execution_test$|cmeta_pool_cpp_test$|cmeta_collector_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_semantic_projection_test$|cstl_typed_decl_cpp_test$)"
+          ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cnet_api_test$|cmeta_scope_|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_execution_test$|cmeta_pool_cpp_test$|cmeta_collector_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_semantic_projection_test$|cstl_typed_decl_cpp_test$)"
       - name: Run Plugin contracts on Unix
         if: matrix.family != 'windows' && matrix.plugin
         shell: bash

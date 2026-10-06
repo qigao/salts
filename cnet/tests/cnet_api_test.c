@@ -1,3 +1,10 @@
+/* The interrupted-poll regression needs pthread_kill before libc is included. */
+#ifndef _WIN32
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+#endif
+
 #include "cnet_test_named_pipe.h"
 #if defined(CNET_INTERNAL_PROFILING)
 #include "cnet_client_internal.h"
