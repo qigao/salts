@@ -12,7 +12,7 @@ lldb-server, forwards its localhost TCP listener through ADB, and launches the
 matching host LLDB.
 
 .PARAMETER Target
-The CMake executable target to build and run, for example test_salts_error.
+The CMake executable target to build and run, for example test_cmeta_error.
 
 .PARAMETER Preset
 The Android build preset. Its associated configure preset and binaryDir are
@@ -62,13 +62,13 @@ Host and device localhost TCP port used for the LLDB connection.
 Uses an already-built test executable without invoking CMake.
 
 .EXAMPLE
-./tools/android-test.ps1 test_salts_error -Tap
+./tools/android-test.ps1 test_cmeta_error -Tap
 
 .EXAMPLE
-./tools/android-test.ps1 test_salts_error -Filter "known error" -JUnit artifacts/test_salts_error.xml
+./tools/android-test.ps1 test_cmeta_error -Filter "known error" -JUnit artifacts/test_cmeta_error.xml
 
 .EXAMPLE
-./tools/android-test.ps1 test_salts_error -Lldb -Serial adb-DEVICE._adb-tls-connect._tcp
+./tools/android-test.ps1 test_cmeta_error -Lldb -Serial adb-DEVICE._adb-tls-connect._tcp
 #>
 param(
     [Parameter(Mandatory, Position = 0)]

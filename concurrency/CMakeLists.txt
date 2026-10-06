@@ -1,4 +1,4 @@
-set(TARGET_NAME salts_concurrency)
+set(TARGET_NAME cmeta_concurrency)
 
 add_library(${TARGET_NAME} STATIC
   src/deadline_queue.c

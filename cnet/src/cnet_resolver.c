@@ -61,8 +61,8 @@ typedef struct cnet_resolver_impl {
   size_t ready_count;
   size_t active_count;
   bool admission_open;
-  salts_mutex_t control_lock;
-  salts_mutex_t state_lock;
+  cmeta_mutex_t control_lock;
+  cmeta_mutex_t state_lock;
   bool socket_overflow;
 } cnet_resolver_impl;
 
@@ -150,7 +150,7 @@ static void cnet_resolver_callback(void *argument, int status, int timeouts,
     if (node == NULL) status = ARES_ENODATA;
   }
 
-  salts_mutex_lock(&impl->state_lock);
+  cmeta_mutex_lock(&impl->state_lock);
   if (slot->state == CNET_RESOLVER_SLOT_ACTIVE) {
     memset(&slot->result, 0, sizeof(slot->result));
     slot->result.query.slot = (uint32_t)(slot - impl->slots) + 1u;
@@ -168,7 +168,7 @@ static void cnet_resolver_callback(void *argument, int status, int timeouts,
         slot->result.query.slot - 1u;
     ++impl->ready_count;
   }
-  salts_mutex_unlock(&impl->state_lock);
+  cmeta_mutex_unlock(&impl->state_lock);
 
   if (addresses != NULL) ares_freeaddrinfo(addresses);
 }
@@ -232,16 +232,16 @@ int cnet_resolver_init(cnet_resolver *resolver, const cnet_resolver_config *conf
     impl->slots[index].owner = impl;
     impl->free_slots[index] = (uint32_t)(impl->capacity - index - 1u);
   }
-  salts_mutex_init(&impl->control_lock);
-  salts_mutex_init(&impl->state_lock);
+  cmeta_mutex_init(&impl->control_lock);
+  cmeta_mutex_init(&impl->state_lock);
 
   memset(&options, 0, sizeof(options));
   options.sock_state_cb = cnet_resolver_socket_state;
   options.sock_state_cb_data = impl;
   status = ares_init_options(&impl->channel, &options, ARES_OPT_SOCK_STATE_CB);
   if (status != ARES_SUCCESS) {
-    salts_mutex_destroy(&impl->state_lock);
-    salts_mutex_destroy(&impl->control_lock);
+    cmeta_mutex_destroy(&impl->state_lock);
+    cmeta_mutex_destroy(&impl->control_lock);
     free(impl->ready_events);
     free(impl->poll_fds);
     free(impl->sockets);
@@ -265,11 +265,11 @@ int cnet_resolver_poll(cnet_resolver *resolver) {
   ares_status_t status;
   if (impl == NULL) return SALTS_EINVAL;
 
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   if (impl->socket_overflow) {
     impl->socket_overflow = false;
     ares_cancel(impl->channel);
-    salts_mutex_unlock(&impl->control_lock);
+    cmeta_mutex_unlock(&impl->control_lock);
     return SALTS_ENOBUFS;
   }
   while (offset < impl->socket_count) {
@@ -292,7 +292,7 @@ int cnet_resolver_poll(cnet_resolver *resolver) {
     polled = poll(impl->poll_fds, (nfds_t)batch, 0);
 #endif
     if (polled < 0) {
-      salts_mutex_unlock(&impl->control_lock);
+      cmeta_mutex_unlock(&impl->control_lock);
       return SALTS_EAI_FAIL;
     }
     for (index = 0u; polled > 0 && index < batch; ++index) {
@@ -308,7 +308,7 @@ int cnet_resolver_poll(cnet_resolver *resolver) {
   }
   status = ares_process_fds(impl->channel, ready_count != 0u ? impl->ready_events : NULL,
                             ready_count, ARES_PROCESS_FLAG_NONE);
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
   if (status == ARES_SUCCESS) return SALTS_OK;
   return status == ARES_ENOMEM ? SALTS_ENOMEM : SALTS_EAI_FAIL;
 }
@@ -317,9 +317,9 @@ bool cnet_resolver_has_pending(cnet_resolver *resolver) {
   cnet_resolver_impl *impl = cnet_resolver_get_impl(resolver);
   bool pending;
   if (impl == NULL) return false;
-  salts_mutex_lock(&impl->state_lock);
+  cmeta_mutex_lock(&impl->state_lock);
   pending = impl->active_count != 0u;
-  salts_mutex_unlock(&impl->state_lock);
+  cmeta_mutex_unlock(&impl->state_lock);
   return pending;
 }
 
@@ -338,16 +338,16 @@ int cnet_resolver_submit(cnet_resolver *resolver, const char *host, uint16_t por
   host_length = strnlen(host, CNET_RESOLVER_HOST_CAPACITY);
   if (host_length == 0u || host_length == CNET_RESOLVER_HOST_CAPACITY) return SALTS_ENAMETOOLONG;
 
-  salts_mutex_lock(&impl->control_lock);
-  salts_mutex_lock(&impl->state_lock);
+  cmeta_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->state_lock);
   if (!impl->admission_open) {
-    salts_mutex_unlock(&impl->state_lock);
-    salts_mutex_unlock(&impl->control_lock);
+    cmeta_mutex_unlock(&impl->state_lock);
+    cmeta_mutex_unlock(&impl->control_lock);
     return SALTS_ESHUTDOWN;
   }
   if (impl->free_count == 0u) {
-    salts_mutex_unlock(&impl->state_lock);
-    salts_mutex_unlock(&impl->control_lock);
+    cmeta_mutex_unlock(&impl->state_lock);
+    cmeta_mutex_unlock(&impl->control_lock);
     return SALTS_ENOBUFS;
   }
 
@@ -363,14 +363,14 @@ int cnet_resolver_submit(cnet_resolver *resolver, const char *host, uint16_t por
   ++impl->active_count;
   out_query->slot = slot_index + 1u;
   out_query->generation = slot->generation;
-  salts_mutex_unlock(&impl->state_lock);
+  cmeta_mutex_unlock(&impl->state_lock);
 
   memset(&hints, 0, sizeof(hints));
   hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = socket_type;
   hints.ai_protocol = socket_type == SOCK_STREAM ? IPPROTO_TCP : IPPROTO_UDP;
   ares_getaddrinfo(impl->channel, slot->host, slot->service, &hints, cnet_resolver_callback, slot);
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
   return SALTS_OK;
 }
 
@@ -379,10 +379,10 @@ int cnet_resolver_cancel(cnet_resolver *resolver, cnet_resolver_query query) {
   cnet_resolver_slot *slot;
 
   if (impl == NULL) return SALTS_EINVAL;
-  salts_mutex_lock(&impl->state_lock);
+  cmeta_mutex_lock(&impl->state_lock);
   slot = cnet_resolver_find_slot(impl, query);
   if (slot == NULL) {
-    salts_mutex_unlock(&impl->state_lock);
+    cmeta_mutex_unlock(&impl->state_lock);
     return SALTS_ENOENT;
   }
   slot->cancelled = true;
@@ -390,7 +390,7 @@ int cnet_resolver_cancel(cnet_resolver *resolver, cnet_resolver_query query) {
     slot->result.status = SALTS_EAI_CANCELED;
     slot->result.address_length = 0u;
   }
-  salts_mutex_unlock(&impl->state_lock);
+  cmeta_mutex_unlock(&impl->state_lock);
   return SALTS_OK;
 }
 
@@ -404,10 +404,10 @@ int cnet_resolver_take(cnet_resolver *resolver, cnet_resolver_result *out_result
   memset(out_result, 0, sizeof(*out_result));
   if (impl == NULL) return SALTS_EINVAL;
 
-  salts_mutex_lock(&impl->state_lock);
+  cmeta_mutex_lock(&impl->state_lock);
   if (impl->ready_count == 0u) {
     drained = !impl->admission_open && impl->active_count == 0u;
-    salts_mutex_unlock(&impl->state_lock);
+    cmeta_mutex_unlock(&impl->state_lock);
     return drained ? SALTS_EOF : SALTS_ETIMEDOUT;
   }
 
@@ -422,7 +422,7 @@ int cnet_resolver_take(cnet_resolver *resolver, cnet_resolver_result *out_result
   slot->cancelled = false;
   --impl->active_count;
   if (slot->state == CNET_RESOLVER_SLOT_FREE) impl->free_slots[impl->free_count++] = slot_index;
-  salts_mutex_unlock(&impl->state_lock);
+  cmeta_mutex_unlock(&impl->state_lock);
   return SALTS_OK;
 }
 
@@ -432,17 +432,17 @@ int cnet_resolver_close(cnet_resolver *resolver, uint32_t timeout_ms) {
   if (impl == NULL) return SALTS_EINVAL;
   (void)timeout_ms;
 
-  salts_mutex_lock(&impl->control_lock);
-  salts_mutex_lock(&impl->state_lock);
+  cmeta_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->state_lock);
   if (!impl->admission_open) {
-    salts_mutex_unlock(&impl->state_lock);
-    salts_mutex_unlock(&impl->control_lock);
+    cmeta_mutex_unlock(&impl->state_lock);
+    cmeta_mutex_unlock(&impl->control_lock);
     return SALTS_EALREADY;
   }
   impl->admission_open = false;
-  salts_mutex_unlock(&impl->state_lock);
+  cmeta_mutex_unlock(&impl->state_lock);
   ares_cancel(impl->channel);
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
   return SALTS_OK;
 }
 
@@ -452,19 +452,19 @@ int cnet_resolver_destroy(cnet_resolver *resolver) {
   if (resolver == NULL) return SALTS_EINVAL;
   if (impl == NULL) return SALTS_OK;
 
-  salts_mutex_lock(&impl->control_lock);
-  salts_mutex_lock(&impl->state_lock);
+  cmeta_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->state_lock);
   if (impl->admission_open || impl->active_count != 0u) {
-    salts_mutex_unlock(&impl->state_lock);
-    salts_mutex_unlock(&impl->control_lock);
+    cmeta_mutex_unlock(&impl->state_lock);
+    cmeta_mutex_unlock(&impl->control_lock);
     return SALTS_EBUSY;
   }
-  salts_mutex_unlock(&impl->state_lock);
+  cmeta_mutex_unlock(&impl->state_lock);
   ares_destroy(impl->channel);
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
 
-  salts_mutex_destroy(&impl->state_lock);
-  salts_mutex_destroy(&impl->control_lock);
+  cmeta_mutex_destroy(&impl->state_lock);
+  cmeta_mutex_destroy(&impl->control_lock);
   free(impl->ready_events);
   free(impl->poll_fds);
   free(impl->sockets);

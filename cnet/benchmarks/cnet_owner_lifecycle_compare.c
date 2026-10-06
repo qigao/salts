@@ -2,7 +2,7 @@
 #include <salts/clock.h>
 #include <salts/error_codes.h>
 #include <salts/thread.h>
-#include <salts_buffer.h>
+#include <cmeta_buffer.h>
 
 #include "cnet_benchmark_stats.h"
 
@@ -67,7 +67,7 @@ typedef struct compare_server {
   atomic_bool abort_requested;
   atomic_int status;
   struct sockaddr_in address;
-  salts_thread_t thread;
+  cmeta_thread_t thread;
   bool thread_started;
 } compare_server;
 
@@ -282,7 +282,7 @@ static int compare_server_init(compare_server *server) {
 }
 
 static int compare_server_start(compare_server *server) {
-  const int status = salts_thread_create(&server->thread, compare_server_entry, server);
+  const int status = cmeta_thread_create(&server->thread, compare_server_entry, server);
   if (status == SALTS_OK) server->thread_started = true;
   return status;
 }
@@ -301,8 +301,8 @@ static int compare_server_finish(compare_server *server) {
   const uintptr_t invalid = compare_socket_token(COMPARE_INVALID_SOCKET);
   int status = SALTS_OK;
   if (server->thread_started) {
-    const int join_status = salts_thread_join(&server->thread);
-    salts_thread_destroy(&server->thread);
+    const int join_status = cmeta_thread_join(&server->thread);
+    cmeta_thread_destroy(&server->thread);
     server->thread_started = false;
     if (join_status != SALTS_OK) status = join_status;
     if (status == SALTS_OK)
@@ -582,15 +582,15 @@ static int compare_run_sample(const char *dso_path, native_io_backend_kind backe
   if (status == SALTS_OK) status = compare_client_init(&client, &api, &server.address, backend_kind);
   for (size_t warmup = 0u; status == SALTS_OK && warmup < CNET_OWNER_COMPARE_WARMUPS; ++warmup)
     status = compare_exchange(&client, payload);
-  if (status == SALTS_OK) wall_started = salts_hrtime();
+  if (status == SALTS_OK) wall_started = cmeta_hrtime();
   for (size_t exchange = 0u; status == SALTS_OK && exchange < CNET_OWNER_COMPARE_EXCHANGES;
        ++exchange) {
-    const uint64_t started = salts_hrtime();
+    const uint64_t started = cmeta_hrtime();
     status = compare_exchange(&client, payload);
-    if (status == SALTS_OK) latencies[exchange] = salts_hrtime() - started;
+    if (status == SALTS_OK) latencies[exchange] = cmeta_hrtime() - started;
   }
   if (status == SALTS_OK) {
-    out_result->wall_ns = salts_hrtime() - wall_started;
+    out_result->wall_ns = cmeta_hrtime() - wall_started;
     if (out_result->wall_ns == 0u) status = SALTS_ERANGE;
   }
   if (status == SALTS_OK) {

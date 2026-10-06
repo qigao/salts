@@ -14,7 +14,7 @@ typedef struct cflow_virtual_clock_state {
 
 static cflow_instant system_clock_now(void *state) {
     (void)state;
-    return (cflow_instant){salts_hrtime()};
+    return (cflow_instant){cmeta_hrtime()};
 }
 
 static bool system_clock_advance(void *state, cflow_duration delta) {

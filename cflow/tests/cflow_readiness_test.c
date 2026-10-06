@@ -71,8 +71,8 @@ typedef struct read_probe {
 } read_probe;
 
 typedef struct wake_probe {
-    salts_mutex_t lock;
-    salts_cond_t changed;
+    cmeta_mutex_t lock;
+    cmeta_cond_t changed;
     size_t calls;
     bool entered;
     bool released;
@@ -97,7 +97,7 @@ typedef struct differential_observation {
 typedef struct fake_env {
     const readiness_contract_factory *factory;
     readiness_contract_fixture *fixture;
-    salts_readiness_reactor reactor;
+    cmeta_readiness_reactor reactor;
     cflow_readiness_publisher_owner owner;
 } fake_env;
 
@@ -115,8 +115,8 @@ typedef struct destroy_thread_args {
 
 typedef struct arm_observing_scheduler_state {
     cflow_scheduler inner;
-    salts_readiness_registration *registration;
-    salts_mutex_t lock;
+    cmeta_readiness_registration *registration;
+    cmeta_mutex_t lock;
     bool observe_next_post;
     int observation_status;
     uint32_t observation_api_borrows;
@@ -124,10 +124,10 @@ typedef struct arm_observing_scheduler_state {
 
 static bool arm_observing_take_next(arm_observing_scheduler_state *state) {
     bool observe;
-    salts_mutex_lock(&state->lock);
+    cmeta_mutex_lock(&state->lock);
     observe = state->observe_next_post;
     state->observe_next_post = false;
-    salts_mutex_unlock(&state->lock);
+    cmeta_mutex_unlock(&state->lock);
     return observe;
 }
 
@@ -135,13 +135,13 @@ static void arm_observing_wait_for_rearm(
     arm_observing_scheduler_state *state, bool observe, bool accepted) {
     if (observe && accepted) {
         uint32_t api_borrows = UINT32_MAX;
-        int status = salts_readiness_backend_wait_arm_waiter_observe(
+        int status = cmeta_readiness_backend_wait_arm_waiter_observe(
             state->registration, 1u, CFLOW_READINESS_TEST_TIMEOUT_NS,
             &api_borrows);
-        salts_mutex_lock(&state->lock);
+        cmeta_mutex_lock(&state->lock);
         state->observation_status = status;
         state->observation_api_borrows = api_borrows;
-        salts_mutex_unlock(&state->lock);
+        cmeta_mutex_unlock(&state->lock);
     }
 }
 
@@ -234,7 +234,7 @@ static void arm_observing_destroy(void *self) {
     arm_observing_scheduler_state *state =
         (arm_observing_scheduler_state *)self;
     cflow_scheduler_destroy(&state->inner);
-    salts_mutex_destroy(&state->lock);
+    cmeta_mutex_destroy(&state->lock);
 }
 
 CMETA_IMPLEMENTS(cflow_scheduler, arm_observing_scheduler,
@@ -256,16 +256,16 @@ CMETA_IMPLEMENTS(cflow_scheduler, arm_observing_scheduler,
 
 static bool arm_observing_scheduler_init(
     arm_observing_scheduler_state *state,
-    salts_readiness_registration *registration,
+    cmeta_readiness_registration *registration,
     cflow_scheduler *scheduler) {
     memset(state, 0, sizeof(*state));
     state->registration = registration;
     state->observation_status = SALTS_EIO;
     state->observation_api_borrows = UINT32_MAX;
-    salts_mutex_init(&state->lock);
+    cmeta_mutex_init(&state->lock);
     if (!state->lock ||
         !cflow_scheduler_worker_init_with_capacity(&state->inner, 1u, 8u, 8u)) {
-        salts_mutex_destroy(&state->lock);
+        cmeta_mutex_destroy(&state->lock);
         return false;
     }
     *scheduler = arm_observing_scheduler_as_cflow_scheduler(state);
@@ -274,32 +274,32 @@ static bool arm_observing_scheduler_init(
 
 static void arm_observing_scheduler_observe_next(
     arm_observing_scheduler_state *state) {
-    salts_mutex_lock(&state->lock);
+    cmeta_mutex_lock(&state->lock);
     state->observe_next_post = true;
-    salts_mutex_unlock(&state->lock);
+    cmeta_mutex_unlock(&state->lock);
 }
 
 static int arm_observing_scheduler_status(
     arm_observing_scheduler_state *state) {
     int status;
-    salts_mutex_lock(&state->lock);
+    cmeta_mutex_lock(&state->lock);
     status = state->observation_status;
-    salts_mutex_unlock(&state->lock);
+    cmeta_mutex_unlock(&state->lock);
     return status;
 }
 
 static uint32_t arm_observing_scheduler_api_borrows(
     arm_observing_scheduler_state *state) {
     uint32_t api_borrows;
-    salts_mutex_lock(&state->lock);
+    cmeta_mutex_lock(&state->lock);
     api_borrows = state->observation_api_borrows;
-    salts_mutex_unlock(&state->lock);
+    cmeta_mutex_unlock(&state->lock);
     return api_borrows;
 }
 
 static bool fake_env_init(fake_env *env, size_t capacity) {
     int status = SALTS_EINVAL;
-    const salts_readiness_config config = {capacity, capacity};
+    const cmeta_readiness_config config = {capacity, capacity};
 
     memset(env, 0, sizeof(*env));
     env->factory = readiness_contract_factory_get();
@@ -312,8 +312,8 @@ static bool fake_env_init(fake_env *env, size_t capacity) {
 static void fake_env_destroy(fake_env *env) {
     if (!env || !env->fixture)
         return;
-    (void)salts_readiness_reactor_shutdown(&env->reactor);
-    (void)salts_readiness_reactor_destroy(&env->reactor);
+    (void)cmeta_readiness_reactor_shutdown(&env->reactor);
+    (void)cmeta_readiness_reactor_destroy(&env->reactor);
     env->factory->destroy(env->fixture);
     memset(env, 0, sizeof(*env));
 }
@@ -349,13 +349,13 @@ static void blocking_wake(void *user) {
     wake_probe *probe = (wake_probe *)user;
     if (!probe)
         return;
-    salts_mutex_lock(&probe->lock);
+    cmeta_mutex_lock(&probe->lock);
     ++probe->calls;
     probe->entered = true;
-    salts_cond_broadcast(&probe->changed);
+    cmeta_cond_broadcast(&probe->changed);
     while (!probe->released)
-        salts_cond_wait(&probe->changed, &probe->lock);
-    salts_mutex_unlock(&probe->lock);
+        cmeta_cond_wait(&probe->changed, &probe->lock);
+    cmeta_mutex_unlock(&probe->lock);
 }
 
 static bool sink_value(void *user, const cmeta_type_desc *type,
@@ -389,25 +389,25 @@ static void emit_thread(void *user) {
 static void destroy_thread(void *user) {
     destroy_thread_args *args = (destroy_thread_args *)user;
     cflow_publisher_destroy(args->source);
-    salts_mutex_lock(&args->probe->lock);
+    cmeta_mutex_lock(&args->probe->lock);
     args->returned = true;
-    salts_cond_broadcast(&args->probe->changed);
-    salts_mutex_unlock(&args->probe->lock);
+    cmeta_cond_broadcast(&args->probe->changed);
+    cmeta_mutex_unlock(&args->probe->lock);
 }
 
 static void cancel_thread(void *user) {
     destroy_thread_args *args = (destroy_thread_args *)user;
     cflow_publisher_cancel(args->source);
-    salts_mutex_lock(&args->probe->lock);
+    cmeta_mutex_lock(&args->probe->lock);
     args->returned = true;
-    salts_cond_broadcast(&args->probe->changed);
-    salts_mutex_unlock(&args->probe->lock);
+    cmeta_cond_broadcast(&args->probe->changed);
+    cmeta_mutex_unlock(&args->probe->lock);
 }
 
 static int make_source(fake_env *env, intptr_t resource, read_probe *probe,
                        cflow_publisher *source,
-                       salts_readiness_registration *registration) {
-    int status = salts_readiness_register(
+                       cmeta_readiness_registration *registration) {
+    int status = cmeta_readiness_register(
         &env->reactor, resource, registration);
     if (status != SALTS_OK)
         return status;
@@ -460,8 +460,8 @@ static void run_array_differential(const int *values,
 static void run_fake_readiness_differential(const int *values,
                                             differential_observation *out) {
     fake_env env;
-    salts_readiness_registration registration = {0};
-    salts_readiness_stats stats = {0};
+    cmeta_readiness_registration registration = {0};
+    cmeta_readiness_stats stats = {0};
     cflow_publisher source = {0};
     cflow_graph graph = {0};
     cflow_scheduler scheduler = {0};
@@ -503,7 +503,7 @@ static void run_fake_readiness_differential(const int *values,
 
     cflow_subscription_close(&run);
     check_equal(read.closes, (size_t)1u);
-    check_equal(salts_readiness_reactor_stats(&env.reactor, &stats), SALTS_OK);
+    check_equal(cmeta_readiness_reactor_stats(&env.reactor, &stats), SALTS_OK);
     check_equal(stats.registered_count, (size_t)0u);
     check_equal(stats.armed_count, (size_t)0u);
     check_equal(stats.callbacks_inflight, (size_t)0u);
@@ -543,8 +543,8 @@ typedef struct native_pipe_read_probe {
 } native_pipe_read_probe;
 
 typedef struct concurrent_sink_probe {
-    salts_mutex_t lock;
-    salts_cond_t changed;
+    cmeta_mutex_t lock;
+    cmeta_cond_t changed;
     int values[CFLOW_DIFFERENTIAL_VALUE_COUNT];
     size_t value_count;
     size_t done_count;
@@ -558,56 +558,56 @@ static bool concurrent_sink_value(void *user,
     bool accepted = false;
     if (!probe || !cmeta_type_equal(type, &cmeta_type_int) || !value)
         return false;
-    salts_mutex_lock(&probe->lock);
+    cmeta_mutex_lock(&probe->lock);
     if (probe->value_count < CFLOW_DIFFERENTIAL_VALUE_COUNT) {
         probe->values[probe->value_count++] = *(const int *)value;
         accepted = true;
-        salts_cond_broadcast(&probe->changed);
+        cmeta_cond_broadcast(&probe->changed);
     }
-    salts_mutex_unlock(&probe->lock);
+    cmeta_mutex_unlock(&probe->lock);
     return accepted;
 }
 
 static void concurrent_sink_error(void *user, const char *message) {
     concurrent_sink_probe *probe = (concurrent_sink_probe *)user;
-    salts_mutex_lock(&probe->lock);
+    cmeta_mutex_lock(&probe->lock);
     probe->error = message;
-    salts_cond_broadcast(&probe->changed);
-    salts_mutex_unlock(&probe->lock);
+    cmeta_cond_broadcast(&probe->changed);
+    cmeta_mutex_unlock(&probe->lock);
 }
 
 static void concurrent_sink_done(void *user) {
     concurrent_sink_probe *probe = (concurrent_sink_probe *)user;
-    salts_mutex_lock(&probe->lock);
+    cmeta_mutex_lock(&probe->lock);
     ++probe->done_count;
-    salts_cond_broadcast(&probe->changed);
-    salts_mutex_unlock(&probe->lock);
+    cmeta_cond_broadcast(&probe->changed);
+    cmeta_mutex_unlock(&probe->lock);
 }
 
 static int concurrent_sink_wait_values(concurrent_sink_probe *probe,
                                        size_t expected) {
     int status = SALTS_OK;
-    salts_mutex_lock(&probe->lock);
+    cmeta_mutex_lock(&probe->lock);
     while (probe->value_count < expected && probe->error == NULL &&
            probe->done_count == 0u && status == SALTS_OK)
-        status = salts_cond_timedwait(
+        status = cmeta_cond_timedwait(
             &probe->changed, &probe->lock, CFLOW_READINESS_TEST_TIMEOUT_NS);
     if (status == SALTS_OK && probe->value_count < expected)
         status = SALTS_EIO;
-    salts_mutex_unlock(&probe->lock);
+    cmeta_mutex_unlock(&probe->lock);
     return status;
 }
 
 static int concurrent_sink_wait_done(concurrent_sink_probe *probe) {
     int status = SALTS_OK;
-    salts_mutex_lock(&probe->lock);
+    cmeta_mutex_lock(&probe->lock);
     while (probe->done_count == 0u && probe->error == NULL &&
            status == SALTS_OK)
-        status = salts_cond_timedwait(
+        status = cmeta_cond_timedwait(
             &probe->changed, &probe->lock, CFLOW_READINESS_TEST_TIMEOUT_NS);
     if (status == SALTS_OK && probe->done_count == 0u)
         status = SALTS_EIO;
-    salts_mutex_unlock(&probe->lock);
+    cmeta_mutex_unlock(&probe->lock);
     return status;
 }
 
@@ -615,13 +615,13 @@ static void capture_concurrent_observation(
     differential_observation *out, concurrent_sink_probe *sink,
     const cflow_subscription *run) {
     memset(out, 0, sizeof(*out));
-    salts_mutex_lock(&sink->lock);
+    cmeta_mutex_lock(&sink->lock);
     out->value_count = sink->value_count;
     out->done_count = sink->done_count;
     out->errored = sink->error != NULL;
     for (size_t index = 0; index < sink->value_count; ++index)
         out->values[index] = sink->values[index];
-    salts_mutex_unlock(&sink->lock);
+    cmeta_mutex_unlock(&sink->lock);
     out->outstanding_demand = cflow_subscription_outstanding_demand(run);
     out->done = cflow_subscription_is_done(run);
     out->errored = out->errored || cflow_subscription_error(run) != NULL;
@@ -692,10 +692,10 @@ static void native_pipe_close(void *user) {
 
 static void run_native_readiness_differential(
     const int *values, differential_observation *out) {
-    const salts_readiness_config config = {1u, 1u};
-    salts_readiness_reactor reactor = {0};
-    salts_readiness_registration registration = {0};
-    salts_readiness_stats stats = {0};
+    const cmeta_readiness_config config = {1u, 1u};
+    cmeta_readiness_reactor reactor = {0};
+    cmeta_readiness_registration registration = {0};
+    cmeta_readiness_stats stats = {0};
     cflow_readiness_publisher_owner owner = {0};
     cflow_publisher source = {0};
     cflow_graph graph = {0};
@@ -711,13 +711,13 @@ static void run_native_readiness_differential(
     int fds[2] = {-1, -1};
 
     check_equal(make_native_pipe(fds), SALTS_OK);
-    salts_mutex_init(&observed.lock);
-    salts_cond_init(&observed.changed);
+    cmeta_mutex_init(&observed.lock);
+    cmeta_cond_init(&observed.changed);
     check_not_null(observed.lock);
     check_not_null(observed.changed);
     read.read_fd = fds[0];
-    check_equal(salts_readiness_reactor_init(&reactor, &config), SALTS_OK);
-    check_equal(salts_readiness_register(&reactor, read.read_fd, &registration),
+    check_equal(cmeta_readiness_reactor_init(&reactor, &config), SALTS_OK);
+    check_equal(cmeta_readiness_register(&reactor, read.read_fd, &registration),
                 SALTS_OK);
     check_equal(cflow_publisher_from_readiness_registration(
                     &source, &owner, &registration,
@@ -734,7 +734,7 @@ static void run_native_readiness_differential(
     check_true(cflow_scheduler_wait_idle(&scheduler));
 
     for (size_t index = 0; index < CFLOW_DIFFERENTIAL_VALUE_COUNT; ++index) {
-        check_equal(salts_readiness_reactor_stats(&reactor, &stats), SALTS_OK);
+        check_equal(cmeta_readiness_reactor_stats(&reactor, &stats), SALTS_OK);
         check_equal(stats.registered_count, (size_t)1u);
         check_equal(stats.armed_count, (size_t)1u);
         check_equal(stats.callbacks_inflight, (size_t)0u);
@@ -742,19 +742,19 @@ static void run_native_readiness_differential(
         check_equal(concurrent_sink_wait_values(&observed, index + 1u),
                     SALTS_OK);
         check_true(cflow_scheduler_wait_idle(&scheduler));
-        salts_mutex_lock(&observed.lock);
+        cmeta_mutex_lock(&observed.lock);
         check_equal(observed.value_count, index + 1u);
         check_null(observed.error);
-        salts_mutex_unlock(&observed.lock);
+        cmeta_mutex_unlock(&observed.lock);
     }
     check_equal(close(fds[1]), 0);
     fds[1] = -1;
     check_equal(concurrent_sink_wait_done(&observed), SALTS_OK);
     check_true(cflow_scheduler_wait_idle(&scheduler));
-    salts_mutex_lock(&observed.lock);
+    cmeta_mutex_lock(&observed.lock);
     check_equal(observed.done_count, (size_t)1u);
     check_null(observed.error);
-    salts_mutex_unlock(&observed.lock);
+    cmeta_mutex_unlock(&observed.lock);
     capture_concurrent_observation(out, &observed, &run);
 
     check_not_equal(read.read_fd, -1);
@@ -763,16 +763,16 @@ static void run_native_readiness_differential(
     check_equal(read.read_fd, -1);
     check_equal(cflow_readiness_publisher_owner_close(&owner), SALTS_OK);
     check_null(owner.impl);
-    check_equal(salts_readiness_reactor_stats(&reactor, &stats), SALTS_OK);
+    check_equal(cmeta_readiness_reactor_stats(&reactor, &stats), SALTS_OK);
     check_equal(stats.registered_count, (size_t)0u);
     check_equal(stats.armed_count, (size_t)0u);
     check_equal(stats.callbacks_inflight, (size_t)0u);
-    check_equal(salts_readiness_reactor_shutdown(&reactor), SALTS_OK);
-    check_equal(salts_readiness_reactor_destroy(&reactor), SALTS_OK);
+    check_equal(cmeta_readiness_reactor_shutdown(&reactor), SALTS_OK);
+    check_equal(cmeta_readiness_reactor_destroy(&reactor), SALTS_OK);
     cflow_scheduler_destroy(&scheduler);
     cflow_graph_destroy(&graph);
-    salts_cond_destroy(&observed.changed);
-    salts_mutex_destroy(&observed.lock);
+    cmeta_cond_destroy(&observed.changed);
+    cmeta_mutex_destroy(&observed.lock);
     if (fds[1] >= 0)
         (void)close(fds[1]);
 }
@@ -781,12 +781,12 @@ static void run_native_readiness_differential(
 suite("CFlow reactor registration Source") {
     it("keeps caller registration ownership on precise admission failure") {
         fake_env env;
-        salts_readiness_registration registration = {0};
+        cmeta_readiness_registration registration = {0};
         cflow_publisher source = {0};
         read_probe probe = {0};
 
         check_true(fake_env_init(&env, 2u));
-        check_equal(salts_readiness_register(
+        check_equal(cmeta_readiness_register(
                         &env.reactor, CFLOW_READINESS_TEST_RESOURCE,
                         &registration), SALTS_OK);
         check_not_null(registration.impl);
@@ -809,14 +809,14 @@ suite("CFlow reactor registration Source") {
         check_false(cflow_publisher_valid(&source));
         check_null(env.owner.impl);
         check_not_null(registration.impl);
-        check_equal(salts_readiness_close(&registration), SALTS_OK);
+        check_equal(cmeta_readiness_close(&registration), SALTS_OK);
         check_null(registration.impl);
         fake_env_destroy(&env);
     }
 
     it("keeps external owner live and side-effect free while Source exists") {
         fake_env env;
-        salts_readiness_registration registration = {0};
+        cmeta_readiness_registration registration = {0};
         cflow_publisher source = {0};
         read_probe probe = {0};
         void *owner_impl;
@@ -844,7 +844,7 @@ suite("CFlow reactor registration Source") {
 
     it("moves registration only after complete construction") {
         fake_env env;
-        salts_readiness_registration registration = {0};
+        cmeta_readiness_registration registration = {0};
         cflow_publisher source = {0};
         read_probe probe = {0};
 
@@ -867,7 +867,7 @@ suite("CFlow reactor registration Source") {
 
     it("makes cancel terminal and keeps destroy cleanup exactly once") {
         fake_env env;
-        salts_readiness_registration registration = {0};
+        cmeta_readiness_registration registration = {0};
         cflow_publisher source = {0};
         read_probe probe = {0};
 
@@ -890,7 +890,7 @@ suite("CFlow reactor registration Source") {
 
     it("retains borrowed user after close error and retries on destroy") {
         fake_env env;
-        salts_readiness_registration registration = {0};
+        cmeta_readiness_registration registration = {0};
         cflow_publisher source = {0};
         cflow_publish_context resume = {0};
         read_probe probe = {0};
@@ -922,7 +922,7 @@ suite("CFlow reactor registration Source") {
     it("keeps persistent close ownership reachable after Run release") {
         enum { PERSISTENT_CLOSE_FAILURES = 16 };
         fake_env env;
-        salts_readiness_registration registration = {0};
+        cmeta_readiness_registration registration = {0};
         cflow_publisher source = {0};
         cflow_graph graph = {0};
         cflow_scheduler scheduler = {0};
@@ -962,8 +962,8 @@ suite("CFlow reactor registration Source") {
         check_equal(cflow_readiness_publisher_owner_close(&env.owner), SALTS_OK);
         check_null(env.owner.impl);
         check_equal(read.closes, (size_t)1u);
-        check_equal(salts_readiness_reactor_shutdown(&env.reactor), SALTS_OK);
-        check_equal(salts_readiness_reactor_destroy(&env.reactor), SALTS_OK);
+        check_equal(cmeta_readiness_reactor_shutdown(&env.reactor), SALTS_OK);
+        check_equal(cmeta_readiness_reactor_destroy(&env.reactor), SALTS_OK);
         env.factory->destroy(env.fixture);
         env.fixture = NULL;
         cflow_scheduler_destroy(&scheduler);
@@ -988,7 +988,7 @@ suite("CFlow reactor registration Source") {
 
         for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
             fake_env env;
-            salts_readiness_registration registration = {0};
+            cmeta_readiness_registration registration = {0};
             cflow_publisher source = {0};
             cflow_graph graph = {0};
             cflow_scheduler scheduler = {0};
@@ -1040,7 +1040,7 @@ suite("CFlow reactor registration Source") {
 
     it("drives Run through WOULD_BLOCK WAIT wake rearm and final value") {
         fake_env env;
-        salts_readiness_registration registration = {0};
+        cmeta_readiness_registration registration = {0};
         cflow_publisher source = {0};
         cflow_graph graph = {0};
         cflow_scheduler scheduler = {0};
@@ -1055,7 +1055,7 @@ suite("CFlow reactor registration Source") {
             sink_value, sink_error, sink_done, &observed
         };
         cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
-        salts_readiness_stats stats = {0};
+        cmeta_readiness_stats stats = {0};
         uint64_t registration_token;
         uint64_t first_arm_token;
 
@@ -1097,7 +1097,7 @@ suite("CFlow reactor registration Source") {
         check_equal(observed.done_count, (size_t)1u);
         check_null(observed.error);
         check_true(cflow_subscription_is_done(&run));
-        check_equal(salts_readiness_reactor_stats(&env.reactor, &stats),
+        check_equal(cmeta_readiness_reactor_stats(&env.reactor, &stats),
                     SALTS_OK);
         check_equal(stats.duplicate_events, (uint64_t)1u);
         check_equal(stats.stale_events, (uint64_t)1u);
@@ -1111,7 +1111,7 @@ suite("CFlow reactor registration Source") {
 
     it("turns synchronous arm status into the exact Run error") {
         fake_env env;
-        salts_readiness_registration registration = {0};
+        cmeta_readiness_registration registration = {0};
         cflow_publisher source = {0};
         cflow_graph graph = {0};
         cflow_scheduler scheduler = {0};
@@ -1148,7 +1148,7 @@ suite("CFlow reactor registration Source") {
 
     it("turns terminal backend status into the exact Run error") {
         fake_env env;
-        salts_readiness_registration registration = {0};
+        cmeta_readiness_registration registration = {0};
         cflow_publisher source = {0};
         cflow_graph graph = {0};
         cflow_scheduler scheduler = {0};
@@ -1186,7 +1186,7 @@ suite("CFlow reactor registration Source") {
 
     it("makes cancel wait until the old callback waker is quiescent") {
         fake_env env;
-        salts_readiness_registration registration = {0};
+        cmeta_readiness_registration registration = {0};
         cflow_publisher source = {0};
         cflow_publish_context resume = {0};
         cflow_step step;
@@ -1196,14 +1196,14 @@ suite("CFlow reactor registration Source") {
             &env, CFLOW_READINESS_TEST_RESOURCE, SALTS_EINVAL
         };
         destroy_thread_args cancel_args = {&source, &wake, false};
-        salts_thread_t emitter = NULL;
-        salts_thread_t canceller = NULL;
-        salts_readiness_stats stats = {0};
+        cmeta_thread_t emitter = NULL;
+        cmeta_thread_t canceller = NULL;
+        cmeta_readiness_stats stats = {0};
         int output = 0;
 
         check_true(fake_env_init(&env, 2u));
-        salts_mutex_init(&wake.lock);
-        salts_cond_init(&wake.changed);
+        cmeta_mutex_init(&wake.lock);
+        cmeta_cond_init(&wake.changed);
         check_not_null(wake.lock);
         check_not_null(wake.changed);
         check_equal(make_source(
@@ -1214,32 +1214,32 @@ suite("CFlow reactor registration Source") {
         check_true(cflow_waitable_arm(
             &step.waitable, (cflow_waker){blocking_wake, &wake}));
 
-        check_equal(salts_thread_create(&emitter, emit_thread, &emit_args),
+        check_equal(cmeta_thread_create(&emitter, emit_thread, &emit_args),
                     SALTS_OK);
-        salts_mutex_lock(&wake.lock);
+        cmeta_mutex_lock(&wake.lock);
         while (!wake.entered)
-            salts_cond_wait(&wake.changed, &wake.lock);
-        salts_mutex_unlock(&wake.lock);
+            cmeta_cond_wait(&wake.changed, &wake.lock);
+        cmeta_mutex_unlock(&wake.lock);
 
         env.factory->block_hook(env.fixture, READINESS_CONTRACT_HOOK_CLOSE);
-        check_equal(salts_thread_create(
+        check_equal(cmeta_thread_create(
                         &canceller, cancel_thread, &cancel_args), SALTS_OK);
         check_equal(env.factory->wait_hook_calls(
                         env.fixture, READINESS_CONTRACT_HOOK_CLOSE, 1u,
                         CFLOW_READINESS_TEST_TIMEOUT_NS), SALTS_OK);
         env.factory->release_hook(env.fixture, READINESS_CONTRACT_HOOK_CLOSE);
-        check_equal(salts_readiness_reactor_stats(&env.reactor, &stats),
+        check_equal(cmeta_readiness_reactor_stats(&env.reactor, &stats),
                     SALTS_OK);
         check_equal(stats.callbacks_inflight, (size_t)1u);
-        salts_mutex_lock(&wake.lock);
+        cmeta_mutex_lock(&wake.lock);
         check_false(cancel_args.returned);
         check_equal(read.closes, (size_t)0u);
         wake.released = true;
-        salts_cond_broadcast(&wake.changed);
-        salts_mutex_unlock(&wake.lock);
+        cmeta_cond_broadcast(&wake.changed);
+        cmeta_mutex_unlock(&wake.lock);
 
-        check_equal(salts_thread_join(&emitter), SALTS_OK);
-        check_equal(salts_thread_join(&canceller), SALTS_OK);
+        check_equal(cmeta_thread_join(&emitter), SALTS_OK);
+        check_equal(cmeta_thread_join(&canceller), SALTS_OK);
         check_equal(emit_args.status, SALTS_OK);
         check_true(cancel_args.returned);
         check_equal(read.closes, (size_t)1u);
@@ -1248,14 +1248,14 @@ suite("CFlow reactor registration Source") {
         check_equal(env.factory->backend_close_calls(env.fixture),
                     (size_t)1u);
         check_equal(cflow_readiness_publisher_owner_close(&env.owner), SALTS_OK);
-        salts_cond_destroy(&wake.changed);
-        salts_mutex_destroy(&wake.lock);
+        cmeta_cond_destroy(&wake.changed);
+        cmeta_mutex_destroy(&wake.lock);
         fake_env_destroy(&env);
     }
 
     it("waits for an inflight callback before user close and free") {
         fake_env env;
-        salts_readiness_registration registration = {0};
+        cmeta_readiness_registration registration = {0};
         cflow_publisher source = {0};
         cflow_publish_context resume = {0};
         cflow_step step;
@@ -1265,14 +1265,14 @@ suite("CFlow reactor registration Source") {
             &env, CFLOW_READINESS_TEST_RESOURCE, SALTS_EINVAL
         };
         destroy_thread_args destroy_args = {&source, &wake, false};
-        salts_thread_t emitter = NULL;
-        salts_thread_t destroyer = NULL;
-        salts_readiness_stats stats = {0};
+        cmeta_thread_t emitter = NULL;
+        cmeta_thread_t destroyer = NULL;
+        cmeta_readiness_stats stats = {0};
         int output = 0;
 
         check_true(fake_env_init(&env, 2u));
-        salts_mutex_init(&wake.lock);
-        salts_cond_init(&wake.changed);
+        cmeta_mutex_init(&wake.lock);
+        cmeta_cond_init(&wake.changed);
         check_not_null(wake.lock);
         check_not_null(wake.changed);
         check_equal(make_source(
@@ -1283,40 +1283,40 @@ suite("CFlow reactor registration Source") {
         check_true(cflow_waitable_arm(
             &step.waitable, (cflow_waker){blocking_wake, &wake}));
 
-        check_equal(salts_thread_create(&emitter, emit_thread, &emit_args),
+        check_equal(cmeta_thread_create(&emitter, emit_thread, &emit_args),
                     SALTS_OK);
-        salts_mutex_lock(&wake.lock);
+        cmeta_mutex_lock(&wake.lock);
         while (!wake.entered)
-            salts_cond_wait(&wake.changed, &wake.lock);
-        salts_mutex_unlock(&wake.lock);
+            cmeta_cond_wait(&wake.changed, &wake.lock);
+        cmeta_mutex_unlock(&wake.lock);
 
         env.factory->block_hook(env.fixture, READINESS_CONTRACT_HOOK_CLOSE);
-        check_equal(salts_thread_create(
+        check_equal(cmeta_thread_create(
                         &destroyer, destroy_thread, &destroy_args), SALTS_OK);
         check_equal(env.factory->wait_hook_calls(
                         env.fixture, READINESS_CONTRACT_HOOK_CLOSE, 1u,
                         CFLOW_READINESS_TEST_TIMEOUT_NS), SALTS_OK);
         env.factory->release_hook(env.fixture, READINESS_CONTRACT_HOOK_CLOSE);
-        check_equal(salts_readiness_reactor_stats(&env.reactor, &stats),
+        check_equal(cmeta_readiness_reactor_stats(&env.reactor, &stats),
                     SALTS_OK);
         check_equal(stats.callbacks_inflight, (size_t)1u);
-        salts_mutex_lock(&wake.lock);
+        cmeta_mutex_lock(&wake.lock);
         check_false(destroy_args.returned);
         check_equal(read.closes, (size_t)0u);
         wake.released = true;
-        salts_cond_broadcast(&wake.changed);
-        salts_mutex_unlock(&wake.lock);
+        cmeta_cond_broadcast(&wake.changed);
+        cmeta_mutex_unlock(&wake.lock);
 
-        check_equal(salts_thread_join(&emitter), SALTS_OK);
-        check_equal(salts_thread_join(&destroyer), SALTS_OK);
+        check_equal(cmeta_thread_join(&emitter), SALTS_OK);
+        check_equal(cmeta_thread_join(&destroyer), SALTS_OK);
         check_equal(emit_args.status, SALTS_OK);
         check_true(destroy_args.returned);
         check_equal(read.closes, (size_t)1u);
         check_equal(env.factory->backend_close_calls(env.fixture),
                     (size_t)1u);
         check_equal(cflow_readiness_publisher_owner_close(&env.owner), SALTS_OK);
-        salts_cond_destroy(&wake.changed);
-        salts_mutex_destroy(&wake.lock);
+        cmeta_cond_destroy(&wake.changed);
+        cmeta_mutex_destroy(&wake.lock);
         fake_env_destroy(&env);
     }
 
@@ -1339,14 +1339,14 @@ suite("CFlow reactor registration Source") {
 
     it("rearms on a worker before the readiness callback returns") {
         fake_env env;
-        salts_readiness_registration registration = {0};
-        salts_readiness_stats stats = {0};
+        cmeta_readiness_registration registration = {0};
+        cmeta_readiness_stats stats = {0};
         cflow_publisher source = {0};
         cflow_graph graph = {0};
         cflow_scheduler scheduler = {0};
         cflow_subscription run = {0};
         arm_observing_scheduler_state scheduler_state;
-        salts_readiness_registration *owner_registration;
+        cmeta_readiness_registration *owner_registration;
         read_probe read = {
             {CFLOW_READ_WOULD_BLOCK, CFLOW_READ_VALUE,
              CFLOW_READ_WOULD_BLOCK, CFLOW_READ_VALUE_AND_DONE},
@@ -1359,7 +1359,7 @@ suite("CFlow reactor registration Source") {
         cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
 
         check_true(fake_env_init(&env, 1u));
-        check_equal(salts_readiness_register(
+        check_equal(cmeta_readiness_register(
                         &env.reactor, CFLOW_READINESS_TEST_RESOURCE,
                         &registration), SALTS_OK);
         check_equal(cflow_publisher_from_readiness_registration(
@@ -1404,7 +1404,7 @@ suite("CFlow reactor registration Source") {
         cflow_subscription_close(&run);
         check_equal(read.closes, (size_t)1u);
         check_equal(cflow_readiness_publisher_owner_close(&env.owner), SALTS_OK);
-        check_equal(salts_readiness_reactor_stats(&env.reactor, &stats), SALTS_OK);
+        check_equal(cmeta_readiness_reactor_stats(&env.reactor, &stats), SALTS_OK);
         check_equal(stats.registered_count, (size_t)0u);
         check_equal(stats.armed_count, (size_t)0u);
         check_equal(stats.callbacks_inflight, (size_t)0u);

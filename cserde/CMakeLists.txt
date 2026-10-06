@@ -1,4 +1,4 @@
-set(TARGET_NAME salts_cserde)
+set(TARGET_NAME cmeta_cserde)
 
 add_library(${TARGET_NAME}
   src/token.c

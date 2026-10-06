@@ -2,7 +2,7 @@
 #define CNET_WEBSOCKET_H
 
 #include <salts/error_codes.h>
-#include <salts_buffer.h>
+#include <cmeta_buffer.h>
 
 #include <stdbool.h>
 #include <stddef.h>

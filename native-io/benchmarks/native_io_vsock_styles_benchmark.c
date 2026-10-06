@@ -523,10 +523,10 @@ static int vsock_style_measure_backend(native_io_backend_kind kind, vsock_style_
   out->payload_size = payload_size;
   out->transfers = VSOCK_STYLE_MEASURED_TRANSFERS;
   for (size_t index = 0u; index < VSOCK_STYLE_MEASURED_TRANSFERS; ++index) {
-    const uint64_t started = salts_hrtime();
+    const uint64_t started = cmeta_hrtime();
     status = style == VSOCK_STYLE_DIRECT ? vsock_style_direct_transfer(&fixture)
                                         : vsock_style_coroutine_transfer(&fixture);
-    latencies[index] = salts_hrtime() - started;
+    latencies[index] = cmeta_hrtime() - started;
     if (status != SALTS_OK) goto cleanup;
     out->wall_ns += latencies[index];
   }
@@ -810,9 +810,9 @@ static void vsock_style_same_driver_run(native_io_sharded_context *context, void
   }
 
   for (size_t index = 0u; index < VSOCK_STYLE_MEASURED_TRANSFERS; ++index) {
-    const uint64_t started = salts_hrtime();
+    const uint64_t started = cmeta_hrtime();
     driver->status = vsock_style_sharded_transfer(fixture, context);
-    driver->latencies[index] = salts_hrtime() - started;
+    driver->latencies[index] = cmeta_hrtime() - started;
     if (driver->status != SALTS_OK) return;
   }
 
@@ -858,9 +858,9 @@ static int vsock_style_measure_sharded(native_io_backend_kind kind,
       goto cleanup;
     }
     for (size_t index = 0u; index < VSOCK_STYLE_MEASURED_TRANSFERS; ++index) {
-      const uint64_t started = salts_hrtime();
+      const uint64_t started = cmeta_hrtime();
       status = vsock_style_sharded_transfer(&fixture, NULL);
-      latencies[index] = salts_hrtime() - started;
+      latencies[index] = cmeta_hrtime() - started;
       if (status != SALTS_OK) goto cleanup;
     }
     if (!native_io_sharded_get_stats(fixture.runtime, &after)) {

@@ -6,8 +6,8 @@
 #include "memory_pool.h"
 #include "sds.h"
 #include "tlog.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,7 +32,7 @@
   #endif
 #endif
 
-static int salts_platform_copy_string(char *buffer, size_t buffer_size, const char *value) {
+static int cmeta_platform_copy_string(char *buffer, size_t buffer_size, const char *value) {
   size_t len;
   if (!buffer || buffer_size == 0 || !value) {
     return -EINVAL;
@@ -45,7 +45,7 @@ static int salts_platform_copy_string(char *buffer, size_t buffer_size, const ch
   return 0;
 }
 
-static void salts_platform_ascii_lowercase(char *value) {
+static void cmeta_platform_ascii_lowercase(char *value) {
   if (!value) {
     return;
   }
@@ -57,22 +57,22 @@ static void salts_platform_ascii_lowercase(char *value) {
   }
 }
 
-static void salts_platform_zero_cpu_info(salts_platform_cpu_info_t *info) {
+static void cmeta_platform_zero_cpu_info(cmeta_platform_cpu_info_t *info) {
   if (!info) {
     return;
   }
   memset(info, 0, sizeof(*info));
-  salts_platform_copy_string(info->model, sizeof(info->model), "unknown");
+  cmeta_platform_copy_string(info->model, sizeof(info->model), "unknown");
 }
 
-static void salts_platform_zero_interface(salts_platform_network_interface_t *iface) {
+static void cmeta_platform_zero_interface(cmeta_platform_network_interface_t *iface) {
   if (!iface) {
     return;
   }
   memset(iface, 0, sizeof(*iface));
 }
 
-static int salts_platform_is_loopback_address(const char *address) {
+static int cmeta_platform_is_loopback_address(const char *address) {
   if (!address || address[0] == '\0') {
     return 0;
   }
@@ -80,7 +80,7 @@ static int salts_platform_is_loopback_address(const char *address) {
 }
 
 #ifdef _WIN32
-static int salts_platform_get_windows_version(char *buffer, size_t buffer_size) {
+static int cmeta_platform_get_windows_version(char *buffer, size_t buffer_size) {
   HMODULE ntdll = GetModuleHandleA("ntdll.dll");
   typedef LONG(WINAPI * rtl_get_version_fn)(PRTL_OSVERSIONINFOW);
   rtl_get_version_fn rtl_get_version;
@@ -113,7 +113,7 @@ static int salts_platform_get_windows_version(char *buffer, size_t buffer_size) 
 #endif
 
 #ifdef _WIN32
-int salts_gettimeofday(salts_timeval_t *tv, salts_timezone_t *tz) {
+int cmeta_gettimeofday(cmeta_timeval_t *tv, cmeta_timezone_t *tz) {
   UNUSED(tz);
   if (tv) {
     FILETIME ft;
@@ -130,7 +130,7 @@ int salts_gettimeofday(salts_timeval_t *tv, salts_timezone_t *tz) {
   return 0;
 }
 #else
-int salts_gettimeofday(salts_timeval_t *tv, salts_timezone_t *tz) {
+int cmeta_gettimeofday(cmeta_timeval_t *tv, cmeta_timezone_t *tz) {
   UNUSED(tz);
   struct timeval system_tv;
   int result = gettimeofday(&system_tv, NULL);
@@ -142,36 +142,36 @@ int salts_gettimeofday(salts_timeval_t *tv, salts_timezone_t *tz) {
 }
 #endif
 
-int salts_secure_random(void *buffer, size_t length) {
-  return salts_platform_secure_random(buffer, length);
+int cmeta_secure_random(void *buffer, size_t length) {
+  return cmeta_platform_secure_random(buffer, length);
 }
 
-static int salts_is_leap_year(int year) {
+static int cmeta_is_leap_year(int year) {
   return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
 }
 
-static int salts_days_in_month(int year, int month) {
+static int cmeta_days_in_month(int year, int month) {
   static const int days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
   if (month < 1 || month > 12) return 0;
-  if (month == 2 && salts_is_leap_year(year)) return 29;
+  if (month == 2 && cmeta_is_leap_year(year)) return 29;
   return days[month - 1];
 }
 
-static int64_t salts_days_before_year(int year) {
+static int64_t cmeta_days_before_year(int year) {
   int64_t y = (int64_t)year - 1;
   return y * 365 + y / 4 - y / 100 + y / 400;
 }
 
-static int64_t salts_days_before_month(int year, int month) {
+static int64_t cmeta_days_before_month(int year, int month) {
   static const int days_before[] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
   int64_t days;
   if (month < 1 || month > 12) return -1;
   days = days_before[month - 1];
-  if (month > 2 && salts_is_leap_year(year)) days++;
+  if (month > 2 && cmeta_is_leap_year(year)) days++;
   return days;
 }
 
-int salts_gmtime(time_t t, struct tm *out) {
+int cmeta_gmtime(time_t t, struct tm *out) {
   if (!out) return -EINVAL;
 #ifdef _WIN32
   return gmtime_s(out, &t) == 0 ? 0 : -EINVAL;
@@ -180,7 +180,7 @@ int salts_gmtime(time_t t, struct tm *out) {
 #endif
 }
 
-int salts_localtime(time_t t, struct tm *out) {
+int cmeta_localtime(time_t t, struct tm *out) {
   if (!out) return -EINVAL;
 #ifdef _WIN32
   return localtime_s(out, &t) == 0 ? 0 : -EINVAL;
@@ -189,7 +189,7 @@ int salts_localtime(time_t t, struct tm *out) {
 #endif
 }
 
-time_t salts_timegm(const struct tm *tm_value) {
+time_t cmeta_timegm(const struct tm *tm_value) {
   int year;
   int month;
   int day;
@@ -204,21 +204,21 @@ time_t salts_timegm(const struct tm *tm_value) {
   year = tm_value->tm_year + 1900;
   month = tm_value->tm_mon + 1;
   day = tm_value->tm_mday;
-  if (month < 1 || month > 12 || day < 1 || day > salts_days_in_month(year, month) ||
+  if (month < 1 || month > 12 || day < 1 || day > cmeta_days_in_month(year, month) ||
       tm_value->tm_hour < 0 || tm_value->tm_hour > 23 || tm_value->tm_min < 0 ||
       tm_value->tm_min > 59 || tm_value->tm_sec < 0 || tm_value->tm_sec > 60) {
     errno = EINVAL;
     return (time_t)-1;
   }
 
-  days = salts_days_before_year(year) - salts_days_before_year(1970);
-  days += salts_days_before_month(year, month);
+  days = cmeta_days_before_year(year) - cmeta_days_before_year(1970);
+  days += cmeta_days_before_month(year, month);
   days += day - 1;
   seconds = days * 86400 + tm_value->tm_hour * 3600 + tm_value->tm_min * 60 + tm_value->tm_sec;
   return (time_t)seconds;
 }
 
-time_t salts_mktime(struct tm *tm_value) {
+time_t cmeta_mktime(struct tm *tm_value) {
   if (!tm_value) {
     errno = EINVAL;
     return (time_t)-1;
@@ -234,7 +234,7 @@ time_t salts_mktime(struct tm *tm_value) {
   #pragma GCC diagnostic ignored "-Wformat-nonliteral"
 #endif
 
-static size_t salts_strftime_format(char *buffer, size_t buffer_size, const char *format,
+static size_t cmeta_strftime_format(char *buffer, size_t buffer_size, const char *format,
                                     const struct tm *tm_value) {
   return strftime(buffer, buffer_size, format, tm_value);
 }
@@ -245,60 +245,60 @@ static size_t salts_strftime_format(char *buffer, size_t buffer_size, const char
   #pragma GCC diagnostic pop
 #endif
 
-int salts_strftime_utc(time_t t, const char *format, char *buffer, size_t buffer_size) {
+int cmeta_strftime_utc(time_t t, const char *format, char *buffer, size_t buffer_size) {
   struct tm tm_value;
   size_t written;
 
   if (!format || !buffer || buffer_size == 0) return -EINVAL;
-  if (salts_gmtime(t, &tm_value) != 0) return -EINVAL;
-  written = salts_strftime_format(buffer, buffer_size, format, &tm_value);
+  if (cmeta_gmtime(t, &tm_value) != 0) return -EINVAL;
+  written = cmeta_strftime_format(buffer, buffer_size, format, &tm_value);
   if (written == 0) return -ENOSPC;
   return (int)written;
 }
 
-int salts_strftime_local(time_t t, const char *format, char *buffer, size_t buffer_size) {
+int cmeta_strftime_local(time_t t, const char *format, char *buffer, size_t buffer_size) {
   struct tm tm_value;
   size_t written;
 
   if (!format || !buffer || buffer_size == 0) return -EINVAL;
-  if (salts_localtime(t, &tm_value) != 0) return -EINVAL;
-  written = salts_strftime_format(buffer, buffer_size, format, &tm_value);
+  if (cmeta_localtime(t, &tm_value) != 0) return -EINVAL;
+  written = cmeta_strftime_format(buffer, buffer_size, format, &tm_value);
   if (written == 0) return -ENOSPC;
   return (int)written;
 }
 
-int salts_platform_os_name(char *buffer, size_t buffer_size) {
+int cmeta_platform_os_name(char *buffer, size_t buffer_size) {
 #ifdef _WIN32
-  return salts_platform_copy_string(buffer, buffer_size, "windows");
+  return cmeta_platform_copy_string(buffer, buffer_size, "windows");
 #else
   struct utsname info;
   if (uname(&info) != 0) {
     return -errno;
   }
-  if (salts_platform_copy_string(buffer, buffer_size, info.sysname) != 0) {
+  if (cmeta_platform_copy_string(buffer, buffer_size, info.sysname) != 0) {
     return -ENOSPC;
   }
   if (strcmp(buffer, "Darwin") == 0) {
-    return salts_platform_copy_string(buffer, buffer_size, "macos");
+    return cmeta_platform_copy_string(buffer, buffer_size, "macos");
   }
-  salts_platform_ascii_lowercase(buffer);
+  cmeta_platform_ascii_lowercase(buffer);
   return 0;
 #endif
 }
 
-int salts_platform_os_version(char *buffer, size_t buffer_size) {
+int cmeta_platform_os_version(char *buffer, size_t buffer_size) {
 #ifdef _WIN32
-  return salts_platform_get_windows_version(buffer, buffer_size);
+  return cmeta_platform_get_windows_version(buffer, buffer_size);
 #else
   struct utsname info;
   if (uname(&info) != 0) {
     return -errno;
   }
-  return salts_platform_copy_string(buffer, buffer_size, info.release);
+  return cmeta_platform_copy_string(buffer, buffer_size, info.release);
 #endif
 }
 
-int salts_platform_arch(char *buffer, size_t buffer_size) {
+int cmeta_platform_arch(char *buffer, size_t buffer_size) {
 #ifdef _WIN32
   SYSTEM_INFO system_info;
   const char *arch = "unknown";
@@ -321,17 +321,17 @@ int salts_platform_arch(char *buffer, size_t buffer_size) {
     break;
   }
 
-  return salts_platform_copy_string(buffer, buffer_size, arch);
+  return cmeta_platform_copy_string(buffer, buffer_size, arch);
 #else
   struct utsname info;
   if (uname(&info) != 0) {
     return -errno;
   }
-  return salts_platform_copy_string(buffer, buffer_size, info.machine);
+  return cmeta_platform_copy_string(buffer, buffer_size, info.machine);
 #endif
 }
 
-int salts_platform_username(char *buffer, size_t buffer_size) {
+int cmeta_platform_username(char *buffer, size_t buffer_size) {
 #ifdef _WIN32
   DWORD size = (DWORD)buffer_size;
   const DWORD env_len = GetEnvironmentVariableA("USERNAME", buffer, size);
@@ -342,19 +342,19 @@ int salts_platform_username(char *buffer, size_t buffer_size) {
 #else
   const char *user = getenv("USER");
   if (user && user[0] != '\0') {
-    return salts_platform_copy_string(buffer, buffer_size, user);
+    return cmeta_platform_copy_string(buffer, buffer_size, user);
   }
   {
     struct passwd *pwd = getpwuid(getuid());
     if (!pwd || !pwd->pw_name) {
       return -ENOENT;
     }
-    return salts_platform_copy_string(buffer, buffer_size, pwd->pw_name);
+    return cmeta_platform_copy_string(buffer, buffer_size, pwd->pw_name);
   }
 #endif
 }
 
-int salts_platform_hostname(char *buffer, size_t buffer_size) {
+int cmeta_platform_hostname(char *buffer, size_t buffer_size) {
 #ifdef _WIN32
   DWORD size = (DWORD)buffer_size;
   if (!GetComputerNameA(buffer, &size)) {
@@ -370,12 +370,12 @@ int salts_platform_hostname(char *buffer, size_t buffer_size) {
 #endif
 }
 
-int salts_platform_cpu_info(salts_platform_cpu_info_t *info) {
+int cmeta_platform_cpu_info(cmeta_platform_cpu_info_t *info) {
   if (!info) {
     return -EINVAL;
   }
 
-  salts_platform_zero_cpu_info(info);
+  cmeta_platform_zero_cpu_info(info);
 
 #ifdef _WIN32
   {
@@ -388,7 +388,7 @@ int salts_platform_cpu_info(salts_platform_cpu_info_t *info) {
       info->core_count = (int)system_info.dwNumberOfProcessors;
     }
     if (env_len == 0 || env_len >= sizeof(info->model)) {
-      salts_platform_copy_string(info->model, sizeof(info->model), "unknown");
+      cmeta_platform_copy_string(info->model, sizeof(info->model), "unknown");
     }
     info->speed_mhz = 0.0;
     return 0;
@@ -404,7 +404,7 @@ int salts_platform_cpu_info(salts_platform_cpu_info_t *info) {
       info->core_count = core_count;
     }
     if (uname(&uts) == 0) {
-      salts_platform_copy_string(info->model, sizeof(info->model), uts.machine);
+      cmeta_platform_copy_string(info->model, sizeof(info->model), uts.machine);
     }
     info->speed_mhz = 0.0;
     return 0;
@@ -417,7 +417,7 @@ int salts_platform_cpu_info(salts_platform_cpu_info_t *info) {
       info->core_count = (int)core_count;
     }
     if (uname(&uts) == 0) {
-      salts_platform_copy_string(info->model, sizeof(info->model), uts.machine);
+      cmeta_platform_copy_string(info->model, sizeof(info->model), uts.machine);
     }
     info->speed_mhz = 0.0;
     return 0;
@@ -425,7 +425,7 @@ int salts_platform_cpu_info(salts_platform_cpu_info_t *info) {
 #endif
 }
 
-int salts_platform_memory_info(salts_platform_memory_info_t *info) {
+int cmeta_platform_memory_info(cmeta_platform_memory_info_t *info) {
   if (!info) {
     return -EINVAL;
   }
@@ -502,7 +502,7 @@ int salts_platform_memory_info(salts_platform_memory_info_t *info) {
 #endif
 }
 
-int salts_platform_load_average(salts_platform_load_average_t *info) {
+int cmeta_platform_load_average(cmeta_platform_load_average_t *info) {
   if (!info) {
     return -EINVAL;
   }
@@ -529,22 +529,22 @@ int salts_platform_load_average(salts_platform_load_average_t *info) {
 }
 
 #ifdef _WIN32
-static void salts_extract_windows_unicast(IP_ADAPTER_ADDRESSES *adapter,
+static void cmeta_extract_windows_unicast(IP_ADAPTER_ADDRESSES *adapter,
                                           IP_ADAPTER_UNICAST_ADDRESS *unicast,
-                                          salts_platform_network_interface_t *iface) {
+                                          cmeta_platform_network_interface_t *iface) {
   DWORD name_len;
   DWORD addr_len = (DWORD)sizeof(iface->address);
 
-  salts_platform_zero_interface(iface);
+  cmeta_platform_zero_interface(iface);
   name_len = WideCharToMultiByte(CP_UTF8, 0, adapter->FriendlyName, -1, iface->name,
                                  (int)sizeof(iface->name), NULL, NULL);
   if (name_len == 0) {
-    salts_platform_copy_string(iface->name, sizeof(iface->name), "unknown");
+    cmeta_platform_copy_string(iface->name, sizeof(iface->name), "unknown");
   }
 
   if (WSAAddressToStringA(unicast->Address.lpSockaddr, (DWORD)unicast->Address.iSockaddrLength,
                           NULL, iface->address, &addr_len) != 0) {
-    salts_platform_copy_string(iface->address, sizeof(iface->address), "unknown");
+    cmeta_platform_copy_string(iface->address, sizeof(iface->address), "unknown");
   }
 
   if (unicast->Address.lpSockaddr->sa_family == AF_INET) {
@@ -554,14 +554,14 @@ static void salts_extract_windows_unicast(IP_ADAPTER_ADDRESSES *adapter,
     mask_addr.S_un.S_addr = mask;
     InetNtopA(AF_INET, &mask_addr, iface->netmask, (DWORD)sizeof(iface->netmask));
   } else if (unicast->Address.lpSockaddr->sa_family == AF_INET6) {
-    salts_platform_copy_string(iface->netmask, sizeof(iface->netmask), "::");
+    cmeta_platform_copy_string(iface->netmask, sizeof(iface->netmask), "::");
   }
 
   iface->is_internal = (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) ||
-                       salts_platform_is_loopback_address(iface->address);
+                       cmeta_platform_is_loopback_address(iface->address);
 }
 #else
-static int salts_format_sockaddr(const struct sockaddr *address, char *buffer, size_t buffer_size) {
+static int cmeta_format_sockaddr(const struct sockaddr *address, char *buffer, size_t buffer_size) {
   if (!address || !buffer || buffer_size == 0) return -EINVAL;
 
   if (address->sa_family == AF_INET) {
@@ -578,7 +578,7 @@ static int salts_format_sockaddr(const struct sockaddr *address, char *buffer, s
 }
 #endif
 
-int salts_platform_network_interfaces(salts_platform_network_interface_t *interfaces,
+int cmeta_platform_network_interfaces(cmeta_platform_network_interface_t *interfaces,
                                       size_t max_interfaces, size_t *count) {
   if (!interfaces || max_interfaces == 0 || !count) {
     return -EINVAL;
@@ -620,7 +620,7 @@ int salts_platform_network_interfaces(salts_platform_network_interface_t *interf
       IP_ADAPTER_UNICAST_ADDRESS *unicast;
       for (unicast = adapter->FirstUnicastAddress; unicast && *count < max_interfaces;
            unicast = unicast->Next) {
-        salts_extract_windows_unicast(adapter, unicast, &interfaces[*count]);
+        cmeta_extract_windows_unicast(adapter, unicast, &interfaces[*count]);
         ++(*count);
       }
     }
@@ -638,7 +638,7 @@ int salts_platform_network_interfaces(salts_platform_network_interface_t *interf
     }
 
     for (ifa = ifaddr; ifa && *count < max_interfaces; ifa = ifa->ifa_next) {
-      salts_platform_network_interface_t *iface;
+      cmeta_platform_network_interface_t *iface;
       int family;
 
       if (!ifa->ifa_addr || !ifa->ifa_name) {
@@ -651,18 +651,18 @@ int salts_platform_network_interfaces(salts_platform_network_interface_t *interf
       }
 
       iface = &interfaces[*count];
-      salts_platform_zero_interface(iface);
-      salts_platform_copy_string(iface->name, sizeof(iface->name), ifa->ifa_name);
+      cmeta_platform_zero_interface(iface);
+      cmeta_platform_copy_string(iface->name, sizeof(iface->name), ifa->ifa_name);
       iface->is_internal = (ifa->ifa_flags & IFF_LOOPBACK) ? 1 : 0;
 
-      if (salts_format_sockaddr(ifa->ifa_addr, iface->address, sizeof(iface->address)) != 0) {
-        salts_platform_copy_string(iface->address, sizeof(iface->address), "unknown");
+      if (cmeta_format_sockaddr(ifa->ifa_addr, iface->address, sizeof(iface->address)) != 0) {
+        cmeta_platform_copy_string(iface->address, sizeof(iface->address), "unknown");
       }
       if (ifa->ifa_netmask &&
-          salts_format_sockaddr(ifa->ifa_netmask, iface->netmask, sizeof(iface->netmask)) != 0) {
-        salts_platform_copy_string(iface->netmask, sizeof(iface->netmask), "unknown");
+          cmeta_format_sockaddr(ifa->ifa_netmask, iface->netmask, sizeof(iface->netmask)) != 0) {
+        cmeta_platform_copy_string(iface->netmask, sizeof(iface->netmask), "unknown");
       }
-      if (salts_platform_is_loopback_address(iface->address)) {
+      if (cmeta_platform_is_loopback_address(iface->address)) {
         iface->is_internal = 1;
       }
       ++(*count);
@@ -681,9 +681,9 @@ int salts_platform_network_interfaces(salts_platform_network_interface_t *interf
 #ifdef _WIN32
 // Windows implementation using CreateTimerQueueTimer
 
-struct salts_native_timer_s {
+struct cmeta_native_timer_s {
   HANDLE timer_handle;
-  salts_timer_cb callback;
+  cmeta_timer_cb callback;
   void *data;
   uint64_t timeout;
   uint64_t repeat;
@@ -694,7 +694,7 @@ struct salts_native_timer_s {
 
 static VOID CALLBACK native_timer_callback_win32(PVOID lpParameter, BOOLEAN TimerOrWaitFired) {
   UNUSED(TimerOrWaitFired);
-  salts_timer_t *timer = (salts_timer_t *)lpParameter;
+  cmeta_timer_t *timer = (cmeta_timer_t *)lpParameter;
   if (!timer) {
     return;
   }
@@ -711,9 +711,9 @@ static VOID CALLBACK native_timer_callback_win32(PVOID lpParameter, BOOLEAN Time
   }
 }
 
-salts_timer_t *salts_timer_create(void *loop) {
+cmeta_timer_t *cmeta_timer_create(void *loop) {
   UNUSED(loop);
-  salts_timer_t *timer = malloc(sizeof(salts_timer_t));
+  cmeta_timer_t *timer = malloc(sizeof(cmeta_timer_t));
   if (!timer) {
     return NULL;
   }
@@ -722,12 +722,12 @@ salts_timer_t *salts_timer_create(void *loop) {
   return timer;
 }
 
-void salts_timer_destroy(salts_timer_t *timer) {
+void cmeta_timer_destroy(cmeta_timer_t *timer) {
   if (!timer) {
     return;
   }
 
-  salts_timer_stop(timer);
+  cmeta_timer_stop(timer);
 
   if (GetCurrentThreadId() == timer->callback_thread_id) {
     timer->pending_free = 1;
@@ -736,12 +736,12 @@ void salts_timer_destroy(salts_timer_t *timer) {
   }
 }
 
-int salts_timer_start(salts_timer_t *timer, salts_timer_cb cb, uint64_t timeout, uint64_t repeat) {
+int cmeta_timer_start(cmeta_timer_t *timer, cmeta_timer_cb cb, uint64_t timeout, uint64_t repeat) {
   if (!timer || !cb) {
     return -1;
   }
 
-  salts_timer_stop(timer);
+  cmeta_timer_stop(timer);
 
   timer->callback = cb;
   timer->timeout = timeout;
@@ -759,7 +759,7 @@ int salts_timer_start(salts_timer_t *timer, salts_timer_cb cb, uint64_t timeout,
   return 0;
 }
 
-int salts_timer_stop(salts_timer_t *timer) {
+int cmeta_timer_stop(cmeta_timer_t *timer) {
   if (!timer || !timer->active) {
     return 0;
   }
@@ -799,8 +799,8 @@ int salts_timer_stop(salts_timer_t *timer) {
 
   #include <time.h>
 
-struct salts_native_timer_s {
-  salts_timer_cb callback;
+struct cmeta_native_timer_s {
+  cmeta_timer_cb callback;
   void *data;
   uint64_t timeout;
   uint64_t repeat;
@@ -809,35 +809,35 @@ struct salts_native_timer_s {
   int destroying;
   int queued;
   int callbacks_inflight;
-  salts_mutex_t lock;
-  salts_cond_t cond;
-  struct salts_native_timer_s *next;
+  cmeta_mutex_t lock;
+  cmeta_cond_t cond;
+  struct cmeta_native_timer_s *next;
 };
 
 typedef struct {
-  salts_mutex_t lock;
-  salts_cond_t cond;
-  salts_timer_t *head;
+  cmeta_mutex_t lock;
+  cmeta_cond_t cond;
+  cmeta_timer_t *head;
   int initialized;
   int init_failed;
-} salts_posix_timer_manager_t;
+} cmeta_posix_timer_manager_t;
 
 typedef struct {
-  salts_timer_t *timer;
-  salts_timer_cb callback;
-} salts_posix_timer_task_t;
+  cmeta_timer_t *timer;
+  cmeta_timer_cb callback;
+} cmeta_posix_timer_task_t;
 
-static salts_posix_timer_manager_t g_salts_posix_timer_manager;
-static salts_once_t g_salts_posix_timer_manager_once = SALTS_ONCE_INIT;
+static cmeta_posix_timer_manager_t g_cmeta_posix_timer_manager;
+static cmeta_once_t g_cmeta_posix_timer_manager_once = SALTS_ONCE_INIT;
 
-static void salts_posix_timer_queue_remove_locked(salts_timer_t *timer) {
-  salts_timer_t **cursor;
+static void cmeta_posix_timer_queue_remove_locked(cmeta_timer_t *timer) {
+  cmeta_timer_t **cursor;
 
   if (timer == NULL || !timer->queued) {
     return;
   }
 
-  cursor = &g_salts_posix_timer_manager.head;
+  cursor = &g_cmeta_posix_timer_manager.head;
   while (*cursor != NULL) {
     if (*cursor == timer) {
       *cursor = timer->next;
@@ -849,15 +849,15 @@ static void salts_posix_timer_queue_remove_locked(salts_timer_t *timer) {
   }
 }
 
-static void salts_posix_timer_queue_insert_locked(salts_timer_t *timer) {
-  salts_timer_t **cursor;
+static void cmeta_posix_timer_queue_insert_locked(cmeta_timer_t *timer) {
+  cmeta_timer_t **cursor;
 
   if (timer == NULL) {
     return;
   }
 
-  salts_posix_timer_queue_remove_locked(timer);
-  cursor = &g_salts_posix_timer_manager.head;
+  cmeta_posix_timer_queue_remove_locked(timer);
+  cursor = &g_cmeta_posix_timer_manager.head;
   while (*cursor != NULL && (*cursor)->due_ms <= timer->due_ms) {
     cursor = &(*cursor)->next;
   }
@@ -866,23 +866,23 @@ static void salts_posix_timer_queue_insert_locked(salts_timer_t *timer) {
   timer->queued = 1;
 }
 
-static void salts_posix_timer_finish_callback(salts_timer_t *timer) {
+static void cmeta_posix_timer_finish_callback(cmeta_timer_t *timer) {
   if (timer == NULL) {
     return;
   }
 
-  salts_mutex_lock(&timer->lock);
+  cmeta_mutex_lock(&timer->lock);
   timer->callbacks_inflight--;
   if (timer->destroying && timer->callbacks_inflight == 0) {
-    salts_cond_signal(&timer->cond);
+    cmeta_cond_signal(&timer->cond);
   }
-  salts_mutex_unlock(&timer->lock);
+  cmeta_mutex_unlock(&timer->lock);
 }
 
-static void salts_posix_timer_callback_thread(void *arg) {
-  salts_posix_timer_task_t *task = (salts_posix_timer_task_t *)arg;
-  salts_timer_t *timer;
-  salts_timer_cb callback;
+static void cmeta_posix_timer_callback_thread(void *arg) {
+  cmeta_posix_timer_task_t *task = (cmeta_posix_timer_task_t *)arg;
+  cmeta_timer_t *timer;
+  cmeta_timer_cb callback;
 
   if (task == NULL) {
     return;
@@ -895,72 +895,72 @@ static void salts_posix_timer_callback_thread(void *arg) {
   if (callback != NULL) {
     callback(timer);
   }
-  salts_posix_timer_finish_callback(timer);
+  cmeta_posix_timer_finish_callback(timer);
 }
 
-static void salts_posix_timer_dispatch(salts_timer_t *timer, salts_timer_cb callback) {
-  salts_posix_timer_task_t *task;
-  salts_thread_t worker = NULL;
+static void cmeta_posix_timer_dispatch(cmeta_timer_t *timer, cmeta_timer_cb callback) {
+  cmeta_posix_timer_task_t *task;
+  cmeta_thread_t worker = NULL;
 
   if (timer == NULL || callback == NULL) {
-    salts_posix_timer_finish_callback(timer);
+    cmeta_posix_timer_finish_callback(timer);
     return;
   }
 
-  task = (salts_posix_timer_task_t *)malloc(sizeof(*task));
+  task = (cmeta_posix_timer_task_t *)malloc(sizeof(*task));
   if (task == NULL) {
     callback(timer);
-    salts_posix_timer_finish_callback(timer);
+    cmeta_posix_timer_finish_callback(timer);
     return;
   }
 
   task->timer = timer;
   task->callback = callback;
-  if (salts_thread_create(&worker, salts_posix_timer_callback_thread, task) != 0) {
+  if (cmeta_thread_create(&worker, cmeta_posix_timer_callback_thread, task) != 0) {
     free(task);
     callback(timer);
-    salts_posix_timer_finish_callback(timer);
+    cmeta_posix_timer_finish_callback(timer);
     return;
   }
-  salts_thread_destroy(&worker);
+  cmeta_thread_destroy(&worker);
 }
 
-static void salts_posix_timer_manager_thread(void *arg) {
+static void cmeta_posix_timer_manager_thread(void *arg) {
   UNUSED(arg);
 
   for (;;) {
-    salts_timer_t *timer = NULL;
-    salts_timer_cb callback = NULL;
+    cmeta_timer_t *timer = NULL;
+    cmeta_timer_cb callback = NULL;
     uint64_t now_ms;
 
-    salts_mutex_lock(&g_salts_posix_timer_manager.lock);
+    cmeta_mutex_lock(&g_cmeta_posix_timer_manager.lock);
     for (;;) {
       uint64_t wait_ms;
 
-      timer = g_salts_posix_timer_manager.head;
+      timer = g_cmeta_posix_timer_manager.head;
       if (timer == NULL) {
-        salts_cond_wait(&g_salts_posix_timer_manager.cond, &g_salts_posix_timer_manager.lock);
+        cmeta_cond_wait(&g_cmeta_posix_timer_manager.cond, &g_cmeta_posix_timer_manager.lock);
         continue;
       }
 
-      now_ms = salts_monotonic_ms();
+      now_ms = cmeta_monotonic_ms();
       if (timer->due_ms <= now_ms) {
         break;
       }
 
       wait_ms = timer->due_ms - now_ms;
-      if (salts_cond_timedwait(&g_salts_posix_timer_manager.cond, &g_salts_posix_timer_manager.lock,
+      if (cmeta_cond_timedwait(&g_cmeta_posix_timer_manager.cond, &g_cmeta_posix_timer_manager.lock,
                                wait_ms * 1000000ULL) != 0) {
         continue;
       }
     }
 
-    timer = g_salts_posix_timer_manager.head;
-    g_salts_posix_timer_manager.head = timer->next;
+    timer = g_cmeta_posix_timer_manager.head;
+    g_cmeta_posix_timer_manager.head = timer->next;
     timer->next = NULL;
     timer->queued = 0;
 
-    salts_mutex_lock(&timer->lock);
+    cmeta_mutex_lock(&timer->lock);
     if (!timer->destroying && timer->active && timer->callback != NULL) {
       callback = timer->callback;
       timer->callbacks_inflight++;
@@ -972,50 +972,50 @@ static void salts_posix_timer_manager_thread(void *arg) {
           next_due_ms = timer->due_ms + skipped * timer->repeat;
         }
         timer->due_ms = next_due_ms;
-        salts_posix_timer_queue_insert_locked(timer);
-        salts_cond_signal(&g_salts_posix_timer_manager.cond);
+        cmeta_posix_timer_queue_insert_locked(timer);
+        cmeta_cond_signal(&g_cmeta_posix_timer_manager.cond);
       } else {
         timer->active = 0;
         timer->due_ms = 0U;
       }
     }
-    salts_mutex_unlock(&timer->lock);
-    salts_mutex_unlock(&g_salts_posix_timer_manager.lock);
+    cmeta_mutex_unlock(&timer->lock);
+    cmeta_mutex_unlock(&g_cmeta_posix_timer_manager.lock);
 
     if (callback != NULL) {
-      salts_posix_timer_dispatch(timer, callback);
+      cmeta_posix_timer_dispatch(timer, callback);
     }
   }
 }
 
-static void salts_posix_timer_manager_init_once(void) {
-  salts_thread_t worker = NULL;
+static void cmeta_posix_timer_manager_init_once(void) {
+  cmeta_thread_t worker = NULL;
 
-  memset(&g_salts_posix_timer_manager, 0, sizeof(g_salts_posix_timer_manager));
-  salts_mutex_init(&g_salts_posix_timer_manager.lock);
-  salts_cond_init(&g_salts_posix_timer_manager.cond);
-  if (salts_thread_create(&worker, salts_posix_timer_manager_thread, NULL) != 0) {
-    g_salts_posix_timer_manager.init_failed = 1;
-    salts_cond_destroy(&g_salts_posix_timer_manager.cond);
-    salts_mutex_destroy(&g_salts_posix_timer_manager.lock);
+  memset(&g_cmeta_posix_timer_manager, 0, sizeof(g_cmeta_posix_timer_manager));
+  cmeta_mutex_init(&g_cmeta_posix_timer_manager.lock);
+  cmeta_cond_init(&g_cmeta_posix_timer_manager.cond);
+  if (cmeta_thread_create(&worker, cmeta_posix_timer_manager_thread, NULL) != 0) {
+    g_cmeta_posix_timer_manager.init_failed = 1;
+    cmeta_cond_destroy(&g_cmeta_posix_timer_manager.cond);
+    cmeta_mutex_destroy(&g_cmeta_posix_timer_manager.lock);
     return;
   }
 
-  salts_thread_destroy(&worker);
-  g_salts_posix_timer_manager.initialized = 1;
+  cmeta_thread_destroy(&worker);
+  g_cmeta_posix_timer_manager.initialized = 1;
 }
 
-static int salts_posix_timer_manager_ensure_started(void) {
-  salts_once(&g_salts_posix_timer_manager_once, salts_posix_timer_manager_init_once);
-  return g_salts_posix_timer_manager.initialized && !g_salts_posix_timer_manager.init_failed ? 0
+static int cmeta_posix_timer_manager_ensure_started(void) {
+  cmeta_once(&g_cmeta_posix_timer_manager_once, cmeta_posix_timer_manager_init_once);
+  return g_cmeta_posix_timer_manager.initialized && !g_cmeta_posix_timer_manager.init_failed ? 0
                                                                                              : -1;
 }
 
-salts_timer_t *salts_timer_create(void *loop) {
+cmeta_timer_t *cmeta_timer_create(void *loop) {
   UNUSED(loop);
-  salts_timer_t *timer = malloc(sizeof(salts_timer_t));
+  cmeta_timer_t *timer = malloc(sizeof(cmeta_timer_t));
 
-  if (salts_posix_timer_manager_ensure_started() != 0) {
+  if (cmeta_posix_timer_manager_ensure_started() != 0) {
     return NULL;
   }
 
@@ -1024,87 +1024,87 @@ salts_timer_t *salts_timer_create(void *loop) {
   }
 
   memset(timer, 0, sizeof(*timer));
-  salts_mutex_init(&timer->lock);
-  salts_cond_init(&timer->cond);
+  cmeta_mutex_init(&timer->lock);
+  cmeta_cond_init(&timer->cond);
   return timer;
 }
 
-void salts_timer_destroy(salts_timer_t *timer) {
+void cmeta_timer_destroy(cmeta_timer_t *timer) {
   if (!timer) {
     return;
   }
 
-  salts_mutex_lock(&g_salts_posix_timer_manager.lock);
-  salts_mutex_lock(&timer->lock);
+  cmeta_mutex_lock(&g_cmeta_posix_timer_manager.lock);
+  cmeta_mutex_lock(&timer->lock);
   timer->destroying = 1;
   timer->callback = NULL;
   timer->active = 0;
   timer->due_ms = 0U;
-  salts_posix_timer_queue_remove_locked(timer);
-  salts_cond_signal(&g_salts_posix_timer_manager.cond);
-  salts_mutex_unlock(&g_salts_posix_timer_manager.lock);
+  cmeta_posix_timer_queue_remove_locked(timer);
+  cmeta_cond_signal(&g_cmeta_posix_timer_manager.cond);
+  cmeta_mutex_unlock(&g_cmeta_posix_timer_manager.lock);
   while (timer->callbacks_inflight > 0) {
-    salts_cond_wait(&timer->cond, &timer->lock);
+    cmeta_cond_wait(&timer->cond, &timer->lock);
   }
-  salts_mutex_unlock(&timer->lock);
+  cmeta_mutex_unlock(&timer->lock);
 
-  salts_cond_destroy(&timer->cond);
-  salts_mutex_destroy(&timer->lock);
+  cmeta_cond_destroy(&timer->cond);
+  cmeta_mutex_destroy(&timer->lock);
   free(timer);
 }
 
-int salts_timer_start(salts_timer_t *timer, salts_timer_cb cb, uint64_t timeout, uint64_t repeat) {
+int cmeta_timer_start(cmeta_timer_t *timer, cmeta_timer_cb cb, uint64_t timeout, uint64_t repeat) {
   uint64_t due_ms;
 
   if (!timer || !cb) {
     return -1;
   }
 
-  due_ms = salts_monotonic_ms() + timeout;
-  salts_mutex_lock(&g_salts_posix_timer_manager.lock);
-  salts_mutex_lock(&timer->lock);
+  due_ms = cmeta_monotonic_ms() + timeout;
+  cmeta_mutex_lock(&g_cmeta_posix_timer_manager.lock);
+  cmeta_mutex_lock(&timer->lock);
   if (timer->destroying) {
-    salts_mutex_unlock(&timer->lock);
-    salts_mutex_unlock(&g_salts_posix_timer_manager.lock);
+    cmeta_mutex_unlock(&timer->lock);
+    cmeta_mutex_unlock(&g_cmeta_posix_timer_manager.lock);
     return -1;
   }
-  salts_posix_timer_queue_remove_locked(timer);
+  cmeta_posix_timer_queue_remove_locked(timer);
   timer->callback = cb;
   timer->timeout = timeout;
   timer->repeat = repeat;
   timer->due_ms = due_ms;
   timer->active = 1;
-  salts_posix_timer_queue_insert_locked(timer);
-  salts_mutex_unlock(&timer->lock);
-  salts_cond_signal(&g_salts_posix_timer_manager.cond);
-  salts_mutex_unlock(&g_salts_posix_timer_manager.lock);
+  cmeta_posix_timer_queue_insert_locked(timer);
+  cmeta_mutex_unlock(&timer->lock);
+  cmeta_cond_signal(&g_cmeta_posix_timer_manager.cond);
+  cmeta_mutex_unlock(&g_cmeta_posix_timer_manager.lock);
   return 0;
 }
 
-int salts_timer_stop(salts_timer_t *timer) {
+int cmeta_timer_stop(cmeta_timer_t *timer) {
   if (!timer) {
     return 0;
   }
 
-  salts_mutex_lock(&g_salts_posix_timer_manager.lock);
-  salts_mutex_lock(&timer->lock);
-  salts_posix_timer_queue_remove_locked(timer);
+  cmeta_mutex_lock(&g_cmeta_posix_timer_manager.lock);
+  cmeta_mutex_lock(&timer->lock);
+  cmeta_posix_timer_queue_remove_locked(timer);
   timer->active = 0;
   timer->due_ms = 0U;
-  salts_mutex_unlock(&timer->lock);
-  salts_cond_signal(&g_salts_posix_timer_manager.cond);
-  salts_mutex_unlock(&g_salts_posix_timer_manager.lock);
+  cmeta_mutex_unlock(&timer->lock);
+  cmeta_cond_signal(&g_cmeta_posix_timer_manager.cond);
+  cmeta_mutex_unlock(&g_cmeta_posix_timer_manager.lock);
   return 0;
 }
 
 #endif
 
-void salts_timer_set_data(salts_timer_t *timer, void *data) {
+void cmeta_timer_set_data(cmeta_timer_t *timer, void *data) {
   if (timer) {
     timer->data = data;
   }
 }
 
-void *salts_timer_get_data(salts_timer_t *timer) { return timer ? timer->data : NULL; }
+void *cmeta_timer_get_data(cmeta_timer_t *timer) { return timer ? timer->data : NULL; }
 
-uint64_t salts_timer_get_repeat(salts_timer_t *timer) { return timer ? timer->repeat : 0; }
+uint64_t cmeta_timer_get_repeat(cmeta_timer_t *timer) { return timer ? timer->repeat : 0; }

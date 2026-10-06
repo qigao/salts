@@ -43,8 +43,8 @@ static bool SALTS_PLUGIN_CALL fixture_identity_invoke(
 }
 
 static plugin_object_fixture_api fixture_api;
-static salts_plugin_export fixture_exports[2];
-static salts_plugin_manifest fixture_manifest = {
+static cmeta_plugin_export fixture_exports[2];
+static cmeta_plugin_manifest fixture_manifest = {
     .struct_size = SALTS_PLUGIN_MANIFEST_SIZE,
     .abi_version = SALTS_PLUGIN_ABI_VERSION,
     .plugin_id = "test.loader.object_interface",
@@ -53,8 +53,8 @@ static salts_plugin_manifest fixture_manifest = {
 static bool fixture_initialized;
 
 SALTS_PLUGIN_QUERY_EXPORT
-const salts_plugin_manifest *SALTS_PLUGIN_CALL
-salts_plugin_query(uint32_t host_abi) {
+const cmeta_plugin_manifest *SALTS_PLUGIN_CALL
+cmeta_plugin_query(uint32_t host_abi) {
     if (host_abi != SALTS_PLUGIN_ABI_VERSION)
         return NULL;
 
@@ -63,7 +63,7 @@ salts_plugin_query(uint32_t host_abi) {
             plugin_object_fixture_impl_as_plugin_object_fixture_api(
                 &fixture_state);
 
-        fixture_exports[0] = (salts_plugin_export){
+        fixture_exports[0] = (cmeta_plugin_export){
             .struct_size = SALTS_PLUGIN_EXPORT_SIZE,
             .kind = SALTS_PLUGIN_EXPORT_INTERFACE,
             .contract_version = 1u,
@@ -76,7 +76,7 @@ salts_plugin_query(uint32_t host_abi) {
             },
         };
 
-        fixture_exports[1] = (salts_plugin_export){
+        fixture_exports[1] = (cmeta_plugin_export){
             .struct_size = SALTS_PLUGIN_EXPORT_SIZE,
             .kind = SALTS_PLUGIN_EXPORT_FUNCTION,
             .contract_version = 1u,

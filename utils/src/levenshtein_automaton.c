@@ -1,5 +1,5 @@
 #include "levenshtein_automaton.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include "cstl_status_internal.h"
 #include <cstl/vec.h>
 
@@ -42,7 +42,7 @@ static int lev_init_common(lev_automaton_t *lev, vstr pattern,
       &lev->pattern, utf8_pattern ? sizeof(uint32_t) : sizeof(uint8_t),
       utf8_pattern ? _Alignof(uint32_t) : _Alignof(uint8_t), pattern.len);
   if (status != STL_OK)
-    return salts_core_status_from_stl(status);
+    return cmeta_core_status_from_stl(status);
 
   if (utf8_pattern) {
     vstr rest = pattern;
@@ -55,7 +55,7 @@ static int lev_init_common(lev_automaton_t *lev, vstr pattern,
       status = vec_push(&lev->pattern, &cp);
       if (status != STL_OK) {
         vec_destroy(&lev->pattern);
-        return salts_core_status_from_stl(status);
+        return cmeta_core_status_from_stl(status);
       }
     }
   } else {
@@ -64,7 +64,7 @@ static int lev_init_common(lev_automaton_t *lev, vstr pattern,
       status = vec_push(&lev->pattern, &byte);
       if (status != STL_OK) {
         vec_destroy(&lev->pattern);
-        return salts_core_status_from_stl(status);
+        return cmeta_core_status_from_stl(status);
       }
     }
   }

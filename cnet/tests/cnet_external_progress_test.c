@@ -217,14 +217,14 @@ static void test_external_native_io_progress(void) {
   for (i = 0u; i < interest_count; ++i)
     assert(native_io_request_valid(interests[i]));
 
-  deadline = salts_monotonic_ms() + TEST_TIMEOUT_MS;
+  deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
   while (!probe.connected && !probe.failed) {
     assert(cnet_client_external_timeout(
                &client, 50u, &wait_ms) == SALTS_OK);
     assert(wait_ms <= 50u);
     assert(drive_external_once(
                &client, &backend, wait_ms) == SALTS_OK);
-    assert(salts_monotonic_ms() < deadline);
+    assert(cmeta_monotonic_ms() < deadline);
   }
   assert(probe.connected);
   assert(!probe.failed);
@@ -335,13 +335,13 @@ static void test_external_native_io_progress(void) {
     assert(native_io_request_valid(interests[i]));
 
   assert(cnet_close(&client, connection) == SALTS_OK);
-  deadline = salts_monotonic_ms() + TEST_TIMEOUT_MS;
+  deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
   while (!probe.terminal) {
     assert(cnet_client_external_timeout(
                &client, 50u, &wait_ms) == SALTS_OK);
     assert(drive_external_once(
                &client, &backend, wait_ms) == SALTS_OK);
-    assert(salts_monotonic_ms() < deadline);
+    assert(cmeta_monotonic_ms() < deadline);
   }
   assert(!probe.failed);
 

@@ -21,112 +21,112 @@ struct readiness_backend_contract_fixture {
 static const uint64_t POLL_TEST_TIMEOUT_NS = UINT64_C(2000000000);
 
 typedef struct poll_fairness_probe {
-  salts_mutex_t mutex;
-  salts_cond_t changed;
+  cmeta_mutex_t mutex;
+  cmeta_cond_t changed;
   size_t first_calls;
   size_t second_calls;
 } poll_fairness_probe;
 
 typedef struct poll_callback_probe {
-  salts_mutex_t mutex;
-  salts_cond_t changed;
+  cmeta_mutex_t mutex;
+  cmeta_cond_t changed;
   size_t calls;
-  salts_readiness_events events;
+  cmeta_readiness_events events;
   int status;
   int blocked;
   int entered;
 } poll_callback_probe;
 
 typedef struct poll_shutdown_args {
-  salts_readiness_reactor *reactor;
-  salts_mutex_t mutex;
-  salts_cond_t changed;
+  cmeta_readiness_reactor *reactor;
+  cmeta_mutex_t mutex;
+  cmeta_cond_t changed;
   int completed;
   int status;
 } poll_shutdown_args;
 
 static void poll_probe_init(poll_callback_probe *probe) {
   *probe = (poll_callback_probe){0};
-  salts_mutex_init(&probe->mutex);
-  salts_cond_init(&probe->changed);
+  cmeta_mutex_init(&probe->mutex);
+  cmeta_cond_init(&probe->changed);
 }
 
 static void poll_probe_destroy(poll_callback_probe *probe) {
-  salts_cond_destroy(&probe->changed);
-  salts_mutex_destroy(&probe->mutex);
+  cmeta_cond_destroy(&probe->changed);
+  cmeta_mutex_destroy(&probe->mutex);
 }
 
-static void poll_record_callback(void *user, salts_readiness_events events, int status) {
+static void poll_record_callback(void *user, cmeta_readiness_events events, int status) {
   poll_callback_probe *probe = (poll_callback_probe *)user;
-  salts_mutex_lock(&probe->mutex);
+  cmeta_mutex_lock(&probe->mutex);
   ++probe->calls;
   probe->events = events;
   probe->status = status;
   probe->entered = 1;
-  salts_cond_broadcast(&probe->changed);
+  cmeta_cond_broadcast(&probe->changed);
   while (probe->blocked)
-    salts_cond_wait(&probe->changed, &probe->mutex);
-  salts_mutex_unlock(&probe->mutex);
+    cmeta_cond_wait(&probe->changed, &probe->mutex);
+  cmeta_mutex_unlock(&probe->mutex);
 }
 
 static int poll_probe_wait_calls(poll_callback_probe *probe, size_t calls) {
   int status = SALTS_OK;
-  salts_mutex_lock(&probe->mutex);
+  cmeta_mutex_lock(&probe->mutex);
   while (probe->calls < calls && status == SALTS_OK)
-    status = salts_cond_timedwait(&probe->changed, &probe->mutex, POLL_TEST_TIMEOUT_NS);
-  salts_mutex_unlock(&probe->mutex);
+    status = cmeta_cond_timedwait(&probe->changed, &probe->mutex, POLL_TEST_TIMEOUT_NS);
+  cmeta_mutex_unlock(&probe->mutex);
   return status;
 }
 
 static void poll_probe_release(poll_callback_probe *probe) {
-  salts_mutex_lock(&probe->mutex);
+  cmeta_mutex_lock(&probe->mutex);
   probe->blocked = 0;
-  salts_cond_broadcast(&probe->changed);
-  salts_mutex_unlock(&probe->mutex);
+  cmeta_cond_broadcast(&probe->changed);
+  cmeta_mutex_unlock(&probe->mutex);
 }
 
 static void poll_shutdown_entry(void *user) {
   poll_shutdown_args *args = (poll_shutdown_args *)user;
-  int status = salts_readiness_reactor_shutdown(args->reactor);
-  salts_mutex_lock(&args->mutex);
+  int status = cmeta_readiness_reactor_shutdown(args->reactor);
+  cmeta_mutex_lock(&args->mutex);
   args->status = status;
   args->completed = 1;
-  salts_cond_broadcast(&args->changed);
-  salts_mutex_unlock(&args->mutex);
+  cmeta_cond_broadcast(&args->changed);
+  cmeta_mutex_unlock(&args->mutex);
 }
 
-static void poll_shutdown_args_init(poll_shutdown_args *args, salts_readiness_reactor *reactor) {
+static void poll_shutdown_args_init(poll_shutdown_args *args, cmeta_readiness_reactor *reactor) {
   *args = (poll_shutdown_args){0};
   args->reactor = reactor;
   args->status = SALTS_EIO;
-  salts_mutex_init(&args->mutex);
-  salts_cond_init(&args->changed);
+  cmeta_mutex_init(&args->mutex);
+  cmeta_cond_init(&args->changed);
 }
 
 static void poll_shutdown_args_destroy(poll_shutdown_args *args) {
-  salts_cond_destroy(&args->changed);
-  salts_mutex_destroy(&args->mutex);
+  cmeta_cond_destroy(&args->changed);
+  cmeta_mutex_destroy(&args->mutex);
 }
 
-static salts_readiness_callback_result
-poll_test_rearm_first(void *user, salts_readiness_events events, int status) {
+static cmeta_readiness_callback_result
+poll_test_rearm_first(void *user, cmeta_readiness_events events, int status) {
   poll_fairness_probe *probe = (poll_fairness_probe *)user;
-  salts_mutex_lock(&probe->mutex);
+  cmeta_mutex_lock(&probe->mutex);
   ++probe->first_calls;
-  salts_mutex_unlock(&probe->mutex);
+  cmeta_mutex_unlock(&probe->mutex);
   return status == SALTS_OK && (events & SALTS_READINESS_EVENT_READ) != 0u
-             ? (salts_readiness_callback_result){SALTS_READINESS_REARM, SALTS_READINESS_EVENT_READ}
-             : (salts_readiness_callback_result){SALTS_READINESS_COMPLETE, 0u};
+             ? (cmeta_readiness_callback_result){SALTS_READINESS_REARM, SALTS_READINESS_EVENT_READ}
+             : (cmeta_readiness_callback_result){SALTS_READINESS_COMPLETE, 0u};
 }
 
-static salts_readiness_callback_result
-poll_test_complete_second(void *user, salts_readiness_events events, int status) {
+static cmeta_readiness_callback_result
+poll_test_complete_second(void *user, cmeta_readiness_events events, int status) {
   poll_fairness_probe *probe = (poll_fairness_probe *)user;
-  salts_mutex_lock(&probe->mutex);
+  cmeta_mutex_lock(&probe->mutex);
   if (status == SALTS_OK && (events & SALTS_READINESS_EVENT_READ) != 0u) ++probe->second_calls;
-  salts_cond_broadcast(&probe->changed);
-  salts_mutex_unlock(&probe->mutex);
-  return (salts_readiness_callback_result){SALTS_READINESS_COMPLETE, 0u};
+  cmeta_cond_broadcast(&probe->changed);
+  cmeta_mutex_unlock(&probe->mutex);
+  return (cmeta_readiness_callback_result){SALTS_READINESS_COMPLETE, 0u};
 }
 
 static int poll_test_set_nonblocking_cloexec(int fd) {
@@ -202,11 +202,11 @@ static void poll_contract_destroy(readiness_backend_contract_fixture *fixture) {
 }
 
 static readiness_backend_contract_fixture *
-poll_contract_create(salts_readiness_config config, salts_readiness_reactor *reactor, int *status) {
+poll_contract_create(cmeta_readiness_config config, cmeta_readiness_reactor *reactor, int *status) {
   readiness_backend_contract_fixture *fixture = NULL;
   size_t created = 0u;
   if (status == NULL) return NULL;
-  *status = salts_readiness_reactor_init_kind(reactor, &config, SALTS_READINESS_BACKEND_POLL);
+  *status = cmeta_readiness_reactor_init_kind(reactor, &config, SALTS_READINESS_BACKEND_POLL);
   if (*status != SALTS_OK) return NULL;
 
   fixture = (readiness_backend_contract_fixture *)calloc(1u, sizeof(*fixture));
@@ -234,8 +234,8 @@ fail:
   } else {
     free(fixture);
   }
-  (void)salts_readiness_reactor_shutdown(reactor);
-  (void)salts_readiness_reactor_destroy(reactor);
+  (void)cmeta_readiness_reactor_shutdown(reactor);
+  (void)cmeta_readiness_reactor_destroy(reactor);
   return NULL;
 }
 
@@ -260,37 +260,37 @@ const readiness_backend_contract_factory *readiness_backend_contract_factory_get
 
 spec("Platform poll readiness selector") {
   it("reports explicit compile-time support") {
-    check_true(salts_readiness_backend_supported(SALTS_READINESS_BACKEND_POLL));
+    check_true(cmeta_readiness_backend_supported(SALTS_READINESS_BACKEND_POLL));
   }
 
   it("reports socket write readiness and pipe hangup through the generic mask") {
-    salts_readiness_reactor reactor = {0};
-    salts_readiness_registration registration = {0};
-    const salts_readiness_config config = {1u, 1u};
+    cmeta_readiness_reactor reactor = {0};
+    cmeta_readiness_registration registration = {0};
+    const cmeta_readiness_config config = {1u, 1u};
     poll_callback_probe probe;
     int fds[2] = {-1, -1};
 
     poll_probe_init(&probe);
     check_equal(poll_test_make_socket_pair(fds), SALTS_OK);
-    check_equal(salts_readiness_reactor_init_kind(&reactor, &config, SALTS_READINESS_BACKEND_POLL),
+    check_equal(cmeta_readiness_reactor_init_kind(&reactor, &config, SALTS_READINESS_BACKEND_POLL),
                 SALTS_OK);
-    check_equal(salts_readiness_register(&reactor, fds[0], &registration), SALTS_OK);
-    check_equal(salts_readiness_arm(&registration, SALTS_READINESS_EVENT_WRITE,
+    check_equal(cmeta_readiness_register(&reactor, fds[0], &registration), SALTS_OK);
+    check_equal(cmeta_readiness_arm(&registration, SALTS_READINESS_EVENT_WRITE,
                                     poll_record_callback, &probe),
                 SALTS_OK);
     check_equal(poll_probe_wait_calls(&probe, 1u), SALTS_OK);
     check_equal(probe.events & SALTS_READINESS_EVENT_WRITE, SALTS_READINESS_EVENT_WRITE);
     check_equal(probe.status, SALTS_OK);
 
-    check_equal(salts_readiness_close(&registration), SALTS_OK);
+    check_equal(cmeta_readiness_close(&registration), SALTS_OK);
     check_equal(close(fds[0]), 0);
     check_equal(close(fds[1]), 0);
     fds[0] = -1;
     fds[1] = -1;
 
     check_equal(poll_test_make_pipe(fds), SALTS_OK);
-    check_equal(salts_readiness_register(&reactor, fds[0], &registration), SALTS_OK);
-    check_equal(salts_readiness_arm(&registration,
+    check_equal(cmeta_readiness_register(&reactor, fds[0], &registration), SALTS_OK);
+    check_equal(cmeta_readiness_arm(&registration,
                                     SALTS_READINESS_EVENT_READ |
                                         SALTS_READINESS_EVENT_HANGUP,
                                     poll_record_callback, &probe),
@@ -301,77 +301,77 @@ spec("Platform poll readiness selector") {
     check_equal(probe.events & SALTS_READINESS_EVENT_HANGUP, SALTS_READINESS_EVENT_HANGUP);
     check_equal(probe.status, SALTS_OK);
 
-    check_equal(salts_readiness_close(&registration), SALTS_OK);
-    check_equal(salts_readiness_reactor_shutdown(&reactor), SALTS_OK);
-    check_equal(salts_readiness_reactor_destroy(&reactor), SALTS_OK);
+    check_equal(cmeta_readiness_close(&registration), SALTS_OK);
+    check_equal(cmeta_readiness_reactor_shutdown(&reactor), SALTS_OK);
+    check_equal(cmeta_readiness_reactor_destroy(&reactor), SALTS_OK);
     (void)close(fds[0]);
     poll_probe_destroy(&probe);
   }
 
   it("maps an invalid borrowed descriptor to the generic error event") {
-    salts_readiness_reactor reactor = {0};
-    salts_readiness_registration registration = {0};
-    const salts_readiness_config config = {1u, 1u};
+    cmeta_readiness_reactor reactor = {0};
+    cmeta_readiness_registration registration = {0};
+    const cmeta_readiness_config config = {1u, 1u};
     poll_callback_probe probe;
     int fds[2] = {-1, -1};
 
     poll_probe_init(&probe);
     check_equal(poll_test_make_pipe(fds), SALTS_OK);
-    check_equal(salts_readiness_reactor_init_kind(&reactor, &config, SALTS_READINESS_BACKEND_POLL),
+    check_equal(cmeta_readiness_reactor_init_kind(&reactor, &config, SALTS_READINESS_BACKEND_POLL),
                 SALTS_OK);
-    check_equal(salts_readiness_register(&reactor, fds[0], &registration), SALTS_OK);
+    check_equal(cmeta_readiness_register(&reactor, fds[0], &registration), SALTS_OK);
     check_equal(close(fds[0]), 0);
     fds[0] = -1;
-    check_equal(salts_readiness_arm(&registration, SALTS_READINESS_EVENT_READ, poll_record_callback,
+    check_equal(cmeta_readiness_arm(&registration, SALTS_READINESS_EVENT_READ, poll_record_callback,
                                     &probe),
                 SALTS_OK);
     check_equal(poll_probe_wait_calls(&probe, 1u), SALTS_OK);
     check_equal(probe.events & SALTS_READINESS_EVENT_ERROR, SALTS_READINESS_EVENT_ERROR);
     check_equal(probe.status, SALTS_OK);
 
-    check_equal(salts_readiness_close(&registration), SALTS_OK);
-    check_equal(salts_readiness_reactor_shutdown(&reactor), SALTS_OK);
-    check_equal(salts_readiness_reactor_destroy(&reactor), SALTS_OK);
+    check_equal(cmeta_readiness_close(&registration), SALTS_OK);
+    check_equal(cmeta_readiness_reactor_shutdown(&reactor), SALTS_OK);
+    check_equal(cmeta_readiness_reactor_destroy(&reactor), SALTS_OK);
     (void)close(fds[1]);
     poll_probe_destroy(&probe);
   }
 
   it("joins the worker only after an inflight callback returns") {
-    salts_readiness_reactor reactor = {0};
-    salts_readiness_registration registration = {0};
-    const salts_readiness_config config = {1u, 1u};
+    cmeta_readiness_reactor reactor = {0};
+    cmeta_readiness_registration registration = {0};
+    const cmeta_readiness_config config = {1u, 1u};
     poll_callback_probe probe;
     poll_shutdown_args shutdown_args;
-    salts_thread_t shutdown_thread = NULL;
+    cmeta_thread_t shutdown_thread = NULL;
     int fds[2] = {-1, -1};
 
     poll_probe_init(&probe);
     check_equal(poll_test_make_pipe(fds), SALTS_OK);
-    check_equal(salts_readiness_reactor_init_kind(&reactor, &config, SALTS_READINESS_BACKEND_POLL),
+    check_equal(cmeta_readiness_reactor_init_kind(&reactor, &config, SALTS_READINESS_BACKEND_POLL),
                 SALTS_OK);
-    check_equal(salts_readiness_register(&reactor, fds[0], &registration), SALTS_OK);
-    salts_mutex_lock(&probe.mutex);
+    check_equal(cmeta_readiness_register(&reactor, fds[0], &registration), SALTS_OK);
+    cmeta_mutex_lock(&probe.mutex);
     probe.blocked = 1;
-    salts_mutex_unlock(&probe.mutex);
-    check_equal(salts_readiness_arm(&registration, SALTS_READINESS_EVENT_READ, poll_record_callback,
+    cmeta_mutex_unlock(&probe.mutex);
+    check_equal(cmeta_readiness_arm(&registration, SALTS_READINESS_EVENT_READ, poll_record_callback,
                                     &probe),
                 SALTS_OK);
     check_equal(poll_test_write_byte(fds[1], 3u), SALTS_OK);
     check_equal(poll_probe_wait_calls(&probe, 1u), SALTS_OK);
 
     poll_shutdown_args_init(&shutdown_args, &reactor);
-    check_equal(salts_thread_create(&shutdown_thread, poll_shutdown_entry, &shutdown_args),
+    check_equal(cmeta_thread_create(&shutdown_thread, poll_shutdown_entry, &shutdown_args),
                 SALTS_OK);
-    check_equal(salts_readiness_backend_wait_admission_closed(&reactor), SALTS_OK);
-    salts_mutex_lock(&shutdown_args.mutex);
+    check_equal(cmeta_readiness_backend_wait_admission_closed(&reactor), SALTS_OK);
+    cmeta_mutex_lock(&shutdown_args.mutex);
     check_false(shutdown_args.completed);
-    salts_mutex_unlock(&shutdown_args.mutex);
+    cmeta_mutex_unlock(&shutdown_args.mutex);
 
     poll_probe_release(&probe);
-    check_equal(salts_thread_join(&shutdown_thread), SALTS_OK);
+    check_equal(cmeta_thread_join(&shutdown_thread), SALTS_OK);
     check_equal(shutdown_args.status, SALTS_OK);
-    check_equal(salts_readiness_close(&registration), SALTS_OK);
-    check_equal(salts_readiness_reactor_destroy(&reactor), SALTS_OK);
+    check_equal(cmeta_readiness_close(&registration), SALTS_OK);
+    check_equal(cmeta_readiness_reactor_destroy(&reactor), SALTS_OK);
     poll_shutdown_args_destroy(&shutdown_args);
     (void)close(fds[0]);
     (void)close(fds[1]);
@@ -379,10 +379,10 @@ spec("Platform poll readiness selector") {
   }
 
   it("rotates a bounded batch across continuously ready registrations") {
-    salts_readiness_reactor reactor = {0};
-    salts_readiness_registration first = {0};
-    salts_readiness_registration second = {0};
-    const salts_readiness_config config = {2u, 1u};
+    cmeta_readiness_reactor reactor = {0};
+    cmeta_readiness_registration first = {0};
+    cmeta_readiness_registration second = {0};
+    const cmeta_readiness_config config = {2u, 1u};
     poll_fairness_probe probe = {0};
     int first_pipe[2] = {-1, -1};
     int second_pipe[2] = {-1, -1};
@@ -390,44 +390,44 @@ spec("Platform poll readiness selector") {
     size_t first_calls;
     size_t second_calls;
 
-    salts_mutex_init(&probe.mutex);
-    salts_cond_init(&probe.changed);
+    cmeta_mutex_init(&probe.mutex);
+    cmeta_cond_init(&probe.changed);
     check_equal(poll_test_make_pipe(first_pipe), SALTS_OK);
     check_equal(poll_test_make_pipe(second_pipe), SALTS_OK);
-    check_equal(salts_readiness_reactor_init_kind(&reactor, &config, SALTS_READINESS_BACKEND_POLL),
+    check_equal(cmeta_readiness_reactor_init_kind(&reactor, &config, SALTS_READINESS_BACKEND_POLL),
                 SALTS_OK);
-    check_equal(salts_readiness_register(&reactor, first_pipe[0], &first), SALTS_OK);
-    check_equal(salts_readiness_register(&reactor, second_pipe[0], &second), SALTS_OK);
-    check_equal(salts_readiness_arm_continuation(&first, SALTS_READINESS_EVENT_READ,
+    check_equal(cmeta_readiness_register(&reactor, first_pipe[0], &first), SALTS_OK);
+    check_equal(cmeta_readiness_register(&reactor, second_pipe[0], &second), SALTS_OK);
+    check_equal(cmeta_readiness_arm_continuation(&first, SALTS_READINESS_EVENT_READ,
                                                  poll_test_rearm_first, &probe),
                 SALTS_OK);
-    check_equal(salts_readiness_arm_continuation(&second, SALTS_READINESS_EVENT_READ,
+    check_equal(cmeta_readiness_arm_continuation(&second, SALTS_READINESS_EVENT_READ,
                                                  poll_test_complete_second, &probe),
                 SALTS_OK);
     check_equal(poll_test_write_byte(first_pipe[1], 1u), SALTS_OK);
     check_equal(poll_test_write_byte(second_pipe[1], 2u), SALTS_OK);
 
-    salts_mutex_lock(&probe.mutex);
+    cmeta_mutex_lock(&probe.mutex);
     while (probe.second_calls == 0u && wait_status == SALTS_OK)
-      wait_status = salts_cond_timedwait(&probe.changed, &probe.mutex, POLL_TEST_TIMEOUT_NS);
+      wait_status = cmeta_cond_timedwait(&probe.changed, &probe.mutex, POLL_TEST_TIMEOUT_NS);
     first_calls = probe.first_calls;
     second_calls = probe.second_calls;
-    salts_mutex_unlock(&probe.mutex);
+    cmeta_mutex_unlock(&probe.mutex);
     check_equal(wait_status, SALTS_OK);
     check_greater(first_calls, (size_t)0u);
     check_equal(second_calls, (size_t)1u);
 
     check_equal(poll_test_drain(first_pipe[0]), SALTS_OK);
     check_equal(poll_test_drain(second_pipe[0]), SALTS_OK);
-    check_equal(salts_readiness_close(&first), SALTS_OK);
-    check_equal(salts_readiness_close(&second), SALTS_OK);
-    check_equal(salts_readiness_reactor_shutdown(&reactor), SALTS_OK);
-    check_equal(salts_readiness_reactor_destroy(&reactor), SALTS_OK);
+    check_equal(cmeta_readiness_close(&first), SALTS_OK);
+    check_equal(cmeta_readiness_close(&second), SALTS_OK);
+    check_equal(cmeta_readiness_reactor_shutdown(&reactor), SALTS_OK);
+    check_equal(cmeta_readiness_reactor_destroy(&reactor), SALTS_OK);
     (void)close(first_pipe[0]);
     (void)close(first_pipe[1]);
     (void)close(second_pipe[0]);
     (void)close(second_pipe[1]);
-    salts_cond_destroy(&probe.changed);
-    salts_mutex_destroy(&probe.mutex);
+    cmeta_cond_destroy(&probe.changed);
+    cmeta_mutex_destroy(&probe.mutex);
   }
 }

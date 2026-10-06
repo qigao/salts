@@ -35,7 +35,7 @@ set(CNET_SOURCE_FILES
   src/cnet_uri.c
   src/cnet_write_queue.c
   src/cnet_websocket.c
-  $<TARGET_OBJECTS:salts_wsparser>)
+  $<TARGET_OBJECTS:cmeta_wsparser>)
 
 function(cnet_configure_target target_name)
   target_compile_features(${target_name} PUBLIC c_std_11)
@@ -51,7 +51,7 @@ function(cnet_configure_target target_name)
   target_link_libraries(
     ${target_name}
     PUBLIC Salts::NativeIO Salts::Concurrency Salts::Core
-    PRIVATE Salts::UriParser Salts::Platform Salts::CSTL monocypher salts_reed
+    PRIVATE Salts::UriParser Salts::Platform Salts::CSTL monocypher cmeta_reed
             ${cnet_cares_link_items} kcp::kcp c-ares::cares
             GmSSL::GmSSL
             $<$<PLATFORM_ID:Windows>:crypt32>

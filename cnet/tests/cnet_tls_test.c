@@ -784,9 +784,9 @@ spec("CNet bounded TLS engine") {
         SALTS_OK);
     check_equal(cnet_tls_client_destroy(&tls_client), SALTS_OK);
 
-    deadline = salts_monotonic_ms() + 5000u;
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((!client_probe.connected || !server_probe.connected) &&
-           salts_monotonic_ms() < deadline)
+           cmeta_monotonic_ms() < deadline)
       check_equal(
           cnet_tls_network_drive(
               &client, &server, &listener, &tls_server,
@@ -845,12 +845,12 @@ spec("CNet bounded TLS engine") {
       mem_buffer_release(prefix);
       mem_buffer_release(payload);
 
-      deadline = salts_monotonic_ms() + 5000u;
+      deadline = cmeta_monotonic_ms() + 5000u;
       while ((server_probe.received_size <
                   frame_prefix_bytes + first_payload_bytes ||
               (size_t)client_probe.sent < sent_before + 1u) &&
              !server_probe.failed && !client_probe.failed &&
-             salts_monotonic_ms() < deadline)
+             cmeta_monotonic_ms() < deadline)
         check_equal(
             cnet_tls_network_drive(
                 &client, &server, &listener, &tls_server,
@@ -921,11 +921,11 @@ spec("CNet bounded TLS engine") {
       mem_buffer_release(payload);
     }
 
-    deadline = salts_monotonic_ms() + 5000u;
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((server_probe.received_size < second_total_bytes ||
             (size_t)client_probe.sent < sent_before + frame_count) &&
            !server_probe.failed && !client_probe.failed &&
-           salts_monotonic_ms() < deadline)
+           cmeta_monotonic_ms() < deadline)
       check_equal(
           cnet_tls_network_drive(
               &client, &server, &listener, &tls_server,
@@ -990,11 +990,11 @@ spec("CNet bounded TLS engine") {
           SALTS_OK);
       mem_buffer_release(wire);
 
-      deadline = salts_monotonic_ms() + 5000u;
+      deadline = cmeta_monotonic_ms() + 5000u;
       while ((client_probe.received_size < wire_size ||
               (size_t)server_probe.sent < sent_before + 1u) &&
              !server_probe.failed && !client_probe.failed &&
-             salts_monotonic_ms() < deadline)
+             cmeta_monotonic_ms() < deadline)
         check_equal(
             cnet_tls_network_drive(
                 &client, &server, &listener, &tls_server,
@@ -1105,11 +1105,11 @@ spec("CNet bounded TLS engine") {
           SALTS_OK);
       mem_buffer_release(wire);
 
-      deadline = salts_monotonic_ms() + 5000u;
+      deadline = cmeta_monotonic_ms() + 5000u;
       while ((client_probe.received_size < second_total_bytes ||
               (size_t)server_probe.sent < sent_before + 1u) &&
              !server_probe.failed && !client_probe.failed &&
-             salts_monotonic_ms() < deadline)
+             cmeta_monotonic_ms() < deadline)
         check_equal(
             cnet_tls_network_drive(
                 &client, &server, &listener, &tls_server,
@@ -1123,9 +1123,9 @@ spec("CNet bounded TLS engine") {
     }
 
     check_equal(cnet_close(&client, client_connection), SALTS_OK);
-    deadline = salts_monotonic_ms() + 5000u;
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((!client_probe.terminal || !server_probe.terminal) &&
-           salts_monotonic_ms() < deadline)
+           cmeta_monotonic_ms() < deadline)
       check_equal(
           cnet_tls_network_drive(
               &client, &server, &listener, &tls_server,
@@ -1735,8 +1735,8 @@ spec("CNet bounded TLS engine") {
                 SALTS_ENOTCONN);
     check_equal(server_end_point_size, (size_t)0u);
 
-    deadline = salts_monotonic_ms() + 5000u;
-    while ((!client_probe.connected || !server_probe.connected) && salts_monotonic_ms() < deadline)
+    deadline = cmeta_monotonic_ms() + 5000u;
+    while ((!client_probe.connected || !server_probe.connected) && cmeta_monotonic_ms() < deadline)
       check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
                                          &accepted),
                   SALTS_OK);
@@ -1830,9 +1830,9 @@ spec("CNet bounded TLS engine") {
     request_second = NULL;
     check_equal(cnet_tls_test_send_bytes(&client, client_connection, second_request, sizeof(second_request) - 1u),
                 SALTS_OK);
-    deadline = salts_monotonic_ms() + 5000u;
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((server_probe.received_size < sizeof(combined_requests) - 1u || client_probe.sent < 2) &&
-           salts_monotonic_ms() < deadline)
+           cmeta_monotonic_ms() < deadline)
       check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
                                          &accepted),
                   SALTS_OK);
@@ -1851,9 +1851,9 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_receive(&client, client_connection, 1u), SALTS_OK);
     check_equal(cnet_tls_test_send_bytes(&server, server_probe.connection, response, sizeof(response) - 1u),
                 SALTS_OK);
-    deadline = salts_monotonic_ms() + 5000u;
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((client_probe.owned_received_size == 0u || server_probe.sent == 0) &&
-           salts_monotonic_ms() < deadline)
+           cmeta_monotonic_ms() < deadline)
       check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
                                          &accepted),
                   SALTS_OK);
@@ -1879,10 +1879,10 @@ spec("CNet bounded TLS engine") {
     final_buffer = NULL;
     check_equal(cnet_tls_test_send_bytes(&client, client_connection, request, sizeof(request) - 1u), SALTS_EBUSY);
     check_equal(cnet_receive(&client, client_connection, 1u), SALTS_EBUSY);
-    deadline = salts_monotonic_ms() + 5000u;
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((!client_probe.terminal || !server_probe.terminal ||
             server_probe.received_size < sizeof(final_request) - 1u) &&
-           salts_monotonic_ms() < deadline)
+           cmeta_monotonic_ms() < deadline)
       check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
                                          &accepted),
                   SALTS_OK);
@@ -1967,9 +1967,9 @@ spec("CNet bounded TLS engine") {
     connect_options = (cnet_connect_options){.uri = uri, .observer = client_observer};
     check_equal(cnet_connect(&client, &connect_options, &client_connection), SALTS_OK);
 
-    deadline = salts_monotonic_ms() + 5000u;
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((!client_probe.connected || !server_probe.connected) &&
-           salts_monotonic_ms() < deadline) {
+           cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       int ready = 0;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
@@ -1993,9 +1993,9 @@ spec("CNet bounded TLS engine") {
     check_equal(
         cnet_tls_test_send_bytes(&client, client_connection, plaintext_request, sizeof(plaintext_request) - 1u),
         SALTS_OK);
-    deadline = salts_monotonic_ms() + 5000u;
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((server_probe.received_size == 0u || client_probe.sent == 0) &&
-           salts_monotonic_ms() < deadline) {
+           cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
@@ -2009,9 +2009,9 @@ spec("CNet bounded TLS engine") {
     check_equal(
         cnet_tls_test_send_bytes(&server, server_connection, plaintext_response, sizeof(plaintext_response) - 1u),
         SALTS_OK);
-    deadline = salts_monotonic_ms() + 5000u;
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((client_probe.received_size == 0u || server_probe.sent == 0) &&
-           salts_monotonic_ms() < deadline) {
+           cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
@@ -2026,9 +2026,9 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_start_tls(&client, client_connection, &tls_options), SALTS_OK);
     check_equal(cnet_tls_server_destroy(&tls_server), SALTS_OK);
 
-    deadline = salts_monotonic_ms() + 5000u;
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((client_probe.connected_count != 2 || server_probe.connected_count != 2) &&
-           !client_probe.terminal && !server_probe.terminal && salts_monotonic_ms() < deadline) {
+           !client_probe.terminal && !server_probe.terminal && cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
@@ -2043,10 +2043,10 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_receive(&server, server_connection, 1u), SALTS_OK);
     check_equal(cnet_tls_test_send_bytes(&client, client_connection, secure_request, sizeof(secure_request) - 1u),
                 SALTS_OK);
-    deadline = salts_monotonic_ms() + 5000u;
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((server_probe.received_size == 0u || client_probe.sent < 2) &&
            !client_probe.terminal && !server_probe.terminal &&
-           salts_monotonic_ms() < deadline) {
+           cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
@@ -2061,8 +2061,8 @@ spec("CNet bounded TLS engine") {
 
     check_equal(cnet_receive(&server, server_connection, 1u), SALTS_OK);
     check_equal(cnet_close(&client, client_connection), SALTS_OK);
-    deadline = salts_monotonic_ms() + 5000u;
-    while ((!client_probe.terminal || !server_probe.terminal) && salts_monotonic_ms() < deadline) {
+    deadline = cmeta_monotonic_ms() + 5000u;
+    while ((!client_probe.terminal || !server_probe.terminal) && cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
@@ -2119,8 +2119,8 @@ spec("CNet bounded TLS engine") {
                                                   .on_send = cnet_tls_network_send},
                                      .tls = &tls_config};
     check_equal(cnet_connect(&client, &options, &client_connection), SALTS_OK);
-    deadline = salts_monotonic_ms() + 2000u;
-    while (!client_probe.terminal && salts_monotonic_ms() < deadline) {
+    deadline = cmeta_monotonic_ms() + 2000u;
+    while (!client_probe.terminal && cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       int ready = 0;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
@@ -2190,8 +2190,8 @@ spec("CNet bounded TLS engine") {
                                      .tls = &tls_config};
     check_equal(cnet_connect(&client, &options, &client_connection), SALTS_OK);
 
-    deadline = salts_monotonic_ms() + 2000u;
-    while (!accepted && salts_monotonic_ms() < deadline) {
+    deadline = cmeta_monotonic_ms() + 2000u;
+    while (!accepted && cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       int ready = 0;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
@@ -2209,8 +2209,8 @@ spec("CNet bounded TLS engine") {
     check_false(client_probe.connected);
     check_equal(cnet_close(&client, client_connection), SALTS_OK);
 
-    deadline = salts_monotonic_ms() + 2000u;
-    while (!client_probe.terminal && salts_monotonic_ms() < deadline) {
+    deadline = cmeta_monotonic_ms() + 2000u;
+    while (!client_probe.terminal && cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       check_equal(cnet_client_poll(&raw_server, 1u, &events), SALTS_OK);

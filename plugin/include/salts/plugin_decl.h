@@ -36,15 +36,15 @@
  * These local value constructors initialize the immutable table; they never
  * mutate a registry or publish anything outside the explicit manifest. */
 #ifdef __cplusplus
-CMETA_INLINE salts_plugin_export_value salts_plugin_decl_function_value(
+CMETA_INLINE cmeta_plugin_export_value cmeta_plugin_decl_function_value(
     const cmeta_function_desc *desc, const cmeta_function_abi_desc *abi,
-    salts_plugin_function_invoke_fn invoke) {
-    salts_plugin_export_value value = {};
+    cmeta_plugin_function_invoke_fn invoke) {
+    cmeta_plugin_export_value value = {};
     value.function = {desc, abi, nullptr, invoke};
     return value;
 }
 #define SALTS_PLUGIN_DECL_VALUE_function(source) \
-    salts_plugin_decl_function_value(FunctionMeta(source),FunctionAbi(source), \
+    cmeta_plugin_decl_function_value(FunctionMeta(source),FunctionAbi(source), \
         CMETA_PP_CAT(source,__plugin_invoke))
 #else
 #define SALTS_PLUGIN_DECL_VALUE_function(source) \
@@ -67,13 +67,13 @@ CMETA_INLINE salts_plugin_export_value salts_plugin_decl_function_value(
     (managed,self,start,stop,quiet,destroy)
 #define SALTS_PLUGIN_DECL_LIFE_CHECK_passive(ignored)
 #define SALTS_PLUGIN_DECL_LIFE_CHECK_managed(self,start,stop,quiet,destroy) \
-    CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(&(start),salts_plugin_start_fn), \
+    CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(&(start),cmeta_plugin_start_fn), \
         "Plugin start callback type mismatch"); \
-    CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(&(stop),salts_plugin_request_stop_fn), \
+    CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(&(stop),cmeta_plugin_request_stop_fn), \
         "Plugin stop callback type mismatch"); \
-    CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(&(quiet),salts_plugin_is_quiescent_fn), \
+    CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(&(quiet),cmeta_plugin_is_quiescent_fn), \
         "Plugin quiescence callback type mismatch"); \
-    CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(&(destroy),salts_plugin_destroy_fn), \
+    CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(&(destroy),cmeta_plugin_destroy_fn), \
         "Plugin destroy callback type mismatch");
 #define SALTS_PLUGIN_DECL_LIFE_CHECK_I(kind,...) \
     CMETA_PP_CAT(SALTS_PLUGIN_DECL_LIFE_CHECK_,kind)(__VA_ARGS__)
@@ -99,7 +99,7 @@ CMETA_INLINE salts_plugin_export_value salts_plugin_decl_function_value(
 #define SALTS_PLUGIN_DECLARE_I(name,id,version,exports,lifecycle) \
     exports(SALTS_PLUGIN_DECL_CHECK) \
     exports(SALTS_PLUGIN_DECL_BRIDGE) \
-    static const salts_plugin_export name##__exports[] = { \
+    static const cmeta_plugin_export name##__exports[] = { \
         exports(SALTS_PLUGIN_DECL_ROW) \
     }; \
     CMETA_STATIC_ASSERT(sizeof(name##__exports)/sizeof(name##__exports[0]) \
@@ -114,13 +114,13 @@ CMETA_INLINE salts_plugin_export_value salts_plugin_decl_function_value(
 #define SALTS_PLUGIN_DECL_MANIFEST(name,id,version,exports,count,lifecycle) \
     CMETA_PP_TUPLE_APPLY(SALTS_PLUGIN_DECL_VERSION,version) \
     CMETA_PP_TUPLE_APPLY(SALTS_PLUGIN_DECL_LIFE_CHECK_I,lifecycle) \
-    static const salts_plugin_manifest name##__manifest = { \
+    static const cmeta_plugin_manifest name##__manifest = { \
         SALTS_PLUGIN_MANIFEST_SIZE,SALTS_PLUGIN_ABI_VERSION,(id), \
         {CMETA_PP_UNPAREN version},(exports),(count), \
         CMETA_PP_TUPLE_APPLY(SALTS_PLUGIN_DECL_LIFE_I,lifecycle) \
     }; \
-    SALTS_PLUGIN_QUERY_EXPORT const salts_plugin_manifest *SALTS_PLUGIN_CALL \
-    salts_plugin_query(uint32_t host_abi) { \
+    SALTS_PLUGIN_QUERY_EXPORT const cmeta_plugin_manifest *SALTS_PLUGIN_CALL \
+    cmeta_plugin_query(uint32_t host_abi) { \
         return host_abi == SALTS_PLUGIN_ABI_VERSION ? &name##__manifest : NULL; \
     } \
     typedef char name##__plugin_declaration_complete[1]

@@ -26,7 +26,7 @@ extern "C" {
  * acquire/release. Control-plane reset or storage replacement requires both
  * roles to be quiescent.
  */
-typedef struct salts_spsc_ring {
+typedef struct cmeta_spsc_ring {
   size_t size;
   size_t mask;
   uint8_t *data;
@@ -35,19 +35,19 @@ typedef struct salts_spsc_ring {
   alignas(64) SALTS_SPSC_ATOMIC_SIZE_T wrap_pos;
   SALTS_SPSC_ATOMIC_SIZE_T wrap_len;
   size_t pending_wrap_len;
-} salts_spsc_ring;
+} cmeta_spsc_ring;
 
-SALTS_CONCURRENCY_C_API bool salts_spsc_ring_init(salts_spsc_ring *ring, uint8_t *storage,
+SALTS_CONCURRENCY_C_API bool cmeta_spsc_ring_init(cmeta_spsc_ring *ring, uint8_t *storage,
                                                    size_t size);
-SALTS_CONCURRENCY_C_API uint8_t *salts_spsc_ring_write_acquire(salts_spsc_ring *ring,
+SALTS_CONCURRENCY_C_API uint8_t *cmeta_spsc_ring_write_acquire(cmeta_spsc_ring *ring,
                                                                size_t required);
-SALTS_CONCURRENCY_C_API void salts_spsc_ring_write_release(salts_spsc_ring *ring,
+SALTS_CONCURRENCY_C_API void cmeta_spsc_ring_write_release(cmeta_spsc_ring *ring,
                                                            size_t written);
-SALTS_CONCURRENCY_C_API uint8_t *salts_spsc_ring_read_acquire(salts_spsc_ring *ring,
+SALTS_CONCURRENCY_C_API uint8_t *cmeta_spsc_ring_read_acquire(cmeta_spsc_ring *ring,
                                                               size_t *available);
-SALTS_CONCURRENCY_C_API void salts_spsc_ring_read_release(salts_spsc_ring *ring, size_t read);
-SALTS_CONCURRENCY_C_API size_t salts_spsc_ring_write_available(const salts_spsc_ring *ring);
-SALTS_CONCURRENCY_C_API size_t salts_spsc_ring_read_available(const salts_spsc_ring *ring);
+SALTS_CONCURRENCY_C_API void cmeta_spsc_ring_read_release(cmeta_spsc_ring *ring, size_t read);
+SALTS_CONCURRENCY_C_API size_t cmeta_spsc_ring_write_available(const cmeta_spsc_ring *ring);
+SALTS_CONCURRENCY_C_API size_t cmeta_spsc_ring_read_available(const cmeta_spsc_ring *ring);
 
 #ifdef __cplusplus
 }

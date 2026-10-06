@@ -206,12 +206,12 @@ static void test_external_listener_accept_shared_progress(void) {
   assert(duplicate.generation == first.generation);
 
   peer = connect_raw_peer(local.port);
-  deadline = salts_monotonic_ms() + TEST_TIMEOUT_MS;
+  deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
   while (!listener_consumed) {
     assert(drive_shared_once(
                &listener, &client, &backend,
                50u, &listener_consumed) == SALTS_OK);
-    assert(salts_monotonic_ms() < deadline);
+    assert(cmeta_monotonic_ms() < deadline);
   }
 
   assert(cnet_listener_submit_external_accept(
@@ -244,7 +244,7 @@ static void test_external_listener_accept_shared_progress(void) {
   assert(native_io_request_valid(second));
   assert(cnet_listener_close(&listener) == SALTS_EBUSY);
 
-  deadline = salts_monotonic_ms() + TEST_TIMEOUT_MS;
+  deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
   for (;;) {
     status = drive_shared_once(
         &listener, &client, &backend, 50u,
@@ -254,7 +254,7 @@ static void test_external_listener_accept_shared_progress(void) {
     if (status == SALTS_OK)
       break;
     assert(status == SALTS_EBUSY);
-    assert(salts_monotonic_ms() < deadline);
+    assert(cmeta_monotonic_ms() < deadline);
   }
 
   assert(cnet_listener_destroy(&listener) == SALTS_OK);
@@ -263,12 +263,12 @@ static void test_external_listener_accept_shared_progress(void) {
   close_test_socket(peer);
   peer = TEST_INVALID_SOCKET;
 
-  deadline = salts_monotonic_ms() + TEST_TIMEOUT_MS;
+  deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
   while (!probe.terminal) {
     assert(drive_shared_once(
                &listener, &client, &backend,
                50u, NULL) == SALTS_OK);
-    assert(salts_monotonic_ms() < deadline);
+    assert(cmeta_monotonic_ms() < deadline);
   }
   assert(!probe.failed);
 

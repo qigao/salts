@@ -5,8 +5,8 @@
 
 #include "tinytest.h"
 #include "tlog.h"
-#include "salts_fs.h"
-#include "salts_thread.h"
+#include "cmeta_fs.h"
+#include "cmeta_thread.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -17,7 +17,7 @@
 
 static volatile int sink_n = 0;
 
-static void null_callback(const salts_log_entry_t *entry, void *user_data) {
+static void null_callback(const cmeta_log_entry_t *entry, void *user_data) {
   (void)entry;
   (void)user_data;
   sink_n++;
@@ -31,7 +31,7 @@ spec("TLog Bench") {
     // Setup a default logger with a callback sink for all benchmarks
     tlog_config_t config = {.min_level = SALTS_LOG_LEVEL_DEBUG, .pool_size = 64 * 1024};
     tlog_t *logger = tlog_create(&config);
-    tlog_add_sink(logger, salts_sink_callback_create(null_callback, NULL));
+    tlog_add_sink(logger, cmeta_sink_callback_create(null_callback, NULL));
     tlog_set_default(logger);
 
     benchmark("sync_simple_message", ITERS_NORMAL, 1) { TLOG_INFO("Benchmark simple message"); }
@@ -54,7 +54,7 @@ spec("TLog Bench") {
     tlog_config_t config = {
         .min_level = SALTS_LOG_LEVEL_DEBUG, .buffer_size = 2 * 1024 * 1024, .pool_size = 64 * 1024};
     tlog_t *async_logger = tlog_create(&config);
-    tlog_add_sink(async_logger, salts_sink_callback_create(null_callback, NULL));
+    tlog_add_sink(async_logger, cmeta_sink_callback_create(null_callback, NULL));
 
     benchmark("async_enqueue_latency", ITERS_FAST, 1) {
       SALTS_LOG_INFO(async_logger, "bench", "Async message latency test");
@@ -67,16 +67,16 @@ spec("TLog Bench") {
 
       benchmark_titles("benchmark", "input", "iters", "avg(us)", NULL, "min(us)", "max(us)", "ops/s", NULL, NULL);
     char log_file[256];
-    salts_fs_get_tmpdir(log_file, sizeof(log_file) - 48);
+    cmeta_fs_get_tmpdir(log_file, sizeof(log_file) - 48);
     strcat(log_file, "/bench_file.log");
 
     tlog_config_t config = {0};
     tlog_t *logger = tlog_create(&config);
-    salts_file_sink_opts_t opts = {.path = log_file};
-    tlog_add_sink(logger, salts_sink_file_create(&opts));
+    cmeta_file_sink_opts_t opts = {.path = log_file};
+    tlog_add_sink(logger, cmeta_sink_file_create(&opts));
 
     benchmark("file_sink", ITERS_HEAVY, 1) {
-      salts_log_str(logger, SALTS_LOG_LEVEL_INFO, VSTR_LIT("bench"), VSTR_LIT(__FILE__), __LINE__,
+      cmeta_log_str(logger, SALTS_LOG_LEVEL_INFO, VSTR_LIT("bench"), VSTR_LIT(__FILE__), __LINE__,
                     VSTR_LIT("File log entry"));
     }
 
@@ -88,7 +88,7 @@ spec("TLog Bench") {
       benchmark_titles("benchmark", "input", "iters", "avg(us)", NULL, "min(us)", "max(us)", "ops/s", NULL, NULL);
     tlog_config_t config = {.min_level = SALTS_LOG_LEVEL_INFO};
     tlog_t *logger = tlog_create(&config);
-    tlog_add_sink(logger, salts_sink_callback_create(null_callback, NULL));
+    tlog_add_sink(logger, cmeta_sink_callback_create(null_callback, NULL));
     tlog_set_default(logger);
 
     benchmark("filtered_out_message", ITERS_FAST, 1) {
@@ -98,7 +98,7 @@ spec("TLog Bench") {
 
     benchmark("raw_string_logging", ITERS_NORMAL, 1) {
       tlog_t *logger_ptr = tlog_get_default();
-      salts_log_str(logger_ptr, SALTS_LOG_LEVEL_INFO, VSTR_LIT("bench"), VSTR_LIT(__FILE__), __LINE__,
+      cmeta_log_str(logger_ptr, SALTS_LOG_LEVEL_INFO, VSTR_LIT("bench"), VSTR_LIT(__FILE__), __LINE__,
                     VSTR_LIT("Raw message"));
     }
 

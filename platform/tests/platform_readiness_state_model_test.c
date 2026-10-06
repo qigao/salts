@@ -4,24 +4,24 @@
 
 typedef struct state_model_case {
   const char *name;
-  salts_readiness_state_view view;
+  cmeta_readiness_state_view view;
   int valid;
 } state_model_case;
 
 static void state_model_callback(void *user,
-                                 salts_readiness_events events,
+                                 cmeta_readiness_events events,
                                  int status) {
   (void)user;
   (void)events;
   (void)status;
 }
 
-static salts_readiness_callback_result state_model_continuation(
-    void *user, salts_readiness_events events, int status) {
+static cmeta_readiness_callback_result state_model_continuation(
+    void *user, cmeta_readiness_events events, int status) {
   (void)user;
   (void)events;
   (void)status;
-  return (salts_readiness_callback_result){
+  return (cmeta_readiness_callback_result){
       SALTS_READINESS_COMPLETE, 0u};
 }
 
@@ -207,75 +207,75 @@ spec("Platform readiness state model") {
     };
 
     for (size_t index = 0; index < sizeof(cases) / sizeof(cases[0]); ++index) {
-      check_equal(salts_readiness_state_model_valid(&cases[index].view),
+      check_equal(cmeta_readiness_state_model_valid(&cases[index].view),
                   cases[index].valid);
     }
   }
 
   it("requires exactly one callback form") {
-    check_true(salts_readiness_callback_forms_valid(
+    check_true(cmeta_readiness_callback_forms_valid(
         state_model_callback, NULL));
-    check_true(salts_readiness_callback_forms_valid(
+    check_true(cmeta_readiness_callback_forms_valid(
         NULL, state_model_continuation));
-    check_false(salts_readiness_callback_forms_valid(NULL, NULL));
-    check_false(salts_readiness_callback_forms_valid(
+    check_false(cmeta_readiness_callback_forms_valid(NULL, NULL));
+    check_false(cmeta_readiness_callback_forms_valid(
         state_model_callback, state_model_continuation));
   }
 
   it("keeps a paused old entrant out of a reused handle generation") {
     uintptr_t admission = 0u;
 
-    check_equal(salts_readiness_registration_admission_enter(&admission),
+    check_equal(cmeta_readiness_registration_admission_enter(&admission),
                 SALTS_OK);
-    check_equal(salts_readiness_registration_admission_entrants(&admission),
+    check_equal(cmeta_readiness_registration_admission_entrants(&admission),
                 (uint32_t)1u);
-    check_equal(salts_readiness_registration_admission_close(&admission),
+    check_equal(cmeta_readiness_registration_admission_close(&admission),
                 SALTS_OK);
-    check_equal(salts_readiness_registration_admission_enter(&admission),
+    check_equal(cmeta_readiness_registration_admission_enter(&admission),
                 SALTS_EBUSY);
-    check_equal(salts_readiness_registration_admission_reset(&admission),
+    check_equal(cmeta_readiness_registration_admission_reset(&admission),
                 SALTS_EBUSY);
 
-    salts_readiness_registration_admission_leave(&admission);
-    check_equal(salts_readiness_registration_admission_entrants(&admission),
+    cmeta_readiness_registration_admission_leave(&admission);
+    check_equal(cmeta_readiness_registration_admission_entrants(&admission),
                 (uint32_t)0u);
-    check_equal(salts_readiness_registration_admission_reset(&admission),
+    check_equal(cmeta_readiness_registration_admission_reset(&admission),
                 SALTS_OK);
-    check_equal(salts_readiness_registration_admission_enter(&admission),
+    check_equal(cmeta_readiness_registration_admission_enter(&admission),
                 SALTS_OK);
-    salts_readiness_registration_admission_leave(&admission);
+    cmeta_readiness_registration_admission_leave(&admission);
   }
 
   it("reserves register admission only when no old entrant exists") {
     uintptr_t admission = 0u;
 
-    check_equal(salts_readiness_registration_admission_enter(&admission),
+    check_equal(cmeta_readiness_registration_admission_enter(&admission),
                 SALTS_OK);
     check_equal(
-        salts_readiness_registration_admission_reserve_register(&admission),
+        cmeta_readiness_registration_admission_reserve_register(&admission),
         SALTS_EBUSY);
-    salts_readiness_registration_admission_leave(&admission);
+    cmeta_readiness_registration_admission_leave(&admission);
     check_equal(
-        salts_readiness_registration_admission_reserve_register(&admission),
+        cmeta_readiness_registration_admission_reserve_register(&admission),
         SALTS_OK);
-    check_equal(salts_readiness_registration_admission_enter(&admission),
+    check_equal(cmeta_readiness_registration_admission_enter(&admission),
                 SALTS_EBUSY);
-    check_equal(salts_readiness_registration_admission_reset(&admission),
+    check_equal(cmeta_readiness_registration_admission_reset(&admission),
                 SALTS_OK);
   }
 
   it("rejects the largest representable entrant count without closing gate") {
     uintptr_t admission =
-        salts_readiness_registration_admission_max_entrants();
+        cmeta_readiness_registration_admission_max_entrants();
 
     check_true(admission > 0u);
-    check_equal(salts_readiness_registration_admission_enter(&admission),
+    check_equal(cmeta_readiness_registration_admission_enter(&admission),
                 -EOVERFLOW);
-    check_equal(salts_readiness_registration_admission_entrants(&admission),
+    check_equal(cmeta_readiness_registration_admission_entrants(&admission),
                 (uint32_t)admission);
-    check_equal(salts_readiness_registration_admission_close(&admission),
+    check_equal(cmeta_readiness_registration_admission_close(&admission),
                 SALTS_OK);
-    check_equal(salts_readiness_registration_admission_enter(&admission),
+    check_equal(cmeta_readiness_registration_admission_enter(&admission),
                 SALTS_EBUSY);
   }
 }

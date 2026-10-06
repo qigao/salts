@@ -57,14 +57,14 @@ static int cnet_shards_test_listener(cnet_shards_test_socket *out_listener,
 
 static int cnet_shards_test_wait_state(cnet_shards *shards, cnet_shard_connection connection,
                                        cnet_session_state expected) {
-  const uint64_t deadline = salts_monotonic_ms() + CNET_SHARDS_TEST_TIMEOUT_MS;
+  const uint64_t deadline = cmeta_monotonic_ms() + CNET_SHARDS_TEST_TIMEOUT_MS;
   for (;;) {
     cnet_session_state state = CNET_SESSION_FREE;
     int status = cnet_shards_state(shards, connection, &state);
     if (status != SALTS_OK) return status;
     if (state == expected) return SALTS_OK;
     if (state == CNET_SESSION_TERMINAL && expected != CNET_SESSION_TERMINAL) return SALTS_EIO;
-    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+    if (cmeta_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
     status = cnet_shards_poll(shards, 1u);
     if (status != SALTS_OK) return status;
   }
@@ -72,11 +72,11 @@ static int cnet_shards_test_wait_state(cnet_shards *shards, cnet_shard_connectio
 
 static int cnet_shards_test_wait_atomic(cnet_shards *shards, const atomic_int *value,
                                         int expected) {
-  const uint64_t deadline = salts_monotonic_ms() + CNET_SHARDS_TEST_TIMEOUT_MS;
+  const uint64_t deadline = cmeta_monotonic_ms() + CNET_SHARDS_TEST_TIMEOUT_MS;
   while (atomic_load_explicit(value, memory_order_acquire) != expected) {
     const int status = cnet_shards_poll(shards, 1u);
     if (status != SALTS_OK) return status;
-    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+    if (cmeta_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
   return SALTS_OK;
 }
@@ -218,16 +218,16 @@ spec("CNet long-lived owner shards") {
     memcpy(payload.host, "127.0.0.1", sizeof("127.0.0.1"));
     payload.port = ntohs(address.sin_port);
     check_equal(cnet_shards_connect(&shards, &payload, &connection), SALTS_OK);
-    deadline = salts_monotonic_ms() + CNET_SHARDS_TEST_TIMEOUT_MS;
-    while (cnet_shards_poll(&shards, 1u) != SALTS_EIO && salts_monotonic_ms() < deadline)
+    deadline = cmeta_monotonic_ms() + CNET_SHARDS_TEST_TIMEOUT_MS;
+    while (cnet_shards_poll(&shards, 1u) != SALTS_EIO && cmeta_monotonic_ms() < deadline)
       ;
-    check_true(salts_monotonic_ms() < deadline);
+    check_true(cmeta_monotonic_ms() < deadline);
     accepted = accept(listener, NULL, NULL);
     check_true(accepted != CNET_SHARDS_TEST_INVALID_SOCKET);
     check_equal(cnet_shards_close(&shards, connection), SALTS_OK);
-    deadline = salts_monotonic_ms() + CNET_SHARDS_TEST_TIMEOUT_MS;
+    deadline = cmeta_monotonic_ms() + CNET_SHARDS_TEST_TIMEOUT_MS;
     while (atomic_load_explicit(&probe.terminal, memory_order_acquire) == 0 &&
-           salts_monotonic_ms() < deadline)
+           cmeta_monotonic_ms() < deadline)
       (void)cnet_shards_poll(&shards, 1u);
     check_equal(atomic_load_explicit(&probe.terminal, memory_order_acquire), 1);
     check_equal(atomic_load_explicit(&probe.status, memory_order_acquire), SALTS_OK);

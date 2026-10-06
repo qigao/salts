@@ -9,7 +9,7 @@
 #ifndef PLATFORM_H
 #define PLATFORM_H
 
-#include "salts_api.h"
+#include "cmeta_api.h"
 #include <salts/clock.h>
 #include <salts/random.h>
 
@@ -55,7 +55,7 @@ typedef intptr_t ssize_t;
 typedef struct {
   int64_t tv_sec;  /**< Seconds since epoch */
   int32_t tv_usec; /**< Microseconds */
-} salts_timeval_t;
+} cmeta_timeval_t;
 
 /**
  * @brief Cross-platform timezone structure (usually ignored)
@@ -63,7 +63,7 @@ typedef struct {
 typedef struct {
   int tz_minuteswest;
   int tz_dsttime;
-} salts_timezone_t;
+} cmeta_timezone_t;
 
 /**
  * @brief Cross-platform gettimeofday equivalent
@@ -71,7 +71,7 @@ typedef struct {
  * @param tz Timezone structure (can be NULL)
  * @return 0 on success
  */
-SALTS_C_API int salts_gettimeofday(salts_timeval_t *tv, salts_timezone_t *tz);
+SALTS_C_API int cmeta_gettimeofday(cmeta_timeval_t *tv, cmeta_timezone_t *tz);
 
 /**
  * @brief Thread-safe UTC time decomposition.
@@ -79,7 +79,7 @@ SALTS_C_API int salts_gettimeofday(salts_timeval_t *tv, salts_timezone_t *tz);
  * @param out Broken-down UTC time
  * @return 0 on success, negative error code on failure
  */
-SALTS_C_API int salts_gmtime(time_t t, struct tm *out);
+SALTS_C_API int cmeta_gmtime(time_t t, struct tm *out);
 
 /**
  * @brief Thread-safe local time decomposition.
@@ -87,21 +87,21 @@ SALTS_C_API int salts_gmtime(time_t t, struct tm *out);
  * @param out Broken-down local time
  * @return 0 on success, negative error code on failure
  */
-SALTS_C_API int salts_localtime(time_t t, struct tm *out);
+SALTS_C_API int cmeta_localtime(time_t t, struct tm *out);
 
 /**
  * @brief Convert broken-down UTC time to seconds since Unix epoch.
  * @param tm_value Broken-down UTC time
  * @return Seconds since Unix epoch, or (time_t)-1 on invalid input
  */
-SALTS_C_API time_t salts_timegm(const struct tm *tm_value);
+SALTS_C_API time_t cmeta_timegm(const struct tm *tm_value);
 
 /**
  * @brief Convert broken-down local time to seconds since Unix epoch.
  * @param tm_value Broken-down local time, normalized by the platform mktime
  * @return Seconds since Unix epoch, or (time_t)-1 on failure
  */
-SALTS_C_API time_t salts_mktime(struct tm *tm_value);
+SALTS_C_API time_t cmeta_mktime(struct tm *tm_value);
 
 /**
  * @brief Format UTC time with strftime semantics.
@@ -111,7 +111,7 @@ SALTS_C_API time_t salts_mktime(struct tm *tm_value);
  * @param buffer_size Size of destination buffer
  * @return Number of bytes written, or negative error code on failure
  */
-SALTS_C_API int salts_strftime_utc(time_t t, const char *format, char *buffer, size_t buffer_size);
+SALTS_C_API int cmeta_strftime_utc(time_t t, const char *format, char *buffer, size_t buffer_size);
 
 /**
  * @brief Format local time with strftime semantics.
@@ -121,7 +121,7 @@ SALTS_C_API int salts_strftime_utc(time_t t, const char *format, char *buffer, s
  * @param buffer_size Size of destination buffer
  * @return Number of bytes written, or negative error code on failure
  */
-SALTS_C_API int salts_strftime_local(time_t t, const char *format, char *buffer,
+SALTS_C_API int cmeta_strftime_local(time_t t, const char *format, char *buffer,
                                      size_t buffer_size);
 
 /**
@@ -134,7 +134,7 @@ SALTS_C_API int salts_strftime_local(time_t t, const char *format, char *buffer,
  * @param length Number of random bytes requested
  * @return 0 on success, negative error code on failure
  */
-SALTS_C_API int salts_secure_random(void *buffer, size_t length);
+SALTS_C_API int cmeta_secure_random(void *buffer, size_t length);
 
 /**
  * @brief Maximum platform info string length including trailing NUL
@@ -147,7 +147,7 @@ SALTS_C_API int salts_secure_random(void *buffer, size_t length);
  * @param buffer_size Size of destination buffer
  * @return 0 on success, negative error code on failure
  */
-SALTS_C_API int salts_platform_os_name(char *buffer, size_t buffer_size);
+SALTS_C_API int cmeta_platform_os_name(char *buffer, size_t buffer_size);
 
 /**
  * @brief Get operating system version string
@@ -155,7 +155,7 @@ SALTS_C_API int salts_platform_os_name(char *buffer, size_t buffer_size);
  * @param buffer_size Size of destination buffer
  * @return 0 on success, negative error code on failure
  */
-SALTS_C_API int salts_platform_os_version(char *buffer, size_t buffer_size);
+SALTS_C_API int cmeta_platform_os_version(char *buffer, size_t buffer_size);
 
 /**
  * @brief Get normalized machine architecture
@@ -163,32 +163,32 @@ SALTS_C_API int salts_platform_os_version(char *buffer, size_t buffer_size);
  * @param buffer_size Size of destination buffer
  * @return 0 on success, negative error code on failure
  */
-SALTS_C_API int salts_platform_arch(char *buffer, size_t buffer_size);
+SALTS_C_API int cmeta_platform_arch(char *buffer, size_t buffer_size);
 
 typedef struct {
   char model[SALTS_PLATFORM_INFO_MAX];
   int core_count;
   double speed_mhz;
-} salts_platform_cpu_info_t;
+} cmeta_platform_cpu_info_t;
 
 typedef struct {
   uint64_t total_memory;
   uint64_t free_memory;
   uint64_t available_memory;
-} salts_platform_memory_info_t;
+} cmeta_platform_memory_info_t;
 
 typedef struct {
   double one_minute;
   double five_minutes;
   double fifteen_minutes;
-} salts_platform_load_average_t;
+} cmeta_platform_load_average_t;
 
 typedef struct {
   char name[SALTS_PLATFORM_INFO_MAX];
   char address[SALTS_PLATFORM_INFO_MAX];
   char netmask[SALTS_PLATFORM_INFO_MAX];
   int is_internal;
-} salts_platform_network_interface_t;
+} cmeta_platform_network_interface_t;
 
 /**
  * @brief Get current username
@@ -196,7 +196,7 @@ typedef struct {
  * @param buffer_size Size of destination buffer
  * @return 0 on success, negative error code on failure
  */
-SALTS_C_API int salts_platform_username(char *buffer, size_t buffer_size);
+SALTS_C_API int cmeta_platform_username(char *buffer, size_t buffer_size);
 
 /**
  * @brief Get current hostname
@@ -204,28 +204,28 @@ SALTS_C_API int salts_platform_username(char *buffer, size_t buffer_size);
  * @param buffer_size Size of destination buffer
  * @return 0 on success, negative error code on failure
  */
-SALTS_C_API int salts_platform_hostname(char *buffer, size_t buffer_size);
+SALTS_C_API int cmeta_platform_hostname(char *buffer, size_t buffer_size);
 
 /**
  * @brief Get CPU information
  * @param info Output structure
  * @return 0 on success, negative error code on failure
  */
-SALTS_C_API int salts_platform_cpu_info(salts_platform_cpu_info_t *info);
+SALTS_C_API int cmeta_platform_cpu_info(cmeta_platform_cpu_info_t *info);
 
 /**
  * @brief Get memory information
  * @param info Output structure
  * @return 0 on success, negative error code on failure
  */
-SALTS_C_API int salts_platform_memory_info(salts_platform_memory_info_t *info);
+SALTS_C_API int cmeta_platform_memory_info(cmeta_platform_memory_info_t *info);
 
 /**
  * @brief Get system load average
  * @param info Output structure
  * @return 0 on success, negative error code on failure
  */
-SALTS_C_API int salts_platform_load_average(salts_platform_load_average_t *info);
+SALTS_C_API int cmeta_platform_load_average(cmeta_platform_load_average_t *info);
 
 /**
  * @brief Get network interface information
@@ -234,7 +234,7 @@ SALTS_C_API int salts_platform_load_average(salts_platform_load_average_t *info)
  * @param count Receives number of interfaces written
  * @return 0 on success, negative error code on failure
  */
-SALTS_C_API int salts_platform_network_interfaces(salts_platform_network_interface_t *interfaces,
+SALTS_C_API int cmeta_platform_network_interfaces(cmeta_platform_network_interface_t *interfaces,
                                                   size_t max_interfaces, size_t *count);
 
 // =============================================================================
@@ -247,21 +247,21 @@ SALTS_C_API int salts_platform_network_interfaces(salts_platform_network_interfa
  * This timer does NOT depend on a libuv loop. Callbacks are executed by the OS
  * thread pool (Windows) or a dedicated thread (POSIX), so they must be thread-safe.
  */
-typedef struct salts_native_timer_s salts_timer_t;
-typedef void (*salts_timer_cb)(salts_timer_t *timer);
+typedef struct cmeta_native_timer_s cmeta_timer_t;
+typedef void (*cmeta_timer_cb)(cmeta_timer_t *timer);
 
 /**
  * @brief Create a timer
  * @param loop Event loop (IGNORED - kept for API compatibility)
  * @return Timer pointer on success, NULL on failure
  */
-SALTS_C_API salts_timer_t *salts_timer_create(void *loop);
+SALTS_C_API cmeta_timer_t *cmeta_timer_create(void *loop);
 
 /**
  * @brief Destroy a timer and free resources
  * @param timer Timer to destroy (stops if running)
  */
-SALTS_C_API void salts_timer_destroy(salts_timer_t *timer);
+SALTS_C_API void cmeta_timer_destroy(cmeta_timer_t *timer);
 
 /**
  * @brief Start a timer
@@ -271,7 +271,7 @@ SALTS_C_API void salts_timer_destroy(salts_timer_t *timer);
  * @param repeat Repeat interval in milliseconds (0 for one-shot)
  * @return 0 on success, error code on failure
  */
-SALTS_C_API int salts_timer_start(salts_timer_t *timer, salts_timer_cb cb, uint64_t timeout,
+SALTS_C_API int cmeta_timer_start(cmeta_timer_t *timer, cmeta_timer_cb cb, uint64_t timeout,
                                   uint64_t repeat);
 
 /**
@@ -279,28 +279,28 @@ SALTS_C_API int salts_timer_start(salts_timer_t *timer, salts_timer_cb cb, uint6
  * @param timer Timer to stop
  * @return 0 on success, error code on failure
  */
-SALTS_C_API int salts_timer_stop(salts_timer_t *timer);
+SALTS_C_API int cmeta_timer_stop(cmeta_timer_t *timer);
 
 /**
  * @brief Set timer user data
  * @param timer Timer to set data on
  * @param data User data pointer
  */
-SALTS_C_API void salts_timer_set_data(salts_timer_t *timer, void *data);
+SALTS_C_API void cmeta_timer_set_data(cmeta_timer_t *timer, void *data);
 
 /**
  * @brief Get timer user data
  * @param timer Timer to get data from
  * @return User data pointer
  */
-SALTS_C_API void *salts_timer_get_data(salts_timer_t *timer);
+SALTS_C_API void *cmeta_timer_get_data(cmeta_timer_t *timer);
 
 /**
  * @brief Get timer repeat interval
  * @param timer Timer to query
  * @return Repeat interval in milliseconds
  */
-SALTS_C_API uint64_t salts_timer_get_repeat(salts_timer_t *timer);
+SALTS_C_API uint64_t cmeta_timer_get_repeat(cmeta_timer_t *timer);
 
 /**
  * @brief Mark a variable as unused to suppress compiler warnings

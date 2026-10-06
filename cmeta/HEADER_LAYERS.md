@@ -21,7 +21,7 @@ include。Core archive 不链接 Platform、Concurrency、Coroutine、Core、CFl
 Atomic 与 RCU 直接属于 Concurrency，使用 `<salts/atomic.h>` 的
 `SALTS_ATOMIC_TYPE` 和 `<salts/rcu.h>` 的 `SALTS_RCU_TYPE`。
 Pool 的 storage/lease/BUSY 归 Core `object_pool_owner_state`；Local affinity/TLS
-归 Platform `salts_thread_affine_state`；CMeta 只增加 canonical DataDesc 生命周期 binding。
+归 Platform `cmeta_thread_affine_state`；CMeta 只增加 canonical DataDesc 生命周期 binding。
 Platform `<salts/fastpath.h>` 拥有 fast key、一次性消费与 native acquire-load，
 CMeta static-call/tracepoint 增加 Function ABI/typed payload metadata。
 纯 fault 控制直接使用 Platform API，不提供另一套 CMeta spelling。

@@ -177,7 +177,7 @@ pointer or descriptor identity. These additions use optional size-versioned
 collection callbacks; older provider prefixes retain their existing behavior.
 
 Salts Core provides header-local `tstr` and `vstr` adapter metadata in
-`salts_cmeta_data.h`. As with other header-generated CMeta metadata, descriptor
+`cmeta_cmeta_data.h`. As with other header-generated CMeta metadata, descriptor
 addresses may differ across translation units; use semantic type comparison.
 
 ## Unified Schema / Replay kernel

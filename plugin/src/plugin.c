@@ -35,7 +35,7 @@ static bool function_abi_complete(const cmeta_function_abi_desc *abi) {
     return true;
 }
 
-static salts_plugin_status validate_export(const salts_plugin_export *entry) {
+static cmeta_plugin_status validate_export(const cmeta_plugin_export *entry) {
     if (entry == NULL || entry->struct_size != SALTS_PLUGIN_EXPORT_SIZE)
         return SALTS_PLUGIN_INVALID_MANIFEST;
     if (!bounded_string_valid(entry->export_id, SALTS_PLUGIN_EXPORT_ID_MAX) ||
@@ -66,12 +66,12 @@ static salts_plugin_status validate_export(const salts_plugin_export *entry) {
     return SALTS_PLUGIN_OK;
 }
 
-bool salts_plugin_export_has_capabilities(const salts_plugin_export *entry,
+bool cmeta_plugin_export_has_capabilities(const cmeta_plugin_export *entry,
                                           uint64_t required) {
     return entry != NULL && (entry->capabilities & required) == required;
 }
 
-static bool contract_key_equal(const salts_plugin_export *entry,
+static bool contract_key_equal(const cmeta_plugin_export *entry,
                                const char *contract_id,
                                uint32_t contract_version) {
     return entry != NULL && contract_version != 0u &&
@@ -81,13 +81,13 @@ static bool contract_key_equal(const salts_plugin_export *entry,
                                 SALTS_PLUGIN_CONTRACT_ID_MAX);
 }
 
-salts_plugin_status salts_plugin_export_require_interface(
-    const salts_plugin_export *entry,
+cmeta_plugin_status cmeta_plugin_export_require_interface(
+    const cmeta_plugin_export *entry,
     const char *contract_id,
     uint32_t contract_version,
     uint64_t required_capabilities,
     const cmeta_interface_desc *expected_interface) {
-    salts_plugin_status status = validate_export(entry);
+    cmeta_plugin_status status = validate_export(entry);
 
     if (status != SALTS_PLUGIN_OK) return status;
     if (contract_version == 0u ||
@@ -97,7 +97,7 @@ salts_plugin_status salts_plugin_export_require_interface(
 
     if (entry->kind != SALTS_PLUGIN_EXPORT_INTERFACE ||
         !contract_key_equal(entry, contract_id, contract_version) ||
-        !salts_plugin_export_has_capabilities(entry, required_capabilities) ||
+        !cmeta_plugin_export_has_capabilities(entry, required_capabilities) ||
         !cmeta_interface_desc_equal(entry->value.interface.desc,
                                            expected_interface))
         return SALTS_PLUGIN_INCOMPATIBLE_CONTRACT;
@@ -105,12 +105,12 @@ salts_plugin_status salts_plugin_export_require_interface(
     return SALTS_PLUGIN_OK;
 }
 
-salts_plugin_status salts_plugin_export_require_function(
-    const salts_plugin_export *entry,
+cmeta_plugin_status cmeta_plugin_export_require_function(
+    const cmeta_plugin_export *entry,
     const char *contract_id,
     uint32_t contract_version,
     uint64_t required_capabilities) {
-    salts_plugin_status status = validate_export(entry);
+    cmeta_plugin_status status = validate_export(entry);
 
     if (status != SALTS_PLUGIN_OK) return status;
     if (contract_version == 0u ||
@@ -119,14 +119,14 @@ salts_plugin_status salts_plugin_export_require_function(
 
     if (entry->kind != SALTS_PLUGIN_EXPORT_FUNCTION ||
         !contract_key_equal(entry, contract_id, contract_version) ||
-        !salts_plugin_export_has_capabilities(entry, required_capabilities))
+        !cmeta_plugin_export_has_capabilities(entry, required_capabilities))
         return SALTS_PLUGIN_INCOMPATIBLE_CONTRACT;
 
     return SALTS_PLUGIN_OK;
 }
 
-salts_plugin_status salts_plugin_manifest_validate(
-    const salts_plugin_manifest *manifest) {
+cmeta_plugin_status cmeta_plugin_manifest_validate(
+    const cmeta_plugin_manifest *manifest) {
     size_t index;
     size_t other;
     bool has_lifecycle;
@@ -160,7 +160,7 @@ salts_plugin_status salts_plugin_manifest_validate(
     }
 
     for (index = 0u; index < manifest->export_count; ++index) {
-        salts_plugin_status status = validate_export(&manifest->exports[index]);
+        cmeta_plugin_status status = validate_export(&manifest->exports[index]);
         if (status != SALTS_PLUGIN_OK) return status;
 
         for (other = 0u; other < index; ++other) {
@@ -174,12 +174,12 @@ salts_plugin_status salts_plugin_manifest_validate(
     return SALTS_PLUGIN_OK;
 }
 
-salts_plugin_status salts_plugin_manifest_find_export(
-    const salts_plugin_manifest *manifest,
+cmeta_plugin_status cmeta_plugin_manifest_find_export(
+    const cmeta_plugin_manifest *manifest,
     const char *export_id,
-    const salts_plugin_export **out_export) {
+    const cmeta_plugin_export **out_export) {
     size_t index;
-    salts_plugin_status status;
+    cmeta_plugin_status status;
 
     if (out_export == NULL)
         return SALTS_PLUGIN_INVALID_ARGUMENT;
@@ -188,7 +188,7 @@ salts_plugin_status salts_plugin_manifest_find_export(
     if (!bounded_string_valid(export_id, SALTS_PLUGIN_EXPORT_ID_MAX))
         return SALTS_PLUGIN_INVALID_ARGUMENT;
 
-    status = salts_plugin_manifest_validate(manifest);
+    status = cmeta_plugin_manifest_validate(manifest);
     if (status != SALTS_PLUGIN_OK) return status;
 
     for (index = 0u; index < manifest->export_count; ++index) {
@@ -202,7 +202,7 @@ salts_plugin_status salts_plugin_manifest_find_export(
     return SALTS_PLUGIN_UNKNOWN_EXPORT;
 }
 
-const char *salts_plugin_status_string(salts_plugin_status status) {
+const char *cmeta_plugin_status_string(cmeta_plugin_status status) {
     switch (status) {
     case SALTS_PLUGIN_OK: return "ok";
     case SALTS_PLUGIN_INVALID_ARGUMENT: return "invalid_argument";

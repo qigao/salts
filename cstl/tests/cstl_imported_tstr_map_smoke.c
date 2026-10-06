@@ -1,5 +1,5 @@
 #include <cstl/typed.h>
-#include <salts_cmeta_data.h>
+#include <cmeta_cmeta_data.h>
 
 #include <stddef.h>
 
@@ -22,18 +22,18 @@ int main(void) {
     goto cleanup_strings;
   }
 
-  if (salts_tstr_cmeta_type.traits == NULL ||
+  if (cmeta_tstr_cmeta_type.traits == NULL ||
       SALTS_TSTR_CMETA_TYPE_REF->traits == NULL ||
-      (salts_tstr_cmeta_type.traits->flags & CMETA_TRAIT_COMPARE) == 0u ||
+      (cmeta_tstr_cmeta_type.traits->flags & CMETA_TRAIT_COMPARE) == 0u ||
       (SALTS_TSTR_CMETA_TYPE_REF->traits->flags & CMETA_TRAIT_COMPARE) == 0u) {
     rc = 2;
     goto cleanup_strings;
   }
 
   if (!cmeta_type_equal(
-          SALTS_TSTR_CMETA_TYPE_REF, &salts_tstr_cmeta_type) ||
+          SALTS_TSTR_CMETA_TYPE_REF, &cmeta_tstr_cmeta_type) ||
       !cmeta_data_desc_equal(
-          SALTS_TSTR_CMETA_DATA_REF, &salts_tstr_cmeta_data)) {
+          SALTS_TSTR_CMETA_DATA_REF, &cmeta_tstr_cmeta_data)) {
     rc = 3;
     goto cleanup_strings;
   }

@@ -16,40 +16,40 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-typedef struct salts_readiness_poll_record {
+typedef struct cmeta_readiness_poll_record {
   int fd;
   uint64_t registration_token;
   uint64_t event_token;
-  salts_readiness_events events;
+  cmeta_readiness_events events;
   int active;
   int armed;
-} salts_readiness_poll_record;
+} cmeta_readiness_poll_record;
 
-typedef struct salts_readiness_poll_snapshot {
+typedef struct cmeta_readiness_poll_snapshot {
   size_t record_index;
   uint64_t registration_token;
   uint64_t event_token;
-  salts_readiness_events events;
-} salts_readiness_poll_snapshot;
+  cmeta_readiness_events events;
+} cmeta_readiness_poll_snapshot;
 
-typedef struct salts_readiness_poll_backend {
-  salts_readiness_reactor *reactor;
-  salts_readiness_poll_record *records;
+typedef struct cmeta_readiness_poll_backend {
+  cmeta_readiness_reactor *reactor;
+  cmeta_readiness_poll_record *records;
   struct pollfd *pollfds;
-  salts_readiness_poll_snapshot *snapshots;
+  cmeta_readiness_poll_snapshot *snapshots;
   size_t capacity;
   size_t event_batch_capacity;
   size_t next_scan_index;
   size_t controls_pending;
-  salts_mutex_t mutex;
-  salts_cond_t changed;
-  salts_thread_t thread;
+  cmeta_mutex_t mutex;
+  cmeta_cond_t changed;
+  cmeta_thread_t thread;
   int control_read_fd;
   int control_write_fd;
   int thread_started;
   int thread_exited;
   atomic_int stopping;
-} salts_readiness_poll_backend;
+} cmeta_readiness_poll_backend;
 
 typedef enum poll_record_change {
   POLL_RECORD_REGISTER = 0,
@@ -106,7 +106,7 @@ static int poll_control_pipe_create(int fds[2]) {
 #endif
 }
 
-static int poll_control_write(salts_readiness_poll_backend *backend) {
+static int poll_control_write(cmeta_readiness_poll_backend *backend) {
   const uint8_t byte = 1u;
   ssize_t written;
   do {
@@ -118,7 +118,7 @@ static int poll_control_write(salts_readiness_poll_backend *backend) {
   return written < 0 ? -errno : SALTS_EIO;
 }
 
-static int poll_control_drain(salts_readiness_poll_backend *backend) {
+static int poll_control_drain(cmeta_readiness_poll_backend *backend) {
   uint8_t bytes[64];
   for (;;) {
     ssize_t count = read(backend->control_read_fd, bytes, sizeof(bytes));
@@ -129,7 +129,7 @@ static int poll_control_drain(salts_readiness_poll_backend *backend) {
   }
 }
 
-static short poll_interest_events(salts_readiness_events events) {
+static short poll_interest_events(cmeta_readiness_events events) {
   short native_events = 0;
   if ((events & SALTS_READINESS_EVENT_READ) != 0u)
     native_events = (short)(native_events | POLLIN | POLLPRI);
@@ -138,8 +138,8 @@ static short poll_interest_events(salts_readiness_events events) {
   return native_events;
 }
 
-static salts_readiness_events poll_translate_events(short native_events) {
-  salts_readiness_events events = 0u;
+static cmeta_readiness_events poll_translate_events(short native_events) {
+  cmeta_readiness_events events = 0u;
   if ((native_events & (POLLIN | POLLPRI)) != 0) events |= SALTS_READINESS_EVENT_READ;
   if ((native_events & POLLOUT) != 0) events |= SALTS_READINESS_EVENT_WRITE;
   if ((native_events & (POLLERR | POLLNVAL)) != 0) events |= SALTS_READINESS_EVENT_ERROR;
@@ -147,13 +147,13 @@ static salts_readiness_events poll_translate_events(short native_events) {
   return events;
 }
 
-static int poll_record_change_apply(salts_readiness_poll_backend *backend,
+static int poll_record_change_apply(cmeta_readiness_poll_backend *backend,
                                     poll_record_change change, intptr_t native_resource,
                                     uint64_t token, uint64_t event_token,
-                                    salts_readiness_events events) {
+                                    cmeta_readiness_events events) {
   const uint32_t index = poll_token_index(token);
-  salts_readiness_poll_record previous;
-  salts_readiness_poll_record desired;
+  cmeta_readiness_poll_record previous;
+  cmeta_readiness_poll_record desired;
   int fd = -1;
   int status;
 
@@ -165,20 +165,20 @@ static int poll_record_change_apply(salts_readiness_poll_backend *backend,
     if (status != SALTS_OK) return status;
   }
 
-  salts_mutex_lock(&backend->mutex);
+  cmeta_mutex_lock(&backend->mutex);
   while (backend->controls_pending != 0u)
-    salts_cond_wait(&backend->changed, &backend->mutex);
+    cmeta_cond_wait(&backend->changed, &backend->mutex);
   previous = backend->records[index];
   desired = previous;
   switch (change) {
   case POLL_RECORD_REGISTER:
     if (previous.active) {
-      salts_mutex_unlock(&backend->mutex);
+      cmeta_mutex_unlock(&backend->mutex);
       return SALTS_EALREADY;
     }
     for (size_t i = 0u; i < backend->capacity; ++i) {
       if (backend->records[i].active && backend->records[i].fd == fd) {
-        salts_mutex_unlock(&backend->mutex);
+        cmeta_mutex_unlock(&backend->mutex);
         return SALTS_EALREADY;
       }
     }
@@ -191,7 +191,7 @@ static int poll_record_change_apply(salts_readiness_poll_backend *backend,
     break;
   case POLL_RECORD_ARM:
     if (!previous.active || previous.registration_token != token || previous.armed) {
-      salts_mutex_unlock(&backend->mutex);
+      cmeta_mutex_unlock(&backend->mutex);
       return previous.armed ? SALTS_EALREADY : SALTS_EINVAL;
     }
     desired.event_token = event_token;
@@ -201,7 +201,7 @@ static int poll_record_change_apply(salts_readiness_poll_backend *backend,
   case POLL_RECORD_UNARM:
   case POLL_RECORD_CLOSE:
     if (!previous.active || previous.registration_token != token) {
-      salts_mutex_unlock(&backend->mutex);
+      cmeta_mutex_unlock(&backend->mutex);
       return SALTS_EINVAL;
     }
     desired.event_token = 0u;
@@ -216,44 +216,44 @@ static int poll_record_change_apply(salts_readiness_poll_backend *backend,
   }
   backend->records[index] = desired;
   backend->controls_pending = 1u;
-  salts_mutex_unlock(&backend->mutex);
+  cmeta_mutex_unlock(&backend->mutex);
 
   status = poll_control_write(backend);
 
-  salts_mutex_lock(&backend->mutex);
+  cmeta_mutex_lock(&backend->mutex);
   if (status != SALTS_OK) backend->records[index] = previous;
   backend->controls_pending = 0u;
-  salts_cond_broadcast(&backend->changed);
-  salts_mutex_unlock(&backend->mutex);
+  cmeta_cond_broadcast(&backend->changed);
+  cmeta_mutex_unlock(&backend->mutex);
   return status;
 }
 
 static int poll_register_resource(void *user, intptr_t native_resource, uint64_t token) {
-  return poll_record_change_apply((salts_readiness_poll_backend *)user, POLL_RECORD_REGISTER,
+  return poll_record_change_apply((cmeta_readiness_poll_backend *)user, POLL_RECORD_REGISTER,
                                   native_resource, token, 0u, 0u);
 }
 
 static int poll_arm(void *user, uint64_t token, uint64_t event_token,
-                    salts_readiness_events events) {
-  return poll_record_change_apply((salts_readiness_poll_backend *)user, POLL_RECORD_ARM, -1, token,
+                    cmeta_readiness_events events) {
+  return poll_record_change_apply((cmeta_readiness_poll_backend *)user, POLL_RECORD_ARM, -1, token,
                                   event_token, events);
 }
 
 static int poll_unarm(void *user, uint64_t token) {
-  return poll_record_change_apply((salts_readiness_poll_backend *)user, POLL_RECORD_UNARM, -1,
+  return poll_record_change_apply((cmeta_readiness_poll_backend *)user, POLL_RECORD_UNARM, -1,
                                   token, 0u, 0u);
 }
 
 static int poll_close_registration(void *user, uint64_t token) {
-  return poll_record_change_apply((salts_readiness_poll_backend *)user, POLL_RECORD_CLOSE, -1,
+  return poll_record_change_apply((cmeta_readiness_poll_backend *)user, POLL_RECORD_CLOSE, -1,
                                   token, 0u, 0u);
 }
 
-static size_t poll_snapshot_build(salts_readiness_poll_backend *backend) {
+static size_t poll_snapshot_build(cmeta_readiness_poll_backend *backend) {
   size_t count = 1u;
-  salts_mutex_lock(&backend->mutex);
+  cmeta_mutex_lock(&backend->mutex);
   while (backend->controls_pending != 0u)
-    salts_cond_wait(&backend->changed, &backend->mutex);
+    cmeta_cond_wait(&backend->changed, &backend->mutex);
   backend->pollfds[0].fd = backend->control_read_fd;
   backend->pollfds[0].events = POLLIN;
   backend->pollfds[0].revents = 0;
@@ -263,7 +263,7 @@ static size_t poll_snapshot_build(salts_readiness_poll_backend *backend) {
   backend->snapshots[0].record_index = SIZE_MAX;
   for (size_t offset = 0u; offset < backend->capacity; ++offset) {
     size_t index = backend->next_scan_index + offset;
-    const salts_readiness_poll_record *record;
+    const cmeta_readiness_poll_record *record;
     if (index >= backend->capacity) index -= backend->capacity;
     record = &backend->records[index];
     if (!record->active || !record->armed) continue;
@@ -276,17 +276,17 @@ static size_t poll_snapshot_build(salts_readiness_poll_backend *backend) {
     backend->snapshots[count].events = record->events;
     ++count;
   }
-  salts_mutex_unlock(&backend->mutex);
+  cmeta_mutex_unlock(&backend->mutex);
   return count;
 }
 
-static int poll_snapshot_claim(salts_readiness_poll_backend *backend, size_t snapshot_index) {
-  const salts_readiness_poll_snapshot *snapshot = &backend->snapshots[snapshot_index];
+static int poll_snapshot_claim(cmeta_readiness_poll_backend *backend, size_t snapshot_index) {
+  const cmeta_readiness_poll_snapshot *snapshot = &backend->snapshots[snapshot_index];
   const size_t index = snapshot->record_index;
   int claimed = 0;
-  salts_mutex_lock(&backend->mutex);
+  cmeta_mutex_lock(&backend->mutex);
   if (index < backend->capacity) {
-    salts_readiness_poll_record *record = &backend->records[index];
+    cmeta_readiness_poll_record *record = &backend->records[index];
     if (record->active && record->armed && record->fd == backend->pollfds[snapshot_index].fd &&
         record->registration_token == snapshot->registration_token &&
         record->event_token == snapshot->event_token) {
@@ -296,19 +296,19 @@ static int poll_snapshot_claim(salts_readiness_poll_backend *backend, size_t sna
       claimed = 1;
     }
   }
-  salts_mutex_unlock(&backend->mutex);
+  cmeta_mutex_unlock(&backend->mutex);
   return claimed;
 }
 
-static void poll_thread_mark_exited(salts_readiness_poll_backend *backend) {
-  salts_mutex_lock(&backend->mutex);
+static void poll_thread_mark_exited(cmeta_readiness_poll_backend *backend) {
+  cmeta_mutex_lock(&backend->mutex);
   backend->thread_exited = 1;
-  salts_cond_broadcast(&backend->changed);
-  salts_mutex_unlock(&backend->mutex);
+  cmeta_cond_broadcast(&backend->changed);
+  cmeta_mutex_unlock(&backend->mutex);
 }
 
 static void poll_thread_entry(void *user) {
-  salts_readiness_poll_backend *backend = (salts_readiness_poll_backend *)user;
+  cmeta_readiness_poll_backend *backend = (cmeta_readiness_poll_backend *)user;
   int terminal_status = SALTS_OK;
   for (;;) {
     const size_t count = poll_snapshot_build(backend);
@@ -332,7 +332,7 @@ static void poll_thread_entry(void *user) {
     }
 
     for (size_t i = 1u; i < count && delivered < backend->event_batch_capacity; ++i) {
-      salts_readiness_events events;
+      cmeta_readiness_events events;
       if (backend->pollfds[i].revents == 0 || !poll_snapshot_claim(backend, i)) continue;
       events = poll_translate_events(backend->pollfds[i].revents);
       if ((backend->snapshots[i].events & SALTS_READINESS_EVENT_READ) == 0u)
@@ -341,7 +341,7 @@ static void poll_thread_entry(void *user) {
         events &= ~SALTS_READINESS_EVENT_WRITE;
       if (events == 0u) continue;
       ++delivered;
-      (void)salts_readiness_backend_dispatch_generation(
+      (void)cmeta_readiness_backend_dispatch_generation(
           backend->reactor, backend->snapshots[i].registration_token,
           backend->snapshots[i].event_token, events, SALTS_OK);
     }
@@ -350,12 +350,12 @@ static void poll_thread_entry(void *user) {
       break;
   }
   if (terminal_status != SALTS_OK)
-    (void)salts_readiness_backend_fail(backend->reactor, terminal_status);
+    (void)cmeta_readiness_backend_fail(backend->reactor, terminal_status);
   poll_thread_mark_exited(backend);
 }
 
 static int poll_shutdown(void *user) {
-  salts_readiness_poll_backend *backend = (salts_readiness_poll_backend *)user;
+  cmeta_readiness_poll_backend *backend = (cmeta_readiness_poll_backend *)user;
   int status;
   if (!backend->thread_started) return SALTS_OK;
   atomic_store_explicit(&backend->stopping, 1, memory_order_release);
@@ -364,34 +364,34 @@ static int poll_shutdown(void *user) {
     atomic_store_explicit(&backend->stopping, 0, memory_order_release);
     return status;
   }
-  salts_mutex_lock(&backend->mutex);
+  cmeta_mutex_lock(&backend->mutex);
   while (!backend->thread_exited)
-    salts_cond_wait(&backend->changed, &backend->mutex);
-  salts_mutex_unlock(&backend->mutex);
-  status = salts_thread_join(&backend->thread);
+    cmeta_cond_wait(&backend->changed, &backend->mutex);
+  cmeta_mutex_unlock(&backend->mutex);
+  status = cmeta_thread_join(&backend->thread);
   if (status != SALTS_OK) return status;
   backend->thread_started = 0;
   return SALTS_OK;
 }
 
 static void poll_backend_destroy(void *user) {
-  salts_readiness_poll_backend *backend = (salts_readiness_poll_backend *)user;
+  cmeta_readiness_poll_backend *backend = (cmeta_readiness_poll_backend *)user;
   if (backend == NULL) return;
   if (backend->control_read_fd >= 0) (void)close(backend->control_read_fd);
   if (backend->control_write_fd >= 0) (void)close(backend->control_write_fd);
-  salts_cond_destroy(&backend->changed);
-  salts_mutex_destroy(&backend->mutex);
+  cmeta_cond_destroy(&backend->changed);
+  cmeta_mutex_destroy(&backend->mutex);
   free(backend->snapshots);
   free(backend->pollfds);
   free(backend->records);
   free(backend);
 }
 
-static const salts_readiness_backend_ops poll_backend_ops = {
+static const cmeta_readiness_backend_ops poll_backend_ops = {
     poll_register_resource,  poll_arm,      poll_unarm,
     poll_close_registration, poll_shutdown, poll_backend_destroy};
 
-static int poll_config_validate(const salts_readiness_config *config) {
+static int poll_config_validate(const cmeta_readiness_config *config) {
   size_t snapshot_capacity;
   if (config == NULL || config->registration_capacity == 0u || config->event_batch_capacity == 0u)
     return SALTS_EINVAL;
@@ -400,16 +400,16 @@ static int poll_config_validate(const salts_readiness_config *config) {
     return SALTS_ERANGE;
   if (config->event_batch_capacity > config->registration_capacity + 1u) return SALTS_EINVAL;
   snapshot_capacity = config->registration_capacity + 1u;
-  if (config->registration_capacity > SIZE_MAX / sizeof(salts_readiness_poll_record) ||
+  if (config->registration_capacity > SIZE_MAX / sizeof(cmeta_readiness_poll_record) ||
       snapshot_capacity > SIZE_MAX / sizeof(struct pollfd) ||
-      snapshot_capacity > SIZE_MAX / sizeof(salts_readiness_poll_snapshot))
+      snapshot_capacity > SIZE_MAX / sizeof(cmeta_readiness_poll_snapshot))
     return SALTS_ERANGE;
   return SALTS_OK;
 }
 
-int salts_readiness_poll_init(salts_readiness_reactor *reactor,
-                              const salts_readiness_config *config) {
-  salts_readiness_poll_backend *backend;
+int cmeta_readiness_poll_init(cmeta_readiness_reactor *reactor,
+                              const cmeta_readiness_config *config) {
+  cmeta_readiness_poll_backend *backend;
   const size_t snapshot_capacity = config != NULL ? config->registration_capacity + 1u : 0u;
   int control_fds[2] = {-1, -1};
   int status = poll_config_validate(config);
@@ -417,7 +417,7 @@ int salts_readiness_poll_init(salts_readiness_reactor *reactor,
   if (reactor == NULL) return SALTS_EINVAL;
   if (status != SALTS_OK) return status;
 
-  backend = (salts_readiness_poll_backend *)calloc(1u, sizeof(*backend));
+  backend = (cmeta_readiness_poll_backend *)calloc(1u, sizeof(*backend));
   if (backend == NULL) return SALTS_ENOMEM;
   backend->control_read_fd = -1;
   backend->control_write_fd = -1;
@@ -425,12 +425,12 @@ int salts_readiness_poll_init(salts_readiness_reactor *reactor,
   backend->event_batch_capacity = config->event_batch_capacity;
   atomic_init(&backend->stopping, 0);
   backend->records =
-      (salts_readiness_poll_record *)calloc(backend->capacity, sizeof(*backend->records));
+      (cmeta_readiness_poll_record *)calloc(backend->capacity, sizeof(*backend->records));
   backend->pollfds = (struct pollfd *)calloc(snapshot_capacity, sizeof(*backend->pollfds));
   backend->snapshots =
-      (salts_readiness_poll_snapshot *)calloc(snapshot_capacity, sizeof(*backend->snapshots));
-  salts_mutex_init(&backend->mutex);
-  salts_cond_init(&backend->changed);
+      (cmeta_readiness_poll_snapshot *)calloc(snapshot_capacity, sizeof(*backend->snapshots));
+  cmeta_mutex_init(&backend->mutex);
+  cmeta_cond_init(&backend->changed);
   if (backend->records == NULL || backend->pollfds == NULL || backend->snapshots == NULL ||
       backend->mutex == NULL || backend->changed == NULL) {
     poll_backend_destroy(backend);
@@ -444,16 +444,16 @@ int salts_readiness_poll_init(salts_readiness_reactor *reactor,
   }
   backend->control_read_fd = control_fds[0];
   backend->control_write_fd = control_fds[1];
-  status = salts_readiness_reactor_init_backend(reactor, config, &poll_backend_ops, backend);
+  status = cmeta_readiness_reactor_init_backend(reactor, config, &poll_backend_ops, backend);
   if (status != SALTS_OK) {
     poll_backend_destroy(backend);
     return status;
   }
   backend->reactor = reactor;
-  status = salts_thread_create(&backend->thread, poll_thread_entry, backend);
+  status = cmeta_thread_create(&backend->thread, poll_thread_entry, backend);
   if (status != SALTS_OK) {
-    (void)salts_readiness_reactor_shutdown(reactor);
-    (void)salts_readiness_reactor_destroy(reactor);
+    (void)cmeta_readiness_reactor_shutdown(reactor);
+    (void)cmeta_readiness_reactor_destroy(reactor);
     return status;
   }
   backend->thread_started = 1;

@@ -24,7 +24,7 @@
 
 enum { SALTS_PLATFORM_RANDOM_CHUNK_BYTES = 256 };
 
-int salts_platform_secure_random(void *buffer, size_t length) {
+int cmeta_platform_secure_random(void *buffer, size_t length) {
   uint8_t *cursor = (uint8_t *)buffer;
   if (length == 0u) return SALTS_OK;
   if (buffer == NULL) return SALTS_EINVAL;

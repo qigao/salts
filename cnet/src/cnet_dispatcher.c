@@ -58,13 +58,13 @@ static cnet_dispatcher_impl *cnet_dispatcher_get(cnet_dispatcher *dispatcher) {
 
 #if defined(CNET_INTERNAL_PROFILING)
 static uint64_t cnet_dispatcher_profile_start(const cnet_dispatcher_impl *impl) {
-  return impl->profile_active ? salts_hrtime() : 0u;
+  return impl->profile_active ? cmeta_hrtime() : 0u;
 }
 
 static void cnet_dispatcher_profile_finish(cnet_dispatcher_impl *impl, uint64_t started,
                                            uint64_t *total_ns, uint64_t *calls) {
   if (started == 0u) return;
-  *total_ns += salts_hrtime() - started;
+  *total_ns += cmeta_hrtime() - started;
   ++*calls;
 }
 #endif
@@ -359,7 +359,7 @@ static int cnet_dispatcher_drive_all(cnet_dispatcher_impl *impl) {
 
 int cnet_dispatcher_wait_idle(cnet_dispatcher *dispatcher, uint32_t timeout_ms) {
   cnet_dispatcher_impl *impl = cnet_dispatcher_get(dispatcher);
-  const uint64_t started_ms = salts_monotonic_ms();
+  const uint64_t started_ms = cmeta_monotonic_ms();
   if (impl == NULL) return SALTS_EINVAL;
   for (;;) {
     const int error = atomic_load_explicit(&impl->first_error, memory_order_acquire);
@@ -368,8 +368,8 @@ int cnet_dispatcher_wait_idle(cnet_dispatcher *dispatcher, uint32_t timeout_ms) 
     status = cnet_dispatcher_drive_all(impl);
     if (status != SALTS_OK && status != SALTS_ETIMEDOUT) return status;
     if (cnet_dispatcher_is_idle(impl)) return SALTS_OK;
-    if (salts_monotonic_ms() - started_ms >= timeout_ms) return SALTS_ETIMEDOUT;
-    salts_sleep_ms(1u);
+    if (cmeta_monotonic_ms() - started_ms >= timeout_ms) return SALTS_ETIMEDOUT;
+    cmeta_sleep_ms(1u);
   }
 }
 
@@ -408,7 +408,7 @@ static int cnet_dispatcher_request_closes(cnet_dispatcher_impl *impl) {
 
 int cnet_dispatcher_drain(cnet_dispatcher *dispatcher, uint32_t timeout_ms) {
   cnet_dispatcher_impl *impl = cnet_dispatcher_get(dispatcher);
-  const uint64_t started_ms = salts_monotonic_ms();
+  const uint64_t started_ms = cmeta_monotonic_ms();
   int first_status;
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->drained) return SALTS_EALREADY;
@@ -428,7 +428,7 @@ int cnet_dispatcher_drain(cnet_dispatcher *dispatcher, uint32_t timeout_ms) {
     status = atomic_load_explicit(&impl->first_error, memory_order_acquire);
     if (status != SALTS_OK && first_status == SALTS_OK) first_status = status;
     if (cnet_dispatcher_is_idle(impl)) break;
-    if (salts_monotonic_ms() - started_ms >= timeout_ms) return SALTS_ETIMEDOUT;
+    if (cmeta_monotonic_ms() - started_ms >= timeout_ms) return SALTS_ETIMEDOUT;
   }
   impl->drained = true;
   return first_status;

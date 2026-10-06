@@ -58,9 +58,9 @@ typedef struct cflow_iocp_resource_record {
 
 typedef struct cflow_iocp_impl {
     cflow_io_native_impl base;
-    salts_mutex_t gate;
-    salts_cond_t changed;
-    salts_thread_t worker;
+    cmeta_mutex_t gate;
+    cmeta_cond_t changed;
+    cmeta_thread_t worker;
     HANDLE port;
     cflow_iocp_record *records;
     cflow_iocp_resource_record *resources;
@@ -369,10 +369,10 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
     DWORD vector_buffer_count;
     bool cancelled;
 
-    salts_mutex_lock(&impl->gate);
+    cmeta_mutex_lock(&impl->gate);
     if (record->phase != CFLOW_IOCP_RECORD_PENDING) {
         iocp_counter_increment(&impl->stale_native_completions);
-        salts_mutex_unlock(&impl->gate);
+        cmeta_mutex_unlock(&impl->gate);
         return;
     }
     actor = record->actor;
@@ -407,7 +407,7 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
     iocp_counter_increment(&impl->completed);
     if (cancelled)
         iocp_counter_increment(&impl->cancelled);
-    salts_mutex_unlock(&impl->gate);
+    cmeta_mutex_unlock(&impl->gate);
 
     if (cancelled) {
         completion = (cflow_io_completion){
@@ -502,42 +502,42 @@ static int iocp_associate_resource(cflow_iocp_impl *impl,
     HANDLE associated;
     DWORD association_error = ERROR_SUCCESS;
 
-    salts_mutex_lock(&impl->gate);
+    cmeta_mutex_lock(&impl->gate);
     for (;;) {
         resource_record = iocp_find_resource_locked(impl, native_handle);
         if (resource_record == NULL || !resource_record->associating)
             break;
-        salts_cond_wait(&impl->changed, &impl->gate);
+        cmeta_cond_wait(&impl->changed, &impl->gate);
     }
     if (resource_record != NULL) {
-        salts_mutex_unlock(&impl->gate);
+        cmeta_mutex_unlock(&impl->gate);
         return SALTS_OK;
     }
     resource_record = iocp_find_free_resource_locked(impl);
     if (resource_record == NULL) {
-        salts_mutex_unlock(&impl->gate);
+        cmeta_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
     resource_record->native_handle = native_handle;
     resource_record->active = true;
     resource_record->associating = true;
-    salts_mutex_unlock(&impl->gate);
+    cmeta_mutex_unlock(&impl->gate);
 
     associated = CreateIoCompletionPort(native_handle, impl->port, 0u, 0u);
     if (associated != impl->port)
         association_error = GetLastError();
-    salts_mutex_lock(&impl->gate);
+    cmeta_mutex_lock(&impl->gate);
     if (associated != impl->port) {
         resource_record->native_handle = INVALID_HANDLE_VALUE;
         resource_record->active = false;
         resource_record->associating = false;
-        salts_cond_broadcast(&impl->changed);
-        salts_mutex_unlock(&impl->gate);
+        cmeta_cond_broadcast(&impl->changed);
+        cmeta_mutex_unlock(&impl->gate);
         return iocp_error(association_error);
     }
     resource_record->associating = false;
-    salts_cond_broadcast(&impl->changed);
-    salts_mutex_unlock(&impl->gate);
+    cmeta_cond_broadcast(&impl->changed);
+    cmeta_mutex_unlock(&impl->gate);
     return SALTS_OK;
 }
 
@@ -569,9 +569,9 @@ static void iocp_worker(void *user) {
     }
 
 stopped:
-    salts_mutex_lock(&impl->gate);
+    cmeta_mutex_lock(&impl->gate);
     impl->worker_running = false;
-    salts_mutex_unlock(&impl->gate);
+    cmeta_mutex_unlock(&impl->gate);
 }
 
 static int iocp_submit_record(
@@ -584,15 +584,15 @@ static int iocp_submit_record(
     cflow_iocp_record *record;
     int status;
 
-    salts_mutex_lock(&impl->gate);
+    cmeta_mutex_lock(&impl->gate);
     if (!impl->admission_open) {
-        salts_mutex_unlock(&impl->gate);
+        cmeta_mutex_unlock(&impl->gate);
         return SALTS_ESHUTDOWN;
     }
     record = iocp_find_free_locked(impl);
     if (record == NULL) {
         iocp_counter_increment(&impl->rejected_full);
-        salts_mutex_unlock(&impl->gate);
+        cmeta_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
     memset(&record->overlapped, 0, sizeof(record->overlapped));
@@ -618,7 +618,7 @@ static int iocp_submit_record(
     record->cancel_requested = false;
     record->resource_kind = resource_kind;
     ++impl->active_requests;
-    salts_mutex_unlock(&impl->gate);
+    cmeta_mutex_unlock(&impl->gate);
 
     status = iocp_associate_resource(impl, record->native_handle);
     if (status == SALTS_OK) {
@@ -630,13 +630,13 @@ static int iocp_submit_record(
             status = iocp_begin_file_operation(impl, record);
     }
     if (status == SALTS_OK) {
-        salts_mutex_lock(&impl->gate);
+        cmeta_mutex_lock(&impl->gate);
         iocp_counter_increment(&impl->submitted);
-        salts_mutex_unlock(&impl->gate);
+        cmeta_mutex_unlock(&impl->gate);
         return SALTS_OK;
     }
 
-    salts_mutex_lock(&impl->gate);
+    cmeta_mutex_lock(&impl->gate);
     record->phase = CFLOW_IOCP_RECORD_FREE;
     record->request_id = 0u;
     record->actor = NULL;
@@ -650,7 +650,7 @@ static int iocp_submit_record(
     record->accepted_socket = INVALID_SOCKET;
     --impl->active_requests;
     iocp_counter_increment(&impl->native_submit_errors);
-    salts_mutex_unlock(&impl->gate);
+    cmeta_mutex_unlock(&impl->gate);
     return status;
 }
 
@@ -711,32 +711,32 @@ static int iocp_cancel(cflow_io_native_impl *base,
     OVERLAPPED *overlapped;
     DWORD error;
 
-    salts_mutex_lock(&impl->gate);
+    cmeta_mutex_lock(&impl->gate);
     record = iocp_find_request_locked(impl, request_id);
     if (record == NULL) {
-        salts_mutex_unlock(&impl->gate);
+        cmeta_mutex_unlock(&impl->gate);
         return SALTS_ENOENT;
     }
     record->cancel_requested = true;
     native_handle = record->native_handle;
     overlapped = &record->overlapped;
-    salts_mutex_unlock(&impl->gate);
+    cmeta_mutex_unlock(&impl->gate);
 
     if (CancelIoEx(native_handle, overlapped))
         return SALTS_OK;
     error = GetLastError();
     if (error == ERROR_NOT_FOUND)
         return SALTS_OK;
-    salts_mutex_lock(&impl->gate);
+    cmeta_mutex_lock(&impl->gate);
     iocp_counter_increment(&impl->native_cancel_errors);
-    salts_mutex_unlock(&impl->gate);
+    cmeta_mutex_unlock(&impl->gate);
     return iocp_error(error);
 }
 
 static bool iocp_get_stats(const cflow_io_native_impl *base,
                            cflow_io_native_backend_stats *out) {
     cflow_iocp_impl *impl = (cflow_iocp_impl *)base;
-    salts_mutex_lock(&impl->gate);
+    cmeta_mutex_lock(&impl->gate);
     *out = (cflow_io_native_backend_stats){
         impl->request_capacity,
         impl->active_requests,
@@ -750,7 +750,7 @@ static bool iocp_get_stats(const cflow_io_native_impl *base,
         impl->admission_open,
         impl->worker_running,
         impl->shutdown_complete};
-    salts_mutex_unlock(&impl->gate);
+    cmeta_mutex_unlock(&impl->gate);
     return true;
 }
 
@@ -760,26 +760,26 @@ static int iocp_forget_resource(cflow_io_native_impl *base,
     cflow_iocp_resource_record *resource_record;
     HANDLE native_handle = (HANDLE)closed_identity;
     size_t index;
-    salts_mutex_lock(&impl->gate);
+    cmeta_mutex_lock(&impl->gate);
     for (index = 0u; index < impl->request_capacity; ++index) {
         if (impl->records[index].phase == CFLOW_IOCP_RECORD_PENDING &&
             impl->records[index].native_handle == native_handle) {
-            salts_mutex_unlock(&impl->gate);
+            cmeta_mutex_unlock(&impl->gate);
             return SALTS_EBUSY;
         }
     }
     resource_record = iocp_find_resource_locked(impl, native_handle);
     if (resource_record == NULL) {
-        salts_mutex_unlock(&impl->gate);
+        cmeta_mutex_unlock(&impl->gate);
         return SALTS_ENOENT;
     }
     if (resource_record->associating) {
-        salts_mutex_unlock(&impl->gate);
+        cmeta_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
     resource_record->native_handle = INVALID_HANDLE_VALUE;
     resource_record->active = false;
-    salts_mutex_unlock(&impl->gate);
+    cmeta_mutex_unlock(&impl->gate);
     return SALTS_OK;
 }
 
@@ -796,45 +796,45 @@ static int iocp_forget_file(cflow_io_native_impl *base,
 static int iocp_shutdown(cflow_io_native_impl *base) {
     cflow_iocp_impl *impl = (cflow_iocp_impl *)base;
     int join_status;
-    salts_mutex_lock(&impl->gate);
+    cmeta_mutex_lock(&impl->gate);
     if (impl->shutdown_complete) {
-        salts_mutex_unlock(&impl->gate);
+        cmeta_mutex_unlock(&impl->gate);
         return SALTS_EALREADY;
     }
     impl->admission_open = false;
     if (impl->active_requests != 0u) {
-        salts_mutex_unlock(&impl->gate);
+        cmeta_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
-    salts_mutex_unlock(&impl->gate);
+    cmeta_mutex_unlock(&impl->gate);
 
     if (!PostQueuedCompletionStatus(impl->port, 0u,
                                     CFLOW_IOCP_STOP_KEY, NULL))
         return iocp_error(GetLastError());
-    join_status = salts_thread_join(&impl->worker);
+    join_status = cmeta_thread_join(&impl->worker);
     if (join_status != SALTS_OK)
         return join_status;
-    salts_thread_destroy(&impl->worker);
+    cmeta_thread_destroy(&impl->worker);
 
-    salts_mutex_lock(&impl->gate);
+    cmeta_mutex_lock(&impl->gate);
     impl->shutdown_complete = true;
-    salts_mutex_unlock(&impl->gate);
+    cmeta_mutex_unlock(&impl->gate);
     return SALTS_OK;
 }
 
 static int iocp_destroy(cflow_io_native_impl *base) {
     cflow_iocp_impl *impl = (cflow_iocp_impl *)base;
-    salts_mutex_lock(&impl->gate);
+    cmeta_mutex_lock(&impl->gate);
     if (!impl->shutdown_complete) {
-        salts_mutex_unlock(&impl->gate);
+        cmeta_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
-    salts_mutex_unlock(&impl->gate);
+    cmeta_mutex_unlock(&impl->gate);
     (void)CloseHandle(impl->port);
     if (impl->winsock_started)
         (void)WSACleanup();
-    salts_cond_destroy(&impl->changed);
-    salts_mutex_destroy(&impl->gate);
+    cmeta_cond_destroy(&impl->changed);
+    cmeta_mutex_destroy(&impl->gate);
     free(impl->resources);
     free(impl->records);
     free(impl);
@@ -880,11 +880,11 @@ int cflow_io_native_iocp_init(cflow_io_native_backend *backend,
     impl->request_capacity = config->request_capacity;
     impl->completion_batch_capacity = config->completion_batch_capacity;
     impl->admission_open = true;
-    salts_mutex_init(&impl->gate);
-    salts_cond_init(&impl->changed);
+    cmeta_mutex_init(&impl->gate);
+    cmeta_cond_init(&impl->changed);
     if (impl->gate == NULL || impl->changed == NULL) {
-        salts_cond_destroy(&impl->changed);
-        salts_mutex_destroy(&impl->gate);
+        cmeta_cond_destroy(&impl->changed);
+        cmeta_mutex_destroy(&impl->gate);
         free(impl->resources);
         free(impl->records);
         free(impl);
@@ -893,8 +893,8 @@ int cflow_io_native_iocp_init(cflow_io_native_backend *backend,
 
     status = WSAStartup(MAKEWORD(2, 2), &winsock_data);
     if (status != 0) {
-        salts_cond_destroy(&impl->changed);
-        salts_mutex_destroy(&impl->gate);
+        cmeta_cond_destroy(&impl->changed);
+        cmeta_mutex_destroy(&impl->gate);
         free(impl->resources);
         free(impl->records);
         free(impl);
@@ -905,19 +905,19 @@ int cflow_io_native_iocp_init(cflow_io_native_backend *backend,
     if (impl->port == NULL) {
         status = iocp_error(GetLastError());
         (void)WSACleanup();
-        salts_cond_destroy(&impl->changed);
-        salts_mutex_destroy(&impl->gate);
+        cmeta_cond_destroy(&impl->changed);
+        cmeta_mutex_destroy(&impl->gate);
         free(impl->resources);
         free(impl->records);
         free(impl);
         return status;
     }
-    status = salts_thread_create(&impl->worker, iocp_worker, impl);
+    status = cmeta_thread_create(&impl->worker, iocp_worker, impl);
     if (status != SALTS_OK) {
         (void)CloseHandle(impl->port);
         (void)WSACleanup();
-        salts_cond_destroy(&impl->changed);
-        salts_mutex_destroy(&impl->gate);
+        cmeta_cond_destroy(&impl->changed);
+        cmeta_mutex_destroy(&impl->gate);
         free(impl->resources);
         free(impl->records);
         free(impl);

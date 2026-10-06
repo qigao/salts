@@ -13,12 +13,12 @@ typedef struct empty_state {
 } empty_state;
 static empty_state state;
 
-static salts_plugin_status SALTS_PLUGIN_CALL empty_start(void *self) {
+static cmeta_plugin_status SALTS_PLUGIN_CALL empty_start(void *self) {
     empty_state *value = CMETA_INVOKE_STORAGE(empty_state,self);
     ++value->starts;
     return SALTS_PLUGIN_OK;
 }
-static salts_plugin_status SALTS_PLUGIN_CALL empty_stop(void *self) {
+static cmeta_plugin_status SALTS_PLUGIN_CALL empty_stop(void *self) {
     empty_state *value = CMETA_INVOKE_STORAGE(empty_state,self);
     ++value->stops;
     return SALTS_PLUGIN_OK;
@@ -46,24 +46,24 @@ suite("Plugin empty declarations") {
     }
 #endif
     it("publishes no exports and preserves the exact query and version contract") {
-        const salts_plugin_manifest *manifest = salts_plugin_query(SALTS_PLUGIN_ABI_VERSION);
+        const cmeta_plugin_manifest *manifest = cmeta_plugin_query(SALTS_PLUGIN_ABI_VERSION);
         check_not_null(manifest);
         check_true(manifest == &empty_plugin__manifest);
-        check_equal(salts_plugin_manifest_validate(manifest),SALTS_PLUGIN_OK);
+        check_equal(cmeta_plugin_manifest_validate(manifest),SALTS_PLUGIN_OK);
         check_equal(manifest->export_count,0u);
         check_null(manifest->exports);
         check_equal(manifest->version.major,0u);
         check_equal(manifest->version.minor,UINT32_MAX);
         check_equal(manifest->version.patch,0u);
-        check_null(salts_plugin_query(SALTS_PLUGIN_ABI_VERSION - 1u));
-        check_null(salts_plugin_query(SALTS_PLUGIN_ABI_VERSION + 1u));
-        const salts_plugin_export *entry = NULL;
-        check_equal(salts_plugin_manifest_find_export(manifest,"absent",&entry),
+        check_null(cmeta_plugin_query(SALTS_PLUGIN_ABI_VERSION - 1u));
+        check_null(cmeta_plugin_query(SALTS_PLUGIN_ABI_VERSION + 1u));
+        const cmeta_plugin_export *entry = NULL;
+        check_equal(cmeta_plugin_manifest_find_export(manifest,"absent",&entry),
             SALTS_PLUGIN_UNKNOWN_EXPORT);
         check_null(entry);
     }
     it("preserves explicit lifecycle ownership without running callbacks on query") {
-        const salts_plugin_manifest *manifest = salts_plugin_query(SALTS_PLUGIN_ABI_VERSION);
+        const cmeta_plugin_manifest *manifest = cmeta_plugin_query(SALTS_PLUGIN_ABI_VERSION);
 #ifdef PLUGIN_EMPTY_MANAGED
         check_true(manifest->self == &state);
         check_equal(state.starts,0u);

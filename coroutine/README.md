@@ -4,7 +4,7 @@
 
 应用协程包含 `<cmeta/coroutine.h>` 并链接 `Salts::Coroutine`。该模块安装 facade
 头文件并导出 target；CMeta core 无需依赖 Coroutine。`cmeta_yield/cmeta_wait*`
-直接复用 `salts_coro_executor_*`，执行器仍拥有 frame、shard、wait slot 与 wake
+直接复用 `coro_executor_*`，执行器仍拥有 frame、shard、wait slot 与 wake
 queue。minicoro 头文件和 executor 私有结构不属于应用接口。
 
 | 入口 | 输入、结果与约束 |
@@ -40,13 +40,13 @@ abort 收尾。已 admission 的操作，其 payload 与资源仍归外部 owner
 
 ```powershell
 cmake --preset win-dev-user
-cmake --build --preset win-dev-user --target cmeta_coroutine_facade_test cmeta_coroutine_header_cpp_test salts_coro_executor_test salts_coro_executor_header_cpp_test
-ctest --preset win-dev-user --output-on-failure -R '^(cmeta_coroutine|salts_coro_executor)'
+cmake --build --preset win-dev-user --target cmeta_coroutine_facade_test cmeta_coroutine_header_cpp_test coro_executor_test coro_executor_header_cpp_test
+ctest --preset win-dev-user --output-on-failure -R '^(cmeta_coroutine|coro_executor)'
 ```
 
 `Salts::Coroutine` 是 `vendor/minicoro/minicoro.h` 的唯一编译封装，提供低层 coroutine primitive、单 owner 有界 frame pool，以及可选的多 shard Executor。它不依赖 CFlow、NativeIO 或 CNet；Executor 只复用 `Salts::Concurrency` 的线程池与 Disruptor，不把网络状态带入 coroutine core。
 
-低层 API 提供显式 coroutine 生命周期、cooperative yield/resume、bounded pool 和通用 scheduler。`salts_coro_pool_t` 本身不增加锁或线程：create/acquire/release/destroy 由同一 owner 执行。`salts_coro_executor_t` 在它之上建立固定 shard；每个 worker 独占一个 scheduler、一个 pool、一个有界 MPSC task queue 和一个有界 completion wake queue，用户线程只提交复制后的 descriptor，运行中的 frame 不跨 shard 迁移。
+低层 API 提供显式 coroutine 生命周期、cooperative yield/resume、bounded pool 和通用 scheduler。`coro_pool_t` 本身不增加锁或线程：create/acquire/release/destroy 由同一 owner 执行。`coro_executor_t` 在它之上建立固定 shard；每个 worker 独占一个 scheduler、一个 pool、一个有界 MPSC task queue 和一个有界 completion wake queue，用户线程只提交复制后的 descriptor，运行中的 frame 不跨 shard 迁移。
 
 Executor 的 admission 与终态协议是：
 
@@ -54,7 +54,7 @@ Executor 的 admission 与终态协议是：
 - `try_submit*` 在 shard queue 满时返回 `SALTS_ENOBUFS`，阻塞提交只等待 queue admission；
 - 成功 admission 恰好执行 `run` 或 `cancel`，随后执行可选 `finalize`；拒绝不调用 callback；
 - `shutdown` 关闭 admission 并 drain 已接收的有限 cooperative coroutine；
-- `salts_coro_executor_yield()` 主动让出当前 shard；`coro_yield()` 仍可作为低层等价入口；
+- `coro_executor_yield()` 主动让出当前 shard；`coro_yield()` 仍可作为低层等价入口；
 - `await_begin` 为当前 frame 预留一个 generation-checked slot，外部操作提交失败时调用 `await_abort`，成功后调用 `await` 挂起；
 - 任意完成线程通过 `await_complete(executor, handle, status)` 发布一次 terminal wake；它不会在调用线程直接 resume，而由原 shard owner 消费 wake queue 后恢复 frame；
 - completion 可以先于 `await` 到达，也可以在 `shutdown` 关闭 task admission 后到达。重复完成返回 `SALTS_EALREADY`，已消费或已 abort 的 handle 返回 `SALTS_ENOENT`。
@@ -78,10 +78,10 @@ Executor 内部保留两个只供测试/benchmark 使用的 batch POC：
 - consumer dequeue batching 只有较小的二级收益，通常在 batch 16–32 已接近平台；
 - 当前 production 中没有天然一次生成同 owner N 个 Coroutine Executor task 的 consumer。NativeIO Sharded 的语义边界仍是一次一个 routed task；CFlow 使用自己的 executor；CNet 普通 data plane 保持 owner-local。
 
-因此 `salts_coro_executor_try_submit_batch_to_internal()`、
-`salts_coro_executor_set_dequeue_batch_limit_internal()` 和相关常量只存在于
+因此 `coro_executor_try_submit_batch_to_internal()`、
+`coro_executor_set_dequeue_batch_limit_internal()` 和相关常量只存在于
 `coroutine/src/` 的 private header。它们不安装、不出现在
-`salts_coro_executor.h`，NativeIO/CNet/CFlow production 源码也不得直接依赖。
+`coro_executor.h`，NativeIO/CNet/CFlow production 源码也不得直接依赖。
 只有出现具有原生 range semantics 的真实 consumer，并有 paired end-to-end
 evidence，才重新讨论 productization。
 

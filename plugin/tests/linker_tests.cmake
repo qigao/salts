@@ -2,7 +2,7 @@
 # headers come from the linked targets, including in the installed tests.
 set(plugin_linker_test_dir "${CMAKE_CURRENT_LIST_DIR}")
 foreach(linker_variant IN ITEMS c cpp missing count)
-  set(linker_target "salts_plugin_linker_fixture_${linker_variant}")
+  set(linker_target "cmeta_plugin_linker_fixture_${linker_variant}")
   add_library(${linker_target} SHARED "${plugin_linker_test_dir}/fixture_plugin_linker_a.c")
   if(linker_variant STREQUAL "cpp")
     target_sources(${linker_target} PRIVATE "${plugin_linker_test_dir}/fixture_plugin_linker_b.cpp"
@@ -34,7 +34,7 @@ foreach(linker_variant IN ITEMS c cpp missing count)
   endif()
 endforeach()
 
-cmake_add_test(salts_plugin_linker_test
+cmake_add_test(cmeta_plugin_linker_test
   SOURCES "${plugin_linker_test_dir}/plugin_linker_test.c"
     "${plugin_linker_test_dir}/fixture_plugin_linker_root.c"
     "${plugin_linker_test_dir}/fixture_plugin_linker_a.c"
@@ -42,22 +42,22 @@ cmake_add_test(salts_plugin_linker_test
   LIBS Salts::Plugin Salts::TinyTest
   DEFS
     "PLUGIN_LINKER_ID=\"test.plugin.linker.executable\"" "PLUGIN_LINKER_COUNT=PLUGIN_LINKER_EXPORT_COUNT"
-    "PLUGIN_LINKER_C_PATH=\"$<TARGET_FILE:salts_plugin_linker_fixture_c>\""
-    "PLUGIN_LINKER_CPP_PATH=\"$<TARGET_FILE:salts_plugin_linker_fixture_cpp>\""
-    "PLUGIN_LINKER_MISSING_PATH=\"$<TARGET_FILE:salts_plugin_linker_fixture_missing>\""
-    "PLUGIN_LINKER_COUNT_PATH=\"$<TARGET_FILE:salts_plugin_linker_fixture_count>\""
+    "PLUGIN_LINKER_C_PATH=\"$<TARGET_FILE:cmeta_plugin_linker_fixture_c>\""
+    "PLUGIN_LINKER_CPP_PATH=\"$<TARGET_FILE:cmeta_plugin_linker_fixture_cpp>\""
+    "PLUGIN_LINKER_MISSING_PATH=\"$<TARGET_FILE:cmeta_plugin_linker_fixture_missing>\""
+    "PLUGIN_LINKER_COUNT_PATH=\"$<TARGET_FILE:cmeta_plugin_linker_fixture_count>\""
   FOLDER "plugin/tests")
-add_dependencies(salts_plugin_linker_test salts_plugin_linker_fixture_c
-  salts_plugin_linker_fixture_cpp salts_plugin_linker_fixture_missing salts_plugin_linker_fixture_count)
-set_target_properties(salts_plugin_linker_test PROPERTIES
+add_dependencies(cmeta_plugin_linker_test cmeta_plugin_linker_fixture_c
+  cmeta_plugin_linker_fixture_cpp cmeta_plugin_linker_fixture_missing cmeta_plugin_linker_fixture_count)
+set_target_properties(cmeta_plugin_linker_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 
-cmake_add_test(salts_plugin_scope_cpp_test
+cmake_add_test(cmeta_plugin_scope_cpp_test
   SOURCES "${plugin_linker_test_dir}/plugin_scope_cpp_test.cpp"
   LIBS Salts::Plugin Salts::TinyTest
-  DEFS "PLUGIN_SCOPE_PATH=\"$<TARGET_FILE:salts_plugin_linker_fixture_cpp>\""
+  DEFS "PLUGIN_SCOPE_PATH=\"$<TARGET_FILE:cmeta_plugin_linker_fixture_cpp>\""
   FOLDER "plugin/tests")
-add_dependencies(salts_plugin_scope_cpp_test salts_plugin_linker_fixture_cpp)
-set_target_properties(salts_plugin_scope_cpp_test PROPERTIES
+add_dependencies(cmeta_plugin_scope_cpp_test cmeta_plugin_linker_fixture_cpp)
+set_target_properties(cmeta_plugin_scope_cpp_test PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
-set_tests_properties(salts_plugin_linker_test salts_plugin_scope_cpp_test PROPERTIES TIMEOUT 60)
+set_tests_properties(cmeta_plugin_linker_test cmeta_plugin_scope_cpp_test PROPERTIES TIMEOUT 60)

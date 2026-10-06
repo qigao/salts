@@ -571,7 +571,7 @@ int cnet_datagram_wake(cnet_datagram *datagram) {
 
 int cnet_datagram_stop(cnet_datagram *datagram, uint32_t timeout_ms) {
   cnet_datagram_impl *impl = cnet_datagram_get(datagram);
-  const uint64_t started_ms = salts_monotonic_ms();
+  const uint64_t started_ms = cmeta_monotonic_ms();
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->callback_active || impl->polling) return SALTS_EBUSY;
   if (impl->stopped) return SALTS_OK;
@@ -590,7 +590,7 @@ int cnet_datagram_stop(cnet_datagram *datagram, uint32_t timeout_ms) {
     }
   }
   while (impl->receive_active || impl->active_send_count != 0u) {
-    const uint64_t elapsed_ms = salts_monotonic_ms() - started_ms;
+    const uint64_t elapsed_ms = cmeta_monotonic_ms() - started_ms;
     uint32_t remaining_ms;
     size_t callbacks = 0u;
     int status;
@@ -598,13 +598,13 @@ int cnet_datagram_stop(cnet_datagram *datagram, uint32_t timeout_ms) {
     remaining_ms = (uint32_t)((uint64_t)timeout_ms - elapsed_ms);
     status = cnet_datagram_drive(impl, remaining_ms, &callbacks);
     if (status != SALTS_OK) {
-      const uint64_t retry_elapsed_ms = salts_monotonic_ms() - started_ms;
+      const uint64_t retry_elapsed_ms = cmeta_monotonic_ms() - started_ms;
       uint32_t retry_delay_ms = CNET_DATAGRAM_STOP_ERROR_RETRY_MS;
       if (impl->stop_status == SALTS_OK) impl->stop_status = status;
       if (retry_elapsed_ms >= timeout_ms) continue;
       if ((uint64_t)retry_delay_ms > (uint64_t)timeout_ms - retry_elapsed_ms)
         retry_delay_ms = (uint32_t)((uint64_t)timeout_ms - retry_elapsed_ms);
-      salts_sleep_ms(retry_delay_ms);
+      cmeta_sleep_ms(retry_delay_ms);
     }
   }
   cnet_datagram_close_socket(impl);

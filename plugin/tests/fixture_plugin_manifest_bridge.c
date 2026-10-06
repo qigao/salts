@@ -18,7 +18,7 @@ static bool SALTS_PLUGIN_CALL declaration_invoke(void *context, void *return_sto
     *(const cmeta_manifest **)return_storage = plugin_fixture_discovery();
     return true;
 }
-static const salts_plugin_export exports[] = {
+static const cmeta_plugin_export exports[] = {
     {
         .struct_size = SALTS_PLUGIN_EXPORT_SIZE,
         .kind = SALTS_PLUGIN_EXPORT_INTERFACE,
@@ -39,7 +39,7 @@ static const salts_plugin_export exports[] = {
             &plugin_manifest_query__function_abi_meta, NULL, declaration_invoke}
     }
 };
-static const salts_plugin_manifest manifest = {
+static const cmeta_plugin_manifest manifest = {
     .struct_size = SALTS_PLUGIN_MANIFEST_SIZE,
     .abi_version = SALTS_PLUGIN_ABI_VERSION,
     .plugin_id = PLUGIN_DECLARATION_ID,
@@ -48,6 +48,6 @@ static const salts_plugin_manifest manifest = {
     .export_count = sizeof(exports) / sizeof(exports[0])
 };
 SALTS_PLUGIN_QUERY_EXPORT
-const salts_plugin_manifest *SALTS_PLUGIN_CALL salts_plugin_query(uint32_t host_abi) {
+const cmeta_plugin_manifest *SALTS_PLUGIN_CALL cmeta_plugin_query(uint32_t host_abi) {
     return host_abi == SALTS_PLUGIN_ABI_VERSION ? &manifest : NULL;
 }

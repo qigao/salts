@@ -74,10 +74,10 @@ static bool SALTS_PLUGIN_CALL plugin_test_decrement_adapter(
     return true;
 }
 
-static salts_plugin_manifest make_manifest(
-    salts_plugin_export exports[2],
+static cmeta_plugin_manifest make_manifest(
+    cmeta_plugin_export exports[2],
     plugin_test_codec *codec) {
-    exports[0] = (salts_plugin_export){
+    exports[0] = (cmeta_plugin_export){
         .struct_size = SALTS_PLUGIN_EXPORT_SIZE,
         .kind = SALTS_PLUGIN_EXPORT_INTERFACE,
         .contract_version = 1u,
@@ -89,7 +89,7 @@ static salts_plugin_manifest make_manifest(
             .value = codec,
         },
     };
-    exports[1] = (salts_plugin_export){
+    exports[1] = (cmeta_plugin_export){
         .struct_size = SALTS_PLUGIN_EXPORT_SIZE,
         .kind = SALTS_PLUGIN_EXPORT_FUNCTION,
         .contract_version = 1u,
@@ -104,7 +104,7 @@ static salts_plugin_manifest make_manifest(
         },
     };
 
-    return (salts_plugin_manifest){
+    return (cmeta_plugin_manifest){
         .struct_size = SALTS_PLUGIN_MANIFEST_SIZE,
         .abi_version = SALTS_PLUGIN_ABI_VERSION,
         .plugin_id = "test.plugin",
@@ -120,17 +120,17 @@ describe("manifest admission") {
         plugin_test_codec_state state = {7};
         plugin_test_codec codec =
             plugin_test_codec_impl_as_plugin_test_codec(&state);
-        salts_plugin_export exports[2];
-        salts_plugin_manifest manifest = make_manifest(exports, &codec);
-        const salts_plugin_export *found = NULL;
+        cmeta_plugin_export exports[2];
+        cmeta_plugin_manifest manifest = make_manifest(exports, &codec);
+        const cmeta_plugin_export *found = NULL;
         void *params[1];
         int input = 5;
         int output = 0;
 
-        check_equal(salts_plugin_manifest_validate(&manifest),
+        check_equal(cmeta_plugin_manifest_validate(&manifest),
                     SALTS_PLUGIN_OK);
 
-        check_equal(salts_plugin_manifest_find_export(
+        check_equal(cmeta_plugin_manifest_find_export(
                         &manifest, "codec", &found),
                     SALTS_PLUGIN_OK);
         check_true(found == &exports[0]);
@@ -139,12 +139,12 @@ describe("manifest admission") {
         check_equal(plugin_test_codec_transform(
                         (plugin_test_codec *)found->value.interface.value, 5),
                     12);
-        check_equal(salts_plugin_export_require_interface(
+        check_equal(cmeta_plugin_export_require_interface(
                         found, "test.codec", 1u, 1u,
                         plugin_test_interface_b()),
                     SALTS_PLUGIN_OK);
 
-        check_equal(salts_plugin_manifest_find_export(
+        check_equal(cmeta_plugin_manifest_find_export(
                         &manifest, "test.transform.increment", &found),
                     SALTS_PLUGIN_OK);
         check_true(found == &exports[1]);
@@ -154,7 +154,7 @@ describe("manifest admission") {
         check_true(cmeta_function_desc_valid(found->value.function.desc));
         check_true(cmeta_function_abi_desc_valid(found->value.function.abi));
         check_true(found->value.function.abi->function == found->value.function.desc);
-        check_equal(salts_plugin_export_require_function(
+        check_equal(cmeta_plugin_export_require_function(
                         found, "test.transform", 1u, 2u),
                     SALTS_PLUGIN_OK);
 
@@ -163,7 +163,7 @@ describe("manifest admission") {
             found->value.function.context, &output, params, 1u));
         check_equal(output, 6);
 
-        check_equal(salts_plugin_manifest_find_export(
+        check_equal(cmeta_plugin_manifest_find_export(
                         &manifest, "missing", &found),
                     SALTS_PLUGIN_UNKNOWN_EXPORT);
         check_null(found);
@@ -173,36 +173,36 @@ describe("manifest admission") {
         plugin_test_codec_state state = {0};
         plugin_test_codec codec =
             plugin_test_codec_impl_as_plugin_test_codec(&state);
-        salts_plugin_export exports[2];
-        salts_plugin_manifest manifest = make_manifest(exports, &codec);
+        cmeta_plugin_export exports[2];
+        cmeta_plugin_manifest manifest = make_manifest(exports, &codec);
 
         manifest.abi_version = SALTS_PLUGIN_ABI_VERSION + 1u;
-        check_equal(salts_plugin_manifest_validate(&manifest),
+        check_equal(cmeta_plugin_manifest_validate(&manifest),
                     SALTS_PLUGIN_UNSUPPORTED_ABI);
 
         manifest = make_manifest(exports, &codec);
         manifest.abi_version = SALTS_PLUGIN_ABI_VERSION - 1u;
-        check_equal(salts_plugin_manifest_validate(&manifest),
+        check_equal(cmeta_plugin_manifest_validate(&manifest),
                     SALTS_PLUGIN_UNSUPPORTED_ABI);
 
         manifest = make_manifest(exports, &codec);
         manifest.struct_size = SALTS_PLUGIN_MANIFEST_SIZE - 1u;
-        check_equal(salts_plugin_manifest_validate(&manifest),
+        check_equal(cmeta_plugin_manifest_validate(&manifest),
                     SALTS_PLUGIN_INVALID_MANIFEST);
 
         manifest = make_manifest(exports, &codec);
         manifest.struct_size = SALTS_PLUGIN_MANIFEST_SIZE + 1u;
-        check_equal(salts_plugin_manifest_validate(&manifest),
+        check_equal(cmeta_plugin_manifest_validate(&manifest),
                     SALTS_PLUGIN_INVALID_MANIFEST);
 
         manifest = make_manifest(exports, &codec);
         exports[0].struct_size = SALTS_PLUGIN_EXPORT_SIZE - 1u;
-        check_equal(salts_plugin_manifest_validate(&manifest),
+        check_equal(cmeta_plugin_manifest_validate(&manifest),
                     SALTS_PLUGIN_INVALID_MANIFEST);
 
         manifest = make_manifest(exports, &codec);
         exports[0].struct_size = SALTS_PLUGIN_EXPORT_SIZE + 1u;
-        check_equal(salts_plugin_manifest_validate(&manifest),
+        check_equal(cmeta_plugin_manifest_validate(&manifest),
                     SALTS_PLUGIN_INVALID_MANIFEST);
     }
 
@@ -210,24 +210,24 @@ describe("manifest admission") {
         plugin_test_codec_state state = {0};
         plugin_test_codec codec =
             plugin_test_codec_impl_as_plugin_test_codec(&state);
-        salts_plugin_export exports[2];
-        salts_plugin_manifest manifest = make_manifest(exports, &codec);
+        cmeta_plugin_export exports[2];
+        cmeta_plugin_manifest manifest = make_manifest(exports, &codec);
         cmeta_function_abi_desc incomplete = *FunctionAbi(plugin_test_increment);
 
         exports[1].value.function.abi = FunctionAbi(plugin_test_widen);
-        check_equal(salts_plugin_manifest_validate(&manifest),
+        check_equal(cmeta_plugin_manifest_validate(&manifest),
                     SALTS_PLUGIN_INVALID_MANIFEST);
 
         manifest = make_manifest(exports, &codec);
         incomplete.return_carrier = CMETA_ABI_UNSPECIFIED;
         exports[1].value.function.abi = &incomplete;
         check_true(cmeta_function_abi_desc_valid(&incomplete));
-        check_equal(salts_plugin_manifest_validate(&manifest),
+        check_equal(cmeta_plugin_manifest_validate(&manifest),
                     SALTS_PLUGIN_INVALID_MANIFEST);
 
         manifest = make_manifest(exports, &codec);
         exports[1].value.function.invoke = NULL;
-        check_equal(salts_plugin_manifest_validate(&manifest),
+        check_equal(cmeta_plugin_manifest_validate(&manifest),
                     SALTS_PLUGIN_INVALID_MANIFEST);
     }
 
@@ -235,16 +235,16 @@ describe("manifest admission") {
         plugin_test_codec_state state = {0};
         plugin_test_codec codec =
             plugin_test_codec_impl_as_plugin_test_codec(&state);
-        salts_plugin_export exports[2];
-        salts_plugin_manifest manifest = make_manifest(exports, &codec);
+        cmeta_plugin_export exports[2];
+        cmeta_plugin_manifest manifest = make_manifest(exports, &codec);
 
         exports[1].export_id = exports[0].export_id;
-        check_equal(salts_plugin_manifest_validate(&manifest),
+        check_equal(cmeta_plugin_manifest_validate(&manifest),
                     SALTS_PLUGIN_DUPLICATE_EXPORT);
 
         manifest = make_manifest(exports, &codec);
         manifest.export_count = SALTS_PLUGIN_MAX_EXPORTS + 1u;
-        check_equal(salts_plugin_manifest_validate(&manifest),
+        check_equal(cmeta_plugin_manifest_validate(&manifest),
                     SALTS_PLUGIN_CAPACITY_EXCEEDED);
     }
 }
@@ -263,7 +263,7 @@ describe("semantic identity") {
     }
 
     it("uses contract identity independently from Function/adapter addresses") {
-        salts_plugin_export left = {
+        cmeta_plugin_export left = {
             .struct_size = SALTS_PLUGIN_EXPORT_SIZE,
             .kind = SALTS_PLUGIN_EXPORT_FUNCTION,
             .contract_version = 1u,
@@ -277,7 +277,7 @@ describe("semantic identity") {
                 .invoke = plugin_test_increment_adapter,
             },
         };
-        salts_plugin_export right = {
+        cmeta_plugin_export right = {
             .struct_size = SALTS_PLUGIN_EXPORT_SIZE,
             .kind = SALTS_PLUGIN_EXPORT_FUNCTION,
             .contract_version = 1u,
@@ -296,17 +296,17 @@ describe("semantic identity") {
         check_true(left.value.function.abi != right.value.function.abi);
         check_true(left.value.function.invoke != right.value.function.invoke);
 
-        check_equal(salts_plugin_export_require_function(
+        check_equal(cmeta_plugin_export_require_function(
                         &left, "test.transform", 1u, 2u),
                     SALTS_PLUGIN_OK);
-        check_equal(salts_plugin_export_require_function(
+        check_equal(cmeta_plugin_export_require_function(
                         &right, "test.transform", 1u, 2u),
                     SALTS_PLUGIN_OK);
 
-        check_equal(salts_plugin_export_require_function(
+        check_equal(cmeta_plugin_export_require_function(
                         &left, "test.transform", 2u, 2u),
                     SALTS_PLUGIN_INCOMPATIBLE_CONTRACT);
-        check_equal(salts_plugin_export_require_function(
+        check_equal(cmeta_plugin_export_require_function(
                         &left, "test.transform", 1u, 4u),
                     SALTS_PLUGIN_INCOMPATIBLE_CONTRACT);
     }
@@ -315,29 +315,29 @@ describe("semantic identity") {
 describe("ABI layout contract") {
     it("uses exact current layouts rather than compatibility prefixes") {
         check_equal(SALTS_PLUGIN_EXPORT_SIZE,
-                    (uint32_t)sizeof(salts_plugin_export));
+                    (uint32_t)sizeof(cmeta_plugin_export));
         check_equal(SALTS_PLUGIN_MANIFEST_SIZE,
-                    (uint32_t)sizeof(salts_plugin_manifest));
+                    (uint32_t)sizeof(cmeta_plugin_manifest));
         check_equal((unsigned)SALTS_PLUGIN_ABI_VERSION, 5u);
     }
 }
 
 describe("status contract") {
     it("keeps required failure classes distinct") {
-        check_equal(strcmp(salts_plugin_status_string(
+        check_equal(strcmp(cmeta_plugin_status_string(
                         SALTS_PLUGIN_INVALID_MANIFEST), "invalid_manifest"), 0);
-        check_equal(strcmp(salts_plugin_status_string(
+        check_equal(strcmp(cmeta_plugin_status_string(
                         SALTS_PLUGIN_UNSUPPORTED_ABI), "unsupported_abi"), 0);
-        check_equal(strcmp(salts_plugin_status_string(
+        check_equal(strcmp(cmeta_plugin_status_string(
                         SALTS_PLUGIN_DUPLICATE_PLUGIN_ID), "duplicate_plugin_id"), 0);
-        check_equal(strcmp(salts_plugin_status_string(
+        check_equal(strcmp(cmeta_plugin_status_string(
                         SALTS_PLUGIN_DUPLICATE_EXPORT), "duplicate_export"), 0);
-        check_equal(strcmp(salts_plugin_status_string(
+        check_equal(strcmp(cmeta_plugin_status_string(
                         SALTS_PLUGIN_UNKNOWN_EXPORT), "unknown_export"), 0);
-        check_equal(strcmp(salts_plugin_status_string(
+        check_equal(strcmp(cmeta_plugin_status_string(
                         SALTS_PLUGIN_INCOMPATIBLE_CONTRACT),
                     "incompatible_contract"), 0);
-        check_equal(strcmp(salts_plugin_status_string(
+        check_equal(strcmp(cmeta_plugin_status_string(
                         SALTS_PLUGIN_CAPACITY_EXCEEDED),
                     "capacity_exceeded"), 0);
     }

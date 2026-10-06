@@ -1,4 +1,4 @@
-set(TARGET_NAME salts_simd)
+set(TARGET_NAME cmeta_simd)
 
 # SIMDe is supplied by the repository's vcpkg contract and warmed by
 # qigao/vcpkg-cache. It remains a private implementation dependency.

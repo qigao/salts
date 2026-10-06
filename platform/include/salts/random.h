@@ -13,7 +13,7 @@ extern "C" {
  * Fills a buffer from the operating system CSPRNG without a process-local
  * fallback. A zero-length request accepts a null buffer.
  */
-SALTS_PLATFORM_C_API int salts_platform_secure_random(void *buffer, size_t length);
+SALTS_PLATFORM_C_API int cmeta_platform_secure_random(void *buffer, size_t length);
 
 #ifdef __cplusplus
 }

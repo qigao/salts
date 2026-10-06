@@ -14,16 +14,16 @@ typedef struct readiness_fake_record {
   intptr_t native_resource;
   uint64_t token;
   uint64_t arm_token;
-  salts_readiness_events events;
+  cmeta_readiness_events events;
   int active;
 } readiness_fake_record;
 
 struct readiness_contract_fixture {
-  salts_readiness_reactor *reactor;
+  cmeta_readiness_reactor *reactor;
   readiness_fake_record *records;
   size_t record_capacity;
-  salts_mutex_t mutex;
-  salts_cond_t changed;
+  cmeta_mutex_t mutex;
+  cmeta_cond_t changed;
   int hook_blocked[READINESS_CONTRACT_HOOK_COUNT];
   size_t hook_block_on_call[READINESS_CONTRACT_HOOK_COUNT];
   size_t hook_calls[READINESS_CONTRACT_HOOK_COUNT];
@@ -54,31 +54,31 @@ static readiness_fake_record *fake_find_token(readiness_contract_fixture *fixtur
 
 static void fake_hook_enter(readiness_contract_fixture *fixture, readiness_contract_hook hook) {
   size_t call;
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   fixture->hook_calls[hook] += 1u;
   call = fixture->hook_calls[hook];
   fixture->hook_sequence += 1u;
   fixture->hook_last_sequence[hook] = fixture->hook_sequence;
-  salts_cond_broadcast(&fixture->changed);
+  cmeta_cond_broadcast(&fixture->changed);
   while (fixture->hook_blocked[hook] || fixture->hook_block_on_call[hook] == call)
-    salts_cond_wait(&fixture->changed, &fixture->mutex);
-  salts_mutex_unlock(&fixture->mutex);
+    cmeta_cond_wait(&fixture->changed, &fixture->mutex);
+  cmeta_mutex_unlock(&fixture->mutex);
 }
 
 static int fake_hook_error(readiness_contract_fixture *fixture, readiness_contract_hook hook) {
   int status = SALTS_OK;
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   if (fixture->hook_fail_remaining[hook] != 0) {
     fixture->hook_fail_remaining[hook] -= 1u;
     status = fixture->hook_fail_status[hook];
   }
-  salts_mutex_unlock(&fixture->mutex);
+  cmeta_mutex_unlock(&fixture->mutex);
   return status;
 }
 
 static void fake_check_reentrant(readiness_contract_fixture *fixture) {
-  salts_readiness_stats stats;
-  if (salts_readiness_reactor_stats(fixture->reactor, &stats) == SALTS_OK)
+  cmeta_readiness_stats stats;
+  if (cmeta_readiness_reactor_stats(fixture->reactor, &stats) == SALTS_OK)
     atomic_fetch_add(&fixture->reentrant_checks, 1u);
 }
 
@@ -88,9 +88,9 @@ static int fake_register_resource(void *user, intptr_t native_resource, uint64_t
   fake_hook_enter(fixture, READINESS_CONTRACT_HOOK_REGISTER);
   int hook_status = fake_hook_error(fixture, READINESS_CONTRACT_HOOK_REGISTER);
   if (hook_status != SALTS_OK) return hook_status;
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   if (fake_find_resource(fixture, native_resource) != NULL) {
-    salts_mutex_unlock(&fixture->mutex);
+    cmeta_mutex_unlock(&fixture->mutex);
     return SALTS_EALREADY;
   }
   for (size_t i = 0; i < fixture->record_capacity; ++i) {
@@ -99,16 +99,16 @@ static int fake_register_resource(void *user, intptr_t native_resource, uint64_t
       fixture->records[i].token = token;
       fixture->records[i].events = 0;
       fixture->records[i].active = 1;
-      salts_mutex_unlock(&fixture->mutex);
+      cmeta_mutex_unlock(&fixture->mutex);
       return SALTS_OK;
     }
   }
-  salts_mutex_unlock(&fixture->mutex);
+  cmeta_mutex_unlock(&fixture->mutex);
   return SALTS_ENOBUFS;
 }
 
 static int fake_arm(void *user, uint64_t token, uint64_t arm_token,
-                    salts_readiness_events events) {
+                    cmeta_readiness_events events) {
   readiness_contract_fixture *fixture = (readiness_contract_fixture *)user;
   readiness_fake_record *record;
   int status = SALTS_OK;
@@ -116,7 +116,7 @@ static int fake_arm(void *user, uint64_t token, uint64_t arm_token,
   fake_hook_enter(fixture, READINESS_CONTRACT_HOOK_ARM);
   status = fake_hook_error(fixture, READINESS_CONTRACT_HOOK_ARM);
   if (status != SALTS_OK) return status;
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   if (fixture->next_arm_error != SALTS_OK) {
     status = fixture->next_arm_error;
     fixture->next_arm_error = SALTS_OK;
@@ -128,7 +128,7 @@ static int fake_arm(void *user, uint64_t token, uint64_t arm_token,
       record->events = events;
     }
   }
-  salts_mutex_unlock(&fixture->mutex);
+  cmeta_mutex_unlock(&fixture->mutex);
   return status;
 }
 
@@ -140,11 +140,11 @@ static int fake_unarm(void *user, uint64_t token) {
   fake_hook_enter(fixture, READINESS_CONTRACT_HOOK_UNARM);
   status = fake_hook_error(fixture, READINESS_CONTRACT_HOOK_UNARM);
   if (status != SALTS_OK) return status;
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   record = fake_find_token(fixture, token);
   if (record == NULL) status = SALTS_EINVAL;
   else record->events = 0;
-  salts_mutex_unlock(&fixture->mutex);
+  cmeta_mutex_unlock(&fixture->mutex);
   return status;
 }
 
@@ -156,11 +156,11 @@ static int fake_close(void *user, uint64_t token) {
   fake_hook_enter(fixture, READINESS_CONTRACT_HOOK_CLOSE);
   status = fake_hook_error(fixture, READINESS_CONTRACT_HOOK_CLOSE);
   if (status != SALTS_OK) return status;
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   record = fake_find_token(fixture, token);
   if (record == NULL) status = SALTS_EINVAL;
   else memset(record, 0, sizeof(*record));
-  salts_mutex_unlock(&fixture->mutex);
+  cmeta_mutex_unlock(&fixture->mutex);
   return status;
 }
 
@@ -173,12 +173,12 @@ static int fake_shutdown(void *user) {
 
 static void fake_backend_destroy(void *user) { (void)user; }
 
-static const salts_readiness_backend_ops fake_backend_ops = {fake_register_resource, fake_arm,
+static const cmeta_readiness_backend_ops fake_backend_ops = {fake_register_resource, fake_arm,
                                                              fake_unarm, fake_close, fake_shutdown,
                                                              fake_backend_destroy};
 
-static readiness_contract_fixture *fake_create(salts_readiness_config config,
-                                               salts_readiness_reactor *reactor, int *status) {
+static readiness_contract_fixture *fake_create(cmeta_readiness_config config,
+                                               cmeta_readiness_reactor *reactor, int *status) {
   readiness_contract_fixture *fixture;
   if (reactor != NULL) reactor->impl = NULL;
   if (status == NULL) return NULL;
@@ -192,29 +192,29 @@ static readiness_contract_fixture *fake_create(salts_readiness_config config,
   }
   fixture->reactor = reactor;
   atomic_init(&fixture->reentrant_checks, 0u);
-  salts_mutex_init(&fixture->mutex);
-  salts_cond_init(&fixture->changed);
+  cmeta_mutex_init(&fixture->mutex);
+  cmeta_cond_init(&fixture->changed);
   if (fixture->mutex == NULL || fixture->changed == NULL) {
-    salts_cond_destroy(&fixture->changed);
-    salts_mutex_destroy(&fixture->mutex);
+    cmeta_cond_destroy(&fixture->changed);
+    cmeta_mutex_destroy(&fixture->mutex);
     free(fixture);
     *status = SALTS_ENOMEM;
     return NULL;
   }
-  *status = salts_readiness_reactor_init_backend(reactor, &config, &fake_backend_ops, fixture);
+  *status = cmeta_readiness_reactor_init_backend(reactor, &config, &fake_backend_ops, fixture);
   if (*status != SALTS_OK) {
-    salts_cond_destroy(&fixture->changed);
-    salts_mutex_destroy(&fixture->mutex);
+    cmeta_cond_destroy(&fixture->changed);
+    cmeta_mutex_destroy(&fixture->mutex);
     free(fixture);
     return NULL;
   }
   fixture->records =
       (readiness_fake_record *)calloc(config.registration_capacity, sizeof(*fixture->records));
   if (fixture->records == NULL) {
-    (void)salts_readiness_reactor_shutdown(reactor);
-    (void)salts_readiness_reactor_destroy(reactor);
-    salts_cond_destroy(&fixture->changed);
-    salts_mutex_destroy(&fixture->mutex);
+    (void)cmeta_readiness_reactor_shutdown(reactor);
+    (void)cmeta_readiness_reactor_destroy(reactor);
+    cmeta_cond_destroy(&fixture->changed);
+    cmeta_mutex_destroy(&fixture->mutex);
     free(fixture);
     *status = SALTS_ENOMEM;
     return NULL;
@@ -225,39 +225,39 @@ static readiness_contract_fixture *fake_create(salts_readiness_config config,
 
 static void fake_destroy(readiness_contract_fixture *fixture) {
   free(fixture->records);
-  salts_cond_destroy(&fixture->changed);
-  salts_mutex_destroy(&fixture->mutex);
+  cmeta_cond_destroy(&fixture->changed);
+  cmeta_mutex_destroy(&fixture->mutex);
   free(fixture);
 }
 
 static int fake_emit_resource(readiness_contract_fixture *fixture, intptr_t native_resource,
-                              salts_readiness_events events) {
+                              cmeta_readiness_events events) {
   uint64_t token = 0;
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   readiness_fake_record *record = fake_find_resource(fixture, native_resource);
   if (record != NULL && record->events != 0) token = record->token;
-  salts_mutex_unlock(&fixture->mutex);
+  cmeta_mutex_unlock(&fixture->mutex);
   return token == 0 ? SALTS_OK
-                    : salts_readiness_backend_dispatch(fixture->reactor, token, events, SALTS_OK);
+                    : cmeta_readiness_backend_dispatch(fixture->reactor, token, events, SALTS_OK);
 }
 
 static int fake_emit_token(readiness_contract_fixture *fixture, uint64_t token,
-                           salts_readiness_events events, int status) {
-  return salts_readiness_backend_dispatch(fixture->reactor, token, events, status);
+                           cmeta_readiness_events events, int status) {
+  return cmeta_readiness_backend_dispatch(fixture->reactor, token, events, status);
 }
 
 static int fake_fail_backend(readiness_contract_fixture *fixture, int status) {
-  return salts_readiness_backend_fail(fixture->reactor, status);
+  return cmeta_readiness_backend_fail(fixture->reactor, status);
 }
 
 static uint64_t fake_token_for_resource(readiness_contract_fixture *fixture,
                                         intptr_t native_resource) {
   readiness_fake_record *record;
   uint64_t token;
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   record = fake_find_resource(fixture, native_resource);
   token = record != NULL ? record->token : 0;
-  salts_mutex_unlock(&fixture->mutex);
+  cmeta_mutex_unlock(&fixture->mutex);
   return token;
 }
 
@@ -265,46 +265,46 @@ static uint64_t fake_arm_token_for_resource(readiness_contract_fixture *fixture,
                                             intptr_t native_resource) {
   readiness_fake_record *record;
   uint64_t token;
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   record = fake_find_resource(fixture, native_resource);
   token = record != NULL ? record->arm_token : 0;
-  salts_mutex_unlock(&fixture->mutex);
+  cmeta_mutex_unlock(&fixture->mutex);
   return token;
 }
 
 static int fake_emit_arm_token(readiness_contract_fixture *fixture, uint64_t token,
-                               uint64_t arm_token, salts_readiness_events events) {
-  return salts_readiness_backend_dispatch_generation(fixture->reactor, token, arm_token, events,
+                               uint64_t arm_token, cmeta_readiness_events events) {
+  return cmeta_readiness_backend_dispatch_generation(fixture->reactor, token, arm_token, events,
                                                      SALTS_OK);
 }
 
 static void fake_fail_next_arm(readiness_contract_fixture *fixture, int status) {
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   fixture->next_arm_error = status;
-  salts_mutex_unlock(&fixture->mutex);
+  cmeta_mutex_unlock(&fixture->mutex);
 }
 
 static void fake_fail_hook(readiness_contract_fixture *fixture, readiness_contract_hook hook,
                            int status, size_t calls) {
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   fixture->hook_fail_status[hook] = status;
   fixture->hook_fail_remaining[hook] = calls;
-  salts_mutex_unlock(&fixture->mutex);
+  cmeta_mutex_unlock(&fixture->mutex);
 }
 
 static size_t fake_backend_close_calls(readiness_contract_fixture *fixture) {
   size_t calls;
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   calls = fixture->hook_calls[READINESS_CONTRACT_HOOK_CLOSE];
-  salts_mutex_unlock(&fixture->mutex);
+  cmeta_mutex_unlock(&fixture->mutex);
   return calls;
 }
 
 static size_t fake_backend_unarm_calls(readiness_contract_fixture *fixture) {
   size_t calls;
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   calls = fixture->hook_calls[READINESS_CONTRACT_HOOK_UNARM];
-  salts_mutex_unlock(&fixture->mutex);
+  cmeta_mutex_unlock(&fixture->mutex);
   return calls;
 }
 
@@ -313,46 +313,46 @@ static size_t fake_backend_reentrant_checks(readiness_contract_fixture *fixture)
 }
 
 static void fake_block_hook(readiness_contract_fixture *fixture, readiness_contract_hook hook) {
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   fixture->hook_blocked[hook] = 1;
-  salts_mutex_unlock(&fixture->mutex);
+  cmeta_mutex_unlock(&fixture->mutex);
 }
 
 static void fake_block_hook_on_call(readiness_contract_fixture *fixture,
                                     readiness_contract_hook hook, size_t call) {
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   fixture->hook_block_on_call[hook] = call;
-  salts_mutex_unlock(&fixture->mutex);
+  cmeta_mutex_unlock(&fixture->mutex);
 }
 
 static void fake_release_hook(readiness_contract_fixture *fixture, readiness_contract_hook hook) {
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   fixture->hook_blocked[hook] = 0;
   fixture->hook_block_on_call[hook] = 0;
-  salts_cond_broadcast(&fixture->changed);
-  salts_mutex_unlock(&fixture->mutex);
+  cmeta_cond_broadcast(&fixture->changed);
+  cmeta_mutex_unlock(&fixture->mutex);
 }
 
 static int fake_wait_hook_calls(readiness_contract_fixture *fixture, readiness_contract_hook hook,
                                 size_t calls, uint64_t timeout_ns) {
   int status = SALTS_OK;
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   while (fixture->hook_calls[hook] < calls && status == SALTS_OK)
-    status = salts_cond_timedwait(&fixture->changed, &fixture->mutex, timeout_ns);
-  salts_mutex_unlock(&fixture->mutex);
+    status = cmeta_cond_timedwait(&fixture->changed, &fixture->mutex, timeout_ns);
+  cmeta_mutex_unlock(&fixture->mutex);
   return status;
 }
 
 static int fake_wait_admission_closed(readiness_contract_fixture *fixture) {
-  return salts_readiness_backend_wait_admission_closed(fixture->reactor);
+  return cmeta_readiness_backend_wait_admission_closed(fixture->reactor);
 }
 
 static uint64_t fake_hook_last_sequence(readiness_contract_fixture *fixture,
                                         readiness_contract_hook hook) {
   uint64_t sequence;
-  salts_mutex_lock(&fixture->mutex);
+  cmeta_mutex_lock(&fixture->mutex);
   sequence = fixture->hook_last_sequence[hook];
-  salts_mutex_unlock(&fixture->mutex);
+  cmeta_mutex_unlock(&fixture->mutex);
   return sequence;
 }
 
@@ -380,7 +380,7 @@ const readiness_contract_factory *readiness_contract_factory_get(void) {
 }
 
 static readiness_backend_contract_fixture *fake_backend_contract_create(
-    salts_readiness_config config, salts_readiness_reactor *reactor, int *status) {
+    cmeta_readiness_config config, cmeta_readiness_reactor *reactor, int *status) {
   return (readiness_backend_contract_fixture *)fake_create(config, reactor, status);
 }
 

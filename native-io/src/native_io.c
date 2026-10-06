@@ -1,7 +1,7 @@
 #include "native_io_internal.h"
 
 #include <salts/error_codes.h>
-#include <salts_coro_pool.h>
+#include <coro_pool.h>
 
 #include <limits.h>
 #include <stdlib.h>
@@ -26,8 +26,8 @@ struct native_io_coroutine {
 };
 
 struct native_io_coroutine_owner {
-  salts_io_impl *impl;
-  salts_coro_pool_t *pool;
+  cmeta_io_impl *impl;
+  coro_pool_t *pool;
   native_io_coroutine *tasks;
   native_io_coroutine_request_owner *request_owners;
   native_io_completion *raw_completions;
@@ -69,8 +69,8 @@ static int native_io_coroutine_retire(native_io_coroutine *coroutine, bool aband
   owner->free_tasks[owner->free_task_count++] = index;
   --owner->active_task_count;
   if (abandon_frame)
-    return salts_coro_pool_abandon(owner->pool, frame) == 0 ? SALTS_OK : SALTS_EIO;
-  salts_coro_pool_release(owner->pool, frame);
+    return coro_pool_abandon(owner->pool, frame) == 0 ? SALTS_OK : SALTS_EIO;
+  coro_pool_release(owner->pool, frame);
   return SALTS_OK;
 }
 
@@ -83,10 +83,10 @@ static int native_io_coroutine_resume(native_io_coroutine *coroutine) {
 }
 
 static native_io_coroutine_owner *
-native_io_coroutine_owner_create(salts_io_impl *impl, size_t task_capacity,
+native_io_coroutine_owner_create(cmeta_io_impl *impl, size_t task_capacity,
                                  size_t completion_capacity) {
   native_io_coroutine_owner *owner;
-  salts_coro_pool_config_t pool_config = {
+  coro_pool_config_t pool_config = {
       .initial_capacity = 0u,
       .max_capacity = task_capacity,
       .stack_size = 0u,
@@ -103,10 +103,10 @@ native_io_coroutine_owner_create(salts_io_impl *impl, size_t task_capacity,
   owner->ready_coroutines =
       (native_io_coroutine **)calloc(completion_capacity, sizeof(*owner->ready_coroutines));
   owner->free_tasks = (uint32_t *)calloc(task_capacity, sizeof(*owner->free_tasks));
-  owner->pool = salts_coro_pool_create(&pool_config);
+  owner->pool = coro_pool_create(&pool_config);
   if (owner->tasks == NULL || owner->request_owners == NULL || owner->raw_completions == NULL ||
       owner->ready_coroutines == NULL || owner->free_tasks == NULL || owner->pool == NULL) {
-    salts_coro_pool_destroy(owner->pool);
+    coro_pool_destroy(owner->pool);
     free(owner->free_tasks);
     free(owner->ready_coroutines);
     free(owner->raw_completions);
@@ -126,7 +126,7 @@ native_io_coroutine_owner_create(salts_io_impl *impl, size_t task_capacity,
 
 static void native_io_coroutine_owner_destroy(native_io_coroutine_owner *owner) {
   if (owner == NULL) return;
-  salts_coro_pool_destroy(owner->pool);
+  coro_pool_destroy(owner->pool);
   free(owner->free_tasks);
   free(owner->ready_coroutines);
   free(owner->raw_completions);
@@ -170,12 +170,12 @@ static int native_io_coroutine_route_completion(native_io_coroutine_owner *owner
   return SALTS_OK;
 }
 
-static salts_io_impl *native_io_impl(native_io_backend *backend) {
-  return backend != NULL ? (salts_io_impl *)backend->impl : NULL;
+static cmeta_io_impl *native_io_impl(native_io_backend *backend) {
+  return backend != NULL ? (cmeta_io_impl *)backend->impl : NULL;
 }
 
-static const salts_io_impl *native_io_const_impl(const native_io_backend *backend) {
-  return backend != NULL ? (const salts_io_impl *)backend->impl : NULL;
+static const cmeta_io_impl *native_io_const_impl(const native_io_backend *backend) {
+  return backend != NULL ? (const cmeta_io_impl *)backend->impl : NULL;
 }
 
 native_io_model native_io_backend_kind_model(native_io_backend_kind kind) {
@@ -258,7 +258,7 @@ bool native_io_operation_valid(const native_io_operation *operation) {
 
 int native_io_backend_init(native_io_backend *backend, const native_io_backend_config *config) {
   int status;
-  salts_io_impl *impl;
+  cmeta_io_impl *impl;
   if (backend == NULL) return SALTS_EINVAL;
   backend->impl = NULL;
   if (config == NULL || native_io_backend_kind_model(config->kind) == NATIVE_IO_MODEL_NONE ||
@@ -279,7 +279,7 @@ int native_io_backend_init(native_io_backend *backend, const native_io_backend_c
 
 int native_io_backend_attach_socket(native_io_backend *backend, uintptr_t native_socket,
                                     native_io_endpoint *out_endpoint) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   if (out_endpoint != NULL) *out_endpoint = (native_io_endpoint){0};
   if (impl == NULL || impl->ops == NULL || impl->ops->attach_socket == NULL ||
       out_endpoint == NULL || native_socket == UINTPTR_MAX)
@@ -288,7 +288,7 @@ int native_io_backend_attach_socket(native_io_backend *backend, uintptr_t native
 }
 
 int native_io_backend_release_socket(native_io_backend *backend, native_io_endpoint endpoint) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   if (impl == NULL || impl->ops == NULL || impl->ops->release_socket == NULL ||
       !native_io_endpoint_valid(endpoint))
     return SALTS_EINVAL;
@@ -297,7 +297,7 @@ int native_io_backend_release_socket(native_io_backend *backend, native_io_endpo
 
 int native_io_backend_attach_pipe(native_io_backend *backend, uintptr_t native_handle,
                                   uint32_t flags, native_io_endpoint *out_endpoint) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   if (out_endpoint != NULL) *out_endpoint = (native_io_endpoint){0};
   if (out_endpoint == NULL || native_handle == UINTPTR_MAX ||
       flags != NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE)
@@ -308,7 +308,7 @@ int native_io_backend_attach_pipe(native_io_backend *backend, uintptr_t native_h
 }
 
 int native_io_backend_release_pipe(native_io_backend *backend, native_io_endpoint endpoint) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   if (impl == NULL || impl->ops == NULL || !native_io_endpoint_valid(endpoint)) return SALTS_EINVAL;
   if (impl->ops->release_pipe == NULL) return SALTS_ENOTSUP;
   return impl->ops->release_pipe(impl, endpoint);
@@ -316,7 +316,7 @@ int native_io_backend_release_pipe(native_io_backend *backend, native_io_endpoin
 
 bool native_io_backend_endpoint_supports_vector_write(const native_io_backend *backend,
                                                       native_io_endpoint endpoint) {
-  const salts_io_impl *impl = native_io_const_impl(backend);
+  const cmeta_io_impl *impl = native_io_const_impl(backend);
   if (impl == NULL || impl->ops == NULL || impl->ops->supports_vector_write == NULL ||
       !native_io_endpoint_valid(endpoint))
     return false;
@@ -327,7 +327,7 @@ int native_io_internal_submit_stream_accept(
     native_io_backend *backend,
     native_io_endpoint listener,
     native_io_request *out_request) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   if (out_request != NULL) *out_request = (native_io_request){0};
   if (impl == NULL || impl->ops == NULL ||
       !native_io_endpoint_valid(listener) || out_request == NULL)
@@ -342,7 +342,7 @@ int native_io_internal_take_stream_accept(
     native_io_backend *backend,
     native_io_request request,
     uintptr_t *out_transport) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   if (out_transport != NULL) *out_transport = UINTPTR_MAX;
   if (impl == NULL || impl->ops == NULL ||
       !native_io_request_valid(request) || out_transport == NULL)
@@ -355,7 +355,7 @@ int native_io_internal_take_stream_accept(
 
 int native_io_backend_submit(native_io_backend *backend, const native_io_operation *operation,
                              native_io_request *out_request) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   if (out_request != NULL) *out_request = (native_io_request){0};
   if (impl == NULL || impl->ops == NULL || impl->ops->submit == NULL ||
       !native_io_operation_valid(operation) || out_request == NULL)
@@ -366,7 +366,7 @@ int native_io_backend_submit(native_io_backend *backend, const native_io_operati
 int native_io_backend_submit_vector(native_io_backend *backend,
                                     const native_io_vector_operation *operation,
                                     native_io_request *out_request) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   if (out_request != NULL) *out_request = (native_io_request){0};
   if (impl == NULL || impl->ops == NULL || !native_io_vector_operation_valid(operation) ||
       out_request == NULL)
@@ -377,7 +377,7 @@ int native_io_backend_submit_vector(native_io_backend *backend,
 
 int native_io_backend_prepare(native_io_backend *backend, const native_io_operation *operation,
                               native_io_request *out_request) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   if (out_request != NULL) *out_request = (native_io_request){0};
   if (impl == NULL || impl->ops == NULL || impl->ops->prepare == NULL ||
       !native_io_operation_valid(operation) || out_request == NULL)
@@ -386,7 +386,7 @@ int native_io_backend_prepare(native_io_backend *backend, const native_io_operat
 }
 
 int native_io_backend_flush(native_io_backend *backend) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   if (impl == NULL || impl->ops == NULL) return SALTS_EINVAL;
   return impl->ops->flush != NULL ? impl->ops->flush(impl) : SALTS_OK;
 }
@@ -394,7 +394,7 @@ int native_io_backend_flush(native_io_backend *backend) {
 int native_io_backend_spawn_coroutine(native_io_backend *backend,
                                       native_io_coroutine_entry_fn entry, void *user_data,
                                       native_io_coroutine_task *out_task) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   native_io_coroutine_owner *owner;
   native_io_coroutine *coroutine;
   native_io_backend_stats stats;
@@ -424,7 +424,7 @@ int native_io_backend_spawn_coroutine(native_io_backend *backend,
   coroutine->user_data = user_data;
   coroutine->task = (native_io_coroutine_task){index + 1u, generation};
   coroutine->active = true;
-  coroutine->frame = salts_coro_pool_acquire(owner->pool, native_io_coroutine_entry, coroutine);
+  coroutine->frame = coro_pool_acquire(owner->pool, native_io_coroutine_entry, coroutine);
   if (coroutine->frame == NULL) {
     coroutine->active = false;
     owner->free_tasks[owner->free_task_count++] = index;
@@ -527,7 +527,7 @@ int native_io_coroutine_await_vector(native_io_coroutine *coroutine,
 }
 
 int native_io_backend_cancel_coroutine(native_io_backend *backend, native_io_coroutine_task task) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   native_io_coroutine *coroutine;
   if (impl == NULL || impl->ops == NULL || impl->coroutine_owner == NULL ||
       !native_io_coroutine_task_valid(task))
@@ -539,7 +539,7 @@ int native_io_backend_cancel_coroutine(native_io_backend *backend, native_io_cor
 }
 
 int native_io_backend_cancel(native_io_backend *backend, native_io_request request) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   if (impl == NULL || impl->ops == NULL || impl->ops->cancel == NULL ||
       !native_io_request_valid(request))
     return SALTS_EINVAL;
@@ -548,7 +548,7 @@ int native_io_backend_cancel(native_io_backend *backend, native_io_request reque
 
 int native_io_backend_observe(native_io_backend *backend, native_io_completion *events,
                               size_t event_capacity, uint32_t timeout_ms, size_t *out_count) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   native_io_coroutine_owner *owner;
   size_t raw_count = 0u;
   size_t direct_count = 0u;
@@ -585,19 +585,19 @@ int native_io_backend_observe(native_io_backend *backend, native_io_completion *
 }
 
 int native_io_backend_wake(native_io_backend *backend) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   if (impl == NULL || impl->ops == NULL || impl->ops->wake == NULL) return SALTS_EINVAL;
   return impl->ops->wake(impl);
 }
 
 int native_io_backend_close(native_io_backend *backend) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   if (impl == NULL || impl->ops == NULL || impl->ops->close == NULL) return SALTS_EINVAL;
   return impl->ops->close(impl);
 }
 
 int native_io_backend_destroy(native_io_backend *backend) {
-  salts_io_impl *impl = native_io_impl(backend);
+  cmeta_io_impl *impl = native_io_impl(backend);
   native_io_coroutine_owner *owner;
   int status;
   if (impl == NULL || impl->ops == NULL || impl->ops->destroy == NULL) return SALTS_EINVAL;
@@ -613,7 +613,7 @@ int native_io_backend_destroy(native_io_backend *backend) {
 
 bool native_io_backend_get_stats(const native_io_backend *backend,
                                  native_io_backend_stats *out_stats) {
-  const salts_io_impl *impl = native_io_const_impl(backend);
+  const cmeta_io_impl *impl = native_io_const_impl(backend);
   if (impl == NULL || impl->ops == NULL || impl->ops->get_stats == NULL || out_stats == NULL)
     return false;
   return impl->ops->get_stats(impl, out_stats);
@@ -621,7 +621,7 @@ bool native_io_backend_get_stats(const native_io_backend *backend,
 
 bool native_io_backend_get_config(const native_io_backend *backend,
                                   native_io_backend_config *out_config) {
-  const salts_io_impl *impl = native_io_const_impl(backend);
+  const cmeta_io_impl *impl = native_io_const_impl(backend);
   native_io_backend_stats stats = {0};
   if (impl == NULL || out_config == NULL ||
       !native_io_backend_get_stats(backend, &stats) ||
@@ -637,7 +637,7 @@ bool native_io_backend_get_config(const native_io_backend *backend,
 
 bool native_io_backend_get_coroutine_stats(const native_io_backend *backend,
                                            native_io_coroutine_stats *out_stats) {
-  const salts_io_impl *impl = native_io_const_impl(backend);
+  const cmeta_io_impl *impl = native_io_const_impl(backend);
   native_io_coroutine_stats stats = NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
   if (impl == NULL || out_stats == NULL ||
       out_stats->abi_version != NATIVE_IO_COROUTINE_STATS_ABI_V1 ||
@@ -646,7 +646,7 @@ bool native_io_backend_get_coroutine_stats(const native_io_backend *backend,
   stats.capacity = impl->coroutine_capacity;
   if (impl->coroutine_owner != NULL) {
     stats.active = impl->coroutine_owner->active_task_count;
-    stats.retained_frames = salts_coro_pool_retained_count(impl->coroutine_owner->pool);
+    stats.retained_frames = coro_pool_retained_count(impl->coroutine_owner->pool);
   }
   *out_stats = stats;
   return true;

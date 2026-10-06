@@ -20,7 +20,7 @@ static void file_init_failure_completion(void *user, cflow_io_request_id request
   (void)completion;
 }
 
-static void file_init_failure_mutex_init(salts_mutex_t *mutex) {
+static void file_init_failure_mutex_init(cmeta_mutex_t *mutex) {
   if (mutex != NULL) *mutex = NULL;
 }
 
@@ -52,7 +52,7 @@ static int file_forget_backend_busy(cflow_io_native_impl *impl, uintptr_t closed
   return SALTS_EBUSY;
 }
 
-#define salts_mutex_init file_init_failure_mutex_init
+#define cmeta_mutex_init file_init_failure_mutex_init
 #define cflow_io_native_backend_supported file_init_failure_backend_supported
 #define cflow_io_native_backend_file_operation_supported file_init_failure_operation_supported
 #define cflow_io_native_backend_init file_init_failure_backend_init
@@ -96,7 +96,7 @@ int cflow_io_file_runtime_destroy_with_init_failure(cflow_io_file_runtime *runti
 #undef cflow_io_native_backend_init
 #undef cflow_io_native_backend_file_operation_supported
 #undef cflow_io_native_backend_supported
-#undef salts_mutex_init
+#undef cmeta_mutex_init
 
 spec("CFlow async file facade initialization failures") {
   it("returns ENOMEM before backend initialization when its mutex is unavailable") {

@@ -12,7 +12,7 @@ set(FMT_SURFACE_CONTRACT_CPP
 set(EXECUTION_COMPAT_C
     ${CMAKE_CURRENT_SOURCE_DIR}/test_execution_compat.c)
 set(SALTS_FS_REPLACE_FAULT_C
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_salts_fs_replace_fault.c)
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_cmeta_fs_replace_fault.c)
 cmake_add_source(TEST_SOURCES DIRS ${CMAKE_CURRENT_SOURCE_DIR} PATTERNS
                  "test_*.c" EXCLUDES ${TLOG_HEADER_COLLISION_C} ${FMT_SURFACE_CONTRACT_C}
                  ${EXECUTION_COMPAT_C} ${SALTS_FS_REPLACE_FAULT_C})
@@ -36,8 +36,8 @@ endforeach()
 
 # Seed a parent-only variable so the process clean-environment contract can be
 # tested without relying on PATH, which command interpreters may synthesize.
-if(TARGET test_salts_process)
-  set_tests_properties(test_salts_process PROPERTIES
+if(TARGET test_cmeta_process)
+  set_tests_properties(test_cmeta_process PROPERTIES
     ENVIRONMENT "SALTS_PROCESS_PARENT_SENTINEL=parent-value")
 endif()
 
@@ -57,35 +57,35 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND TARGET test_tlog)
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  add_library(salts_fs_fsync_fault SHARED salts_fs_fsync_fault.c)
-  target_compile_features(salts_fs_fsync_fault PRIVATE c_std_11)
-  set_target_properties(salts_fs_fsync_fault PROPERTIES
+  add_library(cmeta_fs_fsync_fault SHARED cmeta_fs_fsync_fault.c)
+  target_compile_features(cmeta_fs_fsync_fault PRIVATE c_std_11)
+  set_target_properties(cmeta_fs_fsync_fault PROPERTIES
                         PREFIX ""
                         FOLDER "utils/tests")
 
-  add_executable(salts_fs_replace_fault_test
+  add_executable(cmeta_fs_replace_fault_test
                  ${SALTS_FS_REPLACE_FAULT_C})
-  target_compile_features(salts_fs_replace_fault_test PRIVATE c_std_11)
-  target_link_libraries(salts_fs_replace_fault_test PRIVATE Salts::Core)
-  set_target_properties(salts_fs_replace_fault_test
+  target_compile_features(cmeta_fs_replace_fault_test PRIVATE c_std_11)
+  target_link_libraries(cmeta_fs_replace_fault_test PRIVATE Salts::Core)
+  set_target_properties(cmeta_fs_replace_fault_test
                         PROPERTIES C_STANDARD_REQUIRED ON
                                    FOLDER "utils/tests")
   add_test(
-    NAME test_salts_fs_replace_pre_publish_fault
+    NAME test_cmeta_fs_replace_pre_publish_fault
     COMMAND ${CMAKE_COMMAND} -E env
             "SALTS_FS_TEST_FAIL_FSYNC_CALL=1"
-            "LD_PRELOAD=$<TARGET_FILE:salts_fs_fsync_fault>"
-            $<TARGET_FILE:salts_fs_replace_fault_test>)
+            "LD_PRELOAD=$<TARGET_FILE:cmeta_fs_fsync_fault>"
+            $<TARGET_FILE:cmeta_fs_replace_fault_test>)
   add_test(
-    NAME test_salts_fs_replace_post_publish_fault
+    NAME test_cmeta_fs_replace_post_publish_fault
     COMMAND ${CMAKE_COMMAND} -E env
             "SALTS_FS_TEST_FAIL_FSYNC_CALL=2"
-            "LD_PRELOAD=$<TARGET_FILE:salts_fs_fsync_fault>"
-            $<TARGET_FILE:salts_fs_replace_fault_test>)
+            "LD_PRELOAD=$<TARGET_FILE:cmeta_fs_fsync_fault>"
+            $<TARGET_FILE:cmeta_fs_replace_fault_test>)
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  foreach(tgt test_tlog_cpp test_salts_str_meta_cpp)
+  foreach(tgt test_tlog_cpp test_cmeta_str_meta_cpp)
     if(TARGET ${tgt})
       target_compile_options(${tgt} PRIVATE -Werror=old-style-cast)
     endif()
@@ -139,13 +139,13 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     -Werror=unused-variable)
 endif()
 
-if(TARGET test_salts_str_meta)
-  target_sources(test_salts_str_meta PRIVATE salts_str_meta_peer.c)
+if(TARGET test_cmeta_str_meta)
+  target_sources(test_cmeta_str_meta PRIVATE cmeta_str_meta_peer.c)
 endif()
 
-foreach(tgt test_salts_cmeta_data test_salts_cmeta_data_cpp)
+foreach(tgt test_cmeta_cmeta_data test_cmeta_cmeta_data_cpp)
   if(TARGET ${tgt})
-    target_sources(${tgt} PRIVATE salts_cmeta_data_peer.c)
+    target_sources(${tgt} PRIVATE cmeta_cmeta_data_peer.c)
   endif()
 endforeach()
 
@@ -174,7 +174,7 @@ foreach(tgt test_fmt_re2c test_fmt)
   endif()
 endforeach()
 
-foreach(tgt test_salts_str)
+foreach(tgt test_cmeta_str)
   if(TARGET ${tgt})
     target_link_libraries(${tgt} PRIVATE Salts::SDS)
   endif()

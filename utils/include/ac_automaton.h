@@ -3,7 +3,7 @@
 
 #include "platform.h"
 #include "vstr.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdbool.h>
 #include <stddef.h>

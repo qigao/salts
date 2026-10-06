@@ -1,4 +1,4 @@
-set(TARGET_NAME salts_cflow_cnet)
+set(TARGET_NAME cmeta_cflow_cnet)
 
 add_library(${TARGET_NAME}
   io_cnet_adapter.c)

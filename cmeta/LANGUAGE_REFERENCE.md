@@ -604,7 +604,7 @@ the host environment leaves them available.
 ### Static key / typed static call
 
 `<cmeta/fastpath.h>` 的 C11 `SALTS_FAST_KEY(name, initial)` 定义原子 bool，
-`salts_fast_branch(&name)` acquire 读取；enable/disable 在控制面 release 发布。
+`cmeta_fast_branch(&name)` acquire 读取；enable/disable 在控制面 release 发布。
 `cmeta_static_call(slot, default_function)` 从 FunctionDecl 生成精确类型原子槽，
 `cmeta_static_update(slot, function)` 检查签名与完整 ABI 契约后替换。
 `cmeta_static_invoke(slot, args...)` 直接调用该次读取的目标，零参数用

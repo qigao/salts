@@ -249,10 +249,10 @@ static void test_external_tls_listener_shared_progress(void) {
   server_observer.on_state = on_state;
   server_observer.user = &server_probe;
 
-  deadline = salts_monotonic_ms() + TEST_TIMEOUT_MS;
+  deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
   while ((!client_probe.connected || !server_probe.connected) &&
          !client_probe.failed && !server_probe.failed &&
-         salts_monotonic_ms() < deadline) {
+         cmeta_monotonic_ms() < deadline) {
     assert(drive_shared_once(
                &listener, &server, &client, &backend,
                25u, &listener_consumed) == SALTS_OK);
@@ -283,9 +283,9 @@ static void test_external_tls_listener_shared_progress(void) {
   assert(cnet_close(&client, outbound) == SALTS_OK);
   assert(cnet_close(&server, accepted) == SALTS_OK);
 
-  deadline = salts_monotonic_ms() + TEST_TIMEOUT_MS;
+  deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
   while ((!client_probe.terminal || !server_probe.terminal) &&
-         salts_monotonic_ms() < deadline) {
+         cmeta_monotonic_ms() < deadline) {
     assert(drive_shared_once(
                &listener, &server, &client, &backend,
                25u, NULL) == SALTS_OK);

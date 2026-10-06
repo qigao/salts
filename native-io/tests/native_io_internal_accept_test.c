@@ -18,12 +18,12 @@ typedef struct accept_probe {
 } accept_probe;
 
 typedef struct fake_impl {
-    salts_io_impl base;
+    cmeta_io_impl base;
     accept_probe *probe;
 } fake_impl;
 
 static int fake_submit_accept(
-    salts_io_impl *base,
+    cmeta_io_impl *base,
     native_io_endpoint listener,
     native_io_request *out_request) {
     fake_impl *impl = (fake_impl *)base;
@@ -38,7 +38,7 @@ static int fake_submit_accept(
 }
 
 static int fake_take_accept(
-    salts_io_impl *base,
+    cmeta_io_impl *base,
     native_io_request request,
     uintptr_t *out_transport) {
     fake_impl *impl = (fake_impl *)base;
@@ -55,7 +55,7 @@ static int fake_take_accept(
 }
 
 static void test_private_accept_seam_dispatches(void) {
-    static const salts_io_impl_ops ops = {
+    static const cmeta_io_impl_ops ops = {
         .submit_stream_accept = fake_submit_accept,
         .take_stream_accept = fake_take_accept
     };
@@ -88,8 +88,8 @@ static void test_private_accept_seam_dispatches(void) {
 }
 
 static void test_private_accept_seam_fails_closed(void) {
-    static const salts_io_impl_ops unsupported_ops = {0};
-    salts_io_impl impl = {0};
+    static const cmeta_io_impl_ops unsupported_ops = {0};
+    cmeta_io_impl impl = {0};
     native_io_backend backend = {0};
     native_io_request request = {9u, 2u};
     native_io_request out_request = {8u, 8u};

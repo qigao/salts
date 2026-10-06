@@ -1,4 +1,4 @@
-set(TARGET_NAME salts_native_io)
+set(TARGET_NAME cmeta_native_io)
 
 add_library(${TARGET_NAME} STATIC
   src/native_io.c

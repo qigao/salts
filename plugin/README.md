@@ -53,11 +53,11 @@ Managed provider 使用 `SALTS_PLUGIN_LIFECYCLE(&state,start,request_stop,is_qui
 版本与 capabilities 必须是整数常量表达式，越界、负值和浮点输入均拒绝，避免静默截断。
 缺字段、错误行形状或缺失精确 thunk 也在编译期失败。
 ID 格式、capability admission、重复 ID、state 指针与其余外来数据约束仍由
-`salts_plugin_manifest_validate()` 校验，不能绕过。
+`cmeta_plugin_manifest_validate()` 校验，不能绕过。
 
 函数入口拒绝非 NULL context，使用无 capture 的精确 native thunk；
 其存储、错误与所有权契约见 [CMeta 声明说明](../cmeta/LANGUAGE_REFERENCE.md#有限宏与精确调用声明)。
-生成的 `salts_plugin_query()` 仅在 ABI 完全相等时返回 const manifest，否则返回 NULL。
+生成的 `cmeta_plugin_query()` 仅在 ABI 完全相等时返回 const manifest，否则返回 NULL。
 ABI epoch、struct_size、lease/generation、STARTED admission、停止、quiescence 与 unload 规则不变。
 
 C 使用静态初始化的 const export 表。C++17 使用显式 CMeta `AsAbi` 声明；
@@ -68,7 +68,7 @@ C 使用静态初始化的 const export 表。C++17 使用显式 CMeta `AsAbi` �
 跨 TU 聚合通过可选 `<salts/plugin_linker.h>` 显式启用；lease 作用域入口见下文。
 普通声明继续以生成的静态数组为参考表示。
 
-正式验证包含 `salts_plugin_declaration_test`、C++ 同源用例、空导出的 passive/managed 用例、
+正式验证包含 `cmeta_plugin_declaration_test`、C++ 同源用例、空导出的 passive/managed 用例、
 C/C++ 编译失败用例、已有 loader/lifecycle 回归，以及 `cmeta/tests/installed`
 内的已安装 SDK 声明测试。
 
@@ -78,7 +78,7 @@ C/C++ 编译失败用例、已有 loader/lifecycle 回归，以及 `cmeta/tests/
 ```powershell
 cmake --preset win-dev-user -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
 cmake --build --preset win-dev-user
-ctest --preset win-dev-user -R "(^(cmeta_(pp|const|flags|layout|interface)_|salts_plugin_)|^cmeta_(header_cpp|function_(admission|reflection|header)|tinymock_(interface|function_auto_mock|cflow_clock_interface))_test$|^cflow_interface_reflection_test$)" --output-on-failure
+ctest --preset win-dev-user -R "(^(cmeta_(pp|const|flags|layout|interface)_|cmeta_plugin_)|^cmeta_(header_cpp|function_(admission|reflection|header)|tinymock_(interface|function_auto_mock|cflow_clock_interface))_test$|^cflow_interface_reflection_test$)" --output-on-failure
 ```
 
 安装验证先使用 `install-win-release-user` 构建 preset，再令 `CMETA_PACKAGE_ROOT` 指向
@@ -140,7 +140,7 @@ query 的时间/额外空间都是 O(1)，既有 manifest validation 的复杂�
 ## Lease 作用域（#977）
 
 宿主包含 `<salts/plugin_scope.h>` 并链接 `Salts::Plugin`。
-C 使用 `salts_plugin_with_lease(registry,ref,body,context)`：
+C 使用 `cmeta_plugin_with_lease(registry,ref,body,context)`：
 `registry` 和 `ref` 指定已有 provider，`body` 接收借用的 const manifest 与原样 context。
 空 body 返回 `SALTS_PLUGIN_INVALID_ARGUMENT`；acquire 失败原样返回状态且不调用 body；
 成功时调用 body 一次，释放后返回 body 状态。body 中提前 return 或返回错误均释放，
@@ -153,7 +153,7 @@ C++17 使用 `salts::plugin_lease_scope`。默认对象为空；
 显式 bool 判断是否拥有 lease。类不可复制，可以 noexcept 移动构造，移动后源对象为空；
 不提供移动赋值，避免覆盖活跃 lease 时隐藏释放失败。
 `close()` 成功后清空所有权，重复 close 成功；失败保留所有权及 manifest，允许显式处理后重试。
-析构在正常返回、提前返回与异常展开时调用既有 `salts_plugin_registry_release`。
+析构在正常返回、提前返回与异常展开时调用既有 `cmeta_plugin_registry_release`。
 完整的移动、提前返回和异常示例见 [C++ 作用域回归](tests/plugin_scope_cpp_test.cpp)。
 
 核心状态仍由 registry 拥有：scope 只独占一个 lease token 并借用 registry 的固定地址，
@@ -169,7 +169,7 @@ C++17 使用 `salts::plugin_lease_scope`。默认对象为空；
 需要检查状态的 C++ 调用者先显式 close。该策略不静默丢弃 lease，也不自动重试。
 消费者可随时退回显式 acquire/release，无公开 C ABI 或生命周期迁移。
 
-`salts_plugin_linker_test` 与 `salts_plugin_scope_cpp_test` 同时注册在 in-tree 和
+`cmeta_plugin_linker_test` 与 `cmeta_plugin_scope_cpp_test` 同时注册在 in-tree 和
 installed SDK 测试图，覆盖分片缺失、错误计数、ABI 拒绝、并存 DSO 隔离、精确调用、
 提前返回/异常、移动、停止 admission、显式释放失败和 unload 门禁。
 

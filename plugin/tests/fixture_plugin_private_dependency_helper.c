@@ -2,6 +2,6 @@
 #error "Windows private dependency fixture is Windows-only"
 #endif
 
-__declspec(dllexport) int salts_plugin_private_dependency_value(void) {
+__declspec(dllexport) int cmeta_plugin_private_dependency_value(void) {
     return 42;
 }

@@ -62,7 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V \
-            -R '^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|salts_coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_|salts_plugin_manifest_test$|cmeta_fingerprint_|cmeta_manifest_)'
+            -R '^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_|cmeta_plugin_manifest_test$|cmeta_fingerprint_|cmeta_manifest_)'
       - name: Run Windows native fastpath and capability contracts
         if: matrix.family == 'windows' && matrix.native
         shell: cmd
@@ -71,7 +71,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V -R "^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|salts_coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_|salts_plugin_manifest_test$|cmeta_fingerprint_|cmeta_manifest_|cflow_execution_test$|cflow_interface_reflection_test$|cflow_executor_dso_test$)"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V -R "^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_|cmeta_plugin_manifest_test$|cmeta_fingerprint_|cmeta_manifest_|cflow_execution_test$|cflow_interface_reflection_test$|cflow_executor_dso_test$)"
           if errorlevel 1 exit /b 1
       - name: Run portable atomics under TSan
         shell: bash
@@ -99,7 +99,7 @@ jobs:
         run: |
           set -euo pipefail
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 \
-            -R '^(salts_plugin_|cmeta_(pp|const|flags|layout)_.*)'
+            -R '^(cmeta_plugin_|cmeta_(pp|const|flags|layout)_.*)'
       - name: Run Plugin contracts on Windows
         if: matrix.family == 'windows' && matrix.plugin
         shell: cmd
@@ -108,7 +108,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -R "^(salts_plugin_|cmeta_(pp|const|flags|layout)_.*)"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -R "^(cmeta_plugin_|cmeta_(pp|const|flags|layout)_.*)"
           if errorlevel 1 exit /b 1
       - name: Run reflected CFlow contracts
         if: matrix.projection

@@ -39,14 +39,14 @@ static struct {
   atomic_size_t attempts;
   atomic_size_t finished;
   cnet_event_publish_probe probes[CNET_EVENT_TEST_PUBLISHERS];
-  salts_thread_t threads[CNET_EVENT_TEST_PUBLISHERS];
+  cmeta_thread_t threads[CNET_EVENT_TEST_PUBLISHERS];
   size_t started;
 } publishing;
 
 static void cnet_event_release_worker(void *context) {
   cnet_event_release_probe *probe = (cnet_event_release_probe *)context;
   while (!atomic_load_explicit(probe->start, memory_order_acquire))
-    salts_thread_yield();
+    cmeta_thread_yield();
   probe->status = cnet_event_queue_release(probe->queue, probe->view);
 }
 
@@ -72,7 +72,7 @@ static void cnet_event_publish_worker(void *context) {
                             NULL,
                             0u};
   while (!atomic_load_explicit(probe->start, memory_order_acquire))
-    salts_thread_yield();
+    cmeta_thread_yield();
   for (;;) {
     const int status = cnet_event_queue_publish(probe->queue, &event);
     atomic_fetch_add_explicit(probe->attempts, 1u, memory_order_release);
@@ -86,8 +86,8 @@ static void cnet_event_publish_worker(void *context) {
 static void cnet_event_join_publishers(void) {
   while (publishing.started != 0u) {
     const size_t index = publishing.started - 1u;
-    check_equal(salts_thread_join(&publishing.threads[index]), SALTS_OK);
-    salts_thread_destroy(&publishing.threads[index]);
+    check_equal(cmeta_thread_join(&publishing.threads[index]), SALTS_OK);
+    cmeta_thread_destroy(&publishing.threads[index]);
     --publishing.started;
   }
 }
@@ -273,7 +273,7 @@ spec("CNet bounded callback events") {
     atomic_bool start = false;
     cnet_event_release_probe probes[2] = {{&events, &views[0], &start, SALTS_EIO},
                                           {&events, &views[1], &start, SALTS_EIO}};
-    salts_thread_t threads[2] = {0};
+    cmeta_thread_t threads[2] = {0};
 
     check_equal(cnet_event_queue_init(&events, &config), SALTS_OK);
     check_equal(cnet_event_queue_publish(&events, &event), SALTS_OK);
@@ -281,13 +281,13 @@ spec("CNet bounded callback events") {
     check_equal(cnet_event_queue_publish(&events, &event), SALTS_OK);
     check_equal(cnet_event_queue_take(&events, &views[0]), SALTS_OK);
     check_equal(cnet_event_queue_take(&events, &views[1]), SALTS_OK);
-    check_equal(salts_thread_create(&threads[0], cnet_event_release_worker, &probes[0]), SALTS_OK);
-    check_equal(salts_thread_create(&threads[1], cnet_event_release_worker, &probes[1]), SALTS_OK);
+    check_equal(cmeta_thread_create(&threads[0], cnet_event_release_worker, &probes[0]), SALTS_OK);
+    check_equal(cmeta_thread_create(&threads[1], cnet_event_release_worker, &probes[1]), SALTS_OK);
     atomic_store_explicit(&start, true, memory_order_release);
-    check_equal(salts_thread_join(&threads[1]), SALTS_OK);
-    check_equal(salts_thread_join(&threads[0]), SALTS_OK);
-    salts_thread_destroy(&threads[1]);
-    salts_thread_destroy(&threads[0]);
+    check_equal(cmeta_thread_join(&threads[1]), SALTS_OK);
+    check_equal(cmeta_thread_join(&threads[0]), SALTS_OK);
+    cmeta_thread_destroy(&threads[1]);
+    cmeta_thread_destroy(&threads[0]);
     check_equal(probes[0].status, SALTS_OK);
     check_equal(probes[1].status, SALTS_OK);
   }
@@ -305,14 +305,14 @@ spec("CNet bounded callback events") {
     for (index = 0u; index < CNET_EVENT_TEST_PUBLISHERS; ++index) {
       publishing.probes[index] = (cnet_event_publish_probe){
           &events, &publishing.start, &publishing.attempts, &publishing.finished, SALTS_EIO};
-      check_equal(salts_thread_create(&publishing.threads[index], cnet_event_publish_worker,
+      check_equal(cmeta_thread_create(&publishing.threads[index], cnet_event_publish_worker,
                                       &publishing.probes[index]), SALTS_OK);
       ++publishing.started;
     }
     atomic_store_explicit(&publishing.start, true, memory_order_release);
     while (atomic_load_explicit(&publishing.attempts, memory_order_acquire) < MINIMUM_ATTEMPTS &&
            atomic_load_explicit(&publishing.finished, memory_order_acquire) == 0u)
-      salts_thread_yield();
+      cmeta_thread_yield();
 
     close_status = cnet_event_queue_close(&events);
     check_true(close_status == SALTS_OK || close_status == SALTS_EBUSY);
@@ -322,14 +322,14 @@ spec("CNet bounded callback events") {
     }
 
     {
-      const uint64_t deadline = salts_monotonic_ms() + 5000u;
+      const uint64_t deadline = cmeta_monotonic_ms() + 5000u;
       for (;;) {
         cnet_event_view view = {0};
         const int status = cnet_event_queue_take(&events, &view);
         if (status == SALTS_EOF) break;
         if (status == SALTS_ETIMEDOUT) {
-          check_true(salts_monotonic_ms() < deadline);
-          salts_thread_yield();
+          check_true(cmeta_monotonic_ms() < deadline);
+          cmeta_thread_yield();
           continue;
         }
         check_equal(status, SALTS_OK);
@@ -353,17 +353,17 @@ spec("CNet bounded callback events") {
                               NULL,
                               0u};
     cnet_event_wait_probe probe = {.queue = &events, .status = SALTS_EIO};
-    salts_thread_t thread = NULL;
+    cmeta_thread_t thread = NULL;
 
     atomic_init(&probe.running, true);
     atomic_init(&probe.entered, false);
     check_equal(cnet_event_queue_init(&events, &config), SALTS_OK);
-    check_equal(salts_thread_create(&thread, cnet_event_wait_worker, &probe), SALTS_OK);
+    check_equal(cmeta_thread_create(&thread, cnet_event_wait_worker, &probe), SALTS_OK);
     while (!atomic_load_explicit(&probe.entered, memory_order_acquire))
-      salts_thread_yield();
+      cmeta_thread_yield();
     check_equal(cnet_event_queue_publish(&events, &event), SALTS_OK);
-    check_equal(salts_thread_join(&thread), SALTS_OK);
-    salts_thread_destroy(&thread);
+    check_equal(cmeta_thread_join(&thread), SALTS_OK);
+    cmeta_thread_destroy(&thread);
     check_equal(probe.status, SALTS_OK);
     check_equal(probe.view.state, CNET_EVENT_STATE_CONNECTED);
     check_equal(cnet_event_queue_release(&events, &probe.view), SALTS_OK);
@@ -371,13 +371,13 @@ spec("CNet bounded callback events") {
     memset(&probe.view, 0, sizeof(probe.view));
     probe.status = SALTS_EIO;
     atomic_store_explicit(&probe.entered, false, memory_order_release);
-    check_equal(salts_thread_create(&thread, cnet_event_wait_worker, &probe), SALTS_OK);
+    check_equal(cmeta_thread_create(&thread, cnet_event_wait_worker, &probe), SALTS_OK);
     while (!atomic_load_explicit(&probe.entered, memory_order_acquire))
-      salts_thread_yield();
+      cmeta_thread_yield();
     atomic_store_explicit(&probe.running, false, memory_order_release);
     check_equal(cnet_event_queue_wake(&events), SALTS_OK);
-    check_equal(salts_thread_join(&thread), SALTS_OK);
-    salts_thread_destroy(&thread);
+    check_equal(cmeta_thread_join(&thread), SALTS_OK);
+    cmeta_thread_destroy(&thread);
     check_equal(probe.status, SALTS_ECANCELED);
     check_equal(probe.view._sequence, 0u);
   }

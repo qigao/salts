@@ -350,7 +350,7 @@ Salts is the CMake project, installed package, and exported target namespace:
 - package metadata is installed under `lib/cmake/Salts`;
 - repository presets use `SALTS_ROOT` for the installed SDK root.
 
-CSTL is the container subsystem inside Salts. Its public headers use `<cstl/...>` plus the aggregate `<cstl.h>`. Native C identifiers such as `salts_*` and `cstl_*` remain explicit and stable at their owning module boundary.
+CSTL is the container subsystem inside Salts. Its public headers use `<cstl/...>` plus the aggregate `<cstl.h>`. Native C identifiers such as `cmeta_*` and `cstl_*` remain explicit and stable at their owning module boundary.
 
 Higher-level parsers, QueryVM, crypto, filesystem/process adapters, and related utilities are maintained by salts-utils. HTTP/RPC/S3 infrastructure is maintained by CHTTP. Protocol-oriented network tooling is maintained by salts-net. Salts remains the lower-level foundation and does not depend on those repositories.
 

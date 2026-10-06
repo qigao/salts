@@ -24,7 +24,7 @@ _Static_assert(ATOMIC_POINTER_LOCK_FREE == 2,
                    "CMeta native call requires aligned 64-bit atomic target"); \
     CMETA_INLINE name_##_target_type name_##_load_native( \
         const name_##_slot_type *slot_) { \
-        return (name_##_target_type)salts_fast_target_load_native(slot_); \
+        return (name_##_target_type)cmeta_fast_target_load_native(slot_); \
     }
 #define cmeta_static_native_invoke(name_, ...) \
     name_##_load_native(&(name_))(__VA_ARGS__)

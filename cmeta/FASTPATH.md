@@ -51,8 +51,8 @@ sequence）才建立对此前数据的可见性；bool 反复切换不是版本�
 ## 公开使用
 
 `<salts/fastpath.h>` 暴露 Platform-owned static key；`<cmeta/fastpath.h>` 显式暴露 CMeta typed static-call projection。`<cmeta/meta.h>` 不暴露这些 optional runtime/control-plane 能力。C11 的
-`SALTS_FAST_KEY(name, initial)` 定义原子 gate；`salts_fast_branch(&name)`
-读取，`salts_fast_enable` / `salts_fast_disable` 发布新值，`salts_fast_key_set` 可显式
+`SALTS_FAST_KEY(name, initial)` 定义原子 gate；`cmeta_fast_branch(&name)`
+读取，`cmeta_fast_enable` / `cmeta_fast_disable` 发布新值，`cmeta_fast_key_set` 可显式
 指定状态。NULL 更新返回 `SALTS_EINVAL`；读取要求非 NULL 活对象。
 C++17 只借用 C 定义的 opaque key，通过同名读取和控制 API 访问。
 
@@ -60,7 +60,7 @@ C++17 只借用 C 定义的 opaque key，通过同名读取和控制 API 访问�
 定义槽，不能放进被多个 TU 包含的头中重复定义。默认目标需先有 `FunctionDecl`
 或 `Function0Decl`。`cmeta_static_invoke(slot, args...)` 调用精确签名；零参数用
 `cmeta_static_invoke0(slot)`，避免 C11 空 variadic 参数扩展。显式 native API 是
-`salts_fast_key_read_native`、`cmeta_static_native_invoke` / `invoke0`，仅 native
+`cmeta_fast_key_read_native`、`cmeta_static_native_invoke` / `invoke0`，仅 native
 构建暴露。默认 invoke 始终使用参考实现，开启构建选项也不改变它。
 
 `cmeta_static_update(slot, target_function)` 从同一声明取 pointer 和 ABI，编译期

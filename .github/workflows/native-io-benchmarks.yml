@@ -629,7 +629,7 @@ jobs:
         shell: bash
         env:
           SALTS_BENCH_PROFILE: ${{ fromJSON(inputs.scope).profile }}
-          CORO_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/salts_coro_executor_batch_benchmark
+          CORO_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/coro_executor_batch_benchmark
         run: |
           set -euo pipefail
           result_dir="$GITHUB_WORKSPACE/native-io-results"
@@ -663,7 +663,7 @@ jobs:
         shell: pwsh
         env:
           SALTS_BENCH_PROFILE: ${{ fromJSON(inputs.scope).profile }}
-          CORO_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/salts_coro_executor_batch_benchmark
+          CORO_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/coro_executor_batch_benchmark
         run: |
           $ErrorActionPreference = "Stop"
           $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
@@ -687,7 +687,7 @@ jobs:
         shell: bash
         env:
           SALTS_BENCH_PROFILE: ${{ fromJSON(inputs.scope).profile }}
-          CORO_DEQUEUE_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/salts_coro_executor_dequeue_batch_benchmark
+          CORO_DEQUEUE_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/coro_executor_dequeue_batch_benchmark
         run: |
           set -euo pipefail
           result_dir="$GITHUB_WORKSPACE/native-io-results"
@@ -721,7 +721,7 @@ jobs:
         shell: pwsh
         env:
           SALTS_BENCH_PROFILE: ${{ fromJSON(inputs.scope).profile }}
-          CORO_DEQUEUE_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/salts_coro_executor_dequeue_batch_benchmark
+          CORO_DEQUEUE_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/coro_executor_dequeue_batch_benchmark
         run: |
           $ErrorActionPreference = "Stop"
           $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"

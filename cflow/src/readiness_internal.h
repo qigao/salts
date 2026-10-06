@@ -4,7 +4,7 @@
 #include <cflow/readiness.h>
 
 /* Test-only observer; the owner and Source must remain live for the call. */
-salts_readiness_registration *
+cmeta_readiness_registration *
 cflow_readiness_publisher_owner_observe_registration(
     cflow_readiness_publisher_owner *owner);
 

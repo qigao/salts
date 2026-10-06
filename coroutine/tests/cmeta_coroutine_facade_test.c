@@ -37,17 +37,17 @@ typedef struct facade_state {
 static int wait_atomic_true(atomic_int *value) {
   for (int round = 0; round < FACADE_TEST_WAIT_ROUNDS; ++round) {
     if (atomic_load_explicit(value, memory_order_acquire) != 0) return 1;
-    salts_sleep_ms(FACADE_TEST_POLL_MS);
+    cmeta_sleep_ms(FACADE_TEST_POLL_MS);
   }
   return 0;
 }
 
 static int wait_until_suspended(cmeta_executor *executor) {
   for (int round = 0; round < FACADE_TEST_WAIT_ROUNDS; ++round) {
-    salts_coro_executor_stats_t stats = {0};
-    salts_coro_executor_get_stats(executor, &stats);
+    coro_executor_stats_t stats = {0};
+    coro_executor_get_stats(executor, &stats);
     if (stats.waiting_awaits == 1u) return 1;
-    salts_sleep_ms(FACADE_TEST_POLL_MS);
+    cmeta_sleep_ms(FACADE_TEST_POLL_MS);
   }
   return 0;
 }
@@ -142,13 +142,13 @@ spec("CMeta coroutine facade") {
   static int submitted;
 
   before_each() {
-    salts_coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
     state = (facade_state){0};
     submitted = 0;
     config.worker_count = FACADE_TEST_WORKERS;
     config.queue_capacity_per_worker = 2u;
     config.coroutine_pool.max_capacity = 1u;
-    state.executor = salts_coro_executor_create(&config);
+    state.executor = coro_executor_create(&config);
     check_not_null(state.executor);
   }
 
@@ -159,20 +159,20 @@ spec("CMeta coroutine facade") {
        * assertion before destroy drains and releases the executor. */
       if (submitted && wait_atomic_true(&state.handle_ready))
         (void)cmeta_wait_complete(state.executor, state.wait, SALTS_ECANCELED);
-      check_equal(salts_coro_executor_destroy(state.executor), SALTS_OK);
+      check_equal(coro_executor_destroy(state.executor), SALTS_OK);
     }
   }
 
   it("suspends and resumes on a nonzero owner shard after shutdown") {
-    salts_coro_executor_task_t task = {facade_task, NULL, facade_finalize, &state};
-    check_equal(salts_coro_executor_submit_to(state.executor, FACADE_TEST_OWNER, &task), SALTS_OK);
+    coro_executor_task_t task = {facade_task, NULL, facade_finalize, &state};
+    check_equal(coro_executor_submit_to(state.executor, FACADE_TEST_OWNER, &task), SALTS_OK);
     submitted = 1;
     check_true(wait_atomic_true(&state.handle_ready));
     atomic_store_explicit(&state.allow_wait, 1, memory_order_release);
     check_true(wait_until_suspended(state.executor));
-    check_equal(salts_coro_executor_shutdown(state.executor), SALTS_OK);
+    check_equal(coro_executor_shutdown(state.executor), SALTS_OK);
     check_equal(cmeta_wait_complete(state.executor, state.wait, SALTS_EINTR), SALTS_OK);
-    check_equal(salts_coro_executor_wait(state.executor), SALTS_OK);
+    check_equal(coro_executor_wait(state.executor), SALTS_OK);
     check_equal(state.begin_status, SALTS_OK);
     check_equal(state.yield_status, SALTS_OK);
     check_equal(state.wait_status, SALTS_OK);
@@ -183,23 +183,23 @@ spec("CMeta coroutine facade") {
     check_equal(state.after_shard, (size_t)FACADE_TEST_OWNER);
     check_equal(atomic_load_explicit(&state.finalizes, memory_order_acquire), 1);
     check_equal(cmeta_wait_complete(state.executor, state.wait, SALTS_OK), SALTS_ENOENT);
-    salts_coro_executor_stats_t stats = {0};
-    salts_coro_executor_get_stats(state.executor, &stats);
+    coro_executor_stats_t stats = {0};
+    coro_executor_get_stats(state.executor, &stats);
     check_equal(stats.active_tasks, (uint64_t)0u);
     check_equal(stats.active_awaits, (uint64_t)0u);
     check_equal(stats.waiting_awaits, (uint64_t)0u);
   }
 
   it("preserves early completion and requires consumption when abort loses") {
-    salts_coro_executor_task_t task = {facade_task, NULL, facade_finalize, &state};
+    coro_executor_task_t task = {facade_task, NULL, facade_finalize, &state};
     state.abort_before_wait = 1;
-    check_equal(salts_coro_executor_submit(state.executor, &task), SALTS_OK);
+    check_equal(coro_executor_submit(state.executor, &task), SALTS_OK);
     submitted = 1;
     check_true(wait_atomic_true(&state.handle_ready));
     check_equal(cmeta_wait_complete(state.executor, state.wait, SALTS_ECANCELED), SALTS_OK);
     check_equal(cmeta_wait_complete(state.executor, state.wait, SALTS_EIO), SALTS_EALREADY);
     atomic_store_explicit(&state.allow_wait, 1, memory_order_release);
-    check_equal(salts_coro_executor_wait(state.executor), SALTS_OK);
+    check_equal(coro_executor_wait(state.executor), SALTS_OK);
     check_equal(state.abort_status, SALTS_EALREADY);
     check_equal(state.wait_status, SALTS_OK);
     check_equal(state.completion_status, SALTS_ECANCELED);
@@ -207,15 +207,15 @@ spec("CMeta coroutine facade") {
   }
 
   it("routes external completion to a suspended timed wait") {
-    salts_coro_executor_task_t task = {facade_task, NULL, facade_finalize, &state};
+    coro_executor_task_t task = {facade_task, NULL, facade_finalize, &state};
     state.timeout_ms = FACADE_TEST_DEADLINE_MS;
-    check_equal(salts_coro_executor_submit_to(state.executor, FACADE_TEST_OWNER, &task), SALTS_OK);
+    check_equal(coro_executor_submit_to(state.executor, FACADE_TEST_OWNER, &task), SALTS_OK);
     submitted = 1;
     check_true(wait_atomic_true(&state.handle_ready));
     atomic_store_explicit(&state.allow_wait, 1, memory_order_release);
     check_true(wait_until_suspended(state.executor));
     check_equal(cmeta_wait_complete(state.executor, state.wait, SALTS_EIO), SALTS_OK);
-    check_equal(salts_coro_executor_wait(state.executor), SALTS_OK);
+    check_equal(coro_executor_wait(state.executor), SALTS_OK);
     check_equal(state.wait_status, SALTS_OK);
     check_equal(state.completion_status, SALTS_EIO);
     check_equal(state.after_shard, (size_t)FACADE_TEST_OWNER);
@@ -223,12 +223,12 @@ spec("CMeta coroutine facade") {
   }
 
   it("returns timeout as operation status and rejects late completion") {
-    salts_coro_executor_task_t task = {facade_task, NULL, facade_finalize, &state};
+    coro_executor_task_t task = {facade_task, NULL, facade_finalize, &state};
     state.timeout_ms = FACADE_TEST_TIMEOUT_MS;
     atomic_store_explicit(&state.allow_wait, 1, memory_order_release);
-    check_equal(salts_coro_executor_submit_to(state.executor, FACADE_TEST_OWNER, &task), SALTS_OK);
+    check_equal(coro_executor_submit_to(state.executor, FACADE_TEST_OWNER, &task), SALTS_OK);
     submitted = 1;
-    check_equal(salts_coro_executor_wait(state.executor), SALTS_OK);
+    check_equal(coro_executor_wait(state.executor), SALTS_OK);
     check_equal(state.begin_status, SALTS_OK);
     check_equal(state.wait_status, SALTS_OK);
     check_equal(state.completion_status, SALTS_ETIMEDOUT);
@@ -239,10 +239,10 @@ spec("CMeta coroutine facade") {
 
   it("reuses the sole wait slot without accepting an aborted generation") {
     reuse_state reuse = {0};
-    salts_coro_executor_task_t task = {reuse_task, NULL, NULL, &reuse};
+    coro_executor_task_t task = {reuse_task, NULL, NULL, &reuse};
     reuse.executor = state.executor;
-    check_equal(salts_coro_executor_submit(state.executor, &task), SALTS_OK);
-    check_equal(salts_coro_executor_wait(state.executor), SALTS_OK);
+    check_equal(coro_executor_submit(state.executor, &task), SALTS_OK);
+    check_equal(coro_executor_wait(state.executor), SALTS_OK);
     check_equal(reuse.first_begin, SALTS_OK);
     check_equal(reuse.zero_timeout, SALTS_EINVAL);
     check_equal(reuse.zero_timeout_output, 0);
@@ -267,17 +267,17 @@ spec("CMeta coroutine facade") {
   }
 
   it("rejects completion through another executor without consuming the wait") {
-    salts_coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
-    salts_coro_executor_task_t task = {facade_task, NULL, facade_finalize, &state};
+    coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    coro_executor_task_t task = {facade_task, NULL, facade_finalize, &state};
     config.worker_count = 1u;
     config.coroutine_pool.max_capacity = 1u;
-    cmeta_executor *other = salts_coro_executor_create(&config);
+    cmeta_executor *other = coro_executor_create(&config);
     check_not_null(other);
-    check_equal(salts_coro_executor_submit(state.executor, &task), SALTS_OK);
+    check_equal(coro_executor_submit(state.executor, &task), SALTS_OK);
     submitted = 1;
     check_true(wait_atomic_true(&state.handle_ready));
     int status = cmeta_wait_complete(other, state.wait, SALTS_EIO);
-    check_equal(salts_coro_executor_destroy(other), SALTS_OK);
+    check_equal(coro_executor_destroy(other), SALTS_OK);
     check_equal(status, SALTS_EINVAL);
     status = SALTS_EIO;
     check_equal(cmeta_wait(state.wait, &status), SALTS_EINVAL);
@@ -285,7 +285,7 @@ spec("CMeta coroutine facade") {
     check_equal(cmeta_wait_abort(state.wait), SALTS_EINVAL);
     check_equal(cmeta_wait_complete(state.executor, state.wait, SALTS_OK), SALTS_OK);
     atomic_store_explicit(&state.allow_wait, 1, memory_order_release);
-    check_equal(salts_coro_executor_wait(state.executor), SALTS_OK);
+    check_equal(coro_executor_wait(state.executor), SALTS_OK);
     check_equal(state.wait_status, SALTS_OK);
     check_equal(state.completion_status, SALTS_OK);
   }

@@ -85,8 +85,8 @@ typedef struct central_event_mailbox {
    * thread is the sole consumer across all rings.
    */
   disruptor_t *rings[CENTRAL_LANES];
-  salts_mutex_t mutex;
-  salts_cond_t available;
+  cmeta_mutex_t mutex;
+  cmeta_cond_t available;
   atomic_size_t pending;
   atomic_uint_fast64_t published;
   atomic_uint_fast64_t rejected;
@@ -391,13 +391,13 @@ static int central_event_mailbox_init(central_event_mailbox *mailbox) {
 
   if (mailbox == NULL) return SALTS_EINVAL;
   memset(mailbox, 0, sizeof(*mailbox));
-  salts_mutex_init(&mailbox->mutex);
-  salts_cond_init(&mailbox->available);
+  cmeta_mutex_init(&mailbox->mutex);
+  cmeta_cond_init(&mailbox->available);
   if (mailbox->mutex == NULL || mailbox->available == NULL) {
     if (mailbox->available != NULL)
-      salts_cond_destroy(&mailbox->available);
+      cmeta_cond_destroy(&mailbox->available);
     if (mailbox->mutex != NULL)
-      salts_mutex_destroy(&mailbox->mutex);
+      cmeta_mutex_destroy(&mailbox->mutex);
     memset(mailbox, 0, sizeof(*mailbox));
     return SALTS_ENOMEM;
   }
@@ -407,8 +407,8 @@ static int central_event_mailbox_init(central_event_mailbox *mailbox) {
     if (mailbox->rings[shard] == NULL) {
       for (size_t initialized = 0u; initialized < shard; ++initialized)
         disruptor_destroy(mailbox->rings[initialized]);
-      salts_cond_destroy(&mailbox->available);
-      salts_mutex_destroy(&mailbox->mutex);
+      cmeta_cond_destroy(&mailbox->available);
+      cmeta_mutex_destroy(&mailbox->mutex);
       memset(mailbox, 0, sizeof(*mailbox));
       return SALTS_ENOMEM;
     }
@@ -425,9 +425,9 @@ static void central_event_mailbox_destroy(
     central_event_mailbox *mailbox) {
   if (mailbox == NULL) return;
   if (mailbox->available != NULL)
-    salts_cond_destroy(&mailbox->available);
+    cmeta_cond_destroy(&mailbox->available);
   if (mailbox->mutex != NULL)
-    salts_mutex_destroy(&mailbox->mutex);
+    cmeta_mutex_destroy(&mailbox->mutex);
   for (size_t shard = 0u; shard < CENTRAL_LANES; ++shard) {
     if (mailbox->rings[shard] != NULL)
       disruptor_destroy(mailbox->rings[shard]);
@@ -489,9 +489,9 @@ static int central_event_sink(
   atomic_fetch_add_explicit(
       &mailbox->published, 1u, memory_order_relaxed);
 
-  salts_mutex_lock(&mailbox->mutex);
-  salts_cond_signal(&mailbox->available);
-  salts_mutex_unlock(&mailbox->mutex);
+  cmeta_mutex_lock(&mailbox->mutex);
+  cmeta_cond_signal(&mailbox->available);
+  cmeta_mutex_unlock(&mailbox->mutex);
   return SALTS_OK;
 }
 
@@ -527,13 +527,13 @@ static int central_event_take_wait(
       }
     }
 
-    if (salts_monotonic_ms() >= deadline_ms)
+    if (cmeta_monotonic_ms() >= deadline_ms)
       return SALTS_ETIMEDOUT;
 
-    salts_mutex_lock(&mailbox->mutex);
+    cmeta_mutex_lock(&mailbox->mutex);
     if (atomic_load_explicit(
             &mailbox->pending, memory_order_acquire) == 0u) {
-      const uint64_t now = salts_monotonic_ms();
+      const uint64_t now = cmeta_monotonic_ms();
       const uint64_t remaining_ms =
           deadline_ms > now ? deadline_ms - now : 0u;
       const uint64_t timeout_ns =
@@ -541,13 +541,13 @@ static int central_event_take_wait(
               ? UINT64_MAX
               : remaining_ms * UINT64_C(1000000);
       if (timeout_ns == 0u) {
-        salts_mutex_unlock(&mailbox->mutex);
+        cmeta_mutex_unlock(&mailbox->mutex);
         return SALTS_ETIMEDOUT;
       }
-      (void)salts_cond_timedwait(
+      (void)cmeta_cond_timedwait(
           &mailbox->available, &mailbox->mutex, timeout_ns);
     }
-    salts_mutex_unlock(&mailbox->mutex);
+    cmeta_mutex_unlock(&mailbox->mutex);
   }
 }
 
@@ -687,7 +687,7 @@ static int central_start_lane_sample(
   lane->receive_done = false;
   lane->receive_offset = 0u;
   lane->current_sample = sample;
-  lane->started_ns = salts_hrtime();
+  lane->started_ns = cmeta_hrtime();
   lane->latencies = latencies;
   if (latencies != NULL) latencies[sample] = 0u;
   return central_publish_send(lane);
@@ -743,7 +743,7 @@ static int central_handle_event(
     if (lane->receive_offset == lane->payload_size) {
       if (lane->latencies != NULL)
         lane->latencies[lane->current_sample] =
-            salts_hrtime() - lane->started_ns;
+            cmeta_hrtime() - lane->started_ns;
       lane->receive_done = true;
       lane->receive_offset = 0u;
       if (measuring)
@@ -770,7 +770,7 @@ static int central_run_phase(
   size_t total_completed = 0u;
   const size_t target = CENTRAL_LANES * samples;
   const uint64_t deadline =
-      salts_monotonic_ms() + CENTRAL_TIMEOUT_MS * 4u;
+      cmeta_monotonic_ms() + CENTRAL_TIMEOUT_MS * 4u;
   int status;
 
   for (size_t lane = 0u; lane < CENTRAL_LANES; ++lane) {
@@ -818,7 +818,7 @@ static int central_wait_connected(
     central_event_mailbox *events) {
   size_t connected = 0u;
   const uint64_t deadline =
-      salts_monotonic_ms() + CENTRAL_TIMEOUT_MS * 2u;
+      cmeta_monotonic_ms() + CENTRAL_TIMEOUT_MS * 2u;
 
   while (connected < CENTRAL_LANES) {
     central_event_entry event = {0};
@@ -851,7 +851,7 @@ static int central_close_connections(
     central_event_mailbox *events) {
   size_t terminals = 0u;
   const uint64_t deadline =
-      salts_monotonic_ms() + CENTRAL_TIMEOUT_MS * 2u;
+      cmeta_monotonic_ms() + CENTRAL_TIMEOUT_MS * 2u;
 
   for (size_t lane = 0u; lane < CENTRAL_LANES; ++lane) {
     const central_command close = {
@@ -935,9 +935,9 @@ static int central_close_connections(
   for (size_t lane = 0u; lane < CENTRAL_LANES; ++lane) {
     while (!atomic_load_explicit(
         &lanes[lane].recycled, memory_order_acquire)) {
-      if (salts_monotonic_ms() >= deadline)
+      if (cmeta_monotonic_ms() >= deadline)
         return SALTS_ETIMEDOUT;
-      salts_sleep_ms(1u);
+      cmeta_sleep_ms(1u);
     }
     {
       const int status = atomic_load_explicit(
@@ -1189,13 +1189,13 @@ static int central_run_repeat(
 
   atomic_store_explicit(
       &measure_owner_cpu, true, memory_order_release);
-  wall_started = salts_hrtime();
+  wall_started = cmeta_hrtime();
   central_cpu_started = central_thread_cpu_ns();
   stage = "measure";
   status = central_run_phase(
       lanes, &events, CENTRAL_SAMPLES, true, latencies, &event_hops);
   central_cpu_ns = central_thread_cpu_ns() - central_cpu_started;
-  wall_ns = salts_hrtime() - wall_started;
+  wall_ns = cmeta_hrtime() - wall_started;
   atomic_store_explicit(
       &measure_owner_cpu, false, memory_order_release);
   if (status != SALTS_OK) goto cleanup;

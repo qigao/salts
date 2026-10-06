@@ -44,7 +44,7 @@ static plugin_lifecycle_test_api fixture_api = {
     &fixture_state, &lifecycle_fixture_api_impl_vtable
 };
 
-static salts_plugin_status SALTS_PLUGIN_CALL
+static cmeta_plugin_status SALTS_PLUGIN_CALL
 fixture_start(void *self) {
     lifecycle_fixture_state *state = (lifecycle_fixture_state *)self;
     atomic_store(&state->stopping, false);
@@ -52,7 +52,7 @@ fixture_start(void *self) {
     return SALTS_PLUGIN_OK;
 }
 
-static salts_plugin_status SALTS_PLUGIN_CALL
+static cmeta_plugin_status SALTS_PLUGIN_CALL
 fixture_request_stop(void *self) {
     lifecycle_fixture_state *state = (lifecycle_fixture_state *)self;
     atomic_store(&state->stopping, true);

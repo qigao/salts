@@ -3,11 +3,11 @@
 #include <dlfcn.h>
 #include <string.h>
 
-_Static_assert(sizeof(void *) == sizeof(salts_plugin_query_fn),
+_Static_assert(sizeof(void *) == sizeof(cmeta_plugin_query_fn),
                "POSIX dlsym representation must fit plugin query pointer");
 
-salts_plugin_status salts_plugin_platform_close(
-    salts_plugin_library *library) {
+cmeta_plugin_status cmeta_plugin_platform_close(
+    cmeta_plugin_library *library) {
     void *handle;
 
     if (library == NULL || library->handle == NULL)
@@ -21,10 +21,10 @@ salts_plugin_status salts_plugin_platform_close(
     return SALTS_PLUGIN_OK;
 }
 
-salts_plugin_status salts_plugin_platform_open(
+cmeta_plugin_status cmeta_plugin_platform_open(
     const char *path,
-    salts_plugin_library *out_library,
-    salts_plugin_query_fn *out_query) {
+    cmeta_plugin_library *out_library,
+    cmeta_plugin_query_fn *out_query) {
     void *handle;
     void *symbol;
     const char *error;
@@ -43,9 +43,9 @@ salts_plugin_status salts_plugin_platform_open(
     symbol = dlsym(handle, SALTS_PLUGIN_QUERY_SYMBOL);
     error = dlerror();
     if (error != NULL || symbol == NULL) {
-        salts_plugin_library cleanup = {handle};
-        salts_plugin_status cleanup_status =
-            salts_plugin_platform_close(&cleanup);
+        cmeta_plugin_library cleanup = {handle};
+        cmeta_plugin_status cleanup_status =
+            cmeta_plugin_platform_close(&cleanup);
         return cleanup_status == SALTS_PLUGIN_OK
             ? SALTS_PLUGIN_QUERY_MISSING
             : cleanup_status;

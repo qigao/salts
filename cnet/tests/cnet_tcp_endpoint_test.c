@@ -264,7 +264,7 @@ int main(void) {
              &client_observer, &connection) == SALTS_OK);
   assert(outbound.impl == NULL);
 
-  deadline = salts_monotonic_ms() + TEST_TIMEOUT_MS;
+  deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
   while (!accepted_done ||
          atomic_load_explicit(
              &client_probe.connected, memory_order_acquire) == 0 ||
@@ -288,7 +288,7 @@ int main(void) {
         assert(status == SALTS_ETIMEDOUT);
     }
 
-    assert(salts_monotonic_ms() < deadline);
+    assert(cmeta_monotonic_ms() < deadline);
   }
 
   assert(atomic_load_explicit(
@@ -493,14 +493,14 @@ int main(void) {
   assert(send_one_byte(
              &client, connection) == SALTS_ESHUTDOWN);
 
-  deadline = salts_monotonic_ms() + TEST_TIMEOUT_MS;
+  deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
   while (atomic_load_explicit(
              &client_probe.sent, memory_order_acquire) == 0) {
     size_t events = 0u;
     assert(cnet_client_poll(&client, 1u, &events) == SALTS_OK);
     assert(cnet_client_poll(
                &accepted_client, 0u, &events) == SALTS_OK);
-    assert(salts_monotonic_ms() < deadline);
+    assert(cmeta_monotonic_ms() < deadline);
   }
   /*
    * Receive shutdown is a local contract: no further receive event may be
@@ -520,7 +520,7 @@ int main(void) {
   assert(cnet_close(&client, connection) == SALTS_OK);
   assert(cnet_close(&accepted_client, accepted) == SALTS_OK);
 
-  deadline = salts_monotonic_ms() + TEST_TIMEOUT_MS;
+  deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
   while (atomic_load_explicit(
              &client_probe.terminal, memory_order_acquire) == 0 ||
          atomic_load_explicit(
@@ -529,7 +529,7 @@ int main(void) {
     assert(cnet_client_poll(&client, 1u, &events) == SALTS_OK);
     assert(cnet_client_poll(
                &accepted_client, 1u, &events) == SALTS_OK);
-    assert(salts_monotonic_ms() < deadline);
+    assert(cmeta_monotonic_ms() < deadline);
   }
 
   assert(cnet_connection_local_peer(

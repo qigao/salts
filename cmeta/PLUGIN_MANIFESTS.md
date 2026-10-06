@@ -48,7 +48,7 @@ DSL 支持非空的 1..16 个 role row，通过既有 `CMETA_PP_FOR_EACH` 展开
 
 ## 状态归属、错误与兼容性
 
-Declaration 是显式 discovery set，不声明 runtime exports 的全集，不授予执行或所有权。`Salts::Plugin` 的 `export_id`、`contract_id`、`contract_version`、capability bits、ABI 4 admission、start/stop 和 lease 继续由 Plugin owner 管理。应用显式选择 provider，再用现有 `salts_plugin_export_require_interface` 验证 domain ID/version/capabilities 和 canonical descriptor。CMeta 不选择 provider、不加载模块、不推进生命周期，也不实现第二个依赖 resolver 或 ownership registry。
+Declaration 是显式 discovery set，不声明 runtime exports 的全集，不授予执行或所有权。`Salts::Plugin` 的 `export_id`、`contract_id`、`contract_version`、capability bits、ABI 4 admission、start/stop 和 lease 继续由 Plugin owner 管理。应用显式选择 provider，再用现有 `cmeta_plugin_export_require_interface` 验证 domain ID/version/capabilities 和 canonical descriptor。CMeta 不选择 provider、不加载模块、不推进生命周期，也不实现第二个依赖 resolver 或 ownership registry。
 
 若应用需要跨模块消费 declaration，可像正式 fixture 一样通过现有 FUNCTION export 发布 exact getter：它返回 BORROWED 的 `const cmeta_manifest *`，并具有 canonical FunctionAbi。Provider 的 C/C++ static table 无需 constructor；原 Plugin query 仍只接受 ABI 4。Host 在持有原 lease 时查找并校验 getter contract、执行确切 bridge、查询 declaration、校验所选 provider，最后释放 lease。一个 lease 覆盖 descriptor、interface handle、callback 和指纹读取的整个借用期；复制 descriptor 或返回指针不会延长该期。
 
@@ -59,7 +59,7 @@ Declaration 是显式 discovery set，不声明 runtime exports 的全集，不�
 ## 正式验证
 
 - `cmeta_plugin_test` / `cmeta_plugin_cpp_test`：direct canonical linkage、typed discovery、roles/order、跨 TU、budget、失败输出和固定向量；错误类型有 C/C++ compile-fail。
-- `salts_plugin_manifest_test`：真实 C/C++ metadata 模块，在 ABI 4 和 exact getter contract 校验后读取同一 schema；两个模块均得到 domain 6 固定向量 `5aa1c2c29cbe9f20`。该向量由 `FingerprintService` 的 [`FINGERPRINTS.md`](FINGERPRINTS.md) interface row、PROVIDES/REQUIRES 两行独立计算。
+- `cmeta_plugin_manifest_test`：真实 C/C++ metadata 模块，在 ABI 4 和 exact getter contract 校验后读取同一 schema；两个模块均得到 domain 6 固定向量 `5aa1c2c29cbe9f20`。该向量由 `FingerprintService` 的 [`FINGERPRINTS.md`](FINGERPRINTS.md) interface row、PROVIDES/REQUIRES 两行独立计算。
 - 同一集成测试检查 active lease 仍为 1、callbacks_inflight 为 0、状态仍 STARTED；request_stop 后 lease 阻止卸载，释放后可卸载。Required capability 通过显式选定模块的既有 Plugin contract API 校验，缺失 export 或错误 version 明确失败。
 - GCC、GCC ASan、MSVC、ClangCL、AppleClang CI 运行上述用例；原 Plugin loader/lifecycle/contract 回归继续运行。正式 installed Reflection C/C++ tests 只链接 `Salts::CMeta` 与 TinyTest，实际发现、查询并 fingerprint declaration。
 

@@ -20,7 +20,7 @@ typedef struct reservation_context {
 static void reserve_concurrently(void *user) {
   reservation_context *context = (reservation_context *)user;
   while (!atomic_load_explicit(context->go, memory_order_acquire))
-    salts_thread_yield();
+    cmeta_thread_yield();
   context->status = cnet_session_table_reserve(context->table, &context->handle);
 }
 
@@ -104,7 +104,7 @@ spec("CNet session state core") {
     }
 
     it("assigns unique bounded handles to concurrent admission producers") {
-      salts_thread_t threads[TEST_RESERVATION_PRODUCERS] = {0};
+      cmeta_thread_t threads[TEST_RESERVATION_PRODUCERS] = {0};
       reservation_context contexts[TEST_RESERVATION_PRODUCERS] = {0};
       atomic_bool go;
       size_t index;
@@ -116,12 +116,12 @@ spec("CNet session state core") {
         contexts[index].table = &table;
         contexts[index].go = &go;
         contexts[index].status = SALTS_EIO;
-        check_equal(salts_thread_create(&threads[index], reserve_concurrently, &contexts[index]),
+        check_equal(cmeta_thread_create(&threads[index], reserve_concurrently, &contexts[index]),
                     SALTS_OK);
       }
       atomic_store_explicit(&go, true, memory_order_release);
       for (index = 0u; index < TEST_RESERVATION_PRODUCERS; ++index) {
-        check_equal(salts_thread_join(&threads[index]), SALTS_OK);
+        check_equal(cmeta_thread_join(&threads[index]), SALTS_OK);
         check_equal(contexts[index].status, SALTS_OK);
         check_true(cnet_session_handle_valid(contexts[index].handle));
         for (other = 0u; other < index; ++other)

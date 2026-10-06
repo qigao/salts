@@ -740,7 +740,7 @@ consumers built against an older header must be rebuilt and relinked.
 Those contextual bindings introduced component library version `2.0.0` and
 shared-library ABI identity `2`. The execution-hook extension below appends to
 `cflow_statechart_instance_config`, so this release advances CFlow to `3.0.0`
-and shared ABI identity `3`; Windows shared builds use the `salts_cflow-3`
+and shared ABI identity `3`; Windows shared builds use the `cmeta_cflow-3`
 basename so an older DLL cannot satisfy the new configuration ABI.
 The exported CMake target name is `Salts::CFlow`.
 
@@ -1543,7 +1543,7 @@ int main(void) {
         if (cflow_io_file_run_ready(&file, 64u, &progressed) != SALTS_OK)
             return 3;
         if (progressed == 0u)
-            salts_thread_yield();
+            cmeta_thread_yield();
     }
     if (cflow_io_file_close(&file) != SALTS_OK)
         return 4;
@@ -1552,7 +1552,7 @@ int main(void) {
         if (cflow_io_file_run_ready(&file, 64u, &progressed) != SALTS_OK)
             return 5;
         if (progressed == 0u)
-            salts_thread_yield();
+            cmeta_thread_yield();
     }
     if (cflow_io_file_destroy(&file) != SALTS_OK)
         return 6;
