@@ -3,6 +3,7 @@
 #include <salts/spsc_ring.h>
 #include <salts/thread_pool.h>
 #include <salts/rcu.h>
+#include <salts/typed_rcu.h>
 #include <type_traits>
 
 static_assert(std::is_same_v<disruptor_stage_t, uint32_t>);

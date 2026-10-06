@@ -23,20 +23,27 @@
 | Core：typed carrier、projection 与协议 | `collector.h`, `compute.h`, `container.h`, `contract.h`, `entry.h`, `fixed_array.h`, `generic.h`, `infer.h`, `invokable.h`, `policy.h`, `range.h`, `relations.h`, `value.h`, `vector.h` |
 | Core aggregate | `meta.h` |
 | Structured-C | `scope.h`；`struct.h` 内的 intrusive projection 只增加静态 owner/member/type 检查，不拥有容器运行期 |
-| Optional metadata/type facade | `atomic.h`, `rcu.h`, `local.h`, `pool.h`, `fastpath.h`, `trace.h` |
+| Optional metadata/type facade | `local.h`, `pool.h`, `fastpath.h`, `trace.h` |
 
 ## 可选 facade 的 owner
 
 | Facade | CMeta 增加的语义 | 机制 owner 与边界 |
 |---|---|---|
-| Atomic | finite generic exact type construction | C11 atomic；memory-order validator 的归属仍由 #957 后续收窄，不进入 core aggregate |
-| RCU | typed value/guard/reclaim projection | `Salts::Concurrency`；不实现回收算法、不销毁 provider 对象 |
+| Atomic（已移出） | 不消费 metadata/lifecycle | `Salts::Concurrency` 的 `<salts/atomic.h>`；声明、order validator 和 SALTS 错误语义由同一 owner 提供 |
+| RCU（已移出） | native Type/guard projection 不需 CMeta | `Salts::Concurrency` 的 `<salts/typed_rcu.h>`；只调用 salts_rcu，不增加回收算法或析构语义 |
 | Local | DataDesc 生命周期 binding | `Salts::Platform` thread identity；TLS 不运行构造/析构，owner 在退出前显式销毁 |
 | Pool | typed DataDesc 初始化/清理与借用 | Core `object_pool`；分配、lease/thread policy 的进一步分离仍由 #957 跟踪 |
 | Static call | FunctionAbi exact contract validation | `Salts::Platform` key/atomic/native acquire-load；无 JIT、patch、runtime Reflection 查找 |
 | Trace | exact typed payload 与 canonical Struct metadata | `Salts::Platform` gate；backend 生命周期及同步归调用方 |
 
 `likely/unlikely` 与 generic compiler/bit/array-count helpers 不新增 CMeta spelling。CMeta 不选择调度、线程放置、分配增长、模块保留、重试、阻塞或进程终止策略。未完成的 owner 拆分不视为 #957 已验收；安装包与新的 manifest view 也不替代 #926 后续完整 fingerprint/Plugin 验收。
+
+Atomic/RCU 迁移（HIGH）：移除旧 CMeta header 与 generic kind，不保留 forwarding alias；
+consumer 改用 Concurrency 原生声明，Atomic 状态改为 SALTS_OK/SALTS_EINVAL。
+机制、native 存储、RCU 容量/锁/回收与发布顺序不变。正式 owner 测试只链接
+Concurrency/TinyTest；C/C++、完整 memory-order 矩阵、原 RCU 并发测试及 CMeta
+Pool/Local 相邻回归验证迁移。具体协议见
+[`TYPED_PRIMITIVES.md`](../concurrency/TYPED_PRIMITIVES.md)。Local/Pool 的 owner 拆分仍待完成。
 
 ## 安装包的正式 Reflection 验证
 

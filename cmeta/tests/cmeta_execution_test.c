@@ -1,7 +1,6 @@
 #include <cmeta/pool.h>
 #include <cmeta/local.h>
-#include <cmeta/atomic.h>
-#include <cmeta/rcu.h>
+#include <stdatomic.h>
 #include <cstl/typed.h>
 #include "tinytest.h"
 #include <stdlib.h>
@@ -45,10 +44,6 @@ static const cmeta_data_desc value_data = {
 static const cmeta_data_desc *ExecutionValue_cmeta_data(void) { return &value_data; }
 cmeta_type(Pool, ValuePool, ExecutionValue);
 cmeta_type(Local, ValueLocal, ExecutionValue);
-cmeta_type(Atomic, IntAtomic, int);
-typedef int *IntPointer;
-cmeta_type(Atomic, PointerAtomic, IntPointer);
-cmeta_type(Rcu, IntRcu, int);
 cmeta_type(Vec, ExecutionVec, int);
 cmeta_type(Pool, VecPool, ExecutionVec);
 static cmeta_thread_local(ValueLocal, tls_value);
@@ -76,17 +71,6 @@ static void exercise_local(void *arg) {
         ctx->destroy = ValueLocal_destroy(&tls_value);
     }
 }
-typedef struct publication { IntAtomic ready; int payload; int seen; } publication;
-static void acquire_payload(void *arg) {
-    publication *ctx = arg;
-    int ready = 0;
-    while (ready == 0) {
-        if (IntAtomic_load(&ctx->ready, memory_order_acquire, &ready) != CMETA_OK) return;
-        salts_thread_yield();
-    }
-    ctx->seen = ctx->payload;
-}
-
 spec("CMeta execution primitives") {
     it("reuses slots holding a real CSTL owned vector through canonical lifecycle") {
         VecPool pool = {0}; VecPool_lease lease = {0};
@@ -219,84 +203,5 @@ spec("CMeta execution primitives") {
         check_equal(ValueLocal_get(&tls_value)->value, 10);
         check_equal(ValueLocal_destroy(&tls_value), CMETA_OK);
         check_equal(ValuePool_destroy(&pool), CMETA_OK);
-    }
-    it("checks atomic orders and native compare-exchange expected-value semantics") {
-        IntAtomic value; PointerAtomic pointer;
-        int out = 77, expected = 3, first = 1, second = 2;
-        IntPointer pointer_expected = &first, pointer_out = NULL;
-        bool exchanged = false, lock_free;
-        check_equal(IntAtomic_init(&value, 4), CMETA_OK);
-        check_equal(IntAtomic_load(&value, memory_order_release, &out), CMETA_INVALID_ARGUMENT);
-        check_equal(out, 77);
-        check_equal(IntAtomic_store(&value, 9, memory_order_acquire), CMETA_INVALID_ARGUMENT);
-        check_equal(IntAtomic_exchange(&value, 9, (memory_order)99, &out), CMETA_INVALID_ARGUMENT);
-        check_equal(IntAtomic_compare_exchange(&value, &expected, 5,
-            memory_order_release, memory_order_acquire, &exchanged), CMETA_INVALID_ARGUMENT);
-        check_equal(expected, 3);
-        check_equal(IntAtomic_compare_exchange(&value, &expected, 5,
-            memory_order_acq_rel, memory_order_acquire, &exchanged), CMETA_OK);
-        check_false(exchanged); check_equal(expected, 4);
-        check_equal(IntAtomic_compare_exchange(&value, &expected, 5,
-            memory_order_acq_rel, memory_order_acquire, &exchanged), CMETA_OK);
-        check_true(exchanged);
-        check_equal(IntAtomic_exchange(&value, 6, memory_order_relaxed, &out), CMETA_OK);
-        check_equal(out, 5);
-        check_equal(IntAtomic_is_lock_free(&value, &lock_free), CMETA_OK);
-        check_equal(PointerAtomic_init(&pointer, &first), CMETA_OK);
-        check_equal(PointerAtomic_compare_exchange(&pointer, &pointer_expected, &second,
-            memory_order_release, memory_order_relaxed, &exchanged), CMETA_OK);
-        check_true(exchanged);
-        check_equal(PointerAtomic_load(&pointer, memory_order_acquire, &pointer_out), CMETA_OK);
-        check_true(pointer_out == &second);
-    }
-    it("publishes payload through explicit release/acquire and exposes typed RCU ownership") {
-        publication ctx = {0}; salts_thread_t thread = NULL;
-        IntRcu domain = {0}; IntRcu_guard guard = {0};
-        int first = 1, second = 2; int *out = NULL;
-        check_equal(IntAtomic_init(&ctx.ready, 0), CMETA_OK);
-        check_equal(salts_thread_create(&thread, acquire_payload, &ctx), 0);
-        ctx.payload = 42;
-        check_equal(IntAtomic_store(&ctx.ready, 1, memory_order_release), CMETA_OK);
-        if (thread != NULL) check_equal(salts_thread_join(&thread), 0);
-        check_equal(ctx.seen, 42);
-        check_equal(IntRcu_init(&domain, &first, 1), SALTS_OK);
-        check_equal(IntRcu_read_lock(&domain, &guard), SALTS_OK);
-        check_equal(IntRcu_replace(&domain, &second), SALTS_OK);
-        check_equal(*IntRcu_load(&guard), 1);
-        check_equal(IntRcu_try_reclaim(&domain, &out), SALTS_EBUSY);
-        check_null(out);
-        check_equal(IntRcu_read_unlock(&guard), SALTS_OK);
-        check_equal(IntRcu_try_reclaim(&domain, &out), SALTS_OK);
-        check_true(out == &first);
-        check_equal(IntRcu_close(&domain), SALTS_OK);
-        check_equal(IntRcu_destroy(&domain, &out), SALTS_OK);
-        check_true(out == &second);
-    }
-    it("admits exactly the C11 compare-exchange success/failure order pairs") {
-        enum { ORDER_COUNT = 6 };
-        const memory_order orders[ORDER_COUNT] = {
-            memory_order_relaxed, memory_order_consume, memory_order_acquire,
-            memory_order_release, memory_order_acq_rel, memory_order_seq_cst
-        };
-        const bool admitted[ORDER_COUNT][ORDER_COUNT] = {
-            {true, false, false, false, false, false},
-            {true, true, false, false, false, false},
-            {true, true, true, false, false, false},
-            {true, false, false, false, false, false},
-            {true, true, true, false, false, false},
-            {true, true, true, false, false, true}
-        };
-        for (size_t success = 0; success < ORDER_COUNT; ++success) {
-            for (size_t failure = 0; failure < ORDER_COUNT; ++failure) {
-                IntAtomic value;
-                int expected = 1;
-                bool exchanged = false;
-                check_equal(IntAtomic_init(&value, 1), CMETA_OK);
-                check_equal(IntAtomic_compare_exchange(&value, &expected, 2,
-                    orders[success], orders[failure], &exchanged),
-                    admitted[success][failure] ? CMETA_OK : CMETA_INVALID_ARGUMENT);
-                check_equal(exchanged, admitted[success][failure]);
-            }
-        }
     }
 }
