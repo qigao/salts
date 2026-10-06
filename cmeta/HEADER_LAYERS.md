@@ -41,8 +41,9 @@ These remain ordinary-C helpers built around CMeta metadata/lifecycle semantics:
 - pp.h
 - generic.h
 
-They may be included by `meta.h` while they remain runtime-neutral. If one
-later acquires an external runtime owner, it must move to the optional layer.
+`meta.h` is the Core CMeta aggregate and does not promise Structured-C helpers.
+Consumers include these helpers explicitly. If one later acquires an external
+runtime owner, it must move to the optional layer.
 
 ## Optional runtime/control-plane adapters
 
