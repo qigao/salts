@@ -101,7 +101,7 @@ suite("CMeta typed trace and deterministic fault points") {
     it("fails fast when enabling an unbound point and skips unbound payload arguments") {
         unsigned effects = 0u;
         check_equal(cmeta_trace_enable(unbound_request), CMETA_INVALID_ARGUMENT);
-        check_equal(salts_fast_enable(&unbound_request_key), CMETA_OK);
+        check_equal(salts_fast_enable(&unbound_request_key), SALTS_OK);
         cmeta_trace_emit(unbound_request, ++effects);
         check_equal(effects, 0u);
         check_equal(cmeta_trace_disable(unbound_request), CMETA_OK);
