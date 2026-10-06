@@ -1,8 +1,9 @@
 # 执行与资源原语（#927）
 
 本协议是实现和测试的依据。CMeta 只提供类型与生命周期适配；并发状态由
-`Salts::Concurrency` 管理，对象存储复用 `Salts::Core` 的 `object_pool_t`，
-线程身份由 `Salts::Platform` 提供。已有调用点和 descriptor ABI 保持不变。
+`Salts::Concurrency` 管理，对象池存储/lease 由 `Salts::Core` 管理，线程身份/affinity/TLS 由
+`Salts::Platform` 管理。CMeta 仅负责 DataDesc lifecycle adapter；不保留
+Pool/Local/Atomic/RCU 作为 `cmeta_type(...)` generic kind。
 
 ## RCU 快照
 
@@ -37,7 +38,7 @@ RCU 的移除/等待 grace period/回收分层参考
 
 ## 类型化有界对象池
 
-`cmeta_type(Pool, Name, Type)` 生成 facade。init 验证 canonical construct ops、
+`cmeta_pool_type(Name, Type)` 生成 facade。init 验证 canonical construct ops、
 native size/alignment，一次预分配全部容量；capacity 不能为零。不支持的扩展对齐
 直接失败。对象内部 payload 的容量仍由 Type 自己的契约限制。
 
@@ -55,13 +56,13 @@ native size/alignment，一次预分配全部容量；capacity 不能为零。�
 
 ## Thread-local 与 atomics
 
-`cmeta_type(Local, Name, Type)` 提供显式 init/get/destroy 的线程绑定值；
-`cmeta_thread_local(Name, variable)` 只选择每线程存储，不自动构造或清理资源。
+`cmeta_local_type(Name, Type)` 提供显式 init/get/destroy 的线程绑定值；
+`SALTS_THREAD_LOCAL Name variable` 只选择每线程存储，不自动构造或清理资源。
 线程退出前必须 destroy；借用不得越过 destroy、线程退出或可能迁移线程的挂起。
 普通 Local 实例同样检查创建线程。这不构成 executor shard-local registry；
 shard 生命周期继续由 executor/shard owner 管理，不能把 OS TLS 当作 shard 状态。
 
-`cmeta_type(Atomic, Name, Type)` 包装普通 C11 atomic 操作。调用者显式选择 memory order；
+`SALTS_ATOMIC_TYPE(Name, Type)` 包装普通 C11 atomic 操作。调用者显式选择 memory order；
 load/store/CAS 拒绝不合法的 order，不隐式加强或降低顺序。C++ 使用其原生 atomics，
 不能把 C `_Atomic` 对象作为跨语言 ABI。平台加速只有在 benchmark 证明收益后才能另行启用。
 
@@ -88,12 +89,12 @@ descriptor 和 canonical ops 必须活到池或 Local 销毁，不能提供短�
 
 | 头文件 / 链接依赖 | 生成接口与参数 | 输出与错误 |
 |---|---|---|
-| `cmeta/rcu.h` / CMeta + Concurrency | `Name_init(domain, initial, max_readers)`、`Name_read_lock(domain, guard)`、`Name_load(guard)`、`Name_read_unlock(guard)` | `SALTS_*` 状态；load 返回 `const Type *` 借用；空快照和无效 guard 均返回 NULL，须先检查 read_lock 的结果 |
+| `salts/rcu.h` / Concurrency | `Name_init(domain, initial, max_readers)`、`Name_read_lock(domain, guard)`、`Name_load(guard)`、`Name_read_unlock(guard)` | `SALTS_*` 状态；load 返回 `const Type *` 借用；空快照和无效 guard 均返回 NULL，须先检查 read_lock 的结果 |
 | 同上 | `Name_replace(domain, replacement)`、`Name_try_reclaim(domain, Type **out)`、`Name_close(domain)`、`Name_destroy(domain, Type **out)` | 替换失败不转移所有权；reclaim/destroy 清零输出后检查状态；关闭后不再接收新 guard 或 replacement |
 | `cmeta/pool.h` / CMeta + Core | `Name_init(pool, capacity)`、`Name_acquire(pool, Name_lease *lease)`、`Name_get(pool, lease)` | 容量必须非零；没有 canonical ops 为 `CMETA_TRAIT_MISSING`；布局不符为 `CMETA_TYPE_MISMATCH`；超限为 `CMETA_CAPACITY_EXCEEDED`；初始化分配失败为 `CMETA_OUT_OF_MEMORY`；get 无效时返回 NULL |
 | 同上 | `Name_move_out(pool, lease, Type *zero_destination)`、`Name_release(pool, lease)`、`Name_destroy(pool)` | move 缺失为 `CMETA_TRAIT_MISSING`；目的存储必须位于池外；活跃 lease 或回调重入时 destroy 为 `CMETA_BUSY`；其他 owner/地址/线程错误为 `CMETA_INVALID_ARGUMENT` |
-| `cmeta/local.h` / CMeta + Platform | `Name_init(local)`、`Name_get(local)`、`Name_destroy(local)`；`cmeta_thread_local(Name, variable)` | canonical 初始化错误原样传播且恢复失败对象；get 失败返回 NULL；线程、复制、重复 init/destroy 错误为 `CMETA_INVALID_ARGUMENT`；回调重入为 `CMETA_BUSY` |
-| `cmeta/atomic.h` / CMeta | `Name_init(atomic, initial)`、`Name_load(atomic, order, Type *out)`、`Name_store(atomic, value, order)`、`Name_exchange(atomic, value, order, Type *out)` | 普通 C11 `_Atomic(Type)`；无效参数/order 为 `CMETA_INVALID_ARGUMENT`，原子对象和输出保持原值 |
+| `cmeta/local.h` / CMeta + Platform | `Name_init(local)`、`Name_get(local)`、`Name_destroy(local)`；`SALTS_THREAD_LOCAL Name variable` | canonical 初始化错误原样传播且恢复失败对象；get 失败返回 NULL；线程、复制、重复 init/destroy 错误为 `CMETA_INVALID_ARGUMENT`；回调重入为 `CMETA_BUSY` |
+| `salts/atomic.h` / Concurrency | `Name_init(atomic, initial)`、`Name_load(atomic, order, Type *out)`、`Name_store(atomic, value, order)`、`Name_exchange(atomic, value, order, Type *out)` | 普通 C11 `_Atomic(Type)`；无效参数/order 为 `CMETA_INVALID_ARGUMENT`，原子对象和输出保持原值 |
 | 同上 | `Name_compare_exchange(atomic, Type *expected, desired, success_order, failure_order, bool *exchanged)`、`Name_is_lock_free(atomic, bool *out)` | strong CAS；失配时返回 `CMETA_OK`、exchanged 为 false，expected 更新为实际值；无效 order 在操作前拒绝；查询 native lock-free 性质 |
 
 load 接受 relaxed/consume/acquire/seq_cst；store 接受 relaxed/release/seq_cst；
