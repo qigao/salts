@@ -1,5 +1,6 @@
 #include <cmeta/manifest.h>
 #include "tinytest.h"
+#include <string.h>
 
 static const int json_codec = 1;
 static const int xml_codec = 2;
@@ -16,8 +17,8 @@ suite("CMeta static manifest") {
         check_equal(codec_manifest.entries[0].descriptor, (const void *)&json_codec);
         check_equal(codec_manifest.entries[1].descriptor, (const void *)&xml_codec);
         check_equal(codec_manifest.entries[0].kind, CMETA_MANIFEST_GENERIC);
-        check_str_equal(codec_manifest.entries[0].name, "json_codec");
-        check_str_equal(codec_manifest.entries[1].name, "xml_codec");
+        check_equal(strcmp(codec_manifest.entries[0].name, "json_codec"), 0);
+        check_equal(strcmp(codec_manifest.entries[1].name, "xml_codec"), 0);
     }
 
     it("fingerprints canonical type metadata without using descriptor addresses") {
