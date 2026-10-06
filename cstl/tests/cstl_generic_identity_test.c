@@ -30,6 +30,19 @@ cmeta_type(Map, ExplicitIntLongMap, int, long,
       &cmeta_type_int, &cmeta_data_int,
       &cmeta_type_long, &cmeta_data_long);
 
+static const cmeta_type_identity *owned_vec_arguments[1];
+static const cmeta_type_identity owned_vec_identity =
+    CMETA_TYPE_ID_APPLY_INIT(&stl_vec_generic_desc, owned_vec_arguments);
+cmeta_type(Vec, OwnedIntVec, int, &cmeta_type_int, &cmeta_data_int,
+           &owned_vec_identity);
+static const cmeta_type_identity *owned_map_arguments[2];
+static const cmeta_type_identity owned_map_identity =
+    CMETA_TYPE_ID_APPLY_INIT(&stl_map_generic_desc, owned_map_arguments);
+cmeta_type(Map, OwnedVecMap, int, OwnedIntVec,
+           &cmeta_type_int, &cmeta_data_int,
+           &OwnedIntVec_cmeta_type, &OwnedIntVec_collection_data,
+           &owned_map_identity);
+
 /* Canonical constructors are part of the generic metadata contract. Keeping
  * these references direct makes the public-symbol requirement compile-time
  * visible instead of relying only on runtime descriptor traversal. */
@@ -78,6 +91,37 @@ static const cmeta_generic_desc *const canonical_constructors[] = {
 } while (0)
 
 suite("CSTL generic type identities") {
+    it("uses recursively applied owned wrappers as actual map values") {
+        enum { OWNED_CONTAINER_LIMIT = 2u };
+        OwnedIntVec inner = {0};
+        OwnedVecMap outer = {0};
+        const OwnedIntVec *stored;
+        owned_vec_arguments[0] = cmeta_type_identity_of(&cmeta_type_int);
+        owned_map_arguments[0] = cmeta_type_identity_of(&cmeta_type_int);
+        owned_map_arguments[1] = &owned_vec_identity;
+        check_true(cmeta_type_desc_valid(&OwnedIntVec_cmeta_type));
+        check_true(cmeta_type_desc_valid(&OwnedVecMap_cmeta_type));
+        check_true(OwnedIntVec_cmeta_data()->storage_type == &OwnedIntVec_cmeta_type);
+        check_true(OwnedVecMap_cmeta_data()->storage_type == &OwnedVecMap_cmeta_type);
+        check_equal(OwnedIntVec_init(&inner, OWNED_CONTAINER_LIMIT), STL_OK);
+        check_equal(OwnedIntVec_push(&inner, 42), STL_OK);
+        check_equal(OwnedVecMap_init(&outer, OWNED_CONTAINER_LIMIT), STL_OK);
+        check_equal(OwnedVecMap_put(&outer, 7, inner), STL_OK);
+        check_true(cmeta_container_type_application_valid(&outer));
+        check_true(cmeta_container_type_argument(&outer, 1u) == &OwnedIntVec_cmeta_type);
+        check_true(cmeta_type_identity_argument(
+            cmeta_type_identity_of(&OwnedVecMap_cmeta_type), 1u) ==
+            cmeta_type_identity_of(&OwnedIntVec_cmeta_type));
+        OwnedIntVec_destroy(&inner);
+        stored = OwnedVecMap_get_const(&outer, 7);
+        check_not_null(stored);
+        if (stored != NULL) {
+            check_equal(OwnedIntVec_size(stored), (size_t)1u);
+            check_equal(*OwnedIntVec_at_const(stored, 0u), 42);
+        }
+        OwnedVecMap_destroy(&outer);
+    }
+
     it("exposes canonical generic applications for every typed container kind") {
         Vec(int, vec);
         Deque(int, deque);

@@ -44,6 +44,59 @@ cmeta_type(BTree, IntTree, int, long);
 
 No `implement(...)`, `DeclareContainers(...)`, or `ImplementContainers(...)` call is required or exposed for typed containers.
 
+## Owning nested values
+
+The descriptor-explicit `cmeta_type` forms attach whole-container COPY, MOVE and
+DESTROY traits to the wrapper's own TypeDesc. These traits call the canonical
+`Name_cmeta_data()` lifecycle; they introduce no separate copying algorithm or
+ownership registry. Pass that exact TypeDesc and DataDesc as the outer element
+or value provider. Copy constructs independent inner storage, a failed copy
+destroys its partial construction without publishing an element, and move
+leaves the source in the provider's semantic zero. Each wrapper owns its raw
+storage and delegates each retained element's lifetime to its declared provider.
+
+Vec and Map also accept a final `const cmeta_type_identity *` argument after
+their explicit providers. Supply an APPLY identity using `stl_vec_generic_desc`
+or `stl_map_generic_desc` and the exact argument providers' semantic identities.
+The wrapper TypeDesc, Range metadata, and DataDesc then share that identity.
+Construct any descriptor-owned argument references before publishing the graph,
+from inner to outer, under the application's once initialization or while the
+graph is exclusively owned. Identities and argument arrays must outlive all
+values and remain immutable after publication; item operations do not initialize
+or repair metadata. The declaration does not add comparison or hashing traits
+for whole containers, so an outer Set or map key still requires a provider that
+actually supplies its required operation traits.
+
+```c
+static const cmeta_type_identity *int_vec_args[1];
+static const cmeta_type_identity int_vec_id =
+    CMETA_TYPE_ID_APPLY_INIT(&stl_vec_generic_desc, int_vec_args);
+cmeta_type(Vec, OwnedInts, int, &cmeta_type_int, &cmeta_data_int, &int_vec_id);
+static const cmeta_type_identity *const matrix_args[] = {&int_vec_id};
+static const cmeta_type_identity matrix_id =
+    CMETA_TYPE_ID_APPLY_INIT(&stl_vec_generic_desc, matrix_args);
+cmeta_type(Vec, Matrix, OwnedInts, &OwnedInts_cmeta_type,
+           &OwnedInts_collection_data, &matrix_id);
+
+/* Call exclusively during startup, before exposing either descriptor. */
+static bool prepare_matrix_metadata(void) {
+    int_vec_args[0] = cmeta_type_identity_of(&cmeta_type_int);
+    return cmeta_data_desc_valid(Matrix_cmeta_data()) &&
+           cmeta_data_value_copy_supported(Matrix_cmeta_data()) &&
+           cmeta_data_value_move_supported(Matrix_cmeta_data());
+}
+```
+
+This extends declaration metadata without changing wrapper or descriptor ABI.
+Storage-only declarations remain storage-only; callers must provide complete
+canonical data providers to declare owning nested values. Missing lifecycle or
+ordering capability is an error at the admitting boundary. Generated consumers
+must regenerate and rebuild against the SDK providing this capability. The
+alternative of wrapping an inner container in a synthetic record or privately
+copying its raw handle would introduce a second lifetime authority and is not
+used. Reverting the feature requires reverting its dependent generated consumers
+before rebuilding the SDK; live owned objects must be drained before replacement.
+
 ## Self-describing raw handles
 
 PR #53's declaration and expression initializers remain supported:

@@ -165,6 +165,8 @@
   SALTS_VEC_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
 #define CMETA_TYPED_Vec_4(name, type, type_desc, data_desc) \
   SALTS_VEC_DEFINE_EXPLICIT(name, type, type_desc, data_desc) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_Vec_5(name, type, type_desc, data_desc, identity) \
+  SALTS_VEC_DEFINE_EXPLICIT_IDENTITY(name, type, type_desc, data_desc, identity) enum { name##_cmeta_typed = 1 }
 
 #define CMETA_TYPED_Deque(...) CMETA_TYPED_UNARY_DISPATCH(Deque, __VA_ARGS__)
 #define CMETA_TYPED_Deque_2(name, type) \
@@ -216,6 +218,8 @@
   SALTS_MAP_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
 #define CMETA_TYPED_Map_7(name, key_type, value_type, key_desc, key_data, value_desc, value_data) \
   SALTS_MAP_DEFINE_EXPLICIT(name, key_type, value_type, key_desc, key_data, value_desc, value_data) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_Map_8(name, key_type, value_type, key_desc, key_data, value_desc, value_data, identity) \
+  SALTS_MAP_DEFINE_EXPLICIT_IDENTITY(name, key_type, value_type, key_desc, key_data, value_desc, value_data, identity) enum { name##_cmeta_typed = 1 }
 
 #define CMETA_TYPED_MultiMap(...) CMETA_TYPED_BINARY_DISPATCH(MultiMap, __VA_ARGS__)
 #define CMETA_TYPED_MultiMap_3(name, key_type, value_type) \
