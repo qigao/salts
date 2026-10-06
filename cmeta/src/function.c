@@ -151,6 +151,33 @@ cmeta_function_param_abi(const cmeta_function_abi_desc *desc, size_t index) {
     return desc->param_carriers[index];
 }
 
+bool cmeta_function_abi_contract_compatible(const cmeta_function_abi_desc *expected,
+                                          const cmeta_function_abi_desc *candidate) {
+    size_t i;
+    const cmeta_function_desc *a;
+    const cmeta_function_desc *b;
+    if (!cmeta_function_abi_desc_valid(expected) ||
+        !cmeta_function_abi_desc_valid(candidate))
+        return false;
+    a = expected->function;
+    b = candidate->function;
+    if (expected->return_carrier == CMETA_ABI_UNSPECIFIED ||
+        expected->return_carrier != candidate->return_carrier ||
+        expected->param_count != candidate->param_count ||
+        !cmeta_type_equal(a->return_type, b->return_type) ||
+        a->result_flags != b->result_flags || a->effects != b->effects ||
+        a->properties != b->properties)
+        return false;
+    for (i = 0u; i < expected->param_count; ++i) {
+        if (expected->param_carriers[i] == CMETA_ABI_UNSPECIFIED ||
+            expected->param_carriers[i] != candidate->param_carriers[i] ||
+            a->params[i].flags != b->params[i].flags ||
+            !cmeta_type_equal(a->params[i].type, b->params[i].type))
+            return false;
+    }
+    return true;
+}
+
 const cmeta_param_desc *
 cmeta_function_param(const cmeta_function_desc *desc, size_t index) {
     if (desc == NULL || index >= desc->param_count || desc->params == NULL)

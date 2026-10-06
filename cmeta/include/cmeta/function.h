@@ -85,6 +85,11 @@ bool cmeta_function_desc_equal(const cmeta_function_desc *left,
                                const cmeta_function_desc *right);
 bool cmeta_function_abi_desc_equal(const cmeta_function_abi_desc *left,
                                    const cmeta_function_abi_desc *right);
+/** Replacement compatibility ignores function/parameter names, retaining exact
+ * type, explicit ABI carrier, ownership, effect and property contracts.
+ * Invalid or unspecified ABI metadata is rejected. O(n^2) including validation. */
+bool cmeta_function_abi_contract_compatible(const cmeta_function_abi_desc *expected,
+                                          const cmeta_function_abi_desc *candidate);
 
 cmeta_abi_carrier
 cmeta_function_param_abi(const cmeta_function_abi_desc *desc, size_t index);
@@ -338,6 +343,8 @@ cmeta_function_receiver(const cmeta_function_desc *desc);
     CMETA_PP_FOR_EACH_A(CMETA_FUNCTION_PARAM_ADMIT, ~, __VA_ARGS__) \
     return_type name( \
         CMETA_PP_FOR_EACH_I(CMETA_FUNCTION_PARAM_DECL, ~, __VA_ARGS__)); \
+    typedef return_type (*name##_function_type)( \
+        CMETA_PP_FOR_EACH_I(CMETA_FUNCTION_PARAM_DECL, ~, __VA_ARGS__)); \
     CMETA_FUNCTION_METADATA_AS_ABI_RESULT( \
         name, #name, contract, return_desc, return_abi_carrier, \
         result_flags, __VA_ARGS__); \
@@ -386,6 +393,7 @@ cmeta_function_receiver(const cmeta_function_desc *desc);
 #define CMETA_FUNCTION0_DECL_AS_ABI_RESULT( \
     contract, return_type, return_desc, return_abi_carrier, result_flags, name) \
     return_type name(void); \
+    typedef return_type (*name##_function_type)(void); \
     CMETA_FUNCTION0_METADATA_AS_ABI_RESULT( \
         name, #name, contract, return_desc, return_abi_carrier, result_flags); \
     CMETA_INLINE const cmeta_function_desc *name##_function(void) { \

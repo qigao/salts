@@ -84,11 +84,13 @@ if(ENABLE_SANITIZER_ADDRESS OR ENABLE_SANITIZER_UNDEFINED OR ENABLE_SANITIZER_LE
     endif()
 
     if(SANITIZER_COMPILE_FLAGS)
-        add_compile_options(${SANITIZER_COMPILE_FLAGS})
+        foreach(sanitizer_compile_flag IN LISTS SANITIZER_COMPILE_FLAGS)
+            add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:${sanitizer_compile_flag}>")
+        endforeach()
         add_link_options(${SANITIZER_LINK_FLAGS})
     endif()
 
     if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND NOT MSVC)
-        add_compile_options(-O1 -g)
+        add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-O1;-g>")
     endif()
 endif()

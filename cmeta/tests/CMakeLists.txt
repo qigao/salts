@@ -16,6 +16,26 @@ cmake_add_test(cmeta_capabilities_header_cpp_test
   SOURCES cmeta_capabilities_header_cpp_test.cpp cmeta_capabilities_owned.c
   LIBS Salts::CMeta
   FOLDER "cmeta/tests")
+cmake_add_test(cmeta_fastpath_test
+  SOURCES cmeta_fastpath_test.c cmeta_fastpath_peer.c
+  LIBS Salts::CMeta Salts::TinyTest Salts::Platform
+  FOLDER "cmeta/tests")
+cmake_add_test(cmeta_fastpath_cpp_test
+  SOURCES cmeta_fastpath_cpp_test.cpp cmeta_fastpath_peer.c
+  LIBS Salts::CMeta Salts::TinyTest
+  FOLDER "cmeta/tests")
+cmake_add_test(cmeta_fastpath_coroutine_test
+  SOURCES cmeta_fastpath_coroutine_test.c cmeta_fastpath_peer.c
+  LIBS Salts::CMeta Salts::TinyTest Salts::Coroutine
+  FOLDER "cmeta/tests")
+set_target_properties(cmeta_fastpath_test cmeta_fastpath_cpp_test cmeta_fastpath_coroutine_test
+  PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_target_properties(cmeta_fastpath_cpp_test
+  PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_fastpath_cpp_test PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:-Werror=old-style-cast>")
+endif()
 
 add_executable(cmeta_function_admission_test cmeta_function_admission_test.c)
 target_link_libraries(cmeta_function_admission_test PRIVATE Salts::CMeta Salts::TinyTest)
@@ -269,6 +289,15 @@ cmeta_add_compile_failure_test(cmeta_capabilities_duplicate_tag_compile_fail
   compile_fail/cmeta_capabilities_duplicate_tag.c "duplicate case|case value.*already|case.*already")
 cmeta_add_compile_failure_test(cmeta_capabilities_flags_type_compile_fail
   compile_fail/cmeta_capabilities_flags_type.c "OtherFlags|incompatible type for argument 2")
+
+cmeta_add_compile_failure_test(
+  cmeta_fastpath_wrong_target_compile_fail
+  compile_fail/cmeta_fastpath_wrong_target.c
+  "generic association|compatible type|controlling expression|C11 generic")
+cmeta_add_compile_failure_test(
+  cmeta_fastpath_missing_decl_compile_fail
+  compile_fail/cmeta_fastpath_missing_decl.c
+  "undeclared_target_function_type|syntax error: identifier 'slot_target_type'")
 
 cmeta_add_compile_failure_test(
   cmeta_compute_missing_type_compile_fail
