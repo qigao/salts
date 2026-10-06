@@ -65,7 +65,7 @@ suite("CMeta typed trace and deterministic fault points") {
     }
     it("starts new trace and fault points disabled") {
         unsigned effects = 0u;
-        check_false(cmeta_static_branch(&default_request_key));
+        check_false(salts_fast_branch(&default_request_key));
         cmeta_trace_emit(default_request, ++effects);
         check_equal(effects, 0u);
         check_false(cmeta_fault_hit(&default_fault));
@@ -101,7 +101,7 @@ suite("CMeta typed trace and deterministic fault points") {
     it("fails fast when enabling an unbound point and skips unbound payload arguments") {
         unsigned effects = 0u;
         check_equal(cmeta_trace_enable(unbound_request), CMETA_INVALID_ARGUMENT);
-        check_equal(cmeta_static_enable(&unbound_request_key), CMETA_OK);
+        check_equal(salts_fast_enable(&unbound_request_key), CMETA_OK);
         cmeta_trace_emit(unbound_request, ++effects);
         check_equal(effects, 0u);
         check_equal(cmeta_trace_disable(unbound_request), CMETA_OK);
@@ -127,7 +127,7 @@ suite("CMeta typed trace and deterministic fault points") {
         check_equal(cmeta_trace_enable(http_request), CMETA_OK);
         cmeta_trace_emit(http_request, (uint64_t)TRACE_REQUEST, TRACE_STATUS);
         check_equal(callback_disable_status, CMETA_OK);
-        check_false(cmeta_static_branch(&http_request_key));
+        check_false(salts_fast_branch(&http_request_key));
         cmeta_trace_emit(http_request, ++effects, 0);
         check_equal(effects, 0u);
         check_equal(atomic_load(&backend_calls), 1u);
