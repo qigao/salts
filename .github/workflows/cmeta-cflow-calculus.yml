@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "cmeta/**"
+      - "coroutine/**"
       - "concurrency/**"
       - "platform/include/salts/thread.h"
       - "platform/src/thread_*.c"
@@ -28,6 +29,7 @@ on:
     branches: [master]
     paths:
       - "cmeta/**"
+      - "coroutine/**"
       - "concurrency/**"
       - "platform/include/salts/thread.h"
       - "platform/src/thread_*.c"
@@ -55,6 +57,78 @@ permissions:
   packages: read
 
 jobs:
+  coroutine:
+    name: CMeta coroutine contracts / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC
+            runner: ubuntu-24.04
+            family: unix
+            preset: linux-release-ci
+          - name: GCC ASan
+            runner: ubuntu-24.04
+            family: unix
+            preset: linux-dev-ci
+          - name: MSVC
+            runner: windows-2025
+            family: windows
+            preset: win-release-ci
+          - name: ClangCL
+            runner: windows-2025
+            family: windows
+            preset: win-clang-release-ci
+          - name: AppleClang
+            runner: macos-15
+            family: unix
+            preset: mac-release-ci
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+      - name: Discover Visual Studio
+        if: matrix.family == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) { throw "Visual Studio with the x64 C++ toolchain was not found" }
+          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+      - name: Configure, build and test Unix coroutine contracts
+        if: matrix.family == 'unix'
+        shell: bash
+        env:
+          PROJECT_ROOT: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          cmake --preset "${{ matrix.preset }}" -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+          cmake --build --preset "${{ matrix.preset }}" --parallel 2 --target \
+            cmeta_coroutine_facade_test cmeta_coroutine_header_cpp_test \
+            salts_coro_executor_test salts_coro_executor_header_cpp_test
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 \
+            -R '^(cmeta_coroutine|salts_coro_executor)'
+      - name: Configure, build and test Windows coroutine contracts
+        if: matrix.family == 'windows'
+        shell: cmd
+        env:
+          PROJECT_ROOT: ${{ github.workspace }}
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          cmake --preset "${{ matrix.preset }}" -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+          if errorlevel 1 exit /b 1
+          cmake --build --preset "${{ matrix.preset }}" --parallel 2 --target cmeta_coroutine_facade_test cmeta_coroutine_header_cpp_test salts_coro_executor_test salts_coro_executor_header_cpp_test
+          if errorlevel 1 exit /b 1
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -R "^(cmeta_coroutine|salts_coro_executor)"
+          if errorlevel 1 exit /b 1
+
+
   cmeta:
     name: CMeta scope and execution / ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
