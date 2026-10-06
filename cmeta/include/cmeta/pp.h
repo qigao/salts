@@ -161,6 +161,27 @@
 #define CMETA_PP_FEI_15(M,C,a,b,c,d,e,f,g,h,i,j,k,l,m,n,o) M(0,a,C) M(1,b,C) M(2,c,C) M(3,d,C) M(4,e,C) M(5,f,C) M(6,g,C) M(7,h,C) M(8,i,C) M(9,j,C) M(10,k,C) M(11,l,C) M(12,m,C) M(13,n,C) M(14,o,C)
 #define CMETA_PP_FEI_16(M,C,a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p) M(0,a,C) M(1,b,C) M(2,c,C) M(3,d,C) M(4,e,C) M(5,f,C) M(6,g,C) M(7,h,C) M(8,i,C) M(9,j,C) M(10,k,C) M(11,l,C) M(12,m,C) M(13,n,C) M(14,o,C) M(15,p,C)
 
+
+/* Reverse finite replay for LIFO resource teardown. */
+#define CMETA_PP_FER_1(M,C,a) M(a,C)
+#define CMETA_PP_FER_2(M,C,a,b) M(b,C) M(a,C)
+#define CMETA_PP_FER_3(M,C,a,b,c) M(c,C) M(b,C) M(a,C)
+#define CMETA_PP_FER_4(M,C,a,b,c,d) M(d,C) M(c,C) M(b,C) M(a,C)
+#define CMETA_PP_FER_5(M,C,a,b,c,d,e) M(e,C) M(d,C) M(c,C) M(b,C) M(a,C)
+#define CMETA_PP_FER_6(M,C,a,b,c,d,e,f) M(f,C) M(e,C) M(d,C) M(c,C) M(b,C) M(a,C)
+#define CMETA_PP_FER_7(M,C,a,b,c,d,e,f,g) M(g,C) M(f,C) M(e,C) M(d,C) M(c,C) M(b,C) M(a,C)
+#define CMETA_PP_FER_8(M,C,a,b,c,d,e,f,g,h) M(h,C) M(g,C) M(f,C) M(e,C) M(d,C) M(c,C) M(b,C) M(a,C)
+#define CMETA_PP_FER_9(M,C,a,b,c,d,e,f,g,h,i) M(i,C) M(h,C) M(g,C) M(f,C) M(e,C) M(d,C) M(c,C) M(b,C) M(a,C)
+#define CMETA_PP_FER_10(M,C,a,b,c,d,e,f,g,h,i,j) M(j,C) M(i,C) M(h,C) M(g,C) M(f,C) M(e,C) M(d,C) M(c,C) M(b,C) M(a,C)
+#define CMETA_PP_FER_11(M,C,a,b,c,d,e,f,g,h,i,j,k) M(k,C) M(j,C) M(i,C) M(h,C) M(g,C) M(f,C) M(e,C) M(d,C) M(c,C) M(b,C) M(a,C)
+#define CMETA_PP_FER_12(M,C,a,b,c,d,e,f,g,h,i,j,k,l) M(l,C) M(k,C) M(j,C) M(i,C) M(h,C) M(g,C) M(f,C) M(e,C) M(d,C) M(c,C) M(b,C) M(a,C)
+#define CMETA_PP_FER_13(M,C,a,b,c,d,e,f,g,h,i,j,k,l,m) M(m,C) M(l,C) M(k,C) M(j,C) M(i,C) M(h,C) M(g,C) M(f,C) M(e,C) M(d,C) M(c,C) M(b,C) M(a,C)
+#define CMETA_PP_FER_14(M,C,a,b,c,d,e,f,g,h,i,j,k,l,m,n) M(n,C) M(m,C) M(l,C) M(k,C) M(j,C) M(i,C) M(h,C) M(g,C) M(f,C) M(e,C) M(d,C) M(c,C) M(b,C) M(a,C)
+#define CMETA_PP_FER_15(M,C,a,b,c,d,e,f,g,h,i,j,k,l,m,n,o) M(o,C) M(n,C) M(m,C) M(l,C) M(k,C) M(j,C) M(i,C) M(h,C) M(g,C) M(f,C) M(e,C) M(d,C) M(c,C) M(b,C) M(a,C)
+#define CMETA_PP_FER_16(M,C,a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p) M(p,C) M(o,C) M(n,C) M(m,C) M(l,C) M(k,C) M(j,C) M(i,C) M(h,C) M(g,C) M(f,C) M(e,C) M(d,C) M(c,C) M(b,C) M(a,C)
+#define CMETA_PP_FOR_EACH_REVERSE(M,C,...) \
+    CMETA_PP_CAT(CMETA_PP_FER_, CMETA_PP_NARG(__VA_ARGS__))(M,C,__VA_ARGS__)
+
 #define CMETA_PP_FOR_EACH(M,C,...) CMETA_PP_FOR_EACH_A(M,C,__VA_ARGS__)
 #define CMETA_PP_FOR_EACH_I(M,C,...) \
     CMETA_PP_CAT(CMETA_PP_FEI_, CMETA_PP_NARG(__VA_ARGS__))(M,C,__VA_ARGS__)

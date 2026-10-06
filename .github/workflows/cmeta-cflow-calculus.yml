@@ -3,6 +3,7 @@ name: CMeta-CFlow calculus
 on:
   pull_request:
     paths:
+      - "cmeta/**"
       - "formal/cmeta_cflow_calculus/**"
       - "cmeta/include/cmeta/generated/builtin_signature_manifest.h"
       - "cmeta/include/cmeta/types.h"
@@ -17,6 +18,7 @@ on:
   push:
     branches: [master]
     paths:
+      - "cmeta/**"
       - "formal/cmeta_cflow_calculus/**"
       - "cmeta/include/cmeta/generated/builtin_signature_manifest.h"
       - "cmeta/include/cmeta/types.h"
@@ -35,6 +37,45 @@ permissions:
   packages: read
 
 jobs:
+  cmeta:
+    name: CMeta structured scope / GCC
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Install native build prerequisite
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y nasm
+
+      - name: Configure CMeta contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset linux-release-user \
+            -DENABLE_TESTS=ON \
+            -DBUILD_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            '-DVCPKG_INSTALL_OPTIONS=--only-binarycaching'
+
+      - name: Build configured graph
+        shell: bash
+        run: cmake --build --preset linux-release-user --parallel 2
+
+      - name: Run structured scope contract
+        shell: bash
+        run: ctest --test-dir build/linux-gcc-release --output-on-failure -R "^cmeta_scope_test$"
+
+      - name: Source hygiene
+        shell: bash
+        run: git diff --check
+
   projection:
     name: CFlow reflected function projection
     runs-on: ubuntu-24.04
