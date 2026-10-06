@@ -58,7 +58,6 @@ install(
   DESTINATION include
   FILES_MATCHING PATTERN "*.h")
 
-option(CMETA_BUILD_NATIVE_THUNKS "Build opt-in exact x86-64 native specialization" OFF)
 if(CMETA_BUILD_NATIVE_THUNKS)
   add_subdirectory(native)
 endif()

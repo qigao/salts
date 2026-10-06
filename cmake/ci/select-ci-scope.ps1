@@ -51,6 +51,8 @@ $projection = $nativeCommon -or $pluginRuntime -or $concurrencyRuntime -or $coro
 $lean = $full -or $contractsChanged -or (Test-Changed '^(\.github/workflows/ci\.yml|cmake/ci/select-ci-scope\.ps1|formal/cmeta_cflow_calculus/|cmeta/include/cmeta/generated/builtin_signature_manifest\.h$|cflow/include/cflow/generated/(builtin_operator_policy|machine_schema)\.h$)')
 $plugin = $shared -or $cmetaRuntime -or $platformRuntime -or $concurrencyRuntime -or $utilsRuntime -or $harness -or
   (Test-Changed '^(plugin/|cmeta/tests/cmeta_(pp|const|flags|layout)_)')
+$semantic = $shared -or $harness -or $cmetaRuntime -or $pluginRuntime -or $cflowRuntime -or
+  (Test-Changed '^(cmeta/tests/|plugin/tests/|cstl/)')
 
 $benchmarkCommon = $shared -or $cmetaRuntime -or $utilsRuntime -or $harness -or
   (Test-Changed '^(\.github/workflows/native-io-benchmarks\.yml$|cmake/ci/(?!select-ci-scope\.ps1)|cstl/(include/|src/|CMakeLists\.txt$))')
@@ -96,6 +98,7 @@ $checks = [ordered]@{
   projection = $projection
   lean = $lean
   plugin = $plugin
+  semantic = $semantic
   mobile = $mobile
   work = $work
   evidence = $work
@@ -145,18 +148,21 @@ foreach ($profile in $profiles) {
   $entry = $profile.Clone()
   $entry.cross = $entry.family -in @('android', 'ios')
   $entry.fastpath = 'OFF'
-  $entry.native_thunks = if ($entry.id -in @('linux-release', 'linux-clang-release', 'linux-asan', 'windows-release')) { 'ON' } else { 'OFF' }
+  # Core semantic qualification must also pass without the optional #981 backend.
+  # Explicit release packaging still includes the qualified native specialization.
+  $entry.native_thunks = if ($PrepareRelease -and $entry.id -in @('linux-release', 'linux-clang-release', 'linux-asan', 'windows-release')) { 'ON' } else { 'OFF' }
   $entry.native = $false
   $entry.execution = $execution -and -not $entry.cross -and $entry.id -ne 'linux-arm64-release'
   $entry.armheaders = $entry.id -eq 'linux-arm64-release'
   $entry.portable = $native -and $entry.id -eq 'linux-tsan'
   $entry.plugin = $plugin -and $entry.id -in @('linux-release', 'linux-clang-release', 'windows-release', 'macos-release', 'macos-clang-release')
+  $entry.semantic = $semantic -and $entry.id -in @('linux-release', 'linux-clang-release', 'windows-release', 'macos-release', 'macos-clang-release')
   $entry.projection = $projection -and $entry.id -in @('linux-release', 'linux-clang-release', 'macos-clang-release')
   $entry.benchmarks = if ($entry.id -in @('linux-release', 'windows-release', 'macos-release')) { 'ON' } else { 'OFF' }
   $entry.package = $PrepareRelease -and [bool]$entry.sdk
   $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
   $entry.artifact = if ($entry.cross) { $mobile } else { $work -and [bool]$entry.sdk }
-  if ($entry.execution -or $entry.portable -or $entry.plugin -or $entry.projection -or $entry.package -or $entry.artifact) {
+  if ($entry.execution -or $entry.portable -or $entry.plugin -or $entry.semantic -or $entry.projection -or $entry.package -or $entry.artifact) {
     $builds += $entry
   }
   if ($native -and -not $entry.cross -and $profile.id -notin @('linux-tsan', 'linux-arm64-release')) {
@@ -170,6 +176,7 @@ foreach ($profile in $profiles) {
     $entry.armheaders = $false
     $entry.portable = $false
     $entry.plugin = $false
+    $entry.semantic = $false
     $entry.projection = $false
     $entry.benchmarks = 'OFF'
     $entry.package = $false
@@ -180,7 +187,7 @@ foreach ($profile in $profiles) {
 }
 $matrix = ConvertTo-Json -InputObject @{ include = $builds } -Depth 5 -Compress
 $testRuns = @()
-$suites = @('native', 'portable', 'execution', 'plugin', 'projection', 'armheaders')
+$suites = @('native', 'portable', 'execution', 'plugin', 'semantic', 'projection', 'armheaders')
 foreach ($build in $builds) {
   foreach ($suite in $suites) {
     if (-not $build[$suite]) { continue }

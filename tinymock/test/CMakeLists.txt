@@ -155,3 +155,6 @@ tinymock_add_compile_failure_test(
   cmeta_tinymock_static_inline_selection_compile_fail
   compile_fail/tinymock_static_inline_selection.c
   "tinymock_required_FunctionDecl_tinymock_bad_inline")
+
+get_property(tinymock_semantic_tests DIRECTORY PROPERTY TESTS)
+set_property(TEST ${tinymock_semantic_tests} APPEND PROPERTY LABELS cmeta-semantic)

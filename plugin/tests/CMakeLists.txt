@@ -320,3 +320,7 @@ if(WIN32)
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF)
 endif()
+
+get_property(plugin_semantic_tests DIRECTORY PROPERTY TESTS)
+list(FILTER plugin_semantic_tests EXCLUDE REGEX "^cmeta_plugin_native_")
+set_property(TEST ${plugin_semantic_tests} APPEND PROPERTY LABELS cmeta-semantic)
