@@ -119,8 +119,8 @@ suite("CMeta static fastpath") {
 #if SALTS_PLATFORM_NATIVE_FASTPATH
         check_false(salts_fast_key_read_native(&disabled));
 #endif
-        check_equal(salts_fast_key_set(NULL, true), CMETA_INVALID_ARGUMENT);
-        check_equal(salts_fast_disable(NULL), CMETA_INVALID_ARGUMENT);
+        check_equal(salts_fast_key_set(NULL, true), SALTS_EINVAL);
+        check_equal(salts_fast_disable(NULL), SALTS_EINVAL);
     }
 
     it("acquire readers observe data published before enabling") {
