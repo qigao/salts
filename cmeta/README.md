@@ -26,6 +26,9 @@ facades. Core aggregate headers remain independent of runtime adapters.
 calls, their publication/provider lifetimes, and explicitly enabled x86_64 /
 AArch64 assembly backends. Portable atomics remain the default implementation.
 
+[`FINGERPRINTS.md`](FINGERPRINTS.md) 规定带预算的 canonical contract projection、
+固定字节编码与跨工具链向量；指纹不创建 schema、registry 或 provider ownership。
+
 ## Public programming model
 
 Application users normally use semantic DSLs:

@@ -10,6 +10,7 @@
 #include <cmeta/object.h>
 #include <cmeta/infer.h>
 #include <cmeta/manifest.h>
+#include <cmeta/fingerprint.h>
 #include <cmeta/collector.h>
 #include <cmeta/compute.h>
 #include <cmeta/enum.h>

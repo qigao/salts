@@ -24,4 +24,15 @@ suite("Installed CMeta Reflection without runtime adapters") {
         check_true(function == FunctionAbi(installed_transform));
         check_true(cmeta_type_equal(function->function->return_type, &cmeta_type_int));
     }
+    it("computes a canonical type contract through the installed core archive") {
+        const cmeta_fingerprint_limits limits = {CMETA_FINGERPRINT_DEFAULT_DEPTH,
+            CMETA_FINGERPRINT_DEFAULT_NODES, CMETA_FINGERPRINT_DEFAULT_ROWS,
+            CMETA_FINGERPRINT_DEFAULT_STRING_BYTES};
+        uint64_t original, renamed;
+        check_equal(cmeta_contract_fingerprint_type(&cmeta_type_int, &limits, &original), CMETA_OK);
+        cmeta_type_desc type = cmeta_type_int;
+        type.name = "InstalledDisplayName";
+        check_equal(cmeta_contract_fingerprint_type(&type, &limits, &renamed), CMETA_OK);
+        check_equal(original, renamed);
+    }
 }

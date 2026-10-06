@@ -19,7 +19,7 @@
 | 层 | Header |
 |---|---|
 | Core：基础类型、身份、构造 kernel | `abi.h`, `cmeta.h`, `types.h`, `type_identity.h`, `type_select.h`, `type_traits.h`, `status.h`, `pp.h`, `signatures.h`, `generated/builtin_signature_manifest.h` |
-| Core：canonical metadata 与生命周期 | `data.h`, `data_select.h`, `declared_type.h`, `enum.h`, `flags.h`, `struct.h`, `variant.h`, `lifecycle.h`, `function.h`, `interface.h`, `method.h`, `object.h`, `object_interface.h`, `manifest.h`, `manifest_view.h` |
+| Core：canonical metadata 与生命周期 | `data.h`, `data_select.h`, `declared_type.h`, `enum.h`, `flags.h`, `struct.h`, `variant.h`, `lifecycle.h`, `function.h`, `interface.h`, `method.h`, `object.h`, `object_interface.h`, `manifest.h`, `manifest_view.h`, `fingerprint.h` |
 | Core：typed carrier、projection 与协议 | `collector.h`, `compute.h`, `container.h`, `contract.h`, `entry.h`, `fixed_array.h`, `generic.h`, `infer.h`, `invokable.h`, `policy.h`, `range.h`, `relations.h`, `value.h`, `vector.h` |
 | Core aggregate | `meta.h` |
 | Structured-C | `scope.h`；`struct.h` 内的 intrusive projection 只增加静态 owner/member/type 检查，不拥有容器运行期 |
@@ -40,7 +40,7 @@
 
 ## 安装包的正式 Reflection 验证
 
-`tests/installed` 是 #957 验收要求的正式 TinyTest 集成测试。它只通过安装后的 `SaltsConfig.cmake` 与 public include 消费 `Salts::CMeta`，另链接测试框架 `Salts::TinyTest`；不链接 Core、Platform、Concurrency、Coroutine、CFlow 或 Plugin。C11/C++17 用例实际查询 canonical 类型、struct layout、Function ABI 与 manifest view，并在编译时拒绝 core aggregate 引入可选 fastpath/trace/scope。
+`tests/installed` 是 #957 验收要求的正式 TinyTest 集成测试。它只通过安装后的 `SaltsConfig.cmake` 与 public include 消费 `Salts::CMeta`，另链接测试框架 `Salts::TinyTest`；不链接 Core、Platform、Concurrency、Coroutine、CFlow 或 Plugin。C11/C++17 用例实际查询 canonical 类型、struct layout、Function ABI 与 manifest view 和 canonical contract fingerprint，并在编译时拒绝 core aggregate 引入可选 fastpath/trace/scope。
 
 在 VS x64 开发环境中，根目录配置 `win-release-user` 后：
 

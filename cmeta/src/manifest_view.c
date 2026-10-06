@@ -127,6 +127,13 @@ static cmeta_status interface_valid(const cmeta_interface_desc *desc,
     return cmeta_interface_desc_valid(desc) ? CMETA_OK : CMETA_INVALID_ARGUMENT;
 }
 
+static cmeta_status enum_valid(const cmeta_enum_domain *desc, manifest_budget *budget) {
+    if (desc->struct_size < sizeof(*desc)) return CMETA_INVALID_ARGUMENT;
+    if (desc->abi_version != CMETA_ENUM_DOMAIN_ABI_VERSION) return CMETA_TYPE_MISMATCH;
+    if (desc->count > budget->limits->max_items) return CMETA_CAPACITY_EXCEEDED;
+    return cmeta_enum_domain_valid(desc) ? CMETA_OK : CMETA_INVALID_ARGUMENT;
+}
+
 /* Each getter validates the one canonical descriptor and publishes only on
  * success. No descriptor copies or mutable discovery state are maintained. */
 #define MANIFEST_GETTER(name_, type_, kind_, validate_) \
@@ -150,3 +157,4 @@ MANIFEST_GETTER(function, cmeta_function_abi_desc, CMETA_MANIFEST_FUNCTION, func
 MANIFEST_GETTER(interface, cmeta_interface_desc, CMETA_MANIFEST_INTERFACE, interface_valid)
 MANIFEST_GETTER(trace, cmeta_struct_desc, CMETA_MANIFEST_TRACEPOINT, struct_valid)
 MANIFEST_GETTER(capability, cmeta_interface_desc, CMETA_MANIFEST_CAPABILITY, interface_valid)
+MANIFEST_GETTER(enum, cmeta_enum_domain, CMETA_MANIFEST_ENUM_DOMAIN, enum_valid)

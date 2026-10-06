@@ -1,5 +1,37 @@
 # CMeta public API regression tests.
 
+cmake_add_test(cmeta_fingerprint_test
+  SOURCES cmeta_fingerprint_test.c cmeta_fingerprint_peer.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+cmake_add_test(cmeta_fingerprint_cpp_test
+  SOURCES cmeta_fingerprint_cpp_test.cpp cmeta_fingerprint_peer.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+set_target_properties(cmeta_fingerprint_test cmeta_fingerprint_cpp_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_target_properties(cmeta_fingerprint_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
+if(NOT BUILD_SHARED_LIBS AND NOT CMAKE_CROSSCOMPILING)
+  add_library(cmeta_fingerprint_dso_fixture SHARED
+    cmeta_fingerprint_dso_fixture.cpp cmeta_fingerprint_peer.c)
+  target_link_libraries(cmeta_fingerprint_dso_fixture PRIVATE Salts::CMeta)
+  target_compile_definitions(cmeta_fingerprint_dso_fixture PRIVATE
+    CMETA_FINGERPRINT_DSO_TEST=1 CMETA_FINGERPRINT_DSO_BUILD=1)
+  cmake_config_target(cmeta_fingerprint_dso_fixture FOLDER "cmeta/tests")
+  set_target_properties(cmeta_fingerprint_dso_fixture PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+  cmake_add_test(cmeta_fingerprint_dso_test SOURCES cmeta_fingerprint_dso_test.c
+    LIBS cmeta_fingerprint_dso_fixture Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+  target_compile_definitions(cmeta_fingerprint_dso_test PRIVATE CMETA_FINGERPRINT_DSO_TEST=1)
+  set_target_properties(cmeta_fingerprint_dso_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+endif()
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_fingerprint_cpp_test PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:-Werror=old-style-cast>")
+endif()
+
 cmake_add_test(cmeta_trace_test
   SOURCES cmeta_trace_test.c
   LIBS Salts::CMetaFastpath Salts::TinyTest Salts::Platform

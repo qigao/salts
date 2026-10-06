@@ -96,9 +96,11 @@ already canonical in CMeta: name, size, alignment, kind, trait capability flags,
 semantic type identity, and immediate pointee metadata. It intentionally hashes
 trait capability flags rather than implementation function addresses.
 
-Future struct/enum/function/plugin fingerprints must feed their canonical
-semantic rows into the same versioned builder. They must not hash padding,
-linker addresses, source paths, timestamps, or build-directory data.
+Checked canonical type/struct/enum/function/interface projections now use the
+same builder with a separate projection version and domain. The exact byte
+contract, bounds, failure semantics and golden vectors are specified in
+[FINGERPRINTS.md](FINGERPRINTS.md). Plugin/service composition remains follow-up
+work; fingerprints never duplicate semantic rows or retain providers.
 
 A manifest entry should reference the canonical descriptor/fingerprint rather
 than duplicate field, method, trait, ownership, or lifecycle schema.
@@ -130,13 +132,13 @@ generated/static manifest representation instead of a reduced-safety fallback.
 - qualified ELF/Mach-O/COFF aggregation is an optimization/backend concern, not
   a second public registry model.
 
-Typed tracepoint 和默认关闭的 fault point 使用 #923 的 static key；payload metadata 可直接作为 manifest entry 借用。声明、控制、并发与 provider 生命周期见 [TRACEPOINTS.md](TRACEPOINTS.md)。Plugin/capability manifest 和更完整的 ABI fingerprint 仍由 #926 后续工作完成。
+Typed tracepoint 和默认关闭的 fault point 使用 #923 的 static key；payload metadata 可直接作为 manifest entry 借用。声明、控制、并发与 provider 生命周期见 [TRACEPOINTS.md](TRACEPOINTS.md)。Plugin/service declaration 及其 fingerprint 组合仍由 #926 后续工作完成。
 
 ## Typed consumption（#926 / #957）
 
-`<cmeta/manifest_view.h>` 提供 type、struct、Function ABI、interface、trace payload、capability 的 typed entry 与 getter。布局仍为 v1 的 generic manifest ABI；新增 kind 值只规定 descriptor 的类型契约。Generic、Plugin、fault 与未支持的 descriptor 不会被推断或自动降级到另一种 kind。
+`<cmeta/manifest_view.h>` 提供 type、struct、Function ABI、interface、trace payload、capability、enum domain 的 typed entry 与 getter。布局仍为 v1 的 generic manifest ABI；新增 kind 值只规定 descriptor 的类型契约。Generic、Plugin、fault 与未支持的 descriptor 不会被推断或自动降级到另一种 kind。
 
-`cmeta_manifest_type_entry` / `struct_entry` / `function_entry` / `interface_entry` / `trace_entry` / `capability_entry` 在 C11 用 `_Generic`、C++17 用 typed constexpr pointer conversion 拒绝错误 descriptor 类型。它们不执行 constructor 或注册；fingerprint/flags 初始为零。高级显式 entry 可继续使用既有 `cmeta_manifest_entry`，但 provider 必须如实遵守 kind 契约。`FunctionMeta` / `FunctionAbi` 现在直接投影同一 canonical static descriptor，因此可用于静态初始化；生成的函数 getter 与 descriptor 内容不变。
+`cmeta_manifest_type_entry` / `struct_entry` / `function_entry` / `interface_entry` / `trace_entry` / `capability_entry` / `enum_entry` 在 C11 用 `_Generic`、C++17 用 typed constexpr pointer conversion 拒绝错误 descriptor 类型。它们不执行 constructor 或注册；fingerprint/flags 初始为零。高级显式 entry 可继续使用既有 `cmeta_manifest_entry`，但 provider 必须如实遵守 kind 契约。`FunctionMeta` / `FunctionAbi` 现在直接投影同一 canonical static descriptor，因此可用于静态初始化；生成的函数 getter 与 descriptor 内容不变。
 
 ```c
 #include <cmeta/manifest_view.h>
@@ -158,4 +160,4 @@ int main(void) {
 
 查询限额由调用方显式传入：`max_items` 同时限制 manifest membership、字段/方法/参数/泛型 arity，`max_identity_depth` 与 `max_identity_nodes` 限制递归工作；depth 不能超过可配置的 `CMETA_MANIFEST_DEPTH_LIMIT`。Cycle 在 canonical recursive validator 执行前消耗预算并失败。没有动态分配、对象回调、模块 retain 或缓存。调用方须提供可读且 live 的 ABI-compatible descriptor/数组及 NUL-terminated 字符串；kind 校验不能证明一个任意裸指针的真实存储类型。跨 DSO 消费须先协商 Reflection ABI，并由 Plugin owner 保持 provider lease。这里只验证已知 C metadata，不解析不可信字节流。
 
-`field.type_name` 仍仅用于显示；typed query 不把该字符串当作身份，也不通过全局字符串 lookup 找类型。Legacy ABI-only interface rows 仍按既有 validator 保留 dispatch shape，不伪造 Function metadata。完整 struct/enum/function/plugin fingerprint、Plugin service declaration 与可选 linker aggregation 仍由 #926 后续推进。
+`field.type_name` 仍仅用于显示；typed query 不把该字符串当作身份，也不通过全局字符串 lookup 找类型。Legacy ABI-only interface rows 仍按既有 validator 保留 dispatch shape，不伪造 Function metadata。Canonical struct/enum/function/interface fingerprint 见 [FINGERPRINTS.md](FINGERPRINTS.md)；Plugin service declaration、Plugin fingerprint 组合与可选 linker aggregation 仍由 #926 后续推进。

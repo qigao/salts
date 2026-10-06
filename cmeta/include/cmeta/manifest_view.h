@@ -51,6 +51,9 @@ extern "C" {
 #define cmeta_manifest_capability_entry(name_, descriptor_) \
     cmeta_manifest_entry(name_, CMETA_MANIFEST_CAPABILITY, \
         CMETA_MANIFEST_TYPED_POINTER_(cmeta_interface_desc, descriptor_), UINT64_C(0), UINT32_C(0))
+#define cmeta_manifest_enum_entry(name_, descriptor_) \
+    cmeta_manifest_entry(name_, CMETA_MANIFEST_ENUM_DOMAIN, \
+        CMETA_MANIFEST_TYPED_POINTER_(cmeta_enum_domain, descriptor_), UINT64_C(0), UINT32_C(0))
 
 /** Inspect one immutable manifest entry, with no allocation, registration,
  * object callbacks or provider retention. Inputs must be live, ABI-compatible
@@ -77,6 +80,8 @@ cmeta_status cmeta_manifest_get_trace(const cmeta_manifest *manifest, size_t ind
     const cmeta_manifest_limits *limits, const cmeta_struct_desc **out);
 cmeta_status cmeta_manifest_get_capability(const cmeta_manifest *manifest, size_t index,
     const cmeta_manifest_limits *limits, const cmeta_interface_desc **out);
+cmeta_status cmeta_manifest_get_enum(const cmeta_manifest *manifest, size_t index,
+    const cmeta_manifest_limits *limits, const cmeta_enum_domain **out);
 
 #ifdef __cplusplus
 }

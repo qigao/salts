@@ -31,7 +31,8 @@ typedef enum cmeta_manifest_kind {
     CMETA_MANIFEST_TYPE = 5,
     CMETA_MANIFEST_STRUCT = 6,
     CMETA_MANIFEST_FUNCTION = 7,
-    CMETA_MANIFEST_INTERFACE = 8
+    CMETA_MANIFEST_INTERFACE = 8,
+    CMETA_MANIFEST_ENUM_DOMAIN = 9
 } cmeta_manifest_kind;
 
 typedef struct cmeta_manifest_entry {
