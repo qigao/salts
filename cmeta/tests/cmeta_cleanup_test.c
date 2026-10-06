@@ -71,7 +71,60 @@ static cmeta_status nofail_throw(NofailInt *first, NofailInt *second) {
 static cmeta_status partial_init(void *value) { *(int *)value = 42; return CMETA_CALLBACK_ERROR; }
 static void partial_restore(void *value) { ++partial_restores; *(int *)value = 0; }
 
+typedef struct FinalizeProbe {
+    bool owned;
+    size_t finalize_calls;
+    size_t releases;
+} FinalizeProbe;
+static cmeta_status explicit_finalize(void *authority, void *resource) {
+    FinalizeProbe *value = (FinalizeProbe *)resource;
+    (void)authority;
+    ++value->finalize_calls;
+    return CMETA_CALLBACK_ERROR;
+}
+static void release_finalize_probe(void *authority, void *resource) {
+    FinalizeProbe *value = (FinalizeProbe *)resource;
+    (void)authority;
+    value->owned = false;
+    ++value->releases;
+}
+CMETA_STATIC_ASSERT(!CMETA_TYPE_MATCHES(&explicit_finalize, cmeta_cleanup_fn),
+    "A fallible finalize callback must not be accepted as automatic discharge");
+
 spec("CMeta admitted lifecycle and cleanup obligations") {
+    it("keeps fallible finalization explicit and releases only local ownership automatically") {
+        FinalizeProbe resource = {true, 0, 0};
+        cmeta_cleanup obligation = CMETA_CLEANUP_INIT;
+        check_equal(cmeta_cleanup_arm(&obligation, release_finalize_probe, NULL, &resource), CMETA_OK);
+        check_equal(explicit_finalize(NULL, &resource), CMETA_CALLBACK_ERROR);
+        check_true(resource.owned);
+        check_not_null(obligation.release);
+#ifdef __cplusplus
+        { cmeta::cleanup_scope guard(obligation); }
+#else
+        cmeta_cleanup_run(&obligation);
+#endif
+        cmeta_cleanup_run(&obligation);
+        check_false(resource.owned);
+        check_equal(resource.finalize_calls, (size_t)1);
+        check_equal(resource.releases, (size_t)1);
+    }
+    it("discharges an admitted Data restore obligation exactly once") {
+        cmeta_data_desc data = cmeta_data_int;
+        cmeta_lifecycle_binding binding = CMETA_LIFECYCLE_BINDING_INIT;
+        cmeta_cleanup obligation = CMETA_CLEANUP_INIT;
+        int value = 0;
+        data.struct_size = sizeof(data);
+        data.construct_ops = &ManagedInt_construct_ops;
+        managed_fail = false;
+        managed_restores = 0;
+        check_equal(cmeta_lifecycle_admit(&data, sizeof(value), CMETA_ALIGNOF(int), &binding), CMETA_OK);
+        check_equal(cmeta_lifecycle_init(&binding, &value), CMETA_OK);
+        check_equal(cmeta_cleanup_data(&obligation, &binding, &value), CMETA_OK);
+        cmeta_cleanup_run(&obligation);
+        cmeta_cleanup_run(&obligation);
+        check_equal(managed_restores, (size_t)1);
+    }
 #ifdef __cplusplus
     it("discharges nofail resources before propagating a C++ body exception") {
         cleanup_count = 0;

@@ -112,6 +112,28 @@ C++ `cmeta::cleanup_scope` 在异常展开时执行同一义务。耗时 O(count
 - Plugin adapter 位于 `salts/plugin_scope.h`，调用原 registry release。把 lease 放在依赖
   记录之前，逆序清理时先结束借用；释放失败代表既有 lease 契约被破坏，按原 RAII 规则终止。
 
+### 自动清理的 no-fail 契约（#983）
+
+自动 discharge 只释放本地所有权，必须没有可恢复失败，也不得抛出 C++ 异常。
+`cmeta_cleanup_fn` 保持 `void` 返回值；签名只是必要条件，不能证明函数的行为。
+适配器作者必须引用 canonical authority 的 no-fail 承诺，并保证资源、provider、binding
+和外层 lease 在 discharge 前有效。C 结构化清理与 C++ guard 遵循同一契约。
+
+flush、commit、协议 close/ack、数据库 settlement 等可恢复失败必须通过显式操作返回
+status，由调用方决定传播、重试或放弃；随后自动清理仅释放剩余本地所有权。
+不得把该操作强转为 cleanup callback、忽略其 status、隐藏重试或自动补偿。
+CMeta 不定义文件、socket、数据库或 allocator 的领域语义。
+
+检测到 no-fail 前提被破坏时立即终止进程，不把错误转换成成功或继续下一种清理方案。
+Plugin 的 C 适配器调用 `abort()`，C++ lease guard 调用 `std::terminate()`；二者均不允许
+恢复执行。显式 `plugin_lease_scope::close()` 仍返回原错误并保留 lease，允许调用方修正
+前置条件后显式重试。Data restore 与 ObjectRef release/destroy 的 no-fail 承诺由原
+provider 负责；不能包装一个可恢复失败的 authority 来伪造这一承诺。
+
+正式验证：`cmeta_cleanup_test` / `cmeta_cleanup_cpp_test` 覆盖显式 finalize 失败后保留
+资源、自动释放一次及拒绝 fallible callback 类型；`cmeta_object_scope_cpp_test` 覆盖
+ObjectRef；Plugin scope 测试覆盖 close 失败保留所有权和自动清理的终止边界。
+
 `cmeta_result_cleanup_classify` 使用 Function result flags 区分 VALUE、BORROW、RELEASE、
 DESTROY，UNKNOWN 返回 TRAIT_MISSING，冲突 flags 返回 INVALID_ARGUMENT。
 `cmeta_cleanup_object_result` 只有在 canonical flags 与 ObjectRef lifetime 一致时登记
