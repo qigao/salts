@@ -21,6 +21,10 @@
 #error "cmeta/meta.h must not expose optional trace runtime"
 #endif
 
+#ifdef CMETA_SCOPE_H
+#error "cmeta/meta.h must not expose structured lifetime facade"
+#endif
+
 suite("CMeta aggregate public header") {
     it("exposes range metadata without container facade generators") {
         cmeta_range range = {0};
