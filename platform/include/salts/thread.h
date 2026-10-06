@@ -33,6 +33,8 @@ typedef struct salts_once_s {
 
 typedef void (*salts_thread_cb)(void *arg);
 
+SALTS_PLATFORM_C_API const void *salts_thread_current_token(void);
+
 /*
  * Address-stable thread-affinity state owned by Salts::Platform.
  * This carries no value lifecycle callbacks and owns no payload.
