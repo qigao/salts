@@ -43,15 +43,15 @@ static const cmeta_data_desc value_data = {
     .kind = CMETA_DATA_CUSTOM, .storage_type = &value_type, .construct_ops = &value_ops
 };
 static const cmeta_data_desc *ExecutionValue_cmeta_data(void) { return &value_data; }
-cmeta_type(Pool, ValuePool, ExecutionValue);
-cmeta_type(Local, ValueLocal, ExecutionValue);
+cmeta_pool_type(ValuePool, ExecutionValue);
+cmeta_local_type(ValueLocal, ExecutionValue);
 SALTS_ATOMIC_TYPE(IntAtomic, int);
 typedef int *IntPointer;
 SALTS_ATOMIC_TYPE(PointerAtomic, IntPointer);
 SALTS_RCU_TYPE(IntRcu, int);
 cmeta_type(Vec, ExecutionVec, int);
-cmeta_type(Pool, VecPool, ExecutionVec);
-static cmeta_thread_local(ValueLocal, tls_value);
+cmeta_pool_type(VecPool, ExecutionVec);
+static SALTS_THREAD_LOCAL ValueLocal tls_value = {0};
 
 typedef struct local_worker {
     ValueLocal *foreign;
@@ -126,7 +126,7 @@ spec("CMeta execution primitives") {
         check_equal(ValuePool_acquire(&pool, &first), CMETA_OK);
         check_equal(ValuePool_acquire(&pool, &second), CMETA_OK);
         check_equal(ValuePool_acquire(&pool, &extra), CMETA_CAPACITY_EXCEEDED);
-        check_equal(object_pool_capacity(pool.state.storage), (size_t)2);
+        check_equal(object_pool_capacity(pool.state.owner.storage), (size_t)2);
         value = ValuePool_get(&pool, &first);
         check_not_null(value);
         check_equal((uintptr_t)value % _Alignof(ExecutionValue), (uintptr_t)0);
@@ -162,7 +162,7 @@ spec("CMeta execution primitives") {
         fail_init = true;
         check_equal(ValuePool_acquire(&pool, &lease), CMETA_CALLBACK_ERROR);
         check_equal(atomic_load(&destroyed), 1u);
-        check_equal(object_pool_allocated_count(pool.state.storage), (size_t)0);
+        check_equal(object_pool_allocated_count(pool.state.owner.storage), (size_t)0);
         check_equal(ValueLocal_init(&local), CMETA_CALLBACK_ERROR);
         check_null(ValueLocal_get(&local));
         check_equal(atomic_load(&destroyed), 2u);
