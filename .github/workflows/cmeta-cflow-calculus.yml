@@ -129,7 +129,7 @@ jobs:
           PROJECT_ROOT: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          cmake --preset "${{ matrix.preset }}" -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DCMETA_NATIVE_FASTPATH=ON -DCMETA_BUILD_BENCHMARKS=ON
+          cmake --preset "${{ matrix.preset }}" -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DSALTS_PLATFORM_NATIVE_FASTPATH=ON -DCMETA_BUILD_BENCHMARKS=ON
           cmake --build --preset "${{ matrix.preset }}" --parallel 2 --target \
             cmeta_coroutine_facade_test cmeta_coroutine_header_cpp_test \
             salts_coro_executor_test salts_coro_executor_header_cpp_test \
@@ -147,7 +147,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          cmake --preset "${{ matrix.preset }}" -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DCMETA_NATIVE_FASTPATH=ON -DCMETA_BUILD_BENCHMARKS=ON
+          cmake --preset "${{ matrix.preset }}" -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DSALTS_PLATFORM_NATIVE_FASTPATH=ON -DCMETA_BUILD_BENCHMARKS=ON
           if errorlevel 1 exit /b 1
           cmake --build --preset "${{ matrix.preset }}" --parallel 2 --target cmeta_coroutine_facade_test cmeta_coroutine_header_cpp_test salts_coro_executor_test salts_coro_executor_header_cpp_test cmeta_capabilities_test cmeta_capabilities_header_cpp_test cmeta_core_test cmeta_data_test cmeta_enum_bits_test cmeta_header_cpp_test cmeta_fastpath_test cmeta_fastpath_cpp_test cmeta_fastpath_coroutine_test cmeta_fastpath_benchmark cmeta_function_reflection_test cmeta_abi_test cmeta_manifest_test cmeta_trace_test cmeta_trace_cpp_test cmeta_trace_benchmark cflow_execution_test cflow_interface_reflection_test cflow_executor_dso_test
           if errorlevel 1 exit /b 1
@@ -170,7 +170,7 @@ jobs:
         run: |
           set -euo pipefail
           cmake --preset linux-dev-ci -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
-            -DCMETA_NATIVE_FASTPATH=OFF -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_THREAD=ON
+            -DSALTS_PLATFORM_NATIVE_FASTPATH=OFF -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_THREAD=ON
           cmake --build --preset linux-dev-ci --parallel 2 --target \
             cmeta_fastpath_test cmeta_fastpath_cpp_test cmeta_function_reflection_test cmeta_abi_test cmeta_trace_test cmeta_trace_cpp_test
           ctest --preset linux-dev-ci --no-tests=error --output-on-failure --timeout 60 \
