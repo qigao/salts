@@ -3,6 +3,7 @@
 #include <salts/clock.h>
 
 #include <stdatomic.h>
+#include <stdio.h>
 #include <string.h>
 #include <tinytest.h>
 
@@ -98,6 +99,53 @@ static cnet_client client;
 static cnet_client accepted_client;
 static endpoint_probe client_probe;
 static endpoint_probe accepted_probe;
+
+static void test_accept_nodelay(uint64_t nodelay) {
+  cnet_client_config config = test_client_config();
+  cnet_listener_config listen_config = {
+      .backend = test_backend(), .host = "127.0.0.1", .port = 0u, .backlog = 1u};
+  cnet_stream_socket_options future = CNET_STREAM_SOCKET_OPTIONS_INIT;
+  cnet_observer observer = {.on_state = on_state, .user = &accepted_probe};
+  cnet_connect_options options = {0};
+  cnet_connection connection = {0}, accepted = {0};
+  uint64_t actual = 0u;
+  uint16_t port = 0u;
+  char uri[64];
+  int ready = 0;
+  uint64_t deadline;
+  check_equal(cnet_client_init(&client, &config), SALTS_OK);
+  check_equal(cnet_client_init(&accepted_client, &config), SALTS_OK);
+  future.nodelay = (int)(1u - nodelay);
+  check_equal(cnet_client_set_stream_socket_options(&accepted_client, &future), SALTS_OK);
+  check_equal(cnet_listener_init(&listener, &listen_config), SALTS_OK);
+  check_equal(cnet_listener_tcp_option_set(&listener, CNET_TCP_SOCKET_NODELAY, 1u - nodelay), SALTS_OK);
+  check_equal(cnet_listener_port(&listener, &port), SALTS_OK);
+  check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
+  options.uri = uri;
+  options.observer = (cnet_observer){.on_state = on_state, .user = &client_probe};
+  check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
+  deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
+  while (!atomic_load_explicit(&client_probe.connected, memory_order_acquire)) {
+    size_t events = 0u;
+    check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
+    check_less(cmeta_monotonic_ms(), deadline);
+  }
+  check_equal(cnet_listener_wait(&listener, TEST_TIMEOUT_MS, &ready), SALTS_OK);
+  check_equal(ready, 1);
+  /* Update after the handshake so inherited socket state cannot replace replay. */
+  check_equal(cnet_listener_tcp_option_set(&listener, CNET_TCP_SOCKET_NODELAY, nodelay), SALTS_OK);
+  check_equal(cnet_listener_tcp_option_get(&listener, CNET_TCP_SOCKET_NODELAY, &actual), SALTS_OK);
+  check_equal(actual, nodelay);
+  check_equal(cnet_listener_accept(&listener, &accepted_client, &observer, &accepted), SALTS_OK);
+  deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
+  while (!atomic_load_explicit(&accepted_probe.connected, memory_order_acquire)) {
+    size_t events = 0u;
+    check_equal(cnet_client_poll(&accepted_client, 1u, &events), SALTS_OK);
+    check_less(cmeta_monotonic_ms(), deadline);
+  }
+  check_equal(cnet_connection_tcp_option_get(&accepted_client, accepted, CNET_TCP_SOCKET_NODELAY, &actual), SALTS_OK);
+  check_equal(actual, nodelay);
+}
 
 static void test_tcp_endpoints(void) {
   cnet_stream_endpoint listener_bind = CNET_STREAM_ENDPOINT_INIT;
@@ -453,6 +501,16 @@ static void test_tcp_endpoints(void) {
 
 suite("CNet TCP endpoints") {
   group("address, socket policy and half-close contracts") {
+    before_each() {
+      endpoint_probe *const probes[] = {&client_probe, &accepted_probe};
+      for (size_t i = 0u; i < sizeof(probes) / sizeof(probes[0]); ++i) {
+        atomic_init(&probes[i]->connected, 0);
+        atomic_init(&probes[i]->terminal, 0);
+        atomic_init(&probes[i]->failed, 0);
+        atomic_init(&probes[i]->sent, 0);
+        atomic_init(&probes[i]->received, 0);
+      }
+    }
     after_each() {
       if (client.impl != NULL) {
         check_warn(cnet_client_stop(&client, TEST_TIMEOUT_MS) == SALTS_OK);
@@ -473,5 +531,7 @@ suite("CNet TCP endpoints") {
       }
     }
     it("preserves endpoint identities, options and shutdown semantics") { test_tcp_endpoints(); }
+    it("replays enabled NODELAY onto queued accepts without client policy override") { test_accept_nodelay(1u); }
+    it("replays disabled NODELAY onto queued accepts without client policy override") { test_accept_nodelay(0u); }
   }
 }

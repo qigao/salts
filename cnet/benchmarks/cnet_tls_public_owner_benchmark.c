@@ -412,12 +412,13 @@ static int tls_public_pair_init(
   status = cnet_client_set_stream_socket_options(
       &pair->client, &socket_options);
   if (status != SALTS_OK) return status;
-  status = cnet_client_set_stream_socket_options(
-      &pair->server, &socket_options);
-  if (status != SALTS_OK) return status;
   status = cnet_listener_init(&pair->listener, &listener_config);
   if (status != SALTS_OK) return status;
   pair->listener_initialized = true;
+  /* Direct TLS accept preserves the listener policy, not future client policy. */
+  status = cnet_listener_tcp_option_set(
+      &pair->listener, CNET_TCP_SOCKET_NODELAY, (uint64_t)nodelay);
+  if (status != SALTS_OK) return status;
   status = cnet_listener_port(&pair->listener, &port);
   if (status != SALTS_OK || port == 0u)
     return status == SALTS_OK ? SALTS_EPROTO : status;
@@ -458,20 +459,18 @@ static int tls_public_pair_init(
       !pair->server_probe.connected)
     return SALTS_ETIMEDOUT;
 
-  if (nodelay != 0) {
-    status = cnet_connection_tcp_option_get(
-        &pair->client, pair->client_probe.connection,
-        CNET_TCP_SOCKET_NODELAY, &applied_nodelay);
-    if (status != SALTS_OK) return status;
-    if (applied_nodelay != 1u) return SALTS_EPROTO;
+  status = cnet_connection_tcp_option_get(
+      &pair->client, pair->client_probe.connection,
+      CNET_TCP_SOCKET_NODELAY, &applied_nodelay);
+  if (status != SALTS_OK) return status;
+  if (applied_nodelay != (uint64_t)nodelay) return SALTS_EPROTO;
 
-    applied_nodelay = 0u;
-    status = cnet_connection_tcp_option_get(
-        &pair->server, pair->server_probe.connection,
-        CNET_TCP_SOCKET_NODELAY, &applied_nodelay);
-    if (status != SALTS_OK) return status;
-    if (applied_nodelay != 1u) return SALTS_EPROTO;
-  }
+  applied_nodelay = 0u;
+  status = cnet_connection_tcp_option_get(
+      &pair->server, pair->server_probe.connection,
+      CNET_TCP_SOCKET_NODELAY, &applied_nodelay);
+  if (status != SALTS_OK) return status;
+  if (applied_nodelay != (uint64_t)nodelay) return SALTS_EPROTO;
   return SALTS_OK;
 }
 
