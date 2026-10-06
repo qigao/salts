@@ -563,7 +563,7 @@ suite("CMeta core") {
                     sizeof(cmeta_type_desc *));
     }
 
-    it("exposes builtin type metadata through a bounded registry") {
+    it("exposes builtin type metadata through a bounded catalog") {
         const cmeta_type_desc *int_type = cmeta_builtin_type_find("int");
         cmeta_type_desc equivalent;
 
