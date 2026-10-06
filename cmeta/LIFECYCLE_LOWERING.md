@@ -37,6 +37,9 @@ checked 入口，共享初始化、回滚、清理展开。
 - 每项按声明顺序初始化。失败项立即 restore 一次，跳过 body，先前成功项按 LIFO restore；
   未开始的项不清理。body 返回的状态继续传播，清理不覆盖状态。
 - move 继续执行既有语义，源恢复 semantic zero；源在 scope 结束时仍可安全清理。
+- C++ 的 managed/fallible `cmeta_scope` 和 `cmeta_scope_checked` 在 body 抛异常时，
+  按相同 LIFO 路径清理已初始化资源，再原样重抛；不转换为 status。嵌套 scope 先内后外，
+  moved-from 源仍按 semantic zero 清理。C 的结构化退出和 ABI 不变（#982）。
 - body 只借用对象到返回为止，不允许保存悬空指针、挂起借用或跨函数 goto。
 - checked admission 失败不调用 init/restore，保留明确的 INVALID_ARGUMENT、TRAIT_MISSING
   或 TYPE_MISMATCH；静态声明缺失或 native accessor 类型不符在编译期拒绝。
