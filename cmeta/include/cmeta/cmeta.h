@@ -117,9 +117,9 @@ extern const cmeta_type_desc cmeta_type_gen_status;
 CMETA_PP_FOR_EACH_A(CMETA_DECLARE_TYPE, ~, CMETA_KNOWN_TYPE_LIST)
 #undef CMETA_DECLARE_TYPE
 
-size_t cmeta_type_registry_count(void);
-const cmeta_type_desc *cmeta_type_registry_at(size_t index);
-const cmeta_type_desc *cmeta_type_find(const char *name);
+size_t cmeta_builtin_type_count(void);
+const cmeta_type_desc *cmeta_builtin_type_at(size_t index);
+const cmeta_type_desc *cmeta_builtin_type_find(const char *name);
 
 #define CMETA_DECL_U(in, ret) \
     typedef CMETA_TYPE_CTYPE(ret) (*CMETA_FN_TYPE(CMETA_U_ID(in, ret)))(CMETA_TYPE_CTYPE(in));
