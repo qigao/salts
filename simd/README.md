@@ -8,7 +8,7 @@
 - Consumers must not include SIMDe or depend on `simde_v128_t`.
 - CFlow may consume these semantics later, but SIMD operations are not WebAssembly-specific CFlow operators.
 
-The public carrier is `salts_v128`, an alias of CMeta's neutral 16-byte storage.
+The public carrier is `cmeta_v128`, an alias of CMeta's neutral 16-byte storage.
 Lane interpretation comes from a `cmeta_vector_desc`, not from storage layout.
 
 ## Descriptor-driven execution
@@ -16,12 +16,12 @@ Lane interpretation comes from a `cmeta_vector_desc`, not from storage layout.
 New consumers should use the generic operation families:
 
 ```c
-salts_simd_splat(desc, out, scalar);
-salts_simd_unary(desc, op, out, value);
-salts_simd_binary(desc, op, out, left, right);
-salts_simd_compare(desc, cmp, out_mask, left, right);
-salts_simd_shift(desc, op, out, value, count);
-salts_simd_select(desc, out, when_set, when_unset, mask);
+cmeta_simd_splat(desc, out, scalar);
+cmeta_simd_unary(desc, op, out, value);
+cmeta_simd_binary(desc, op, out, left, right);
+cmeta_simd_compare(desc, cmp, out_mask, left, right);
+cmeta_simd_shift(desc, op, out, value, count);
+cmeta_simd_select(desc, out, when_set, when_unset, mask);
 ```
 
 The descriptor supplies lane width, lane count, signedness/floating-point kind,
@@ -31,7 +31,7 @@ and mask semantics. Unsupported descriptor/operation combinations return
 The operation enums are domain-neutral. They intentionally do not contain
 WebAssembly opcode names.
 
-Existing helpers such as `salts_simd_i32x4_add` remain available as
+Existing helpers such as `cmeta_simd_i32x4_add` remain available as
 compatibility wrappers over the generic dispatcher.
 
 ## Layering
@@ -56,15 +56,15 @@ Salts also provides portable transforms over caller-owned, already-validated
 bytes:
 
 ```c
-salts_simd_load_splat(desc, out, source);
-salts_simd_load_extend(desc, out, source);
-salts_simd_load_zero(loaded_bits, out, source);
+cmeta_simd_load_splat(desc, out, source);
+cmeta_simd_load_extend(desc, out, source);
+cmeta_simd_load_zero(loaded_bits, out, source);
 
-salts_simd_extract_lane(desc, value, lane, &scalar);
-salts_simd_replace_lane(desc, out, value, lane, scalar);
+cmeta_simd_extract_lane(desc, value, lane, &scalar);
+cmeta_simd_replace_lane(desc, out, value, lane, scalar);
 
-salts_simd_shuffle_bytes(out, left, right, lanes);
-salts_simd_swizzle_bytes(out, value, indices);
+cmeta_simd_shuffle_bytes(out, left, right, lanes);
+cmeta_simd_swizzle_bytes(out, value, indices);
 ```
 
 These helpers do **not** own:
@@ -76,7 +76,7 @@ These helpers do **not** own:
 A runtime such as TurboWasm first checks its memory/table rules, then hands the
 checked bytes or v128 value to Salts for the portable transformation.
 
-`salts_simd_load_extend` derives the widening rule from the destination CMeta
+`cmeta_simd_load_extend` derives the widening rule from the destination CMeta
 descriptor:
 - i16x8/u16x8 widen 8 lanes from 8-bit source values;
 - i32x4/u32x4 widen 4 lanes from 16-bit source values;

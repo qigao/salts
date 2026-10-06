@@ -16,6 +16,9 @@
             "name": "vcpkg-cache-windows",
             "hidden": true,
             "inherits": "vcpkg-cache",
+            "cacheVariables": {
+                "VCPKG_HOST_TRIPLET": "x64-windows"
+            },
             "environment": {
                 "VCPKG_CACHE_REPOSITORY_ROOT": "$penv{LOCALAPPDATA}/qigao/vcpkg-cache"
             }
@@ -24,6 +27,9 @@
             "name": "vcpkg-cache-linux",
             "hidden": true,
             "inherits": "vcpkg-cache",
+            "cacheVariables": {
+                "VCPKG_HOST_TRIPLET": "x64-linux"
+            },
             "environment": {
                 "VCPKG_CACHE_REPOSITORY_ROOT": "$penv{HOME}/.cache/qigao/vcpkg-cache"
             }
@@ -49,15 +55,11 @@
             "name": "win-toolchain",
             "hidden": true,
             "inherits": "vcpkg-cache-windows",
-            "cacheVariables": {
-                "VCPKG_HOST_TRIPLET": "$env{VCPKG_WINDOWS_HOST_TRIPLET}"
-            },
             "environment": {
                 "PROJECT_ROOT": "$penv{PROJECT_ROOT}",
                 "PKG_ROOT": "$env{PROJECT_ROOT}/external/pkgs",
                 "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
-                "VCPKG_ROOT": "$penv{VCPKG_ROOT}",
-                "VCPKG_WINDOWS_HOST_TRIPLET": "$penv{VCPKG_WINDOWS_HOST_TRIPLET}"
+                "VCPKG_ROOT": "$penv{VCPKG_ROOT}"
             }
         },
         {
@@ -78,7 +80,7 @@
                 "strategy": "external"
             },
             "environment": {
-                "VCPKG_WINDOWS_TRIPLET": "$penv{VCPKG_WINDOWS_TRIPLET}"
+                "VCPKG_WINDOWS_TRIPLET": "x64-windows"
             }
         },
         {
@@ -176,7 +178,8 @@
             ]
         },
         {
-            "name": "mac-release-user",
+            "name": "mac-paths",
+            "hidden": true,
             "cacheVariables": {
                 "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
                 "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}"
@@ -185,13 +188,38 @@
                 "PROJECT_ROOT": "$penv{PROJECT_ROOT}",
                 "PKG_ROOT": "$env{PROJECT_ROOT}/external/pkgs",
                 "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
-                "VCPKG_ROOT": "$penv{VCPKG_ROOT}",
-                "SALTS_ROOT": "$env{PKG_ROOT}/salts/release"
+                "VCPKG_ROOT": "$penv{VCPKG_ROOT}"
             },
             "inherits": [
                 "release-mac-ninja",
                 "vcpkg-cache-macos"
             ]
+        },
+        {
+            "name": "mac-x64-release-user",
+            "inherits": "mac-paths",
+            "binaryDir": "${sourceDir}/build/mac-x64-gcc-release",
+            "cacheVariables": {
+                "CMAKE_OSX_ARCHITECTURES": "x86_64",
+                "VCPKG_HOST_TRIPLET": "x64-osx",
+                "VCPKG_TARGET_TRIPLET": "x64-osx"
+            },
+            "environment": {
+                "SALTS_ROOT": "$env{PKG_ROOT}/salts-macos-x64/release"
+            }
+        },
+        {
+            "name": "mac-arm64-release-user",
+            "inherits": "mac-paths",
+            "binaryDir": "${sourceDir}/build/mac-arm64-gcc-release",
+            "cacheVariables": {
+                "CMAKE_OSX_ARCHITECTURES": "arm64",
+                "VCPKG_HOST_TRIPLET": "arm64-osx",
+                "VCPKG_TARGET_TRIPLET": "arm64-osx"
+            },
+            "environment": {
+                "SALTS_ROOT": "$env{PKG_ROOT}/salts-macos-arm64/release"
+            }
         },
         {
             "name": "linux-release-user",
@@ -209,6 +237,21 @@
                 "release-linux-ninja",
                 "linux-paths"
             ]
+        },
+        {
+            "name": "linux-arm64-release-user",
+            "inherits": "linux-release-user",
+            "binaryDir": "${sourceDir}/build/linux-arm64-release",
+            "cacheVariables": {
+                "VCPKG_HOST_TRIPLET": "arm64-linux",
+                "VCPKG_TARGET_TRIPLET": "arm64-linux",
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/arm64-linux"
+            },
+            "environment": {
+                "SALTS_ROOT": "$env{PKG_ROOT}/salts-linux-arm64/release",
+                "PATH": "${sourceDir}/build/linux-arm64-release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/arm64-linux/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}",
+                "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/arm64-linux/lib${pathListSep}$env{SALTS_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
+            }
         },
         {
             "name": "linux-sdk-package",
@@ -318,72 +361,95 @@
             ]
         },
         {
-            "name": "win-clang-user",
-            "cacheVariables": {
-                "ENABLE_SANITIZER_ADDRESS": "OFF",
-                "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
-                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/debug"
-            },
-            "environment": {
-                "SALTS_ROOT": "$env{PKG_ROOT}/salts/debug",
-                "PATH": "${sourceDir}/build/Clang/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
-            },
-            "inherits": [
-                "base-win-dev-clang-user",
-                "win-paths"
-            ]
-        },
-        {
-            "name": "win-clang-release-user",
-            "cacheVariables": {
-                "ENABLE_SANITIZER_ADDRESS": "OFF",
-                "ENABLE_TESTS": "ON",
-                "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
-                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}"
-            },
-            "environment": {
-                "SALTS_ROOT": "$env{PKG_ROOT}/salts/release",
-                "PATH": "${sourceDir}/build/Clang-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
-            },
-            "inherits": [
-                "base-win-release-clang-user",
-                "win-paths"
-            ]
-        },
-        {
             "name": "win-release-ci",
             "inherits": [
                 "vcpkg-cache-ci",
                 "win-release-user"
-            ]
-        },
-        {
-            "name": "win-clang-release-ci",
-            "inherits": [
-                "vcpkg-cache-ci",
-                "win-clang-release-user"
-            ]
+            ],
+            "environment": {
+                "VCPKG_WINDOWS_TRIPLET": "$penv{VCPKG_WINDOWS_TRIPLET}",
+                "SALTS_ROOT": "${sourceDir}/stage/sdk/windows-x64"
+            }
         },
         {
             "name": "linux-release-ci",
             "inherits": [
                 "vcpkg-cache-ci",
                 "linux-release-user"
+            ],
+            "environment": {
+                "SALTS_ROOT": "${sourceDir}/stage/sdk/linux-x64"
+            }
+        },
+        {
+            "name": "linux-clang-release-ci",
+            "inherits": [
+                "Clang",
+                "linux-release-ci"
+            ],
+            "binaryDir": "${sourceDir}/build/linux-clang-release",
+            "environment": {
+                "SALTS_ROOT": "${sourceDir}/stage/sdk/linux-clang-release",
+                "PATH": "${sourceDir}/build/linux-clang-release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
+            }
+        },
+        {
+            "name": "mac-arm64-clang-release-ci",
+            "inherits": [
+                "AppleClang",
+                "mac-arm64-release-ci"
+            ],
+            "binaryDir": "${sourceDir}/build/mac-arm64-clang-release",
+            "environment": {
+                "SALTS_ROOT": "${sourceDir}/stage/sdk/macos-clang-release"
+            }
+        },
+        {
+            "name": "linux-arm64-release-ci",
+            "inherits": [
+                "vcpkg-cache-ci",
+                "linux-arm64-release-user"
+            ],
+            "cacheVariables": {
+                "ENABLE_TESTS": "OFF",
+                "BUILD_TESTS": "OFF",
+                "BUILD_BENCHMARKS": "OFF",
+                "BUILD_EXAMPLES": "OFF",
+                "VCPKG_INSTALL_OPTIONS": "--only-binarycaching"
+            },
+            "environment": {
+                "SALTS_ROOT": "${sourceDir}/stage/sdk/linux-arm64"
+            }
+        },
+        {
+            "name": "mac-x64-release-ci",
+            "inherits": [
+                "vcpkg-cache-ci",
+                "mac-x64-release-user"
             ]
         },
         {
-            "name": "mac-release-ci",
+            "name": "mac-arm64-release-ci",
             "inherits": [
                 "vcpkg-cache-ci",
-                "mac-release-user"
-            ]
+                "mac-arm64-release-user"
+            ],
+            "environment": {
+                "SALTS_ROOT": "${sourceDir}/stage/sdk/macos-arm64"
+            }
         },
         {
             "name": "android-arm64-v8a-release-ci",
             "inherits": [
                 "vcpkg-cache-ci",
                 "android-arm64-v8a-release-user"
-            ]
+            ],
+            "environment": {
+                "SALTS_ROOT": "${sourceDir}/stage/sdk/android-arm64-v8a"
+            },
+            "cacheVariables": {
+                "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}"
+            }
         },
         {
             "name": "linux-dev-ci",
@@ -404,27 +470,91 @@
                 "SALTS_ROOT": "$env{PKG_ROOT}/salts/debug-tsan",
                 "PATH": "${sourceDir}/build/linux-gcc-tsan/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/debug/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
             }
+        },
+        {
+            "name": "ios-arm64-release-ci",
+            "inherits": [
+                "AppleClang",
+                "mac-arm64-release-ci"
+            ],
+            "binaryDir": "${sourceDir}/build/ios-arm64",
+            "cacheVariables": {
+                "CMAKE_SYSTEM_NAME": "iOS",
+                "CMAKE_OSX_SYSROOT": "iphoneos",
+                "CMAKE_OSX_ARCHITECTURES": "arm64",
+                "VCPKG_TARGET_TRIPLET": "arm64-ios",
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/arm64-ios",
+                "VCPKG_INSTALL_OPTIONS": "--only-binarycaching",
+                "ENABLE_TESTS": "OFF",
+                "BUILD_TESTS": "OFF",
+                "BUILD_BENCHMARKS": "OFF",
+                "BUILD_EXAMPLES": "OFF"
+            },
+            "environment": {
+                "SALTS_ROOT": "${sourceDir}/stage/sdk/ios-arm64"
+            }
+        },
+        {
+            "name": "ios-simulator-arm64-release-ci",
+            "inherits": [
+                "AppleClang",
+                "mac-arm64-release-ci"
+            ],
+            "binaryDir": "${sourceDir}/build/ios-simulator-arm64",
+            "cacheVariables": {
+                "CMAKE_SYSTEM_NAME": "iOS",
+                "CMAKE_OSX_SYSROOT": "iphonesimulator",
+                "CMAKE_OSX_ARCHITECTURES": "arm64",
+                "VCPKG_TARGET_TRIPLET": "arm64-ios-simulator",
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/arm64-ios-simulator",
+                "VCPKG_INSTALL_OPTIONS": "--only-binarycaching",
+                "ENABLE_TESTS": "OFF",
+                "BUILD_TESTS": "OFF",
+                "BUILD_BENCHMARKS": "OFF",
+                "BUILD_EXAMPLES": "OFF"
+            },
+            "environment": {
+                "SALTS_ROOT": "${sourceDir}/stage/sdk/ios-simulator-arm64"
+            }
         }
     ],
     "buildPresets": [
         {
-            "name": "win-release-ci",
-            "configurePreset": "win-release-ci"
+            "name": "linux-arm64-release-user",
+            "configurePreset": "linux-arm64-release-user"
         },
         {
-            "name": "win-clang-release-ci",
-            "configurePreset": "win-clang-release-ci"
-        },
-        {
-            "name": "install-win-release-ci",
-            "configurePreset": "win-release-ci",
+            "name": "install-linux-arm64-release-user",
+            "configurePreset": "linux-arm64-release-user",
             "targets": [
                 "install"
             ]
         },
         {
-            "name": "install-win-clang-release-ci",
-            "configurePreset": "win-clang-release-ci",
+            "name": "linux-arm64-release-ci",
+            "configurePreset": "linux-arm64-release-ci"
+        },
+        {
+            "name": "install-linux-arm64-release-ci",
+            "configurePreset": "linux-arm64-release-ci",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-strip-linux-arm64-release-ci",
+            "configurePreset": "linux-arm64-release-ci",
+            "targets": [
+                "install/strip"
+            ]
+        },
+        {
+            "name": "win-release-ci",
+            "configurePreset": "win-release-ci"
+        },
+        {
+            "name": "install-win-release-ci",
+            "configurePreset": "win-release-ci",
             "targets": [
                 "install"
             ]
@@ -446,8 +576,26 @@
             "configurePreset": "linux-release-user"
         },
         {
-            "name": "mac-release-user",
-            "configurePreset": "mac-release-user"
+            "name": "mac-x64-release-user",
+            "configurePreset": "mac-x64-release-user"
+        },
+        {
+            "name": "mac-arm64-release-user",
+            "configurePreset": "mac-arm64-release-user"
+        },
+        {
+            "name": "install-mac-x64-release-user",
+            "configurePreset": "mac-x64-release-user",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-mac-arm64-release-user",
+            "configurePreset": "mac-arm64-release-user",
+            "targets": [
+                "install"
+            ]
         },
         {
             "name": "linux-sdk-package",
@@ -559,34 +707,48 @@
             ]
         },
         {
-            "name": "win-clang-user",
-            "configurePreset": "win-clang-user"
-        },
-        {
-            "name": "win-clang-release-user",
-            "configurePreset": "win-clang-release-user"
-        },
-        {
-            "name": "install-win-clang-user",
-            "configurePreset": "win-clang-user",
-            "targets": [
-                "install"
-            ]
-        },
-        {
-            "name": "install-win-clang-release-user",
-            "configurePreset": "win-clang-release-user",
-            "targets": [
-                "install"
-            ]
-        },
-        {
             "name": "linux-release-ci",
             "configurePreset": "linux-release-ci"
         },
         {
-            "name": "mac-release-ci",
-            "configurePreset": "mac-release-ci"
+            "name": "linux-clang-release-ci",
+            "configurePreset": "linux-clang-release-ci"
+        },
+        {
+            "name": "install-linux-clang-release-ci",
+            "configurePreset": "linux-clang-release-ci",
+            "targets": ["install"]
+        },
+        {
+            "name": "mac-arm64-clang-release-ci",
+            "configurePreset": "mac-arm64-clang-release-ci"
+        },
+        {
+            "name": "install-mac-arm64-clang-release-ci",
+            "configurePreset": "mac-arm64-clang-release-ci",
+            "targets": ["install"]
+        },
+        {
+            "name": "mac-x64-release-ci",
+            "configurePreset": "mac-x64-release-ci"
+        },
+        {
+            "name": "mac-arm64-release-ci",
+            "configurePreset": "mac-arm64-release-ci"
+        },
+        {
+            "name": "install-mac-x64-release-ci",
+            "configurePreset": "mac-x64-release-ci",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-mac-arm64-release-ci",
+            "configurePreset": "mac-arm64-release-ci",
+            "targets": [
+                "install"
+            ]
         },
         {
             "name": "android-arm64-v8a-release-ci",
@@ -613,18 +775,82 @@
             "targets": [
                 "install"
             ]
+        },
+        {
+            "name": "install-linux-release-ci",
+            "configurePreset": "linux-release-ci",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-strip-linux-release-ci",
+            "configurePreset": "linux-release-ci",
+            "targets": [
+                "install/strip"
+            ]
+        },
+        {
+            "name": "install-strip-mac-arm64-release-ci",
+            "configurePreset": "mac-arm64-release-ci",
+            "targets": [
+                "install/strip"
+            ]
+        },
+        {
+            "name": "ios-arm64-release-ci",
+            "configurePreset": "ios-arm64-release-ci"
+        },
+        {
+            "name": "install-ios-arm64-release-ci",
+            "configurePreset": "ios-arm64-release-ci",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-strip-ios-arm64-release-ci",
+            "configurePreset": "ios-arm64-release-ci",
+            "targets": [
+                "install/strip"
+            ]
+        },
+        {
+            "name": "ios-simulator-arm64-release-ci",
+            "configurePreset": "ios-simulator-arm64-release-ci"
+        },
+        {
+            "name": "install-ios-simulator-arm64-release-ci",
+            "configurePreset": "ios-simulator-arm64-release-ci",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-strip-ios-simulator-arm64-release-ci",
+            "configurePreset": "ios-simulator-arm64-release-ci",
+            "targets": [
+                "install/strip"
+            ]
+        },
+        {
+            "name": "install-android-arm64-v8a-release-ci",
+            "configurePreset": "android-arm64-v8a-release-ci",
+            "targets": [
+                "install"
+            ]
         }
     ],
     "testPresets": [
         {
+            "name": "linux-arm64-release-user",
+            "inherits": "base-test",
+            "configurePreset": "linux-arm64-release-user"
+        },
+        {
             "name": "win-release-ci",
             "inherits": "base-test",
             "configurePreset": "win-release-ci"
-        },
-        {
-            "name": "win-clang-release-ci",
-            "inherits": "base-test",
-            "configurePreset": "win-clang-release-ci"
         },
         {
             "name": "win-dev-user",
@@ -647,19 +873,19 @@
             "configurePreset": "linux-release-user"
         },
         {
-            "name": "win-clang-user",
-            "inherits": "base-test",
-            "configurePreset": "win-clang-user"
-        },
-        {
-            "name": "win-clang-release-user",
-            "inherits": "base-test",
-            "configurePreset": "win-clang-release-user"
-        },
-        {
             "name": "linux-release-ci",
             "inherits": "base-test",
             "configurePreset": "linux-release-ci"
+        },
+        {
+            "name": "linux-clang-release-ci",
+            "inherits": "base-test",
+            "configurePreset": "linux-clang-release-ci"
+        },
+        {
+            "name": "mac-arm64-clang-release-ci",
+            "inherits": "base-test",
+            "configurePreset": "mac-arm64-clang-release-ci"
         },
         {
             "name": "linux-dev-ci",
@@ -672,9 +898,29 @@
             "configurePreset": "linux-tsan-ci"
         },
         {
-            "name": "mac-release-ci",
+            "name": "mac-x64-release-user",
             "inherits": "base-test",
-            "configurePreset": "mac-release-ci"
+            "configurePreset": "mac-x64-release-user"
+        },
+        {
+            "name": "mac-arm64-release-user",
+            "inherits": "base-test",
+            "configurePreset": "mac-arm64-release-user"
+        },
+        {
+            "name": "mac-x64-release-ci",
+            "inherits": "base-test",
+            "configurePreset": "mac-x64-release-ci"
+        },
+        {
+            "name": "mac-arm64-release-ci",
+            "inherits": "base-test",
+            "configurePreset": "mac-arm64-release-ci"
+        },
+        {
+            "name": "linux-arm64-release-ci",
+            "inherits": "base-test",
+            "configurePreset": "linux-arm64-release-ci"
         }
     ]
 }

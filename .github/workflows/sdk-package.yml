@@ -1,0 +1,127 @@
+name: Prepare release package
+'on':
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+permissions:
+  contents: read
+  packages: read
+jobs:
+  pack:
+    name: Pack Salts.Native
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: salts-sdk-*
+          path: package/sdk
+          merge-multiple: true
+      - name: Verify package payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f package/sdk/linux-x64/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/linux-x64/include/cmeta/function.h
+          test -f package/sdk/linux-x64/include/cflow/function_projection.h
+          grep -F "Salts::CFlow" package/sdk/linux-x64/lib/cmake/Salts/SaltsTargets.cmake
+          test -f package/sdk/linux-x64/include/cmeta/interface.h
+          test -f package/sdk/linux-x64/include/tinytest/detail/equality.h
+          test -f package/sdk/linux-x64/include/tinymock.h
+          test -f package/sdk/linux-arm64/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
+          test -f package/sdk/linux-arm64/include/cmeta/function.h
+          test -f package/sdk/linux-arm64/include/cflow/function_projection.h
+          test -f package/sdk/linux-arm64/include/cmeta/interface.h
+          test -f package/sdk/linux-arm64/include/tinytest/detail/equality.h
+          grep -F "Salts::CMeta" package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
+          grep -F "Salts::CFlow" package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
+          grep -F "Salts::CNet" package/sdk/linux-arm64/lib/cmake/Salts/SaltsTargets.cmake
+          test -f package/sdk/windows-x64/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/windows-x64/include/cmeta/function.h
+          test -f package/sdk/windows-x64/include/cflow/function_projection.h
+          test -f package/sdk/windows-x64/include/cmeta/interface.h
+          test -f package/sdk/windows-x64/bin/cnet.dll
+          test -f package/sdk/windows-x64/bin/salts.dll
+          test ! -f package/sdk/windows-x64/bin/ssl.dll
+          test ! -f package/sdk/windows-x64/bin/crypto.dll
+          test ! -f package/sdk/windows-x64/bin/gmssl.dll
+          test -f package/sdk/android-arm64-v8a/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/android-arm64-v8a/include/cmeta/function.h
+          test -f package/sdk/android-arm64-v8a/include/cflow/function_projection.h
+          test -f package/sdk/android-arm64-v8a/include/cmeta/interface.h
+          test -f package/sdk/ios-arm64/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/ios-arm64/include/cmeta/function.h
+          test -f package/sdk/ios-arm64/include/cflow/function_projection.h
+          test -f package/sdk/ios-simulator-arm64/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/ios-simulator-arm64/include/cmeta/function.h
+          test -f package/sdk/ios-simulator-arm64/include/cflow/function_projection.h
+          grep -F "cmeta_function_abi_desc" package/sdk/linux-x64/include/cmeta/function.h
+          grep -F "cmeta_function_abi_desc" package/sdk/windows-x64/include/cmeta/function.h
+          grep -F "cmeta_function_abi_desc" package/sdk/android-arm64-v8a/include/cmeta/function.h
+          grep -F "cflow_function_typed_filter_projection_admit" package/sdk/linux-x64/include/cflow/function_projection.h
+          grep -F "cflow_function_typed_filter_projection_admit" package/sdk/windows-x64/include/cflow/function_projection.h
+          grep -F "cflow_function_typed_filter_projection_admit" package/sdk/android-arm64-v8a/include/cflow/function_projection.h
+          mac_header="$(find package/sdk -path '*/include/cmeta/function.h' -path '*macos-*' -print -quit)"
+          mac_projection="$(find package/sdk -path '*/include/cflow/function_projection.h' -path '*macos-*' -print -quit)"
+          mac_interface="$(find package/sdk -path '*/include/cmeta/interface.h' -path '*macos-*' -print -quit)"
+          test -n "$mac_header"
+          test -n "$mac_projection"
+          test -n "$mac_interface"
+          grep -F "cmeta_interface_desc_valid" package/sdk/linux-x64/include/cmeta/interface.h
+          grep -F "cmeta_interface_desc_equal" package/sdk/linux-x64/include/cmeta/interface.h
+          grep -F "cmeta_interface_desc_valid" package/sdk/windows-x64/include/cmeta/interface.h
+          grep -F "cmeta_interface_desc_equal" package/sdk/windows-x64/include/cmeta/interface.h
+          grep -F "cmeta_interface_desc_valid" package/sdk/android-arm64-v8a/include/cmeta/interface.h
+          grep -F "cmeta_interface_desc_equal" package/sdk/android-arm64-v8a/include/cmeta/interface.h
+          grep -F "cmeta_interface_desc_valid" "$mac_interface"
+          grep -F "cmeta_interface_desc_equal" "$mac_interface"
+          grep -F "cmeta_function_abi_desc" "$mac_header"
+          grep -F "cflow_function_typed_filter_projection_admit" "$mac_projection"
+          test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 7
+
+          mapfile -t cache_contracts < <(
+            grep -h '^vcpkg_cache_contract=' package/sdk/*/salts-sdk-manifest.txt |
+              tr -d '\r' |
+              sort -u
+          )
+          mapfile -t cache_revisions < <(
+            grep -h '^vcpkg_cache_revision=' package/sdk/*/salts-sdk-manifest.txt |
+              tr -d '\r' |
+              sort -u
+          )
+
+          printf 'vcpkg cache contracts (%d):\n' "${#cache_contracts[@]}"
+          printf '  %s\n' "${cache_contracts[@]}"
+          printf 'vcpkg cache revisions (%d):\n' "${#cache_revisions[@]}"
+          printf '  %s\n' "${cache_revisions[@]}"
+
+          test "${#cache_contracts[@]}" -eq 1
+          test "${#cache_revisions[@]}" -ge 1
+          while IFS= read -r manifest; do
+            test "$(grep -c '^vcpkg_cache_revision=' "$manifest")" -eq 1
+            revision="$(sed -n 's/^vcpkg_cache_revision=//p' "$manifest" | tr -d '\r')"
+            test -n "$revision"
+            printf '%s -> vcpkg_cache_revision=%s\n' "$manifest" "$revision"
+          done < <(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt -print | sort)
+          find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt -print
+          du -sh package/sdk
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Create NuGet package
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet pack packaging/nuget/Salts.Native.csproj --configuration Release --output dist -p:PackageVersion=${{ inputs.version }} -p:PackageRoot="$GITHUB_WORKSPACE/package" -p:RepositoryCommit="${{ github.sha }}"
+          test -f "dist/Salts.Native.${{ inputs.version }}.nupkg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salts-native-nuget
+          path: dist/*.nupkg
+          if-no-files-found: error

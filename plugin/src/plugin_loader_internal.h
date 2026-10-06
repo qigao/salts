@@ -1,18 +1,18 @@
-#ifndef SALTS_PLUGIN_LOADER_INTERNAL_H
-#define SALTS_PLUGIN_LOADER_INTERNAL_H
+#ifndef CMETA_PLUGIN_LOADER_INTERNAL_H
+#define CMETA_PLUGIN_LOADER_INTERNAL_H
 
 #include <salts/plugin.h>
 
-typedef struct salts_plugin_library {
+typedef struct cmeta_plugin_library {
     void *handle;
-} salts_plugin_library;
+} cmeta_plugin_library;
 
-salts_plugin_status salts_plugin_platform_open(
+cmeta_plugin_status cmeta_plugin_platform_open(
     const char *path,
-    salts_plugin_library *out_library,
-    salts_plugin_query_fn *out_query);
+    cmeta_plugin_library *out_library,
+    cmeta_plugin_query_fn *out_query);
 
-salts_plugin_status salts_plugin_platform_close(
-    salts_plugin_library *library);
+cmeta_plugin_status cmeta_plugin_platform_close(
+    cmeta_plugin_library *library);
 
-#endif /* SALTS_PLUGIN_LOADER_INTERNAL_H */
+#endif /* CMETA_PLUGIN_LOADER_INTERNAL_H */

@@ -46,10 +46,29 @@ static cmeta_status scoped_move_body(
 #endif
 
 suite("CSTL typed public header") {
+    it("exposes the canonical lifecycle through native-typed static declarations") {
+        const cmeta_data_construct_ops *admitted = NULL;
+        check_equal(cmeta_lifecycle_bind(HeaderGenericVec_cmeta_data(),
+            sizeof(HeaderGenericVec), _Alignof(HeaderGenericVec), &admitted), CMETA_OK);
+        check_true(HeaderGenericVec_cmeta_lifecycle(NULL) == admitted);
+        check_true(HeaderGenericList_cmeta_lifecycle(NULL) ==
+                   HeaderGenericList_cmeta_data()->construct_ops);
+        check_true(HeaderGenericMap_cmeta_lifecycle(NULL) ==
+                   HeaderGenericMap_cmeta_data()->construct_ops);
+    }
+
     it("cleans allocated and moved-from lists through canonical scope ops") {
         cmeta_status status;
-        cmeta_scope(lists, status,
-            cmeta_autos(cmeta_auto(HeaderGenericList, source) cmeta_auto(HeaderGenericList, destination)),
+        cmeta_scope(status,
+            cmeta_autos((HeaderGenericList, source), (HeaderGenericList, destination)),
+            cmeta_body(scoped_move_body(&source, &destination)));
+        check_equal(status, CMETA_OK);
+    }
+
+    it("cleans managed nofail lists after allocation and ownership transfer") {
+        cmeta_status status;
+        cmeta_scope(status,
+            cmeta_autos((HeaderGenericList, source), (HeaderGenericList, destination)),
             cmeta_body(scoped_move_body(&source, &destination)));
         check_equal(status, CMETA_OK);
     }

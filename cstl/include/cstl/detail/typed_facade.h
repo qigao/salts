@@ -5,13 +5,14 @@
 #include <cmeta/container.h>
 #include <cmeta/data_select.h>
 #include <cmeta/function.h>
-#include <cmeta/method.h>
+#include <cmeta/lifecycle.h>
+#include <cmeta/operation.h>
 #include <cstl/status.h>
 #include <cstl/detail/instance_meta.h>
 
 #include <string.h>
 
-CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
+CMETA_INLINE cmeta_status cmeta_stl_cmeta_status(stl_status status) {
  switch (status) {
   case STL_OK: return CMETA_OK;
   case STL_INVALID_ARGUMENT: return CMETA_INVALID_ARGUMENT;
@@ -52,9 +53,9 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  SALTS_META_INDEX_SEQUENCE_DATA_WITH_DATA(name,type,CMETA_DATAOF(type),semantic_kind)
 #define SALTS_META_LIST_COLLECTION_DATA_WITH_DATA(name,type,data_expr) \
  CMETA_INLINE const cmeta_data_desc *name##_collection_element(const void *object){(void)object;return (data_expr);} \
- CMETA_INLINE cmeta_status name##_collection_foreach(const void *object,cmeta_data_collection_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;cmeta_range_cursor cursor={0};const void *value=NULL;size_t count=0u;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;while(salts_stl_typed_list_range_next(&self->raw,&cursor,&value)){cmeta_status status;if(count>=max_items)return CMETA_CAPACITY_EXCEEDED;status=visit(context,value);if(status!=CMETA_OK)return status;++count;}return CMETA_OK;} \
+ CMETA_INLINE cmeta_status name##_collection_foreach(const void *object,cmeta_data_collection_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;cmeta_range_cursor cursor={0};const void *value=NULL;size_t count=0u;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;while(cmeta_stl_typed_list_range_next(&self->raw,&cursor,&value)){cmeta_status status;if(count>=max_items)return CMETA_CAPACITY_EXCEEDED;status=visit(context,value);if(status!=CMETA_OK)return status;++count;}return CMETA_OK;} \
  CMETA_INLINE size_t name##_borrow_size(const void *object){const name *self=(const name*)object;return self!=NULL?name##_size(self):0u;} \
- CMETA_INLINE cmeta_gen_status name##_borrow_next(const void *object,cmeta_range_cursor *cursor,const void **out_element){const name *self=(const name*)object;if(self==NULL||cursor==NULL||out_element==NULL)return CMETA_GEN_ERROR;*out_element=NULL;if(!salts_stl_typed_list_range_next(&self->raw,cursor,out_element))return CMETA_GEN_DONE;return CMETA_GEN_VALUE;} \
+ CMETA_INLINE cmeta_gen_status name##_borrow_next(const void *object,cmeta_range_cursor *cursor,const void **out_element){const name *self=(const name*)object;if(self==NULL||cursor==NULL||out_element==NULL)return CMETA_GEN_ERROR;*out_element=NULL;if(!cmeta_stl_typed_list_range_next(&self->raw,cursor,out_element))return CMETA_GEN_DONE;return CMETA_GEN_VALUE;} \
  CMETA_LOCAL const cmeta_data_collection_borrow_ops name##_borrow_ops={sizeof(cmeta_data_collection_borrow_ops),CMETA_DATA_COLLECTION_BORROW_OPS_ABI_VERSION,name##_borrow_size,name##_borrow_next,name##_cmeta_generation}; \
  CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),CMETA_DATA_COLLECTION_ORDERED,name##_collection_element,NULL,name##_collection_foreach,name##_collector_erased,&name##_borrow_ops,(data_expr),NULL,NULL}; \
  CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_SEQUENCE,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops}; \
@@ -89,9 +90,9 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
 #define SALTS_META_MAP_DATA_WITH_DATA(name,key_type,value_type,key_data_expr,value_data_expr) \
  CMETA_INLINE const cmeta_data_desc *name##_map_key(const void *object){(void)object;return (key_data_expr);} \
  CMETA_INLINE const cmeta_data_desc *name##_map_value(const void *object){(void)object;return (value_data_expr);} \
- CMETA_INLINE cmeta_status name##_map_foreach(const void *object,cmeta_data_map_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;cmeta_range_cursor cursor={0};const void *key=NULL,*value=NULL;size_t count=0u;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;while(salts_stl_typed_map_range_next(&self->raw,&cursor,&key,&value)){cmeta_status status;if(count>=max_items)return CMETA_CAPACITY_EXCEEDED;status=visit(context,key,value);if(status!=CMETA_OK)return status;++count;}return CMETA_OK;} \
+ CMETA_INLINE cmeta_status name##_map_foreach(const void *object,cmeta_data_map_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;cmeta_range_cursor cursor={0};const void *key=NULL,*value=NULL;size_t count=0u;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;while(cmeta_stl_typed_map_range_next(&self->raw,&cursor,&key,&value)){cmeta_status status;if(count>=max_items)return CMETA_CAPACITY_EXCEEDED;status=visit(context,key,value);if(status!=CMETA_OK)return status;++count;}return CMETA_OK;} \
  CMETA_INLINE size_t name##_map_borrow_size(const void *object){const name *self=(const name*)object;return self!=NULL?name##_size(self):0u;} \
- CMETA_INLINE cmeta_gen_status name##_map_borrow_next(const void *object,cmeta_range_cursor *cursor,const void **out_key,const void **out_value){const name *self=(const name*)object;if(self==NULL||cursor==NULL||out_key==NULL||out_value==NULL)return CMETA_GEN_ERROR;*out_key=NULL;*out_value=NULL;return salts_stl_typed_map_range_next(&self->raw,cursor,out_key,out_value)?CMETA_GEN_VALUE:CMETA_GEN_DONE;} \
+ CMETA_INLINE cmeta_gen_status name##_map_borrow_next(const void *object,cmeta_range_cursor *cursor,const void **out_key,const void **out_value){const name *self=(const name*)object;if(self==NULL||cursor==NULL||out_key==NULL||out_value==NULL)return CMETA_GEN_ERROR;*out_key=NULL;*out_value=NULL;return cmeta_stl_typed_map_range_next(&self->raw,cursor,out_key,out_value)?CMETA_GEN_VALUE:CMETA_GEN_DONE;} \
  CMETA_LOCAL const cmeta_data_map_borrow_ops name##_map_borrow_ops={sizeof(cmeta_data_map_borrow_ops),CMETA_DATA_MAP_BORROW_OPS_ABI_VERSION,name##_map_borrow_size,name##_map_borrow_next,name##_cmeta_generation}; \
  CMETA_LOCAL const cmeta_data_map_ops name##_map_ops={sizeof(cmeta_data_map_ops),CMETA_DATA_MAP_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),CMETA_DATA_MAP_UNIQUE_KEYS|CMETA_DATA_MAP_ORDERED|CMETA_DATA_MAP_SORTED,name##_map_key,name##_map_value,name##_map_foreach,name##_collector_erased,name##_map_accept,&name##_map_borrow_ops,(key_data_expr),(value_data_expr)}; \
  CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF_OR(name,&name##_cmeta_type),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops,&name##_construct_ops}; \
@@ -142,13 +143,17 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_status name##_construct_init_zero(void *object){name *self=(name*)object;if(self==NULL)return CMETA_INVALID_ARGUMENT;*self=(name){.cmeta={&name##_cmeta_container_desc},.raw=init_expr};return CMETA_OK;} \
  CMETA_INLINE void name##_construct_restore_zero(void *object){name *self=(name*)object;if(self==NULL)return;destroy_expr;*self=(name){.cmeta={&name##_cmeta_container_desc},.raw=init_expr};} \
  CMETA_INLINE void name##_construct_move(void *destination,void *source){name *dst=(name*)destination;name *src=(name*)source;if(dst==NULL||src==NULL||dst==src)return;{name *self=dst;destroy_expr;}*dst=*src;*src=(name){.cmeta={&name##_cmeta_container_desc},.raw=init_expr};} \
- CMETA_LOCAL const cmeta_data_construct_ops name##_construct_ops={sizeof(cmeta_data_construct_ops),CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),name##_construct_init_zero,name##_construct_restore_zero,name##_construct_move};
+ enum { name##_construct_flags = CMETA_LIFECYCLE_INIT_NOFAIL | CMETA_LIFECYCLE_MOVABLE }; \
+ CMETA_LOCAL const cmeta_data_construct_ops name##_construct_ops={sizeof(cmeta_data_construct_ops),CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),name##_construct_init_zero,name##_construct_restore_zero,name##_construct_move,name##_construct_flags}; \
+ CMETA_DEFINE_STATIC_LIFECYCLE(name, name##_construct_ops, name##_construct_flags)
 
 #define SALTS_META_C2_CONSTRUCT(name,init_expr,destroy_expr) \
  CMETA_INLINE cmeta_status name##_construct_init_zero(void *object){name *self=(name*)object;if(self==NULL)return CMETA_INVALID_ARGUMENT;*self=(name){.cmeta={&name##_cmeta_container_desc},.raw=init_expr};return CMETA_OK;} \
  CMETA_INLINE void name##_construct_restore_zero(void *object){name *self=(name*)object;if(self==NULL)return;destroy_expr;*self=(name){.cmeta={&name##_cmeta_container_desc},.raw=init_expr};} \
  CMETA_INLINE void name##_construct_move(void *destination,void *source){name *dst=(name*)destination;name *src=(name*)source;if(dst==NULL||src==NULL||dst==src)return;{name *self=dst;destroy_expr;}*dst=*src;*src=(name){.cmeta={&name##_cmeta_container_desc},.raw=init_expr};} \
- CMETA_LOCAL const cmeta_data_construct_ops name##_construct_ops={sizeof(cmeta_data_construct_ops),CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),name##_construct_init_zero,name##_construct_restore_zero,name##_construct_move};
+ enum { name##_construct_flags = CMETA_LIFECYCLE_INIT_NOFAIL | CMETA_LIFECYCLE_MOVABLE }; \
+ CMETA_LOCAL const cmeta_data_construct_ops name##_construct_ops={sizeof(cmeta_data_construct_ops),CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),name##_construct_init_zero,name##_construct_restore_zero,name##_construct_move,name##_construct_flags}; \
+ CMETA_DEFINE_STATIC_LIFECYCLE(name, name##_construct_ops, name##_construct_flags)
 
 
 
@@ -169,8 +174,8 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  SALTS_META_ADAPTER_SEQUENCE_DATA_WITH_DATA(name,type,CMETA_DATAOF(type),prefix,semantic_kind)
 
 #define SALTS_META_C1_COLLECTOR_WITH_TYPE(name,type,type_desc,accept_method) \
- CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){name *output=(name*)context;if(output==NULL)return CMETA_INVALID_ARGUMENT;if(!cmeta_type_equal(input,(type_desc)))return CMETA_TYPE_MISMATCH;name##_destroy(output);return salts_stl_cmeta_status((stl_status)name##_init(output,limit));} \
- CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){return salts_stl_cmeta_status((stl_status)name##_##accept_method((name*)context,*(const type*)value));} \
+ CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){name *output=(name*)context;if(output==NULL)return CMETA_INVALID_ARGUMENT;if(!cmeta_type_equal(input,(type_desc)))return CMETA_TYPE_MISMATCH;name##_destroy(output);return cmeta_stl_cmeta_status((stl_status)name##_init(output,limit));} \
+ CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){return cmeta_stl_cmeta_status((stl_status)name##_##accept_method((name*)context,*(const type*)value));} \
  CMETA_INLINE cmeta_status name##_collector_finish_cb(void *context){(void)context;return CMETA_OK;} \
  CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output){name##_destroy(output);memset(output,0,sizeof(*output));}} \
  CMETA_LOCAL const cmeta_collector_ops name##_collector_ops={name##_collector_begin_cb,name##_collector_accept_cb,name##_collector_finish_cb,name##_collector_abort_cb}; \
@@ -181,8 +186,8 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
 
 #define SALTS_META_C2_COLLECTOR(name) \
  CMETA_LOCAL cmeta_type_desc name##_entry_cmeta_type; \
- CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){name *output=(name*)context;if(output==NULL)return CMETA_INVALID_ARGUMENT;if(!cmeta_type_equal(input,&name##_entry_cmeta_type))return CMETA_TYPE_MISMATCH;if(cmeta_type_require_traits(input,CMETA_TRAIT_COPY|CMETA_TRAIT_MOVE|CMETA_TRAIT_DESTROY)!=CMETA_OK)return CMETA_TRAIT_MISSING;name##_destroy(output);return salts_stl_cmeta_status((stl_status)name##_init(output,limit));} \
- CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){const name##_entry *entry=(const name##_entry*)value;return salts_stl_cmeta_status((stl_status)name##_put((name*)context,entry->key,entry->value));} \
+ CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){name *output=(name*)context;if(output==NULL)return CMETA_INVALID_ARGUMENT;if(!cmeta_type_equal(input,&name##_entry_cmeta_type))return CMETA_TYPE_MISMATCH;if(cmeta_type_require_traits(input,CMETA_TRAIT_COPY|CMETA_TRAIT_MOVE|CMETA_TRAIT_DESTROY)!=CMETA_OK)return CMETA_TRAIT_MISSING;name##_destroy(output);return cmeta_stl_cmeta_status((stl_status)name##_init(output,limit));} \
+ CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){const name##_entry *entry=(const name##_entry*)value;return cmeta_stl_cmeta_status((stl_status)name##_put((name*)context,entry->key,entry->value));} \
  CMETA_INLINE cmeta_status name##_collector_finish_cb(void *context){(void)context;return CMETA_OK;} \
  CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output){name##_destroy(output);memset(output,0,sizeof(*output));}} \
  CMETA_LOCAL const cmeta_collector_ops name##_collector_ops={name##_collector_begin_cb,name##_collector_accept_cb,name##_collector_finish_cb,name##_collector_abort_cb}; \
@@ -192,8 +197,8 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
 /* A multimap collector's limit bounds total retained key/value pairs. */
 #define SALTS_META_MULTIMAP_COLLECTOR(name) \
  CMETA_LOCAL cmeta_type_desc name##_entry_cmeta_type; \
- CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){name *output=(name*)context;if(output==NULL)return CMETA_INVALID_ARGUMENT;if(!cmeta_type_equal(input,&name##_entry_cmeta_type))return CMETA_TYPE_MISMATCH;if(cmeta_type_require_traits(input,CMETA_TRAIT_COPY|CMETA_TRAIT_MOVE|CMETA_TRAIT_DESTROY)!=CMETA_OK)return CMETA_TRAIT_MISSING;name##_destroy(output);return salts_stl_cmeta_status((stl_status)name##_init(output,limit));} \
- CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){const name##_entry *entry=(const name##_entry*)value;return salts_stl_cmeta_status((stl_status)name##_put((name*)context,entry->key,entry->value));} \
+ CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){name *output=(name*)context;if(output==NULL)return CMETA_INVALID_ARGUMENT;if(!cmeta_type_equal(input,&name##_entry_cmeta_type))return CMETA_TYPE_MISMATCH;if(cmeta_type_require_traits(input,CMETA_TRAIT_COPY|CMETA_TRAIT_MOVE|CMETA_TRAIT_DESTROY)!=CMETA_OK)return CMETA_TRAIT_MISSING;name##_destroy(output);return cmeta_stl_cmeta_status((stl_status)name##_init(output,limit));} \
+ CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){const name##_entry *entry=(const name##_entry*)value;return cmeta_stl_cmeta_status((stl_status)name##_put((name*)context,entry->key,entry->value));} \
  CMETA_INLINE cmeta_status name##_collector_finish_cb(void *context){(void)context;return CMETA_OK;} \
  CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output){name##_destroy(output);memset(output,0,sizeof(*output));}} \
  CMETA_LOCAL const cmeta_collector_ops name##_collector_ops={name##_collector_begin_cb,name##_collector_accept_cb,name##_collector_finish_cb,name##_collector_abort_cb}; \
@@ -426,7 +431,7 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_PP_CAT(SALTS_META_C1_METHOD_ENTRY_,kind)(pub,op,extra,__VA_ARGS__)
 
 #define SALTS_META_C1_METHOD_ENTRY_VALUE(pub,op,extra,name,type,type_desc) \
- { CMETA_CONTAINER_STR(pub), &name##_##pub##__function_meta, \
+ { CMETA_CONTAINER_STR(pub), \
    &name##_##pub##__function_abi_meta },
 
 #define SALTS_META_C1_METHOD_ENTRY_PUSH_VALUE SALTS_META_C1_METHOD_ENTRY_VALUE
@@ -456,17 +461,17 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
 #define SALTS_META_C1_METHOD_METADATA(kind,name,type,type_desc,methods) \
  SALTS_META_RECEIVER_TYPE(name) \
  methods(SALTS_META_C1_METHOD_REFLECT_DISPATCH,(name,type,type_desc)) \
- CMETA_LOCAL const cmeta_receiver_method name##_receiver_methods[] = { \
+ CMETA_LOCAL const cmeta_receiver_operation name##_receiver_operations[] = { \
    methods(SALTS_META_C1_METHOD_ENTRY_DISPATCH,(name,type,type_desc)) \
  }; \
- CMETA_LOCAL const cmeta_receiver_method_set name##_receiver_method_set_value = { \
-   sizeof(cmeta_receiver_method_set), &name##_cmeta_type, \
-   name##_receiver_methods, \
-   sizeof(name##_receiver_methods) / sizeof(name##_receiver_methods[0]), \
+ CMETA_LOCAL const cmeta_receiver_operation_set name##_receiver_operation_set_value = { \
+   sizeof(cmeta_receiver_operation_set), &name##_cmeta_type, \
+   name##_receiver_operations, \
+   sizeof(name##_receiver_operations) / sizeof(name##_receiver_operations[0]), \
    SALTS_META_GENERIC_DESC(kind) \
  }; \
- CMETA_INLINE const cmeta_receiver_method_set *name##_receiver_method_set(void) { \
-   return &name##_receiver_method_set_value; \
+ CMETA_INLINE const cmeta_receiver_operation_set *name##_receiver_operation_set(void) { \
+   return &name##_receiver_operation_set_value; \
  }
 
 #define SALTS_META_C2_METHOD_REFLECT_DISPATCH(kind,pub,op,extra,ctx) \
@@ -512,7 +517,7 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
 
 #define SALTS_META_C2_METHOD_ENTRY_PUT( \
     pub,op,extra,name,kt,vt,key_desc,value_desc) \
- { CMETA_CONTAINER_STR(pub), &name##_##pub##__function_meta, \
+ { CMETA_CONTAINER_STR(pub), \
    &name##_##pub##__function_abi_meta },
 
 #define SALTS_META_C2_METHOD_ENTRY_INIT_KV_HASH SALTS_META_METHOD_REFLECT_SKIP
@@ -545,131 +550,131 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  SALTS_META_RECEIVER_TYPE(name) \
  methods(SALTS_META_C2_METHOD_REFLECT_DISPATCH, \
          (name,kt,vt,key_desc,value_desc)) \
- CMETA_LOCAL const cmeta_receiver_method name##_receiver_methods[] = { \
+ CMETA_LOCAL const cmeta_receiver_operation name##_receiver_operations[] = { \
    methods(SALTS_META_C2_METHOD_ENTRY_DISPATCH, \
            (name,kt,vt,key_desc,value_desc)) \
  }; \
- CMETA_LOCAL const cmeta_receiver_method_set name##_receiver_method_set_value = { \
-   sizeof(cmeta_receiver_method_set), &name##_cmeta_type, \
-   name##_receiver_methods, \
-   sizeof(name##_receiver_methods) / sizeof(name##_receiver_methods[0]), \
+ CMETA_LOCAL const cmeta_receiver_operation_set name##_receiver_operation_set_value = { \
+   sizeof(cmeta_receiver_operation_set), &name##_cmeta_type, \
+   name##_receiver_operations, \
+   sizeof(name##_receiver_operations) / sizeof(name##_receiver_operations[0]), \
    SALTS_META_GENERIC_DESC(kind) \
  }; \
- CMETA_INLINE const cmeta_receiver_method_set *name##_receiver_method_set(void) { \
-   return &name##_receiver_method_set_value; \
+ CMETA_INLINE const cmeta_receiver_operation_set *name##_receiver_operation_set(void) { \
+   return &name##_receiver_operation_set_value; \
  }
 
 /* List and Map use small storage bridges where their raw initialization or
  * destruction entry point differs from the generated method contract. */
-CMETA_INLINE stl_status salts_stl_typed_list_raw_init(
+CMETA_INLINE stl_status cmeta_stl_typed_list_raw_init(
     list_t *self, const cmeta_type_desc *type, size_t limit) {
   return list_raw_init(self, type, limit);
 }
-CMETA_INLINE stl_status salts_stl_typed_list_raw_from_array(
+CMETA_INLINE stl_status cmeta_stl_typed_list_raw_from_array(
     list_t *self, const void *values, size_t count,
     const cmeta_type_desc *type, size_t limit) {
   return list_raw_from_array(self, values, count, type, limit);
 }
-CMETA_INLINE void salts_stl_typed_list_raw_destroy_storage(list_t *self) {
+CMETA_INLINE void cmeta_stl_typed_list_raw_destroy_storage(list_t *self) {
   list_raw_destroy_storage(self);
 }
-CMETA_INLINE void salts_stl_typed_list_clear(list_t *self) {
+CMETA_INLINE void cmeta_stl_typed_list_clear(list_t *self) {
   list_clear(self);
 }
-CMETA_INLINE stl_status salts_stl_typed_list_push_back(
+CMETA_INLINE stl_status cmeta_stl_typed_list_push_back(
     list_t *self, const void *value, list_iter_t *iterator) {
   return list_push_back(self, value, iterator);
 }
-CMETA_INLINE stl_status salts_stl_typed_list_push_front(
+CMETA_INLINE stl_status cmeta_stl_typed_list_push_front(
     list_t *self, const void *value, list_iter_t *iterator) {
   return list_push_front(self, value, iterator);
 }
-CMETA_INLINE stl_status salts_stl_typed_list_pop_back(
+CMETA_INLINE stl_status cmeta_stl_typed_list_pop_back(
     list_t *self, void *value) {
   return list_pop_back(self, value);
 }
-CMETA_INLINE stl_status salts_stl_typed_list_pop_front(
+CMETA_INLINE stl_status cmeta_stl_typed_list_pop_front(
     list_t *self, void *value) {
   return list_pop_front(self, value);
 }
-CMETA_INLINE void *salts_stl_typed_list_front(list_t *self) {
+CMETA_INLINE void *cmeta_stl_typed_list_front(list_t *self) {
   return list_front(self);
 }
-CMETA_INLINE const void *salts_stl_typed_list_front_const(
+CMETA_INLINE const void *cmeta_stl_typed_list_front_const(
     const list_t *self) {
   return list_front_const(self);
 }
-CMETA_INLINE void *salts_stl_typed_list_back(list_t *self) {
+CMETA_INLINE void *cmeta_stl_typed_list_back(list_t *self) {
   return list_back(self);
 }
-CMETA_INLINE const void *salts_stl_typed_list_back_const(
+CMETA_INLINE const void *cmeta_stl_typed_list_back_const(
     const list_t *self) {
   return list_back_const(self);
 }
-CMETA_INLINE size_t salts_stl_typed_list_size(const list_t *self) {
+CMETA_INLINE size_t cmeta_stl_typed_list_size(const list_t *self) {
   return list_size(self);
 }
-CMETA_INLINE uint64_t salts_stl_typed_list_generation(const list_t *self) {
+CMETA_INLINE uint64_t cmeta_stl_typed_list_generation(const list_t *self) {
   return list_generation(self);
 }
-CMETA_INLINE bool salts_stl_typed_list_empty(const list_t *self) {
+CMETA_INLINE bool cmeta_stl_typed_list_empty(const list_t *self) {
   return list_empty(self);
 }
-CMETA_INLINE bool salts_stl_typed_list_range_next(
+CMETA_INLINE bool cmeta_stl_typed_list_range_next(
     const list_t *self, cmeta_range_cursor *cursor, const void **value) {
   return list_range_next(self, cursor, value);
 }
 
-CMETA_INLINE stl_status salts_stl_typed_map_raw_init(
+CMETA_INLINE stl_status cmeta_stl_typed_map_raw_init(
     map_t *self, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t limit) {
   return map_raw_init(self, key_type, value_type, limit);
 }
-CMETA_INLINE stl_status salts_stl_typed_map_raw_from_arrays(
+CMETA_INLINE stl_status cmeta_stl_typed_map_raw_from_arrays(
     map_t *self, const void *keys, const void *values, size_t count,
     const cmeta_type_desc *key_type, const cmeta_type_desc *value_type,
     size_t limit) {
   return map_raw_from_arrays(self, keys, values, count, key_type, value_type,
                              limit);
 }
-CMETA_INLINE void salts_stl_typed_map_raw_destroy_storage(map_t *self) {
+CMETA_INLINE void cmeta_stl_typed_map_raw_destroy_storage(map_t *self) {
   map_raw_destroy_storage(self);
 }
-CMETA_INLINE void salts_stl_typed_map_destroy(map_t *self) {
+CMETA_INLINE void cmeta_stl_typed_map_destroy(map_t *self) {
   map_raw_destroy_storage(self);
 }
-CMETA_INLINE void salts_stl_typed_map_clear(map_t *self) {
+CMETA_INLINE void cmeta_stl_typed_map_clear(map_t *self) {
   map_clear(self);
 }
-CMETA_INLINE stl_status salts_stl_typed_map_put(
+CMETA_INLINE stl_status cmeta_stl_typed_map_put(
     map_t *self, const void *key, const void *value) {
   return map_put(self, key, value);
 }
-CMETA_INLINE void *salts_stl_typed_map_get(map_t *self, const void *key) {
+CMETA_INLINE void *cmeta_stl_typed_map_get(map_t *self, const void *key) {
   return map_get(self, key);
 }
-CMETA_INLINE const void *salts_stl_typed_map_get_const(
+CMETA_INLINE const void *cmeta_stl_typed_map_get_const(
     const map_t *self, const void *key) {
   return map_get_const(self, key);
 }
-CMETA_INLINE bool salts_stl_typed_map_contains(
+CMETA_INLINE bool cmeta_stl_typed_map_contains(
     const map_t *self, const void *key) {
   return map_contains(self, key);
 }
-CMETA_INLINE stl_status salts_stl_typed_map_remove(
+CMETA_INLINE stl_status cmeta_stl_typed_map_remove(
     map_t *self, const void *key, void *value) {
   return map_remove(self, key, value);
 }
-CMETA_INLINE size_t salts_stl_typed_map_size(const map_t *self) {
+CMETA_INLINE size_t cmeta_stl_typed_map_size(const map_t *self) {
   return map_size(self);
 }
-CMETA_INLINE uint64_t salts_stl_typed_map_generation(const map_t *self) {
+CMETA_INLINE uint64_t cmeta_stl_typed_map_generation(const map_t *self) {
   return map_generation(self);
 }
-CMETA_INLINE bool salts_stl_typed_map_empty(const map_t *self) {
+CMETA_INLINE bool cmeta_stl_typed_map_empty(const map_t *self) {
   return map_empty(self);
 }
-CMETA_INLINE bool salts_stl_typed_map_range_next(
+CMETA_INLINE bool cmeta_stl_typed_map_range_next(
     const map_t *self, cmeta_range_cursor *cursor, const void **key,
     const void **value) {
   return map_range_next(self, cursor, key, value);
@@ -707,14 +712,14 @@ CMETA_INLINE bool salts_stl_typed_map_range_next(
  * adapters remain thin language-policy shims that reference these rows. */
 #define SALTS_STL_KIND_ROW_Vec (Vec,1,C1_INDEX,vec_t,vec,SALTS_META_VEC_METHODS,push,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_CONTIGUOUS|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
 #define SALTS_STL_KIND_ROW_Deque (Deque,1,C1_INDEX,deque_t,deque,SALTS_META_DEQUE_METHODS,push_back,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
-#define SALTS_STL_KIND_ROW_List (List,1,C1_LINK,list_t,salts_stl_typed_list,SALTS_META_LIST_METHODS,push_back,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,0,0,0)
+#define SALTS_STL_KIND_ROW_List (List,1,C1_LINK,list_t,cmeta_stl_typed_list,SALTS_META_LIST_METHODS,push_back,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,0,0,0)
 #define SALTS_STL_KIND_ROW_Stack (Stack,1,C1_INDEX,cstl_stack_t,stack,SALTS_META_STACK_METHODS,push,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
 #define SALTS_STL_KIND_ROW_Queue (Queue,1,C1_INDEX,queue_t,queue,SALTS_META_QUEUE_METHODS,push,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
 #define SALTS_STL_KIND_ROW_Heap (Heap,1,C1_INDEX,heap_t,heap,SALTS_META_HEAP_METHODS,push,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_RANDOM_ACCESS|CMETA_RANGE_REUSABLE,0,0,0)
 #define SALTS_STL_KIND_ROW_Set (Set,1,C1_LINK,set_t,set,SALTS_META_SET_METHODS,add,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,0,0,0)
 #define SALTS_STL_KIND_ROW_HashSet (HashSet,1,C1_SLOT,hash_set_t,hash_set,SALTS_META_HASH_SET_METHODS,add,_,_,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,0,0,0)
 #define SALTS_STL_KIND_ROW_HashMap (HashMap,2,C2_HASH,hash_map_t,hash_map,SALTS_META_HASH_MAP_METHODS,_,key_at,value_at_const,0,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
-#define SALTS_STL_KIND_ROW_Map (Map,2,C2_LINK,map_t,salts_stl_typed_map,SALTS_META_MAP_METHODS,_,_,_,0,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
+#define SALTS_STL_KIND_ROW_Map (Map,2,C2_LINK,map_t,cmeta_stl_typed_map,SALTS_META_MAP_METHODS,_,_,_,0,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
 #define SALTS_STL_KIND_ROW_MultiMap (MultiMap,2,C2_LINK,multimap_t,multimap,SALTS_META_MULTIMAP_METHODS,_,_,_,0,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_REUSABLE)
 #define SALTS_STL_KIND_ROW_BTree (BTree,2,C2_LINK,btree_t,btree,SALTS_META_BTREE_METHODS,_,_,_,0,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)
 #define SALTS_STL_KIND_ROW_BPlusTree (BPlusTree,2,C2_LINK,bplus_tree_t,bplus_tree,SALTS_META_BPLUS_TREE_METHODS,_,_,_,0,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_REUSABLE,CMETA_RANGE_SIZED|CMETA_RANGE_ORDERED|CMETA_RANGE_SORTED|CMETA_RANGE_UNIQUE|CMETA_RANGE_REUSABLE)

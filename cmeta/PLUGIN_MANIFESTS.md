@@ -48,19 +48,19 @@ DSL 支持非空的 1..16 个 role row，通过既有 `CMETA_PP_FOR_EACH` 展开
 
 ## 状态归属、错误与兼容性
 
-Declaration 是显式 discovery set，不声明 runtime exports 的全集，不授予执行或所有权。`Salts::Plugin` 的 `export_id`、`contract_id`、`contract_version`、capability bits、ABI 4 admission、start/stop 和 lease 继续由 Plugin owner 管理。应用显式选择 provider，再用现有 `salts_plugin_export_require_interface` 验证 domain ID/version/capabilities 和 canonical descriptor。CMeta 不选择 provider、不加载模块、不推进生命周期，也不实现第二个依赖 resolver 或 ownership registry。
+Declaration 是显式 discovery set，不声明 runtime exports 的全集，不授予执行或所有权。`Salts::Plugin` 的 `export_id`、`contract_id`、`contract_version`、capability bits、ABI 5 admission、start/stop 和 lease 继续由 Plugin owner 管理。应用显式选择 provider，再用现有 `cmeta_plugin_export_require_interface` 验证 domain ID/version/capabilities 和 canonical descriptor。CMeta 不选择 provider、不加载模块、不推进生命周期，也不实现第二个依赖 resolver 或 ownership registry。
 
-若应用需要跨模块消费 declaration，可像正式 fixture 一样通过现有 FUNCTION export 发布 exact getter：它返回 BORROWED 的 `const cmeta_manifest *`，并具有 canonical FunctionAbi。Provider 的 C/C++ static table 无需 constructor；原 Plugin query 仍只接受 ABI 4。Host 在持有原 lease 时查找并校验 getter contract、执行确切 bridge、查询 declaration、校验所选 provider，最后释放 lease。一个 lease 覆盖 descriptor、interface handle、callback 和指纹读取的整个借用期；复制 descriptor 或返回指针不会延长该期。
+若应用需要跨模块消费 declaration，可像正式 fixture 一样通过现有 FUNCTION export 发布 exact getter：它返回 BORROWED 的 `const cmeta_manifest *`，并具有 canonical FunctionAbi。Provider 的 C/C++ static table 无需 constructor；Plugin query 只接受当前 ABI 5。Host 在持有原 lease 时查找并校验 getter contract、执行确切 bridge、查询 declaration、校验所选 provider，最后释放 lease。一个 lease 覆盖 descriptor、interface handle、callback 和指纹读取的整个借用期；复制 descriptor 或返回指针不会延长该期。
 
-兼容性（MED）：新 public metadata/query 是 additive；Plugin ABI 4、Reflection ABI 3、generic manifest v1 布局和所有旧 kind 编号均不变。跨 DSO 仍须在读取 metadata 前协商这些契约。Plugin fingerprint 是 ordered membership/interface **形状**，不包含 runtime domain ID/version 或 native implementation；相同形状的两个模块可以同 hash。Consumer 必须另行验证 Plugin 的 ID/version，并对 TypeDesc 未表达的 Struct/enum schema 显式组合相应指纹。摘要不能替代 canonical compatibility 或安全认证。
+兼容性（MED）：当前契约为 Plugin ABI 5 / Reflection ABI 4，属于显式 cutover；host、provider 和消费者须一起重建，旧 epoch 在读取 metadata 前拒绝，不提供旧布局归一化或 ABI fallback。Declaration format 1、generic manifest v1 和既有 kind 编号保持不变。Plugin fingerprint 是 ordered membership/interface **形状**，不包含 runtime domain ID/version 或 native implementation；相同形状的两个模块可以同 hash。Consumer 必须另行验证 Plugin 的 ID/version，并对 TypeDesc 未表达的 Struct/enum schema 显式组合相应指纹。摘要不能替代 canonical compatibility 或安全认证。
 
 失败没有半更新：query/hash 保持原输出，provider admission、dependency failure、retry 和停止/卸载收场由原 owner 处理。Provider release/unload 后禁止继续读取 declaration；完整的派生 `uint64_t` 指纹可继续保存。
 
 ## 正式验证
 
 - `cmeta_plugin_test` / `cmeta_plugin_cpp_test`：direct canonical linkage、typed discovery、roles/order、跨 TU、budget、失败输出和固定向量；错误类型有 C/C++ compile-fail。
-- `salts_plugin_manifest_test`：真实 C/C++ metadata 模块，在 ABI 4 和 exact getter contract 校验后读取同一 schema；两个模块均得到 domain 6 固定向量 `5aa1c2c29cbe9f20`。该向量由 `FingerprintService` 的 [`FINGERPRINTS.md`](FINGERPRINTS.md) interface row、PROVIDES/REQUIRES 两行独立计算。
+- `cmeta_plugin_manifest_test`：真实 C/C++ metadata 模块，在 ABI 5 和 exact getter contract 校验后读取同一 schema；两个模块均得到 domain 6 固定向量 `5aa1c2c29cbe9f20`。该向量由 `FingerprintService` 的 [`FINGERPRINTS.md`](FINGERPRINTS.md) interface row、PROVIDES/REQUIRES 两行独立计算。
 - 同一集成测试检查 active lease 仍为 1、callbacks_inflight 为 0、状态仍 STARTED；request_stop 后 lease 阻止卸载，释放后可卸载。Required capability 通过显式选定模块的既有 Plugin contract API 校验，缺失 export 或错误 version 明确失败。
-- GCC、GCC ASan、MSVC、ClangCL、AppleClang CI 运行上述用例；原 Plugin loader/lifecycle/contract 回归继续运行。正式 installed Reflection C/C++ tests 只链接 `Salts::CMeta` 与 TinyTest，实际发现、查询并 fingerprint declaration。
+- 当前 CI 配置包含 GCC、Linux Clang、MSVC、macOS GCC 和 AppleClang 的语义门禁，实际通过情况以对应运行结果为准，见 [`REVIEW_STACKS.md`](REVIEW_STACKS.md)。原 Plugin loader/lifecycle/contract 回归继续运行。正式 installed Reflection C/C++ tests 只链接 `Salts::CMeta` 与 TinyTest，实际发现、查询并 fingerprint declaration。
 
-没有新增 linker aggregation backend；portable static array 仍是唯一参考实现。ELF/Mach-O/COFF section syntax、constructor registration、package pinning 和 mutable CMeta registry 均未加入。
+CMeta declaration discovery 使用 portable static array，不引入 constructor registration 或 mutable CMeta registry。Plugin 的 #977 runtime export 聚合另由 [`plugin_linker.h`](../plugin/include/salts/plugin_linker.h) 提供经过资格验证的 ELF/Mach-O/COFF 后端；其 manifest/query 和 lease 契约见 [`Plugin README`](../plugin/README.md)。两者都不通过聚合隐式加载模块或延长 borrowed metadata 的生命周期。

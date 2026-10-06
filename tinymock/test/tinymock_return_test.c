@@ -50,7 +50,7 @@ static const cmeta_function_desc return_managed_function = {
   0u,
   CMETA_EFFECT_PURE,
   CMETA_PROP_NONE,
-  CMETA_RESULT_UNKNOWN
+  CMETA_RESULT_VALUE
 };
 
 static const cmeta_function_desc return_value_function = {

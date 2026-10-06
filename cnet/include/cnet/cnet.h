@@ -3,7 +3,7 @@
 
 #include <salts/error_codes.h>
 #include <salts/native_io.h>
-#include <salts_buffer.h>
+#include <cmeta_buffer.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -718,7 +718,8 @@ int cnet_stream_socket_options_validate(const cnet_stream_socket_options *option
  * Copies policy for future TCP/TLS connections. Detached TCP streams produced
  * by a CNet listener receive this final-owner policy when consumed through
  * cnet_client_adopt_accepted() or cnet_client_adopt_accepted_tls(). Generic
- * native-socket adoption preserves the socket's existing live policy.
+ * native-socket adoption and direct cnet_listener_accept*() calls preserve
+ * the socket's existing live policy, including configured listener options.
  * No active connection may exist while replacing this client-global policy.
  */
 int cnet_client_set_stream_socket_options(cnet_client *client,
@@ -1363,7 +1364,8 @@ int cnet_listener_route_external_completion(
  * Accepts at most one pending TCP peer and transfers its socket into `client`.
  * Success publishes a generation-checked handle and guarantees a later state
  * callback. No pending peer returns `SALTS_ETIMEDOUT`. Admission failure closes
- * the native peer and leaves `out_connection` zero.
+ * the native peer and leaves `out_connection` zero. The child preserves the
+ * listener's TCP policy; the client's future-connection policy is not applied.
  */
 int cnet_listener_accept(cnet_listener *listener, cnet_client *client,
                          const cnet_observer *observer, cnet_connection *out_connection);
@@ -1449,6 +1451,7 @@ int cnet_listener_accept_vsock_peer(cnet_listener *listener, cnet_client *client
 /**
  * Accepts one TCP peer and begins a server-side TLS handshake before
  * CONNECTED. The caller must not destroy `server` concurrently with this call.
+ * Like plaintext direct accept, the child preserves the listener's TCP policy.
  * @return The plaintext accept statuses, plus `SALTS_ENOTSUP` when `client`
  * has no bounded TLS storage or `SALTS_EINVAL` for an invalid TLS context.
  */

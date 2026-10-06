@@ -141,3 +141,53 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF)
 endif()
+
+foreach(benchmark IN ITEMS cnet_io_benchmark cnet_tls_sg_benchmark
+    cnet_scaling_benchmark cnet_owner_parallel_benchmark
+    cnet_shards_parallel_benchmark cnet_central_callback_benchmark
+    cnet_external_owner_parallel_benchmark)
+  if(TARGET ${benchmark})
+    add_test(NAME ${benchmark} COMMAND ${benchmark})
+    set_tests_properties(${benchmark} PROPERTIES LABELS benchmark
+      WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+  endif()
+endforeach()
+
+# Workloads and comparison DSOs belong to the execution, not the build identity.
+# CTest expands these environment arguments when consuming the compiled artifact.
+set(benchmark_tests [=[
+add_test(cnet_owner_lifecycle_compare "$<TARGET_FILE:cnet_owner_lifecycle_compare>"
+  "$ENV{CNET_COMPARE_BASELINE_DSO}" "$ENV{CNET_COMPARE_CANDIDATE_DSO}"
+  "$ENV{CNET_COMPARE_REPORT}")
+set_tests_properties(cnet_owner_lifecycle_compare PROPERTIES LABELS benchmark)
+]=])
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  foreach(benchmark IN ITEMS cnet_tls_provider_parallel_benchmark cnet_tls_public_owner_benchmark)
+    set(tls_test [=[
+add_test(@benchmark@ "$<TARGET_FILE:@benchmark@>"
+  "$ENV{CNET_TLS_MODE}" "$ENV{CNET_TLS_PAYLOAD}"
+  "$ENV{CNET_TLS_OWNERS}" "$ENV{CNET_TLS_TEMPERATURE}")
+set_tests_properties(@benchmark@ PROPERTIES LABELS benchmark)
+]=])
+    string(CONFIGURE "${tls_test}" tls_test @ONLY)
+    string(APPEND benchmark_tests "${tls_test}")
+  endforeach()
+  string(APPEND benchmark_tests [=[
+add_test(cnet_io_benchmark_trace strace -ff -ttt -T -s 128
+  -e trace=%network,read,readv,write,writev,poll,ppoll,epoll_ctl,epoll_wait,epoll_pwait,epoll_pwait2,io_uring_setup,io_uring_register,io_uring_enter,futex
+  -o "$ENV{SALTS_BENCH_TRACE_PREFIX}" "$<TARGET_FILE:cnet_io_benchmark>" --no-color)
+set_tests_properties(cnet_io_benchmark_trace PROPERTIES LABELS "benchmark;trace")
+]=])
+endif()
+
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/benchmarks-$<CONFIG>.cmake"
+  CONTENT "${benchmark_tests}")
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/benchmark-tests.cmake" CONTENT [=[
+if("@CMAKE_CONFIGURATION_TYPES@" STREQUAL "")
+  include("${CMAKE_CURRENT_LIST_DIR}/benchmarks-@CMAKE_BUILD_TYPE@.cmake")
+else()
+  include("${CMAKE_CURRENT_LIST_DIR}/benchmarks-${CTEST_CONFIGURATION_TYPE}.cmake")
+endif()
+]=] @ONLY)
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+  "${CMAKE_CURRENT_BINARY_DIR}/benchmark-tests.cmake")

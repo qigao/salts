@@ -2,7 +2,7 @@
 
 int main(void) {
     cmeta_status status;
-    cmeta_scope(rejected, status, cmeta_autos(cmeta_auto(ScopeValue, value)),
+    cmeta_scope_checked(status, cmeta_autos((ScopeValue, value)),
         cmeta_body(goto outside;));
 outside:
     return status;

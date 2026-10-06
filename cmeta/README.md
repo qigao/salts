@@ -1,5 +1,10 @@
 # CMeta v50
 
+声明生成新增入口：有限 PP 原语见 [`pp.h`](include/cmeta/pp.h)，编译器约束见
+[`compiler.h`](include/cmeta/compiler.h)，精确函数 thunk 见
+[`invoke_decl.h`](include/cmeta/invoke_decl.h)。使用与边界详见
+[`LANGUAGE_REFERENCE.md`](LANGUAGE_REFERENCE.md#有限宏与精确调用声明)。
+
 **Finite generic programming, typed metadata, and semantic code generation for strict C11.**
 
 CMeta is the semantic foundation of Salts. It uses standard C11 techniques such
@@ -70,8 +75,39 @@ application field syntax.
 `cmeta_scope` owns an explicit finite resource set and runs a status-returning
 body function. Native early returns from that function still reach generated
 LIFO cleanup. Scope construction and cleanup use the same canonical DataDesc
-construct ops without runtime Reflection queries or a cleanup registry. See
+construct ops through a generated native-typed static lifecycle accessor.
+`cmeta_scope_checked` explicitly admits hand-written/runtime descriptors through
+the existing checked lifecycle binding; it uses the same cleanup lowering.
+There is no automatic fallback or second lifecycle registry. See
 [structured scope and migration](LANGUAGE_REFERENCE.md#structured-scope).
+
+Canonical lifecycle facts automatically select lowering for `(Type, value)`
+rows: trivial storage has no callbacks or ops/live state; managed nofail storage
+has no partial-init state; fallible storage uses nested rollback control flow.
+Admitted lifecycle/invokable/field bindings
+support repeated use without validating immutable metadata graphs again.
+Data, ObjectRef and Plugin adapters share finite lexical cleanup obligations;
+their existing resource authorities remain separate. See
+[lifetime admission and lowering](LIFECYCLE_LOWERING.md).
+
+Bindings are caller-trusted validated borrowed records, not unforgeable security
+capabilities. Use only successful, unmodified bind/admit results and keep the
+canonical provider/outer Plugin lease alive through all uses and cleanup.
+`cmeta_scope_nofail` remains an explicit assertion using the same lowering;
+ordinary scope already selects this path for declared INIT_NOFAIL types.
+Body failures and C++ exceptions still perform LIFO cleanup.
+
+`<cmeta/data_select.h>` provides `cmeta_data_of(pointer)` for builtin Data
+descriptors and `cmeta_data_of_in(pointer, schema)` for explicit local schemas.
+The pointer is an unevaluated type witness. Both C11 and C++17 select the same
+canonical descriptor, reject unknown/volatile pointer types, and evaluate only
+the selected descriptor expression once. See [typed selection](LANGUAGE_REFERENCE.md#schema-driven-data-selection).
+
+`<cmeta/bind.h>` generates receiver and ordinary parameter binding with explicit
+scalar snapshots or borrowed pointers, exact native thunks, and canonical
+Function projections. Captures stay within `CMETA_CAPTURE_INLINE`; projected
+signatures use the existing unary/binary registry. See
+[parameter binding](RECEIVER_OPERATIONS.md#生成-receivercapturebind976-2729).
 
 Execution/runtime ownership is explicit. Atomics and RCU are owned by
 Salts::Concurrency. Pool storage/lease policy is owned by Salts::Core and
@@ -156,7 +192,7 @@ pointer or descriptor identity. These additions use optional size-versioned
 collection callbacks; older provider prefixes retain their existing behavior.
 
 Salts Core provides header-local `tstr` and `vstr` adapter metadata in
-`salts_cmeta_data.h`. As with other header-generated CMeta metadata, descriptor
+`cmeta_cmeta_data.h`. As with other header-generated CMeta metadata, descriptor
 addresses may differ across translation units; use semantic type comparison.
 
 ## Unified Schema / Replay kernel

@@ -2,10 +2,7 @@
 
 #include <salts/error_codes.h>
 
-#ifdef NDEBUG
-#undef NDEBUG
-#endif
-#include <assert.h>
+#include <tinytest.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -15,13 +12,16 @@ typedef struct retire_probe {
     int status;
 } retire_probe;
 
+static native_io_accept_escrow escrow;
+static retire_probe probe;
+
 static int retire_transport(
     void *context,
     uintptr_t transport) {
     retire_probe *probe = (retire_probe *)context;
 
-    assert(probe != NULL);
-    assert(probe->count <
+    check(probe != NULL);
+    check(probe->count <
            sizeof(probe->retired) / sizeof(probe->retired[0]));
     probe->retired[probe->count++] = transport;
     return probe->status;
@@ -37,165 +37,163 @@ static native_io_request request(
 }
 
 static void test_take_consumes_once(void) {
-    native_io_accept_escrow escrow = {0};
-    retire_probe probe = {0};
     uintptr_t transport = 0u;
 
-    assert(native_io_accept_escrow_init(
+    check(native_io_accept_escrow_init(
                &escrow, 2u, retire_transport, &probe) ==
            SALTS_OK);
-    assert(native_io_accept_escrow_publish(
+    check(native_io_accept_escrow_publish(
                &escrow, request(1u, 1u),
                (uintptr_t)11u) == SALTS_OK);
-    assert(escrow.live_count == 1u);
+    check(escrow.live_count == 1u);
 
-    assert(native_io_accept_escrow_take(
+    check(native_io_accept_escrow_take(
                &escrow, request(1u, 1u),
                &transport) == SALTS_OK);
-    assert(transport == (uintptr_t)11u);
-    assert(escrow.live_count == 0u);
-    assert(probe.count == 0u);
+    check(transport == (uintptr_t)11u);
+    check(escrow.live_count == 0u);
+    check(probe.count == 0u);
 
-    assert(native_io_accept_escrow_take(
+    check(native_io_accept_escrow_take(
                &escrow, request(1u, 1u),
                &transport) == SALTS_ENOENT);
-    assert(native_io_accept_escrow_destroy(
+    check(native_io_accept_escrow_destroy(
                &escrow) == SALTS_OK);
-    assert(probe.count == 0u);
+    check(probe.count == 0u);
 }
 
 static void test_generation_is_part_of_identity(void) {
-    native_io_accept_escrow escrow = {0};
-    retire_probe probe = {0};
     uintptr_t transport = 0u;
 
-    assert(native_io_accept_escrow_init(
+    check(native_io_accept_escrow_init(
                &escrow, 2u, retire_transport, &probe) ==
            SALTS_OK);
-    assert(native_io_accept_escrow_publish(
+    check(native_io_accept_escrow_publish(
                &escrow, request(1u, 7u),
                (uintptr_t)21u) == SALTS_OK);
-    assert(native_io_accept_escrow_publish(
+    check(native_io_accept_escrow_publish(
                &escrow, request(1u, 8u),
                (uintptr_t)22u) == SALTS_OK);
 
-    assert(native_io_accept_escrow_take(
+    check(native_io_accept_escrow_take(
                &escrow, request(1u, 9u),
                &transport) == SALTS_ENOENT);
-    assert(native_io_accept_escrow_take(
+    check(native_io_accept_escrow_take(
                &escrow, request(1u, 8u),
                &transport) == SALTS_OK);
-    assert(transport == (uintptr_t)22u);
+    check(transport == (uintptr_t)22u);
 
-    assert(native_io_accept_escrow_discard(
+    check(native_io_accept_escrow_discard(
                &escrow, request(1u, 7u)) == SALTS_OK);
-    assert(probe.count == 1u);
-    assert(probe.retired[0] == (uintptr_t)21u);
-    assert(native_io_accept_escrow_destroy(
+    check(probe.count == 1u);
+    check(probe.retired[0] == (uintptr_t)21u);
+    check(native_io_accept_escrow_destroy(
                &escrow) == SALTS_OK);
 }
 
 static void test_capacity_is_hard_bound(void) {
-    native_io_accept_escrow escrow = {0};
-    retire_probe probe = {0};
 
-    assert(native_io_accept_escrow_init(
+    check(native_io_accept_escrow_init(
                &escrow, 1u, retire_transport, &probe) ==
            SALTS_OK);
-    assert(native_io_accept_escrow_publish(
+    check(native_io_accept_escrow_publish(
                &escrow, request(1u, 1u),
                (uintptr_t)31u) == SALTS_OK);
-    assert(native_io_accept_escrow_publish(
+    check(native_io_accept_escrow_publish(
                &escrow, request(2u, 1u),
                (uintptr_t)32u) == SALTS_ENOBUFS);
-    assert(native_io_accept_escrow_publish(
+    check(native_io_accept_escrow_publish(
                &escrow, request(1u, 1u),
                (uintptr_t)33u) == SALTS_EALREADY);
 
-    assert(native_io_accept_escrow_discard(
+    check(native_io_accept_escrow_discard(
                &escrow, request(1u, 1u)) == SALTS_OK);
-    assert(probe.count == 1u);
-    assert(probe.retired[0] == (uintptr_t)31u);
-    assert(native_io_accept_escrow_publish(
+    check(probe.count == 1u);
+    check(probe.retired[0] == (uintptr_t)31u);
+    check(native_io_accept_escrow_publish(
                &escrow, request(2u, 1u),
                (uintptr_t)32u) == SALTS_OK);
-    assert(native_io_accept_escrow_destroy(
+    check(native_io_accept_escrow_destroy(
                &escrow) == SALTS_OK);
-    assert(probe.count == 2u);
-    assert(probe.retired[1] == (uintptr_t)32u);
+    check(probe.count == 2u);
+    check(probe.retired[1] == (uintptr_t)32u);
 }
 
 static void test_destroy_retires_every_unclaimed_child_once(void) {
-    native_io_accept_escrow escrow = {0};
-    retire_probe probe = {0};
 
-    assert(native_io_accept_escrow_init(
+    check(native_io_accept_escrow_init(
                &escrow, 3u, retire_transport, &probe) ==
            SALTS_OK);
-    assert(native_io_accept_escrow_publish(
+    check(native_io_accept_escrow_publish(
                &escrow, request(1u, 3u),
                (uintptr_t)41u) == SALTS_OK);
-    assert(native_io_accept_escrow_publish(
+    check(native_io_accept_escrow_publish(
                &escrow, request(2u, 4u),
                (uintptr_t)42u) == SALTS_OK);
 
-    assert(native_io_accept_escrow_destroy(
+    check(native_io_accept_escrow_destroy(
                &escrow) == SALTS_OK);
-    assert(probe.count == 2u);
-    assert(probe.retired[0] == (uintptr_t)41u);
-    assert(probe.retired[1] == (uintptr_t)42u);
-    assert(escrow.entries == NULL);
-    assert(escrow.live_count == 0u);
+    check(probe.count == 2u);
+    check(probe.retired[0] == (uintptr_t)41u);
+    check(probe.retired[1] == (uintptr_t)42u);
+    check(escrow.entries == NULL);
+    check(escrow.live_count == 0u);
 
-    assert(native_io_accept_escrow_destroy(
+    check(native_io_accept_escrow_destroy(
                &escrow) == SALTS_OK);
-    assert(probe.count == 2u);
+    check(probe.count == 2u);
 }
 
 static void test_destroy_reports_retire_error_after_consuming(void) {
-    native_io_accept_escrow escrow = {0};
-    retire_probe probe = {0};
 
     probe.status = SALTS_EIO;
-    assert(native_io_accept_escrow_init(
+    check(native_io_accept_escrow_init(
                &escrow, 1u, retire_transport, &probe) ==
            SALTS_OK);
-    assert(native_io_accept_escrow_publish(
+    check(native_io_accept_escrow_publish(
                &escrow, request(3u, 5u),
                (uintptr_t)51u) == SALTS_OK);
 
-    assert(native_io_accept_escrow_destroy(
+    check(native_io_accept_escrow_destroy(
                &escrow) == SALTS_EIO);
-    assert(probe.count == 1u);
-    assert(probe.retired[0] == (uintptr_t)51u);
-    assert(escrow.entries == NULL);
+    check(probe.count == 1u);
+    check(probe.retired[0] == (uintptr_t)51u);
+    check(escrow.entries == NULL);
 }
 
 static void test_invalid_contract_rejected(void) {
-    native_io_accept_escrow escrow = {0};
-    retire_probe probe = {0};
     uintptr_t transport = 0u;
 
-    assert(native_io_accept_escrow_init(
+    check(native_io_accept_escrow_init(
                &escrow, 0u, retire_transport, &probe) ==
            SALTS_EINVAL);
-    assert(native_io_accept_escrow_init(
+    check(native_io_accept_escrow_init(
                &escrow, 1u, NULL, &probe) ==
            SALTS_EINVAL);
-    assert(native_io_accept_escrow_publish(
+    check(native_io_accept_escrow_publish(
                &escrow, request(0u, 1u),
                (uintptr_t)1u) == SALTS_EINVAL);
-    assert(native_io_accept_escrow_take(
+    check(native_io_accept_escrow_take(
                &escrow, request(0u, 1u),
                &transport) == SALTS_EINVAL);
 }
 
-int main(void) {
-    test_take_consumes_once();
-    test_generation_is_part_of_identity();
-    test_capacity_is_hard_bound();
-    test_destroy_retires_every_unclaimed_child_once();
-    test_destroy_reports_retire_error_after_consuming();
-    test_invalid_contract_rejected();
-    return 0;
+suite("NativeIO accept escrow") {
+    before_each() {
+        check_null(escrow.entries);
+        escrow = (native_io_accept_escrow){0};
+        probe = (retire_probe){0};
+    }
+    after_each() {
+        probe.status = SALTS_OK;
+        check_equal(native_io_accept_escrow_destroy(&escrow), SALTS_OK);
+    }
+    group("ownership and capacity") {
+        it("take consumes once") { test_take_consumes_once(); }
+        it("generation is part of identity") { test_generation_is_part_of_identity(); }
+        it("capacity is hard bound") { test_capacity_is_hard_bound(); }
+        it("destroy retires every unclaimed child once") { test_destroy_retires_every_unclaimed_child_once(); }
+        it("destroy reports retire error after consuming") { test_destroy_reports_retire_error_after_consuming(); }
+        it("invalid contract rejected") { test_invalid_contract_rejected(); }
+    }
 }

@@ -96,7 +96,7 @@ cmake_add_test(
   SOURCES
   cnet_command_profile_test.c
   LIBS
-  cnet_profile
+  cnet_test_profile
   Salts::Core
   Salts::TinyTest
   INCLUDES
@@ -135,7 +135,7 @@ cmake_add_test(
   SOURCES
   cnet_tls_test.c
   LIBS
-  cnet_profile
+  cnet_test_profile
   Salts::Core
   Salts::TinyTest
   INCLUDES
@@ -170,7 +170,7 @@ unset(CNET_TLS_TEST_SHA384_DER)
 find_package(GmSSL CONFIG REQUIRED)
 
 add_executable(cnet_gmssl_contract_test cnet_gmssl_contract_test.c)
-target_link_libraries(cnet_gmssl_contract_test PRIVATE GmSSL::GmSSL)
+target_link_libraries(cnet_gmssl_contract_test PRIVATE GmSSL::GmSSL Salts::TinyTest)
 set_target_properties(
   cnet_gmssl_contract_test
   PROPERTIES C_STANDARD 11
@@ -225,7 +225,7 @@ cmake_add_test(
   SOURCES
   cnet_owner_test.c
   LIBS
-  cnet_profile
+  cnet_test_profile
   Salts::TinyTest
   INCLUDES
   ${CNET_TEST_PRIVATE_INCLUDE}
@@ -297,7 +297,7 @@ cmake_add_test(
   SOURCES
   cnet_shards_multi_owner_test.c
   LIBS
-  cnet_profile
+  cnet_test_profile
   Salts::TinyTest
   INCLUDES
   ${CNET_TEST_PRIVATE_INCLUDE}
@@ -333,7 +333,7 @@ cmake_add_test(
   SOURCES
   cnet_tcp_endpoint_test.c
   LIBS
-  cnet
+  Salts::TinyTest cnet
   Salts::Core
   FOLDER
   "cnet/tests")
@@ -392,7 +392,7 @@ cmake_add_test(
   SOURCES
   cnet_external_listener_test.c
   LIBS
-  cnet
+  Salts::TinyTest cnet
   Salts::Core
   Salts::NativeIO
   FOLDER
@@ -408,7 +408,7 @@ cmake_add_test(
   SOURCES
   cnet_external_tls_listener_test.c
   LIBS
-  cnet
+  Salts::TinyTest cnet
   Salts::Core
   Salts::NativeIO
   FOLDER
@@ -437,7 +437,7 @@ cmake_add_test(
   SOURCES
   cnet_external_progress_test.c
   LIBS
-  cnet
+  Salts::TinyTest cnet
   Salts::Core
   Salts::NativeIO
   FOLDER
@@ -454,7 +454,7 @@ cmake_add_test(
   cnet_api_test.c
   cnet_send_buffer_api_test.c
   LIBS
-  cnet_profile
+  cnet_test_profile
   Salts::TinyTest
   INCLUDES
   ${CNET_TEST_PRIVATE_INCLUDE}
@@ -472,7 +472,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     SOURCES
     cnet_vsock_integration_test.c
     LIBS
-    cnet
+    Salts::TinyTest cnet
     FOLDER
     "cnet/tests")
   set_target_properties(
@@ -491,6 +491,11 @@ if(CNET_POWERSHELL_EXECUTABLE)
     COMMAND ${CNET_POWERSHELL_EXECUTABLE}
             -NoProfile
             -File ${CMAKE_CURRENT_SOURCE_DIR}/cnet_io_trace_test.ps1)
+  add_test(
+    NAME cnet_scaling_verifier_test
+    COMMAND ${CNET_POWERSHELL_EXECUTABLE}
+            -NoProfile
+            -File ${CMAKE_CURRENT_SOURCE_DIR}/cnet_scaling_verifier_test.ps1)
 endif()
 
 cmake_add_test(
@@ -570,7 +575,7 @@ cmake_add_test(
   SOURCES
   cnet_stop_contract_test.c
   LIBS
-  cnet_profile
+  cnet_test_profile
   Salts::TinyTest
   INCLUDES
   ${CNET_TEST_PRIVATE_INCLUDE}
@@ -621,11 +626,11 @@ cmake_add_test(
   SOURCES
   cnet_header_cpp_test.cpp
   LIBS
-  cnet
+  Salts::TinyTest cnet
   FOLDER
   "cnet/tests")
 set_target_properties(
   cnet_header_cpp_test
-  PROPERTIES CXX_STANDARD 11
+  PROPERTIES CXX_STANDARD 17
              CXX_STANDARD_REQUIRED ON
              CXX_EXTENSIONS OFF)

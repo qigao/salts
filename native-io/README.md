@@ -25,28 +25,28 @@ Coroutine pool       Platform errors/ABI
 
 ## NativeIPC 控制面
 
-`<salts/native_ipc.h>` 只负责创建或接入 byte-pipe endpoint，不提交 payload I/O。Windows 提供固定容量、单 owner 驱动的 overlapped named-pipe accept server，以及不等待、不调用 `WaitNamedPipe` 的单次 client connect；POSIX 提供现有 FIFO 的 nonblocking open，不创建、不删除也不修改路径权限。`salts_ipc_pipe_capability_supported()` 是平台能力的唯一查询入口，未支持的控制面返回 `SALTS_ENOTSUP`，不会切换到线程或其他传输。
+`<salts/native_ipc.h>` 只负责创建或接入 byte-pipe endpoint，不提交 payload I/O。Windows 提供固定容量、单 owner 驱动的 overlapped named-pipe accept server，以及不等待、不调用 `WaitNamedPipe` 的单次 client connect；POSIX 提供现有 FIFO 的 nonblocking open，不创建、不删除也不修改路径权限。`cmeta_ipc_pipe_capability_supported()` 是平台能力的唯一查询入口，未支持的控制面返回 `SALTS_ENOTSUP`，不会切换到线程或其他传输。
 
-每个 `salts_ipc_pipe_endpoint` 是 move-only 所有权包装。C 赋值不会复制底层 handle/fd 的所有权；需要转交时逐字段移动并立即 `salts_ipc_pipe_endpoint_init()` 原对象。成功 rendezvous 返回的 `native_io_flags` 可原样传给 `native_io_backend_attach_pipe()`。`request_capacity` 只限制仍由 server 拥有的 pending/ready accept；成功回调转移 endpoint 后立即归还 slot，存活连接不占 accept 容量。Windows server 的关闭顺序为：停止 accept admission、`close` 请求取消、持续 `observe` 到 quiescent、处理或关闭 callback 收到的 endpoint，最后 `destroy`。
+每个 `cmeta_ipc_pipe_endpoint` 是 move-only 所有权包装。C 赋值不会复制底层 handle/fd 的所有权；需要转交时逐字段移动并立即 `cmeta_ipc_pipe_endpoint_init()` 原对象。成功 rendezvous 返回的 `native_io_flags` 可原样传给 `native_io_backend_attach_pipe()`。`request_capacity` 只限制仍由 server 拥有的 pending/ready accept；成功回调转移 endpoint 后立即归还 slot，存活连接不占 accept 容量。Windows server 的关闭顺序为：停止 accept admission、`close` 请求取消、持续 `observe` 到 quiescent、处理或关闭 callback 收到的 endpoint，最后 `destroy`。
 
 ```c
 #include <salts/native_io.h>
 #include <salts/native_ipc.h>
 
-salts_ipc_pipe_endpoint endpoint;
-salts_ipc_pipe_endpoint_init(&endpoint);
+cmeta_ipc_pipe_endpoint endpoint;
+cmeta_ipc_pipe_endpoint_init(&endpoint);
 
 #if defined(_WIN32)
-int status = salts_ipc_named_pipe_connect(
+int status = cmeta_ipc_named_pipe_connect(
     "\\\\.\\pipe\\salts-example", SALTS_IPC_PIPE_DUPLEX, &endpoint);
 #else
-int status = salts_ipc_fifo_open(
+int status = cmeta_ipc_fifo_open(
     "/tmp/salts-example.fifo", SALTS_IPC_PIPE_READ, &endpoint);
 #endif
 
 if (status == SALTS_OK) {
   /* attach_pipe 借用 native identity；release 后仍由 endpoint 负责 close。 */
-  salts_ipc_pipe_endpoint_close(&endpoint);
+  cmeta_ipc_pipe_endpoint_close(&endpoint);
 }
 ```
 

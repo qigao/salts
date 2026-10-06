@@ -1,22 +1,24 @@
 #ifndef SALTS_READINESS_H
 #define SALTS_READINESS_H
 
-#include <salts/platform.h>
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-typedef struct salts_readiness_reactor {
-  void *impl;
-} salts_readiness_reactor;
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-typedef struct salts_readiness_registration {
+typedef struct cmeta_readiness_reactor {
+  void *impl;
+} cmeta_readiness_reactor;
+
+typedef struct cmeta_readiness_registration {
   void *impl;
   uintptr_t _admission;
-} salts_readiness_registration;
+} cmeta_readiness_registration;
 
-typedef uint32_t salts_readiness_events;
+typedef uint32_t cmeta_readiness_events;
 
 enum {
   SALTS_READINESS_EVENT_READ = 1u << 0,
@@ -25,18 +27,18 @@ enum {
   SALTS_READINESS_EVENT_HANGUP = 1u << 3
 };
 
-typedef struct salts_readiness_config {
+typedef struct cmeta_readiness_config {
   size_t registration_capacity;
   size_t event_batch_capacity;
-} salts_readiness_config;
+} cmeta_readiness_config;
 
-typedef enum salts_readiness_backend_kind {
+typedef enum cmeta_readiness_backend_kind {
   SALTS_READINESS_BACKEND_EPOLL = 1,
   SALTS_READINESS_BACKEND_KQUEUE,
   SALTS_READINESS_BACKEND_POLL
-} salts_readiness_backend_kind;
+} cmeta_readiness_backend_kind;
 
-typedef struct salts_readiness_stats {
+typedef struct cmeta_readiness_stats {
   size_t capacity;
   size_t registered_count;
   size_t armed_count;
@@ -45,26 +47,26 @@ typedef struct salts_readiness_stats {
   uint64_t stale_events;
   uint64_t duplicate_events;
   uint64_t backend_errors;
-} salts_readiness_stats;
+} cmeta_readiness_stats;
 
-typedef void (*salts_readiness_callback)(void *user, salts_readiness_events events, int status);
+typedef void (*cmeta_readiness_callback)(void *user, cmeta_readiness_events events, int status);
 
-typedef enum salts_readiness_action {
+typedef enum cmeta_readiness_action {
   SALTS_READINESS_COMPLETE = 0,
   SALTS_READINESS_REARM = 1
-} salts_readiness_action;
+} cmeta_readiness_action;
 
-typedef struct salts_readiness_callback_result {
-  salts_readiness_action action;
-  salts_readiness_events interests;
-} salts_readiness_callback_result;
+typedef struct cmeta_readiness_callback_result {
+  cmeta_readiness_action action;
+  cmeta_readiness_events interests;
+} cmeta_readiness_callback_result;
 
-typedef salts_readiness_callback_result (*salts_readiness_continuation)(
-    void *user, salts_readiness_events events, int status);
+typedef cmeta_readiness_callback_result (*cmeta_readiness_continuation)(
+    void *user, cmeta_readiness_events events, int status);
 
 /*
  * Reactors and registrations are zero-state handles. A successful register
- * borrows native_resource until salts_readiness_close() returns SALTS_OK.
+ * borrows native_resource until cmeta_readiness_close() returns SALTS_OK.
  * Registration handles are move-only: copying the complete handle is allowed
  * only at a quiescent ownership-transfer boundary. Controls on one handle are
  * concurrency-safe; register, close, or reuse of that handle must not race its
@@ -79,19 +81,19 @@ typedef salts_readiness_callback_result (*salts_readiness_continuation)(
  * The explicit poll backend additionally rejects registration_capacity above
  * INT_MAX - 1 because poll() reports the ready descriptor count as int.
  */
-SALTS_PLATFORM_C_API int salts_readiness_reactor_init(salts_readiness_reactor *reactor,
-                                                      const salts_readiness_config *config);
+int cmeta_readiness_reactor_init(cmeta_readiness_reactor *reactor,
+                                 const cmeta_readiness_config *config);
 
 /** Returns compile-time availability; it does not probe runtime OS policy. */
-SALTS_PLATFORM_C_API bool salts_readiness_backend_supported(salts_readiness_backend_kind kind);
+bool cmeta_readiness_backend_supported(cmeta_readiness_backend_kind kind);
 
 /**
  * Initializes exactly kind. Unsupported kinds return SALTS_ENOTSUP and clear
  * reactor; this selector never falls back to another backend.
  */
-SALTS_PLATFORM_C_API int salts_readiness_reactor_init_kind(salts_readiness_reactor *reactor,
-                                                           const salts_readiness_config *config,
-                                                           salts_readiness_backend_kind kind);
+int cmeta_readiness_reactor_init_kind(cmeta_readiness_reactor *reactor,
+                                      const cmeta_readiness_config *config,
+                                      cmeta_readiness_backend_kind kind);
 
 /*
  * Shutdown atomically closes admission and reserves one SALTS_ESHUTDOWN
@@ -103,11 +105,10 @@ SALTS_PLATFORM_C_API int salts_readiness_reactor_init_kind(salts_readiness_react
  * SALTS_EBUSY without committing a state transition. Repeated shutdown after
  * success returns SALTS_EALREADY.
  */
-SALTS_PLATFORM_C_API int salts_readiness_reactor_shutdown(salts_readiness_reactor *reactor);
-SALTS_PLATFORM_C_API int salts_readiness_reactor_destroy(salts_readiness_reactor *reactor);
-SALTS_PLATFORM_C_API int salts_readiness_register(salts_readiness_reactor *reactor,
-                                                  intptr_t native_resource,
-                                                  salts_readiness_registration *registration);
+int cmeta_readiness_reactor_shutdown(cmeta_readiness_reactor *reactor);
+int cmeta_readiness_reactor_destroy(cmeta_readiness_reactor *reactor);
+int cmeta_readiness_register(cmeta_readiness_reactor *reactor, intptr_t native_resource,
+                             cmeta_readiness_registration *registration);
 
 /*
  * Arm is one-shot. callback and user must already be valid before this call.
@@ -125,9 +126,8 @@ SALTS_PLATFORM_C_API int salts_readiness_register(salts_readiness_reactor *react
  * related READ or WRITE interest; some poll implementations do not report
  * terminal bits for a descriptor whose native interest mask is empty.
  */
-SALTS_PLATFORM_C_API int salts_readiness_arm(salts_readiness_registration *registration,
-                                             salts_readiness_events events,
-                                             salts_readiness_callback callback, void *user);
+int cmeta_readiness_arm(cmeta_readiness_registration *registration, cmeta_readiness_events events,
+                        cmeta_readiness_callback callback, void *user);
 
 /*
  * Continuation arm is the additive persistent-reactor form of the one-shot
@@ -150,14 +150,13 @@ SALTS_PLATFORM_C_API int salts_readiness_arm(salts_readiness_registration *regis
  *         reentry or conflicting control; SALTS_ESHUTDOWN after admission
  *         closes; otherwise the exact initial backend arm error.
  *
- * A continuing callback returns (salts_readiness_callback_result){
+ * A continuing callback returns (cmeta_readiness_callback_result){
  *     work_remains ? SALTS_READINESS_REARM : SALTS_READINESS_COMPLETE,
  *     work_remains ? SALTS_READINESS_EVENT_READ : 0u};
  */
-SALTS_PLATFORM_C_API int salts_readiness_arm_continuation(
-    salts_readiness_registration *registration,
-    salts_readiness_events events,
-    salts_readiness_continuation continuation, void *user);
+int cmeta_readiness_arm_continuation(cmeta_readiness_registration *registration,
+                                     cmeta_readiness_events events,
+                                     cmeta_readiness_continuation continuation, void *user);
 
 /*
  * External unarm/close calls return only after an inflight callback is
@@ -169,9 +168,13 @@ SALTS_PLATFORM_C_API int salts_readiness_arm_continuation(
  * is in progress, registration controls invoked by any callback on that reactor
  * fail fast with SALTS_EBUSY; external callers wait and then re-evaluate state.
  */
-SALTS_PLATFORM_C_API int salts_readiness_unarm(salts_readiness_registration *registration);
-SALTS_PLATFORM_C_API int salts_readiness_close(salts_readiness_registration *registration);
-SALTS_PLATFORM_C_API int salts_readiness_reactor_stats(salts_readiness_reactor *reactor,
-                                                       salts_readiness_stats *stats);
+int cmeta_readiness_unarm(cmeta_readiness_registration *registration);
+int cmeta_readiness_close(cmeta_readiness_registration *registration);
+int cmeta_readiness_reactor_stats(cmeta_readiness_reactor *reactor, cmeta_readiness_stats *stats);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* SALTS_READINESS_H */

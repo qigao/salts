@@ -47,8 +47,8 @@ typedef struct rejection_callback_close_state {
 } rejection_callback_close_state;
 
 typedef struct pending_foreign_scheduler_state {
-    salts_mutex_t mutex;
-    salts_cond_t changed;
+    cmeta_mutex_t mutex;
+    cmeta_cond_t changed;
     cflow_task_fn pending_fn;
     void *pending_user;
     cflow_task_id pending_id;
@@ -76,28 +76,28 @@ static cflow_schedule_result pending_foreign_try_post_after(
     (void)delay;
     if (state == NULL || fn == NULL)
         return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
-    salts_mutex_lock(&state->mutex);
+    cmeta_mutex_lock(&state->mutex);
     if (state->pending_fn != NULL) {
-        salts_mutex_unlock(&state->mutex);
+        cmeta_mutex_unlock(&state->mutex);
         return (cflow_schedule_result){CFLOW_ADMISSION_FULL, 0u};
     }
     ++state->post_calls;
     if (state->block_on_post == state->post_calls) {
         atomic_fetch_add(&state->blocked_posts, 1);
-        salts_cond_broadcast(&state->changed);
+        cmeta_cond_broadcast(&state->changed);
         while (!state->release_blocked_post)
-            salts_cond_wait(&state->changed, &state->mutex);
+            cmeta_cond_wait(&state->changed, &state->mutex);
     }
     id = ++state->next_id;
     if (state->run_inline) {
-        salts_mutex_unlock(&state->mutex);
+        cmeta_mutex_unlock(&state->mutex);
         fn(user);
         return (cflow_schedule_result){CFLOW_ADMISSION_ACCEPTED, id};
     }
     state->pending_fn = fn;
     state->pending_user = user;
     state->pending_id = id;
-    salts_mutex_unlock(&state->mutex);
+    cmeta_mutex_unlock(&state->mutex);
     return (cflow_schedule_result){CFLOW_ADMISSION_ACCEPTED, id};
 }
 
@@ -111,7 +111,7 @@ static bool pending_foreign_cancel(void *self, cflow_task_id id) {
         (pending_foreign_scheduler_state *)self;
     bool cancelled = false;
     if (state == NULL || id == 0u) return false;
-    salts_mutex_lock(&state->mutex);
+    cmeta_mutex_lock(&state->mutex);
     if (state->pending_fn != NULL && state->pending_id == id) {
         state->pending_fn = NULL;
         state->pending_user = NULL;
@@ -119,7 +119,7 @@ static bool pending_foreign_cancel(void *self, cflow_task_id id) {
         state->last_cancelled_id = id;
         cancelled = true;
     }
-    salts_mutex_unlock(&state->mutex);
+    cmeta_mutex_unlock(&state->mutex);
     if (cancelled) atomic_fetch_add(&state->cancel_calls, 1);
     return cancelled;
 }
@@ -130,13 +130,13 @@ static bool pending_foreign_run_one(void *self) {
     cflow_task_fn fn;
     void *user;
     if (state == NULL) return false;
-    salts_mutex_lock(&state->mutex);
+    cmeta_mutex_lock(&state->mutex);
     fn = state->pending_fn;
     user = state->pending_user;
     state->pending_fn = NULL;
     state->pending_user = NULL;
     state->pending_id = 0u;
-    salts_mutex_unlock(&state->mutex);
+    cmeta_mutex_unlock(&state->mutex);
     if (fn == NULL) return false;
     fn(user);
     return true;
@@ -151,10 +151,10 @@ static void pending_foreign_run_one_thread(void *user) {
 
 static void pending_foreign_release_blocked_post(
     pending_foreign_scheduler_state *state) {
-    salts_mutex_lock(&state->mutex);
+    cmeta_mutex_lock(&state->mutex);
     state->release_blocked_post = true;
-    salts_cond_broadcast(&state->changed);
-    salts_mutex_unlock(&state->mutex);
+    cmeta_cond_broadcast(&state->changed);
+    cmeta_mutex_unlock(&state->mutex);
 }
 
 static size_t pending_foreign_run_ready(void *self) {
@@ -179,9 +179,9 @@ static bool pending_foreign_wait_idle(void *self) {
         (pending_foreign_scheduler_state *)self;
     bool idle;
     if (state == NULL) return false;
-    salts_mutex_lock(&state->mutex);
+    cmeta_mutex_lock(&state->mutex);
     idle = state->pending_fn == NULL;
-    salts_mutex_unlock(&state->mutex);
+    cmeta_mutex_unlock(&state->mutex);
     return idle;
 }
 
@@ -237,12 +237,12 @@ static cflow_schedule_result coalescing_try_post_after(
     atomic_fetch_add(&state->posts, 1);
     atomic_store(&state->entered, true);
     {
-        const uint64_t started = salts_monotonic_ms();
+        const uint64_t started = cmeta_monotonic_ms();
         const uint64_t timeout = state->timeout_ms != 0u
             ? state->timeout_ms : RUNTIME_SATURATION_TIMEOUT_MS;
-        while (salts_monotonic_ms() - started < timeout &&
+        while (cmeta_monotonic_ms() - started < timeout &&
                !atomic_load(&state->release))
-            salts_sleep_ms(1u);
+            cmeta_sleep_ms(1u);
     }
     if (!atomic_load(&state->release))
         atomic_store(&state->timed_out, true);
@@ -726,8 +726,8 @@ static void close_from_sink_done(void *user) {
 
 typedef struct concurrent_close_state {
     cflow_subscription *run;
-    salts_mutex_t lock;
-    salts_cond_t changed;
+    cmeta_mutex_t lock;
+    cmeta_cond_t changed;
     bool callback_entered;
     bool external_started;
     bool callback_returned;
@@ -741,19 +741,19 @@ static bool concurrent_close_value(void *user,
     if (!state || !cmeta_type_equal(type, &cmeta_type_int) || !value)
         return false;
 
-    salts_mutex_lock(&state->lock);
+    cmeta_mutex_lock(&state->lock);
     state->callback_entered = true;
-    salts_cond_broadcast(&state->changed);
+    cmeta_cond_broadcast(&state->changed);
     while (!state->external_started)
-        salts_cond_wait(&state->changed, &state->lock);
-    salts_mutex_unlock(&state->lock);
+        cmeta_cond_wait(&state->changed, &state->lock);
+    cmeta_mutex_unlock(&state->lock);
 
     cflow_subscription_close(state->run);
 
-    salts_mutex_lock(&state->lock);
+    cmeta_mutex_lock(&state->lock);
     state->callback_returned = true;
-    salts_cond_broadcast(&state->changed);
-    salts_mutex_unlock(&state->lock);
+    cmeta_cond_broadcast(&state->changed);
+    cmeta_mutex_unlock(&state->lock);
     return true;
 }
 
@@ -761,17 +761,17 @@ static void concurrent_external_close(void *user) {
     concurrent_close_state *state = (concurrent_close_state *)user;
     if (!state) return;
 
-    salts_mutex_lock(&state->lock);
+    cmeta_mutex_lock(&state->lock);
     state->external_started = true;
-    salts_cond_broadcast(&state->changed);
-    salts_mutex_unlock(&state->lock);
+    cmeta_cond_broadcast(&state->changed);
+    cmeta_mutex_unlock(&state->lock);
 
     cflow_subscription_close(state->run);
 
-    salts_mutex_lock(&state->lock);
+    cmeta_mutex_lock(&state->lock);
     state->external_returned = true;
-    salts_cond_broadcast(&state->changed);
-    salts_mutex_unlock(&state->lock);
+    cmeta_cond_broadcast(&state->changed);
+    cmeta_mutex_unlock(&state->lock);
 }
 
 typedef struct destroy_reentrant_close_state {
@@ -817,8 +817,8 @@ static void readiness_order_close(void *user) {
 }
 
 typedef struct timer_wake_gate {
-    salts_mutex_t mutex;
-    salts_cond_t changed;
+    cmeta_mutex_t mutex;
+    cmeta_cond_t changed;
     bool entered;
     bool release;
 } timer_wake_gate;
@@ -846,12 +846,12 @@ static void timer_count_wake(void *user) {
 static void timer_blocking_wake(void *user) {
     timer_wake_gate *gate = (timer_wake_gate *)user;
     if (gate == NULL) return;
-    salts_mutex_lock(&gate->mutex);
+    cmeta_mutex_lock(&gate->mutex);
     gate->entered = true;
-    salts_cond_broadcast(&gate->changed);
+    cmeta_cond_broadcast(&gate->changed);
     while (!gate->release)
-        salts_cond_wait(&gate->changed, &gate->mutex);
-    salts_mutex_unlock(&gate->mutex);
+        cmeta_cond_wait(&gate->changed, &gate->mutex);
+    cmeta_mutex_unlock(&gate->mutex);
 }
 
 static void source_destroy_thread(void *user) {
@@ -1120,10 +1120,10 @@ static void saturation_sink_done(void *user) {
 
 static bool runtime_wait_until_at_least_for(atomic_int *value, int expected,
                                             uint64_t timeout_ms) {
-    const uint64_t started = salts_monotonic_ms();
-    while (salts_monotonic_ms() - started < timeout_ms) {
+    const uint64_t started = cmeta_monotonic_ms();
+    while (cmeta_monotonic_ms() - started < timeout_ms) {
         if (atomic_load(value) >= expected) return true;
-        salts_sleep_ms(1u);
+        cmeta_sleep_ms(1u);
     }
     return atomic_load(value) >= expected;
 }
@@ -1134,11 +1134,11 @@ static bool runtime_wait_until_at_least(atomic_int *value, int expected) {
 }
 
 static bool runtime_wait_until_true(atomic_bool *value) {
-    const uint64_t started = salts_monotonic_ms();
-    while (salts_monotonic_ms() - started <
+    const uint64_t started = cmeta_monotonic_ms();
+    while (cmeta_monotonic_ms() - started <
            RUNTIME_SATURATION_TIMEOUT_MS) {
         if (atomic_load(value)) return true;
-        salts_sleep_ms(1u);
+        cmeta_sleep_ms(1u);
     }
     return atomic_load(value);
 }
@@ -1305,8 +1305,8 @@ suite("CFlow runtime") {
         cflow_publisher source = {0};
         cflow_subscription run = {0};
 
-        salts_mutex_init(&scheduler_state.mutex);
-        salts_cond_init(&scheduler_state.changed);
+        cmeta_mutex_init(&scheduler_state.mutex);
+        cmeta_cond_init(&scheduler_state.changed);
         scheduler_state.run_inline = true;
         scheduler = pending_foreign_scheduler_as_cflow_scheduler(
             &scheduler_state);
@@ -1325,8 +1325,8 @@ suite("CFlow runtime") {
 
         cflow_subscription_close(&run);
         cflow_scheduler_destroy(&scheduler);
-        salts_cond_destroy(&scheduler_state.changed);
-        salts_mutex_destroy(&scheduler_state.mutex);
+        cmeta_cond_destroy(&scheduler_state.changed);
+        cmeta_mutex_destroy(&scheduler_state.mutex);
         cflow_graph_destroy(&normalized);
         cflow_graph_destroy(&surface);
     }
@@ -1444,13 +1444,13 @@ suite("CFlow runtime") {
         cflow_publisher source = {0};
         cflow_subscription run = {0};
         coalescing_close_context close_context = {0};
-        salts_thread_t close_thread = 0;
+        cmeta_thread_t close_thread = 0;
         bool cancel_observed;
         bool close_returned_before_rescue;
         bool close_started;
 
-        salts_mutex_init(&state.mutex);
-        salts_cond_init(&state.changed);
+        cmeta_mutex_init(&state.mutex);
+        cmeta_cond_init(&state.changed);
         scheduler = pending_foreign_scheduler_as_cflow_scheduler(&state);
         normalized.root = CMETA_INVALID_ID;
         cflow_graph_init(&surface, &cmeta_type_int);
@@ -1465,7 +1465,7 @@ suite("CFlow runtime") {
         check_equal(pending_foreign_pending(&state), (size_t)1u);
 
         close_context.run = &run;
-        check_equal(salts_thread_create(
+        check_equal(cmeta_thread_create(
             &close_thread, coalescing_close, &close_context), 0);
         close_started = runtime_wait_until_at_least(
             &close_context.started, 1);
@@ -1481,7 +1481,7 @@ suite("CFlow runtime") {
             if (!runtime_wait_until_at_least(&close_context.returned, 1))
                 abort();
         }
-        check_equal(salts_thread_join(&close_thread), 0);
+        check_equal(cmeta_thread_join(&close_thread), 0);
         close_thread = 0;
 
         check_true(close_started);
@@ -1492,8 +1492,8 @@ suite("CFlow runtime") {
         check_null(run.impl);
 
         cflow_scheduler_destroy(&scheduler);
-        salts_cond_destroy(&state.changed);
-        salts_mutex_destroy(&state.mutex);
+        cmeta_cond_destroy(&state.changed);
+        cmeta_mutex_destroy(&state.mutex);
         cflow_graph_destroy(&normalized);
         cflow_graph_destroy(&surface);
     }
@@ -1508,14 +1508,14 @@ suite("CFlow runtime") {
         cflow_subscription run = {0};
         pending_foreign_run_context pump_context = {&scheduler_state};
         coalescing_close_context close_context = {&run};
-        salts_thread_t pump_thread = 0;
-        salts_thread_t close_thread = 0;
+        cmeta_thread_t pump_thread = 0;
+        cmeta_thread_t close_thread = 0;
         bool pump_returned;
         bool close_started;
         bool close_returned_before_rescue;
 
-        salts_mutex_init(&scheduler_state.mutex);
-        salts_cond_init(&scheduler_state.changed);
+        cmeta_mutex_init(&scheduler_state.mutex);
+        cmeta_cond_init(&scheduler_state.changed);
         scheduler_state.block_on_post = 2u;
         scheduler = pending_foreign_scheduler_as_cflow_scheduler(
             &scheduler_state);
@@ -1529,13 +1529,13 @@ suite("CFlow runtime") {
         check_true(cflow_subscription_request(&run, SIZE_MAX));
         check_equal(pending_foreign_pending(&scheduler_state), (size_t)1u);
 
-        check_equal(salts_thread_create(
+        check_equal(cmeta_thread_create(
             &pump_thread, pending_foreign_run_one_thread, &pump_context), 0);
         if (!runtime_wait_until_at_least(
                 &scheduler_state.blocked_posts, 1))
             abort();
 
-        check_equal(salts_thread_create(
+        check_equal(cmeta_thread_create(
             &close_thread, coalescing_close, &close_context), 0);
         close_started = runtime_wait_until_at_least(
             &close_context.started, 1);
@@ -1553,8 +1553,8 @@ suite("CFlow runtime") {
                 abort();
         }
 
-        check_equal(salts_thread_join(&pump_thread), 0);
-        check_equal(salts_thread_join(&close_thread), 0);
+        check_equal(cmeta_thread_join(&pump_thread), 0);
+        check_equal(cmeta_thread_join(&close_thread), 0);
         check_true(pump_context.ran);
         check_true(close_started);
         check_true(close_returned_before_rescue);
@@ -1565,8 +1565,8 @@ suite("CFlow runtime") {
         check_null(run.impl);
 
         cflow_scheduler_destroy(&scheduler);
-        salts_cond_destroy(&scheduler_state.changed);
-        salts_mutex_destroy(&scheduler_state.mutex);
+        cmeta_cond_destroy(&scheduler_state.changed);
+        cmeta_mutex_destroy(&scheduler_state.mutex);
         cflow_graph_destroy(&normalized);
         cflow_graph_destroy(&surface);
     }
@@ -1576,7 +1576,7 @@ suite("CFlow runtime") {
         coalescing_scheduler_state state = {0};
         cflow_scheduler scheduler =
             coalescing_scheduler_as_cflow_scheduler(&state);
-        const uint64_t started = salts_monotonic_ms();
+        const uint64_t started = cmeta_monotonic_ms();
         cflow_schedule_result result;
 
         state.timeout_ms = CONTROLLED_BARRIER_TIMEOUT_MS;
@@ -1589,7 +1589,7 @@ suite("CFlow runtime") {
         check_true(atomic_load(&state.timed_out));
         check_false(atomic_load(&state.release));
         check_equal(atomic_load(&state.posts), 1);
-        check_less(salts_monotonic_ms() - started,
+        check_less(cmeta_monotonic_ms() - started,
                    (uint64_t)RUNTIME_SATURATION_TIMEOUT_MS);
     }
 
@@ -1761,14 +1761,14 @@ suite("CFlow runtime") {
             &sink_state};
         cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
         coalescing_request_context request = {&run};
-        salts_thread_t thread = {0};
+        cmeta_thread_t thread = {0};
 
         cflow_graph_init(&surface, &cmeta_type_int);
         check_true(cflow_graph_normalize(&normalized, &surface));
         check_true(cflow_subscribe(
             &run, &normalized, &source, &scheduler, &sink));
         {
-            const int create_status = salts_thread_create(
+            const int create_status = cmeta_thread_create(
                 &thread, coalescing_request, &request);
             check_equal(create_status, 0);
             if (create_status != 0) abort();
@@ -1784,7 +1784,7 @@ suite("CFlow runtime") {
             check_true(returned);
             if (!returned) abort();
         }
-        check_equal(salts_thread_join(&thread), 0);
+        check_equal(cmeta_thread_join(&thread), 0);
         check_true(atomic_load(&request.returned));
         check_false(request.result);
         check_equal(atomic_load(&scheduler_state.posts), 1);
@@ -1811,14 +1811,14 @@ suite("CFlow runtime") {
             NULL, rejection_callback_close_error, NULL, &close_state};
         cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
         coalescing_request_context request = {&run};
-        salts_thread_t thread = {0};
+        cmeta_thread_t thread = {0};
 
         cflow_graph_init(&surface, &cmeta_type_int);
         check_true(cflow_graph_normalize(&normalized, &surface));
         check_true(cflow_subscribe(
             &run, &normalized, &source, &scheduler, &sink));
         {
-            const int create_status = salts_thread_create(
+            const int create_status = cmeta_thread_create(
                 &thread, coalescing_request, &request);
             check_equal(create_status, 0);
             if (create_status != 0) abort();
@@ -1832,7 +1832,7 @@ suite("CFlow runtime") {
             check_true(returned);
             if (!returned) abort();
         }
-        check_equal(salts_thread_join(&thread), 0);
+        check_equal(cmeta_thread_join(&thread), 0);
         check_equal(atomic_load(&close_state.errors), 1);
         check_true(atomic_load(&close_state.close_returned));
         check_null(run.impl);
@@ -1864,15 +1864,15 @@ suite("CFlow runtime") {
             cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
             coalescing_request_context request = {&run};
             coalescing_close_context close = {&run};
-            salts_thread_t request_thread = {0};
-            salts_thread_t close_thread = {0};
+            cmeta_thread_t request_thread = {0};
+            cmeta_thread_t close_thread = {0};
 
             cflow_graph_init(&surface, &cmeta_type_int);
             check_true(cflow_graph_normalize(&normalized, &surface));
             check_true(cflow_subscribe(
                 &run, &normalized, &source, &scheduler, &sink));
             {
-                const int create_status = salts_thread_create(
+                const int create_status = cmeta_thread_create(
                     &request_thread, coalescing_request, &request);
                 check_equal(create_status, 0);
                 if (create_status != 0) abort();
@@ -1880,7 +1880,7 @@ suite("CFlow runtime") {
             check_true(runtime_wait_until_at_least(
                 &scheduler_state.posts, 1));
             {
-                const int create_status = salts_thread_create(
+                const int create_status = cmeta_thread_create(
                     &close_thread, coalescing_close, &close);
                 check_equal(create_status, 0);
                 if (create_status != 0) abort();
@@ -1897,8 +1897,8 @@ suite("CFlow runtime") {
                 check_true(close_returned);
                 if (!request_returned || !close_returned) abort();
             }
-            check_equal(salts_thread_join(&request_thread), 0);
-            check_equal(salts_thread_join(&close_thread), 0);
+            check_equal(cmeta_thread_join(&request_thread), 0);
+            check_equal(cmeta_thread_join(&close_thread), 0);
             check_true(atomic_load(&request.returned));
             check_equal(atomic_load(&close.returned), 1);
             check_null(run.impl);
@@ -2783,14 +2783,14 @@ suite("CFlow runtime") {
         timer_wake_gate gate = {0};
         pending_foreign_run_context run_context = {&scheduler_state};
         source_destroy_context destroy_context = {&source};
-        salts_thread_t run_thread = 0;
-        salts_thread_t destroy_thread = 0;
+        cmeta_thread_t run_thread = 0;
+        cmeta_thread_t destroy_thread = 0;
         size_t output = 0u;
 
-        salts_mutex_init(&scheduler_state.mutex);
-        salts_cond_init(&scheduler_state.changed);
-        salts_mutex_init(&gate.mutex);
-        salts_cond_init(&gate.changed);
+        cmeta_mutex_init(&scheduler_state.mutex);
+        cmeta_cond_init(&scheduler_state.changed);
+        cmeta_mutex_init(&gate.mutex);
+        cmeta_cond_init(&gate.changed);
         scheduler = pending_foreign_scheduler_as_cflow_scheduler(
             &scheduler_state);
         resume_context = (cflow_publish_context){&scheduler};
@@ -2799,32 +2799,32 @@ suite("CFlow runtime") {
         check_equal(step.kind, CFLOW_STEP_WAIT);
         check_true(cflow_waitable_arm(
             &step.waitable, (cflow_waker){timer_blocking_wake, &gate}));
-        check_equal(salts_thread_create(
+        check_equal(cmeta_thread_create(
             &run_thread, pending_foreign_run_one_thread, &run_context), 0);
-        salts_mutex_lock(&gate.mutex);
+        cmeta_mutex_lock(&gate.mutex);
         while (!gate.entered)
-            salts_cond_wait(&gate.changed, &gate.mutex);
-        salts_mutex_unlock(&gate.mutex);
-        check_equal(salts_thread_create(
+            cmeta_cond_wait(&gate.changed, &gate.mutex);
+        cmeta_mutex_unlock(&gate.mutex);
+        check_equal(cmeta_thread_create(
             &destroy_thread, source_destroy_thread, &destroy_context), 0);
         if (!runtime_wait_until_at_least(&destroy_context.started, 1)) abort();
-        salts_sleep_ms(20u);
+        cmeta_sleep_ms(20u);
         check_equal(atomic_load(&destroy_context.returned), 0);
 
-        salts_mutex_lock(&gate.mutex);
+        cmeta_mutex_lock(&gate.mutex);
         gate.release = true;
-        salts_cond_broadcast(&gate.changed);
-        salts_mutex_unlock(&gate.mutex);
-        check_equal(salts_thread_join(&run_thread), 0);
-        check_equal(salts_thread_join(&destroy_thread), 0);
+        cmeta_cond_broadcast(&gate.changed);
+        cmeta_mutex_unlock(&gate.mutex);
+        check_equal(cmeta_thread_join(&run_thread), 0);
+        check_equal(cmeta_thread_join(&destroy_thread), 0);
         check_equal(atomic_load(&destroy_context.returned), 1);
         check_false(cflow_publisher_valid(&source));
 
         cflow_scheduler_destroy(&scheduler);
-        salts_cond_destroy(&gate.changed);
-        salts_mutex_destroy(&gate.mutex);
-        salts_cond_destroy(&scheduler_state.changed);
-        salts_mutex_destroy(&scheduler_state.mutex);
+        cmeta_cond_destroy(&gate.changed);
+        cmeta_mutex_destroy(&gate.mutex);
+        cmeta_cond_destroy(&scheduler_state.changed);
+        cmeta_mutex_destroy(&scheduler_state.mutex);
     }
 
     it("survives inline Timer wake destruction during scheduler admission") {
@@ -2836,8 +2836,8 @@ suite("CFlow runtime") {
         reentrant_timer_wake_state wake_state = {&source, false};
         size_t output = 0u;
 
-        salts_mutex_init(&scheduler_state.mutex);
-        salts_cond_init(&scheduler_state.changed);
+        cmeta_mutex_init(&scheduler_state.mutex);
+        cmeta_cond_init(&scheduler_state.changed);
         scheduler_state.run_inline = true;
         scheduler = pending_foreign_scheduler_as_cflow_scheduler(
             &scheduler_state);
@@ -2852,8 +2852,8 @@ suite("CFlow runtime") {
         check_false(cflow_publisher_valid(&source));
 
         cflow_scheduler_destroy(&scheduler);
-        salts_cond_destroy(&scheduler_state.changed);
-        salts_mutex_destroy(&scheduler_state.mutex);
+        cmeta_cond_destroy(&scheduler_state.changed);
+        cmeta_mutex_destroy(&scheduler_state.mutex);
     }
 
     it("rearms a Timer only after the prior callback settles") {
@@ -2952,13 +2952,13 @@ suite("CFlow runtime") {
             &state
         };
         cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
-        salts_thread_t external_thread;
+        cmeta_thread_t external_thread;
         const int input = 11;
 
         state.run = &run;
         normalized.root = CMETA_INVALID_ID;
-        salts_mutex_init(&state.lock);
-        salts_cond_init(&state.changed);
+        cmeta_mutex_init(&state.lock);
+        cmeta_cond_init(&state.changed);
         check_not_null(state.lock);
         check_not_null(state.changed);
         cflow_graph_init(&surface, &cmeta_type_int);
@@ -2970,13 +2970,13 @@ suite("CFlow runtime") {
             &run, &normalized, &source, &scheduler, &sink));
         check_true(cflow_subscription_request(&run, 1u));
 
-        salts_mutex_lock(&state.lock);
+        cmeta_mutex_lock(&state.lock);
         while (!state.callback_entered)
-            salts_cond_wait(&state.changed, &state.lock);
-        salts_mutex_unlock(&state.lock);
-        check_equal(salts_thread_create(
+            cmeta_cond_wait(&state.changed, &state.lock);
+        cmeta_mutex_unlock(&state.lock);
+        check_equal(cmeta_thread_create(
             &external_thread, concurrent_external_close, &state), 0);
-        check_equal(salts_thread_join(&external_thread), 0);
+        check_equal(cmeta_thread_join(&external_thread), 0);
         check_true(cflow_scheduler_wait_idle(&scheduler));
 
         check_true(state.callback_returned);
@@ -2987,8 +2987,8 @@ suite("CFlow runtime") {
         cflow_scheduler_destroy(&scheduler);
         cflow_graph_destroy(&normalized);
         cflow_graph_destroy(&surface);
-        salts_cond_destroy(&state.changed);
-        salts_mutex_destroy(&state.lock);
+        cmeta_cond_destroy(&state.changed);
+        cmeta_mutex_destroy(&state.lock);
     }
 
     it("allows a source destroy callback to close the same run") {

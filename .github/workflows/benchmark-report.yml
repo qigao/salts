@@ -1,0 +1,71 @@
+name: Benchmark PR images
+'on':
+  workflow_run:
+    workflows: [Salts CI]
+    types: [completed]
+permissions:
+  contents: read
+concurrency:
+  group: benchmark-report-${{ github.event.workflow_run.head_repository.id }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+jobs:
+  report:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      # workflow_run uses trusted default-branch code, never the PR checkout.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/github-script@v8
+        id: source
+        with:
+          script: |
+            await require('./.github/scripts/publish-benchmark-report.cjs').prepare({github, context, core});
+      - uses: actions/download-artifact@v7
+        if: steps.source.outputs.publish == 'true'
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+          pattern: io-benchmark-*
+          path: benchmark-inputs
+      - name: Install chart renderer
+        if: steps.source.outputs.publish == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y python3-matplotlib
+      - name: Test report rendering and publication logic
+        if: steps.source.outputs.publish == 'true'
+        run: |
+          /usr/bin/python3 -m unittest discover -s cmake/ci/tests
+          node --test .github/scripts/publish-benchmark-report.test.cjs
+      - name: Render verdict artifacts and TCP/UDP comparison images
+        if: steps.source.outputs.publish == 'true'
+        env:
+          REPORT_HEAD: ${{ github.event.workflow_run.head_sha }}
+          REPORT_RUN: ${{ github.event.workflow_run.id }}
+          REPORT_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          /usr/bin/python3 cmake/ci/render-benchmark-report.py \
+            --input benchmark-inputs --output benchmark-report \
+            --head "$REPORT_HEAD" --run "$REPORT_RUN" --conclusion "$REPORT_CONCLUSION"
+      - name: Retain organized report
+        if: steps.source.outputs.publish == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-report
+          path: benchmark-report
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish TCP/UDP images and update PR comment
+        if: steps.source.outputs.publish == 'true'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            await require('./.github/scripts/publish-benchmark-report.cjs').publish({github, context, core});

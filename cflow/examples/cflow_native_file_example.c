@@ -81,14 +81,14 @@ static int cflow_file_example_make_path(
             path, CFLOW_FILE_EXAMPLE_PATH_CAPACITY, _TRUNCATE,
             "%scflow-native-file-%lu-%llu.bin", directory,
             GetCurrentProcessId(),
-            (unsigned long long)salts_hrtime()) < 0)
+            (unsigned long long)cmeta_hrtime()) < 0)
         return SALTS_ERANGE;
     return SALTS_OK;
 #elif defined(__linux__)
     const int written = snprintf(
         path, CFLOW_FILE_EXAMPLE_PATH_CAPACITY,
         "/tmp/cflow-native-file-%ld-%llu.bin", (long)getpid(),
-        (unsigned long long)salts_hrtime());
+        (unsigned long long)cmeta_hrtime());
     return written > 0 && written < CFLOW_FILE_EXAMPLE_PATH_CAPACITY
         ? SALTS_OK : SALTS_ERANGE;
 #else
@@ -122,7 +122,7 @@ static bool cflow_file_example_runtime_unavailable(int status) {
 static int cflow_file_example_drive_until(
     cflow_io_file *file, cflow_file_example_state *state,
     size_t expected_completions) {
-    const uint64_t started = salts_hrtime();
+    const uint64_t started = cmeta_hrtime();
     for (;;) {
         cflow_io_file_stats stats = {0};
         size_t progressed = 0u;
@@ -137,15 +137,15 @@ static int cflow_file_example_drive_until(
         if (state->count >= expected_completions &&
             stats.operation_slots_in_use == 0u)
             return SALTS_OK;
-        if (salts_hrtime() - started >= CFLOW_FILE_EXAMPLE_TIMEOUT_NS)
+        if (cmeta_hrtime() - started >= CFLOW_FILE_EXAMPLE_TIMEOUT_NS)
             return SALTS_ETIMEDOUT;
         if (progressed == 0u)
-            salts_thread_yield();
+            cmeta_thread_yield();
     }
 }
 
 static int cflow_file_example_close_destroy(cflow_io_file *file) {
-    const uint64_t started = salts_hrtime();
+    const uint64_t started = cmeta_hrtime();
     int status = cflow_io_file_close(file);
     if (status != SALTS_OK && status != SALTS_EALREADY)
         return status;
@@ -155,10 +155,10 @@ static int cflow_file_example_close_destroy(cflow_io_file *file) {
             file, CFLOW_FILE_EXAMPLE_MAX_STEPS, &progressed);
         if (status != SALTS_OK)
             return status;
-        if (salts_hrtime() - started >= CFLOW_FILE_EXAMPLE_TIMEOUT_NS)
+        if (cmeta_hrtime() - started >= CFLOW_FILE_EXAMPLE_TIMEOUT_NS)
             return SALTS_ETIMEDOUT;
         if (progressed == 0u)
-            salts_thread_yield();
+            cmeta_thread_yield();
     }
     return cflow_io_file_destroy(file);
 }

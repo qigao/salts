@@ -37,7 +37,7 @@ static void produce(void *arg) {
     producer *p = (producer *)arg;
     for (int i = 0; i < p->count; ++i) {
         int v = p->start + i;
-        while (!cflow_channel_push(p->ch, &v)) salts_thread_yield();
+        while (!cflow_channel_push(p->ch, &v)) cmeta_thread_yield();
     }
 }
 
@@ -59,12 +59,12 @@ int main(void) {
     cflow_subscription sub;
     if (!cflow_subscribe(&sub, &s.graph, &source, &workers, &obs)) return 4;
 
-    salts_thread_t threads[4] = {0}; producer ps[4];
+    cmeta_thread_t threads[4] = {0}; producer ps[4];
     for (int t = 0; t < 4; ++t) {
         ps[t] = (producer){ &ch, t * 250 + 1, 250 };
-        if (salts_thread_create(&threads[t], produce, &ps[t]) != 0) return 6;
+        if (cmeta_thread_create(&threads[t], produce, &ps[t]) != 0) return 6;
     }
-    for (int t = 0; t < 4; ++t) (void)salts_thread_join(&threads[t]);
+    for (int t = 0; t < 4; ++t) (void)cmeta_thread_join(&threads[t]);
     cflow_channel_close(&ch);
     if (!cflow_subscription_request(&sub, 1000)) return 5;
     if (!cflow_scheduler_wait_idle(&workers)) return 7;

@@ -26,7 +26,7 @@ spec("platform_datetime") {
     tm_value.tm_mday = 1;
     tm_value.tm_hour = 12;
 
-    ts = salts_timegm(&tm_value);
+    ts = cmeta_timegm(&tm_value);
     check(ts != (time_t)-1);
     check_equal((int)ts, 1704110400);
   }
@@ -34,7 +34,7 @@ spec("platform_datetime") {
   it("should decompose UTC time safely") {
     struct tm tm_value;
 
-    check_equal(salts_gmtime((time_t)1704110400, &tm_value), 0);
+    check_equal(cmeta_gmtime((time_t)1704110400, &tm_value), 0);
     check_equal(tm_value.tm_year + 1900, 2024);
     check_equal(tm_value.tm_mon + 1, 1);
     check_equal(tm_value.tm_mday, 1);
@@ -43,7 +43,7 @@ spec("platform_datetime") {
 
   it("should format UTC time with strftime") {
     char buf[32];
-    int rc = salts_strftime_utc((time_t)1704110400, "%Y-%m-%dT%H:%M:%SZ",
+    int rc = cmeta_strftime_utc((time_t)1704110400, "%Y-%m-%dT%H:%M:%SZ",
                                 buf, sizeof(buf));
 
     check(rc > 0);

@@ -8,7 +8,7 @@ results="$GITHUB_WORKSPACE/android-runtime-results"
 cross_build="$GITHUB_WORKSPACE/android-cross-build-results/cross-build.json"
 consumer_meta="$GITHUB_WORKSPACE/android-cross-build-results/package-consumer.json"
 
-test -f "$bundle/salts_android_runtime_probe"
+test -f "$bundle/cmeta_android_runtime_probe"
 test -f "$cross_build"
 test -f "$consumer_meta"
 
@@ -43,9 +43,9 @@ while IFS= read -r file; do
   adb push "$file" "$remote/$(basename "$file")" >/dev/null
 done < <(find "$bundle" -maxdepth 1 -type f | sort)
 
-adb shell "chmod 755 '$remote/salts_android_runtime_probe'"
+adb shell "chmod 755 '$remote/cmeta_android_runtime_probe'"
 
-runtime_command="cd $remote && LD_LIBRARY_PATH=$remote ./salts_android_runtime_probe"
+runtime_command="cd $remote && LD_LIBRARY_PATH=$remote ./cmeta_android_runtime_probe"
 set +e
 adb shell "$runtime_command" 2>&1 | tr -d '\r' | tee "$results/runtime-output.txt"
 runtime_status=$PIPESTATUS

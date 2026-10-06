@@ -136,13 +136,42 @@ rows; traits still use comma-separated rows.
 See [capability contracts and executable examples](CAPABILITIES.md) for callback
 signatures, provider admission, ownership, failure cleanup and compatibility.
 
+### Schema-driven Data selection
+
+`<cmeta/data_select.h>` exposes `cmeta_data_of(pointer)` for builtin types and
+`cmeta_data_of_in(pointer, schema)` for an explicit `Schema(M, (NativeType,
+descriptor_expression), ...)`. A row names an unqualified native type and an
+expression of exactly `const cmeta_data_desc *`; its descriptor remains the
+provider's canonical object. No registry, copied metadata or lifetime retention
+is introduced. C11 uses `_Generic`; C++17 uses exact pointer type matching.
+
+The pointer is an unevaluated type witness and may be null. Mutable and const
+pointees select the same descriptor. Unknown/volatile pointers, duplicate
+compatible types (including typedef aliases), and wrong descriptor expression
+types are compile errors. Only the selected descriptor expression executes,
+exactly once. Schema expressions must be usable from static context in C++;
+provider accessors are the portable way to express computed descriptors.
+This proves native selection and descriptor pointer type, not arbitrary foreign
+descriptor validity: provider/Plugin admission remains mandatory at its boundary.
+
+Existing `CMETA_DATAOF(Type)` and `CMETA_DATAOF_OR(Type, fallback)` keep their
+historical unknown-type behavior. Builtin associations now replay the same
+`CMETA_BUILTIN_DATA_SCHEMA` used by the strict pointer frontend. Fixed-width
+aliases still use `cmeta_data_integer_width`, avoiding duplicate associations.
+See the complete C/C++ example in
+[`cmeta_data_select_test.c`](tests/cmeta_data_select_test.c), which checks builtin
+identity, custom provider selection, const views, and unevaluated pointer effects.
+
 ### Structured scope
 
-`cmeta_scope(name, status, autos, body)` owns 1 through 16 explicit
-`cmeta_auto(Type, local_name)` rows inside `cmeta_autos(...)`. The wrapper
-keeps the leading-comma row stream in one preprocessor argument and has no
-runtime representation. Each type exposes `Type_cmeta_data()` with
-canonical concrete `construct_ops`. The body is one ISO C expression returning
+`cmeta_scope(status, autos, body)` owns 1 through 16 explicit
+`(Type, local_name)` rows separated by commas inside `cmeta_autos(...)`.
+The wrapper keeps the tuple list in one preprocessor argument and has no
+runtime representation. `CMETA_PP_UNIQUE` supplies the internal scope identifier;
+the frontend requires `CMETA_HAS_COUNTER`, supported by the qualified GCC, Clang
+and MSVC backends. Each type exposes a native-typed `Type_cmeta_lifecycle`
+accessor to canonical concrete `construct_ops`. CSTL generates it together with
+the type's DataDesc. The body is one ISO C expression returning
 `cmeta_status`, usually a typed function call borrowing the local values:
 
 ```c
@@ -158,8 +187,8 @@ static cmeta_status fill_values(ScopeList *values) {
 
 int main(void) {
     cmeta_status status;
-    cmeta_scope(request, status,
-        cmeta_autos(cmeta_auto(ScopeList, values)),
+    cmeta_scope(status,
+        cmeta_autos((ScopeList, values)),
         cmeta_body(fill_values(&values)));
     return status == CMETA_OK ? 0 : 1;
 }
@@ -187,17 +216,51 @@ continue with status
 An initialization error restores the failed partial value once, skips the body,
 then cleans earlier initialized resources. A body error follows the same cleanup
 path. The returned body status replaces `status`; cleanup does not overwrite it.
-The same cached canonical ops supply initialization and destruction. The binding
-checks descriptor/ops ABI, callback presence and native size/alignment without
-field-name lookup, recursive Reflection validation or another lifecycle table.
-Descriptors lacking concrete construct ops return `CMETA_TRAIT_MISSING` before
-construction; malformed ABI/callbacks return `CMETA_INVALID_ARGUMENT`, and an
-incompatible native layout returns `CMETA_TYPE_MISMATCH`.
+The same cached canonical ops supply initialization and destruction. Static
+entry checks the accessor's exact native function type at compile time and
+borrows its constant-address ops without runtime descriptor admission.
+
+For hand-written or runtime-selected descriptors, use
+`cmeta_scope_checked(status, autos, body)` with the same tuple/body syntax.
+Each Type must expose `Type_cmeta_data()`; `cmeta_lifecycle_bind()` checks the
+descriptor, ops ABI, callback presence, semantic storage identity and native
+size/alignment before construction. Missing ops return `CMETA_TRAIT_MISSING`,
+malformed ABI/callbacks return `CMETA_INVALID_ARGUMENT`, and incompatible native
+storage returns `CMETA_TYPE_MISMATCH`. Admission failure calls no lifecycle
+callback for that resource. Static and checked entry share cleanup lowering;
+neither silently selects the other.
+
+A local declaration owner may expose its existing canonical ops using
+`CMETA_DEFINE_STATIC_LIFECYCLE(Type, immutable_ops_object)`. The object must have
+static storage duration and be the exact ops referenced by its DataDesc. The
+generated accessor takes `const Type *` as a type witness (NULL is allowed),
+never dereferences or retains it, and returns the borrowed ops pointer. The
+declaration owner remains responsible for callback/metadata semantics; this
+macro must not be used to bypass foreign/Plugin admission. Details and migration
+are in [lifecycle lowering](LIFECYCLE_LOWERING.md).
 
 Scope setup/cleanup is O(N) time and O(N) bounded automatic storage for N resource
-rows, excluding provider-owned payloads. No heap allocation, source lowerer,
+rows, excluding provider-owned payloads and checked descriptor validation.
+No heap allocation, source lowerer,
 cleanup attribute, SEH or assembly backend is required. DataDesc layout and the
 generic checked runtime lifecycle APIs retain their existing contracts.
+
+**Source migration (#980):** remove the first, caller-supplied scope token and
+replace adjacent `cmeta_auto(Type, name)` entries with comma-separated
+`(Type, name)` tuples. The old four-argument form and leading-comma entry macro
+are removed. Generated identifiers are unique even for two expansions on the
+same source line. The common PP tuple replay replaces the sentinel/drop layer;
+resource ownership, error status, partial rollback and LIFO cleanup are unchanged.
+Ordinary two-field rows automatically select lowering from canonical lifecycle
+facts. Trivial rows have no callbacks/ops/live state; managed nofail rows have no
+partial-init state. Fallible rows use the caller's status and nested control flow
+for rollback, without per-value live flags or cached static ops. Checked scopes
+retain borrowed ops only after full admission. Explicit `trivial`/nofail spellings
+are assertions, not required application annotations. See
+[lifecycle classification and binding trust](LIFECYCLE_LOWERING.md).
+Types that only expose a DataDesc accessor must explicitly use
+`cmeta_scope_checked` or publish an authoritative static lifecycle declaration.
+No descriptor layout or binary ABI changes follow from this source migration.
 
 **Migration and design decision (#920/#929):** the earlier statement-block
 `cmeta_body(...)` could let native exits bypass cleanup. Pure C macros cannot
@@ -440,7 +503,7 @@ Unload order is: stop new admissions, drain calls/runs, destroy dependent values
 and consumers while their callbacks are live, then release the final module
 reference. Validators require live storage and cannot detect an unloaded pointer.
 
-`CMETA_REFLECTION_ABI_VERSION` is the reflection layout epoch. Epoch 2 introduced result-semantic FunctionDesc layout; epoch 3 replaces receiver-method owner strings with optional canonical `cmeta_generic_desc` identity. Ordinary receiver methods use a null generic owner, while generic operation sets publish their constructor descriptor. A provider bootstrap
+`CMETA_REFLECTION_ABI_VERSION` is the reflection layout epoch. Epoch 2 introduced result-semantic FunctionDesc layout; epoch 3 replaced receiver-method owner strings with optional canonical `cmeta_generic_desc` identity. Epoch 4 replaces receiver methods with thin `{ name, abi }` operation rows and moves receiver projection validation into Function. Ordinary receiver operations use a null generic owner, while generic operation sets publish their constructor descriptor. Source consumers and Plugin hosts/providers must migrate together; see [receiver operation migration](RECEIVER_OPERATIONS.md). A provider bootstrap
 must accept a fixed-width requested epoch and reject a mismatch **before publishing
 descriptor pointers**. The provider compares against its own header constant;
 `cmeta_reflection_abi_version()` returns the linked CMeta library's epoch and checks
@@ -573,7 +636,7 @@ the host environment leaves them available.
 ### Static key / typed static call
 
 `<cmeta/fastpath.h>` 的 C11 `SALTS_FAST_KEY(name, initial)` 定义原子 bool，
-`salts_fast_branch(&name)` acquire 读取；enable/disable 在控制面 release 发布。
+`cmeta_fast_branch(&name)` acquire 读取；enable/disable 在控制面 release 发布。
 `cmeta_static_call(slot, default_function)` 从 FunctionDecl 生成精确类型原子槽，
 `cmeta_static_update(slot, function)` 检查签名与完整 ABI 契约后替换。
 `cmeta_static_invoke(slot, args...)` 直接调用该次读取的目标，零参数用
@@ -1068,3 +1131,283 @@ Runtime Protocol
 
 Do not add a new keyword when an existing declaration, schema mapper, descriptor,
 interface, or ordinary C function composes cleanly enough.
+
+## 有限宏与精确调用声明
+
+`<cmeta/pp.h>` 维护有限宏展开；`<cmeta/compiler.h>` 维护编译器与语言差异。
+`<cmeta/invoke_decl.h>` 在 canonical Function 声明上增加显式选择的精确 thunk。
+现有 `FunctionDecl` 的描述用途、Interface 的源行语法与运行时 ABI 保持不变。
+
+编译器能力统一通过 `CMETA_HAS_BUILTIN(name)`、`CMETA_HAS_ATTRIBUTE(name)`、
+`CMETA_HAS_FEATURE(name)` 查询，结果为 0/1，可用于 `#if`。底层编译器没有相应探测器时
+返回 0，表示未获支持保证，不启用替代实现。`CMETA_UNUSED` 也消费这个统一探测层。
+参数及能力含义沿用编译器自身词汇，见 [Clang 扩展说明](https://clang.llvm.org/docs/LanguageExtensions.html)
+与 [GCC builtin 探测](https://gcc.gnu.org/onlinedocs/cpp/_005f_005fhas_005fbuiltin.html)。
+`CMETA_HAS_COUNTER` 表示唯一名称生成能力；不支持时不提供 `CMETA_PP_UNIQUE`，不会以行号代替。
+唯一编号只用于命名，不定义声明次序、资源顺序或跨 TU 身份；顺序由 schema 和 indexed/reverse replay 决定。
+
+原生类型助手也归属 `compiler.h`，与返回反射 descriptor 的既有 `CMETA_TYPEOF(type)` 分离：
+
+| 入口 | 参数与结果 | 能力与边界 |
+| --- | --- | --- |
+| `CMETA_NATIVE_TYPEOF(expr)` | 产生原生类型，可用于 typedef 或声明；保留 cv、数组边界和函数类型；C++ 去掉引用 | 先检查 `CMETA_HAS_NATIVE_TYPEOF`；只对非变长类型保证不求值 |
+| `CMETA_SAME_TYPE(a,b)` | 两个表达式的原生类型比较，返回编译期 0/1；顶层及指针目标的 cv 限定参与比较 | 先检查 `CMETA_HAS_SAME_TYPE`；C 使用类型兼容规则，C++ 使用去引用后的类型相等；不比较反射身份、所有权或 ABI |
+| `CMETA_AUTO(name,expr)` | 声明一个局部值，初始化表达式恰好求值一次；类型按原生 `auto` / `__auto_type` 规则推导，数组/函数初始化器退化 | 先检查 `CMETA_HAS_AUTO`；name 是新的局部标识符，expr 必须可推导、可初始化，不接受裸花括号初始化列表 |
+
+三个能力宏均可在 `#if` 中使用。不支持时不定义对应操作宏，调用方必须明确要求能力，
+不能用转换或 `typeof(expr) name = expr` 模拟单次求值。当前支持 C++17（含 MSVC）、
+GCC C 和 Clang C；MSVC C 不声明支持。C++ 沿用普通值初始化的复制、移动和析构规则，
+不从声明推导 CMeta 资源所有权；这些助手不改变 descriptor、Plugin 生命周期或运行时分派。
+
+`CMETA_NATIVE_TYPEOF` / `CMETA_SAME_TYPE` 的可移植查询域是固定类型、非 void 的非位域表达式。
+不要将变长数组或变长数组指针作为类型查询操作数；GNU `typeof` 可能求值这类表达式。
+`CMETA_AUTO` 使用独立的原生推导设施，对变长数组指针初始化器也只求值一次。
+原生查询沿用编译器的语言规则，不修复编译器自身的表达式推导差异：本地 MSVC 19.44
+对直接 `*&function_name` 的 `decltype` 得到函数指针类型，而命名函数指针变量的解引用
+得到函数类型。跨编译器查询应使用函数名或命名指针的解引用，避免直接 `*&function_name`。
+实现依据见 [GCC typeof / auto type](https://gcc.gnu.org/onlinedocs/gcc/Typeof.html)
+与 [Clang auto type](https://clang.llvm.org/docs/LanguageExtensions.html#auto-type)。
+
+```c
+#include <cmeta/compiler.h>
+#if !CMETA_HAS_AUTO || !CMETA_HAS_NATIVE_TYPEOF
+#error "This example requires native type deduction"
+#endif
+int main(void) {
+    int calls = 0;
+    CMETA_AUTO(value, ++calls);
+    typedef CMETA_NATIVE_TYPEOF(value) value_type;
+    value_type copy = value;
+    return calls == 1 && copy == 1 ? 0 : 1;
+}
+```
+
+`CMETA_LAYOUT_REQUIRE(condition)` 和 `CMETA_FLAGS_REQUIRE(value,mask)` 均为表达式级编译期约束，
+成功贡献整数零，可放入静态初始化器。前者要求常量条件为真；后者要求非负整数常量的全部
+置位都包含在显式 mask 中。失败必须导致编译错误，运行时值也不能充当条件或 flag 输入。
+两者复用 `CMETA_CONST_REQUIRE`，不进行运行时检查，不从类型拼写推断业务允许位。
+
+Function、Interface、精确 thunk 与 TinyMock 的参数投影共用五字段内部行：
+`(type,name,flags,descriptor,carrier)`。三字段输入仍先进行标量准入，descriptor 来自
+注册类型且 carrier 为 `CMETA_ABI_SCALAR`；四字段输入保留显式 descriptor 和
+`CMETA_ABI_UNSPECIFIED`；五字段输入保留全部显式语义。归一化不会让描述性元数据
+自动获得可调用资格，未指定 ABI 的声明仍不能用于精确 thunk 或 ABI 替换。
+
+`CMETA_STRUCT`、`CMETA_ENUM` 及 `StructMeta`、`EnumMeta`、`EnumParse` 现在统一先展开
+宏别名再生成符号和反射名称。普通标识符、字段布局、枚举显式值及自动递增规则不变。
+兼容性边界：过去直接向底层声明宏传类型别名宏时，元数据可能保留别名 token 名称；
+现在记录展开后的实际类型名，与 `Struct`/`Enum` 前端一致。依赖旧别名字符串的查询需
+改用实际类型名；descriptor 的二进制布局及生命周期没有变化。
+
+静态发现与 Plugin 反射声明也使用同一展开规则：`cmeta_entry(symbol)` 的名称是展开后的
+符号名，`cmeta_registry(name, entries)` 的名称和生成数组使用同一展开后的标识符。
+这会修正旧代码传宏别名时保留别名字符串的行为；显式 `cmeta_manifest_*_entry("name", ...)`
+的名称不变。entry 顺序、kind、descriptor 指针、format version 和 ABI 布局不变。
+底层 `CMETA_INTERFACE` 同样先展开类型别名，避免方法名与 interface 元数据符号使用不同 token；
+宏别名声明的反射名称统一使用实际接口名，普通接口声明的行为不变。
+
+`cmeta_registry` 接受非空 entry 流；零项使用 `cmeta_registry_empty(name)`，生成
+`entries == NULL, count == 0` 的普通 `static const cmeta_manifest`。
+`cmeta_plugin` 接受 1–16 个 provides/requires 行，使用共享逗号 map 保留行顺序与重复项；
+零项使用 `cmeta_plugin_empty(name)`，生成 `capabilities == NULL, count == 0`，仍通过
+`cmeta_plugin_meta(name)` 取得描述符。两种空声明都不生成零长数组或占位项。
+空 Plugin 描述符只有放入显式 manifest 才会被该表发现；它不是运行中的 Salts::Plugin。
+这两个声明宏没有运行时返回值；非法标识符或不合约的非空行在编译期报错。
+空表的索引查询仍返回 `CMETA_INVALID_ARGUMENT`，失败时输出参数保持原值。
+
+生成对象均为 TU-local 不可变元数据，不包含句柄、分配、注册副作用或隐藏 lease。
+查询视图仍借用 provider 元数据；跨 DSO 使用时必须由既有 Plugin lease 保证其生命周期。
+静态数组仍是参考表示，没有新增 linker 聚合或构造函数注册。
+
+```c
+#include <cmeta/manifest_view.h>
+cmeta_registry_empty(NoExports);
+cmeta_plugin_empty(NoCapabilities);
+cmeta_registry(Discovery,
+    cmeta_manifest_plugin_entry("provider", cmeta_plugin_meta(NoCapabilities)));
+int main(void) {
+    const cmeta_manifest_limits limits = {CMETA_MANIFEST_DEFAULT_ITEMS,
+        CMETA_MANIFEST_DEFAULT_DEPTH, CMETA_MANIFEST_DEFAULT_NODES};
+    const cmeta_plugin_desc *provider = NULL;
+    return cmeta_manifest_get_plugin(&Discovery, 0u, &limits, &provider) == CMETA_OK
+        && provider->count == 0u && NoExports.count == 0u ? 0 : 1;
+}
+```
+
+| 原语 | 契约 |
+| --- | --- |
+| `CMETA_PP_MAP(M,C,...)` | 1–16 项，调用 `M(item,C)`，不插分隔符 |
+| `CMETA_PP_MAP_COMMA/SEMI/PREFIX_COMMA` | 同上，分别在项间插逗号、分号，或每项前插逗号；分号形式不追加末尾分号 |
+| 上述各形式的 `_N(N,M,C,...)` | 显式 0–16 项；例如零项写成 `CMETA_PP_MAP_N(0,M,C,)`；不调用 mapper、不输出分隔符 |
+| `CMETA_PP_MAP_I_N(N,M,C,...)` | `M(index,item,C)`，下标从零起；0–16 项 |
+| `CMETA_PP_PAIR_MAP_N` / `PAIR_MAP_COMMA_N` / `PAIR_MAP_PREFIX_COMMA_N` | 恰好 N 组平铺 `type,name`，0–16 组，调用 `M(type,name,C)`；零组最后保留一个空实参 |
+| `CMETA_PP_BOOL/NOT/AND/OR/IF/WHEN` | 输入是单个 token，只有 `0` 为假；不是预处理整数表达式求值器 |
+| `CMETA_PP_IIF(c)(t,f)` | c 必须为 0 或 1；`IF` 会先用 BOOL 归一化 |
+| `CMETA_PP_WHEN(c)(...)` | 条件为真时输出可变参数，否则不输出 |
+| `CMETA_PP_IS_VOID(x)` | 只识别展开后的单个 `void` token，不识别 typedef 或任意 C 类型拼写 |
+| `CMETA_PP_STRINGIFY(x)` | 先展开再字符串化；`STRINGIFY_I` 保留原 token 拼写 |
+| `CMETA_PP_OVERLOAD(prefix,...)` | 1–16 项，返回拼接了参数数目的宏名，由调用点继续传参 |
+| `CMETA_PP_TUPLE_GET_0..15` / `HEAD` / `TAIL` / `APPLY` | 有界 tuple 投影；索引必须存在，TAIL 的输入至少两项，APPLY 调用 `M tuple` |
+| `CMETA_PP_UNIQUE(prefix)` | 当前编译器提供 `__COUNTER__` 时可用；同一 TU 内唯一，不承诺跨 TU 名字唯一 |
+
+这些 map 复用同一有限 indexed 展开族，mapper 内不支持再次嵌套同一 map。
+需要已有多层乘积展开时仍使用 `FOR_EACH_A/B/C`。自然参数计数仍要求非空；
+严格 C11 的零项使用显式 `_N`，不依赖 `__VA_OPT__` 扩展或隐式回退。
+
+`CMETA_HAS_VA_OPT` 是标准模式准入标志：C++20 及以后、声明
+`__STDC_VERSION__ >= 202311L` 的 C23 及以后为 1；MSVC 还要求一致性预处理器。
+MSVC 的语言模式同时识别 `_MSVC_LANG`，不依赖 `/Zc:__cplusplus`。
+C11/C++17、C23 草案模式及 MSVC 传统预处理器为 0，即使编译器接受扩展也不开放。
+只有该标志为 1 时，以下宏才有定义：
+
+| 原语 | 契约 |
+| --- | --- |
+| `CMETA_PP_HAS_ARGS(...)` | 展开后含 token 返回 1，否则为 0；`()` 和逗号本身也属于 token |
+| `CMETA_PP_NARG_ZERO(...)` | 计算 0–16 项；省略参数或展开为空的宏均为零，括号保护项内逗号 |
+| `CMETA_PP_PREFIX_COMMA(...)` | 非空时输出一个前导逗号及原参数；为空时不输出 |
+| `CMETA_PP_MAP_ZERO(M,C,...)` | 0–16 项，复用显式计数 map；零项不调用 mapper |
+| `CMETA_PP_MAP_COMMA_ZERO/SEMI_ZERO/PREFIX_COMMA_ZERO` | 同一零项规则，分别复用相应分隔符策略 |
+
+计数不推断语义：`CMETA_PP_NARG_ZERO(())` 为 1，`CMETA_PP_NARG_ZERO(,)` 为 2。
+多项中的空项仍由 mapper 解释。超过 16 项不支持；与既有 map 一样，mapper
+不能递归嵌套同一展开族。使用方必须先检查能力标志；未准入时应使用显式 `_N`
+或明确要求更高语言模式，不存在自动切换实现。现有 `NARG`、`MAP`、`FOR_EACH`
+和 Interface 零参数声明的契约不变。
+
+完整 C++20 示例：
+
+```cpp
+#include <cmeta/pp.h>
+#if !CMETA_HAS_VA_OPT
+#error "This example requires standard zero-argument variadics"
+#endif
+#define VALUE(item,context) ((item) + (context))
+int main() {
+    const int empty[] = { 7 CMETA_PP_MAP_PREFIX_COMMA_ZERO(VALUE,0) };
+    const int values[] = { CMETA_PP_MAP_COMMA_ZERO(VALUE,1,2,3) };
+    return empty[0] == 7 && values[0] == 3 && values[1] == 4 ? 0 : 1;
+}
+```
+
+语言依据：[GCC Variadic Macros](https://gcc.gnu.org/onlinedocs/cpp/Variadic-Macros.html)、
+[MSVC 一致性预处理器](https://learn.microsoft.com/en-us/cpp/preprocessor/preprocessor-experimental-overview)、
+[C23 草案 N3096 的 6.10.4 宏替换](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3096.pdf)。
+
+`CMETA_STATIC_ASSERT(condition,message)` 用于声明位置；
+`CMETA_CONST_REQUIRE(condition)` 用于表达式位置，成功值为整数零。
+条件必须是编译期常量，假值使编译失败。`CMETA_TYPE_MATCHES(expr,T)` 不求值：
+C11 使用 generic selection 的转换后类型，C++17 使用 `decltype`；
+`CMETA_TYPE_IS_VALUE(T)` 要求 T 在参数退化前后是同一无顶层限定的值类型。
+
+完整的 C 函数声明示例（定义放在同一 TU）：
+
+```c
+#include <cmeta/invoke_decl.h>
+FunctionInvokeDecl(value, int, increment, (int, input, CMETA_PARAM_IN));
+int increment(int input) { return input + 1; }
+
+int main(void) {
+    int input = 4, output = 0;
+    void *params[] = { &input };
+    return FunctionInvoke(increment)(&output, params, 1) && output == 5 ? 0 : 1;
+}
+```
+
+`FunctionInvokeDecl` / `Function0InvokeDecl` 对应既有 inferred 声明。
+`FunctionInvokeDeclAsAbi[Result]` / `Function0InvokeDeclAsAbi[Result]`
+与同名去掉 `Invoke` 的既有声明使用相同实参顺序，生成同一份 FunctionDesc/FunctionAbi。
+C++17 使用显式 `AsAbi` 形式及五字段参数行。返回 ABI carrier 必须是 canonical
+`CMETA_ABI_VOID/SCALAR/OBJECT_POINTER/AGGREGATE/FUNCTION_POINTER/OPAQUE/ENUM`
+token（允许宏别名）；不接受任意 carrier 表达式或 UNSPECIFIED。
+
+`FunctionInvoke(name)(return_storage, params, param_count)` 返回 bool。
+错误数量、缺失参数数组、任一缺失参数对象、非 void 缺失返回对象时返回 false，
+不执行 native 函数；成功恰好执行一次，void 返回不要求返回存储。
+参数数量为 0 时允许 params 为 NULL。参数与返回对象必须具有声明中的精确类型、
+对齐和有效生命周期；普通 `void *` 不能检查这些调用方前置条件。
+指针参数也需要一个指针对象的地址，允许该对象保存 NULL。
+数组、函数 typedef 和顶层 const/volatile 参数不能直接作为 carrier；
+使用其精确的无顶层限定值类型或显式指针类型。受指针指向的 const/volatile 不受影响。
+
+生成器只借用存储，不分配、不 retain、不转移所有权。Function 的 result flags
+仍是语义事实源，Plugin 描述符和 thunk 的有效期仍受 live lease 约束。
+外来描述符继续完整 admission；生成 thunk 不解释 Reflection，不执行 ABI 猜测。
+
+### 固定布局的 container_of 与 cleanup 能力（#976）
+
+`<cmeta/container_of.h>` 的 `cmeta_container_of_as(ptr,Owner,MemberType,member)`
+从成员地址恢复 `Owner *`。它同时检查 `Owner.member` 和传入指针的精确原生类型，
+包括 cv 限定与数组范围；`ptr` 只求值一次。C11（包括 MSVC C）使用这个显式类型入口。
+`CMETA_HAS_CONTAINER_OF` 为 1 时还提供 `cmeta_container_of(ptr,Owner,member)`，
+通过已有原生 typeof 推导 MemberType，复用同一检查与地址计算。
+不支持推导的编译器不定义三参数入口，不提供无检查替代。
+
+Owner 必须是实际存活、固定地址的外围对象类型；C++ 要求 standard-layout。
+ptr 必须非 NULL，且恰好指向这个对象中指定成员；类型相同不代表成员来源正确。
+位域、柔性数组、动态字段和过期指针不在契约内。数组成员须使用数组 typedef 并传整个数组的地址。
+只读或 volatile 对象显式传 `const Owner` / `volatile Owner`，MemberType 带相应限定；
+仅有 const 成员的指针不能证明整个对象可写，调用者不能借此声明一个不真实的可写 Owner。
+没有分配、引用计数、状态迁移或线程同步，时间和额外空间均为 O(1)，借用在原对象移动或销毁时失效。
+错误原生类型在编译期拒绝；对象来源和生命周期属于调用前置条件，不进行运行时猜测。
+可编译的 C/C++ 用例见 [container_of 回归](tests/cmeta_container_of_cases.h)。
+
+`CMETA_HAS_CLEANUP` / `CMETA_ATTR_CLEANUP(function)` 只探测和封装原生 cleanup attribute。
+函数接收自动变量的地址，负责该资源自己的清理；没有隐含 free、retain 或返回值处理。
+不支持的编译器令能力值为 0，且不定义 attribute 宏。普通返回和块退出可用于 lexical cleanup；
+longjmp 等非局部退出不属于此入口的保证，异常清理还取决于后端和异常编译选项。
+MSVC 的结构化 scope 入口继续保持相同资源语义，不将缺失 attribute 解释为不清理。
+行为用例见 [cleanup 回归](tests/cmeta_compiler_cleanup_cases.h)，平台机制参见
+[GCC cleanup 文档](https://gcc.gnu.org/onlinedocs/gcc/Common-Variable-Attributes.html)。
+
+这些入口均为增量能力，不改变 Reflection ABI；既有 descriptor 与 scope 不会隐式改用它们。
+成员地址布局基于标准 offsetof，编译器机制见
+[GCC offsetof 文档](https://gcc.gnu.org/onlinedocs/gcc/Offsetof.html)。
+
+Interface 的 R/V/F/FR/FV/D/FD 行先归一化为参数 tuple、arity、结果动作和 Reflection
+属性，再由公共生成器输出 vtable、wrapper、验证与 metadata。析构仍先调用再清空 handle。
+验证覆盖 C/C++ 的所有 0–4 参数行、16 项 PP 上界、零项、错误展开和精确 native 调用。
+迁移只需要显式选择新声明；撤回声明层时可恢复手写 thunk，无数据迁移或运行时格式变化。
+Plugin 的可选跨 TU linker 聚合与 C/C++ lease 作用域入口见
+[Plugin 声明与生命周期协议](../plugin/README.md)。共享 section 原语位于 `cmeta/compiler.h`，
+平台聚合和 lease 所有权仍归 Plugin；CMeta descriptor 不持有 lease。
+通用 capture/bind 与通用生命周期 guard 不在这两个 Plugin 入口的范围内。
+
+### Explicit lifetime and parameter binding
+
+`<cmeta/lifecycle.h>` 提供 `cmeta_lifecycle_binding`：先用 `cmeta_lifecycle_admit` 验证
+canonical DataDesc，再重复 init/move/restore。`<cmeta/cleanup.h>` 把 Data、ObjectRef、
+Plugin 各自的释放 authority 适配为有限 lexical obligation；`<cmeta/object_scope.h>` 提供
+ObjectRef C adapter 和不可复制的 C++ `cmeta::object_scope`。初始化失败回滚、逆序清理、
+provider 寿命及参数/返回错误约定见 [生命周期协议](LIFECYCLE_LOWERING.md)。
+
+`<cmeta/bind.h>` 从显式行生成捕获和精确 thunk，例如：
+
+```c
+#include <cmeta/bind.h>
+
+FunctionDeclAsAbiResult(value, int, &cmeta_type_int, CMETA_ABI_SCALAR, CMETA_RESULT_VALUE,
+    add, (int, a, CMETA_PARAM_IN, &cmeta_type_int, CMETA_ABI_SCALAR),
+         (int, b, CMETA_PARAM_IN, &cmeta_type_int, CMETA_ABI_SCALAR));
+int add(int a, int b) { return a + b; }
+
+FunctionBindDeclAsAbiResult(value, int, &cmeta_type_int, CMETA_ABI_SCALAR, CMETA_RESULT_VALUE,
+    plus10, add, CMETA_SIG_U_I_I,
+    (value, (int, a, CMETA_PARAM_IN, &cmeta_type_int, CMETA_ABI_SCALAR)),
+    (arg, (int, b, CMETA_PARAM_IN, &cmeta_type_int, CMETA_ABI_SCALAR)));
+
+int main(void) {
+    plus10_capture capture = {10};
+    cmeta_invokable call = CMETA_INVOKABLE_INIT;
+    int input = 5, output = 0;
+    const void *args[] = {&input};
+    if (plus10_bind(&capture, &call) != CMETA_OK) return 1;
+    if (cmeta_invokable_invoke_admitted(&call, &output, args) != CMETA_OK) return 1;
+    return output == 15 ? 0 : 1;
+}
+```
+
+`value` 是已注册平凡标量的 snapshot，`borrow` 是显式借用的 object pointer，`arg` 保留
+调用参数。receiver 使用含 `CMETA_PARAM_RECEIVER | CMETA_PARAM_BORROWED` 的 borrow 行。
+capture 总量在编译期限制为 `CMETA_CAPTURE_INLINE`，不得捕获 managed ownership；
+剩余参数须匹配现有注册的一元/二元 signature。返回 flags 和全部未绑定参数契约保持不变。
+更多边界和迁移说明见 [receiver 与参数投影](RECEIVER_OPERATIONS.md)。

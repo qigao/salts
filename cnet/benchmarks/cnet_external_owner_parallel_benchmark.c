@@ -315,7 +315,7 @@ static void external_parallel_receive(
   entry->received_bytes += view->size;
   if (entry->received_bytes == lane->payload_size) {
     if (entry->latency_out != NULL)
-      *entry->latency_out = salts_hrtime() - entry->started_ns;
+      *entry->latency_out = cmeta_hrtime() - entry->started_ns;
     entry->received_bytes = 0u;
     entry->receive_done = true;
     if (lane->measuring) ++lane->measured_receives;
@@ -393,14 +393,14 @@ static int external_parallel_lane_poll(
 static int external_parallel_lane_wait_connected(
     external_parallel_lane *lane) {
   const uint64_t deadline =
-      salts_monotonic_ms() + EXTERNAL_PARALLEL_TIMEOUT_MS;
+      cmeta_monotonic_ms() + EXTERNAL_PARALLEL_TIMEOUT_MS;
 
   while (!lane->connection.connected) {
     int status;
     if (lane->status != SALTS_OK) return lane->status;
     status = external_parallel_lane_poll(lane, 10u);
     if (status != SALTS_OK) return status;
-    if (salts_monotonic_ms() >= deadline)
+    if (cmeta_monotonic_ms() >= deadline)
       return SALTS_ETIMEDOUT;
   }
   return SALTS_OK;
@@ -489,7 +489,7 @@ static int external_parallel_lane_init(
 static int external_parallel_lane_cycle(
     external_parallel_lane *lane, uint64_t *latency_out) {
   const uint64_t deadline =
-      salts_monotonic_ms() + EXTERNAL_PARALLEL_TIMEOUT_MS;
+      cmeta_monotonic_ms() + EXTERNAL_PARALLEL_TIMEOUT_MS;
   external_parallel_connection *entry = &lane->connection;
   int status;
 
@@ -497,7 +497,7 @@ static int external_parallel_lane_cycle(
   entry->send_done = false;
   entry->receive_done = false;
   entry->latency_out = latency_out;
-  entry->started_ns = salts_hrtime();
+  entry->started_ns = cmeta_hrtime();
   if (latency_out != NULL) *latency_out = 0u;
 
   status = cnet_send_buffer(
@@ -508,7 +508,7 @@ static int external_parallel_lane_cycle(
     if (lane->status != SALTS_OK) return lane->status;
     status = external_parallel_lane_poll(lane, 10u);
     if (status != SALTS_OK) return status;
-    if (salts_monotonic_ms() >= deadline)
+    if (cmeta_monotonic_ms() >= deadline)
       return SALTS_ETIMEDOUT;
   }
 
@@ -561,7 +561,7 @@ static int external_parallel_lane_destroy(
 
   if (lane->client.impl != NULL) {
     const uint64_t deadline =
-        salts_monotonic_ms() + EXTERNAL_PARALLEL_TIMEOUT_MS;
+        cmeta_monotonic_ms() + EXTERNAL_PARALLEL_TIMEOUT_MS;
 
     if (lane->connection.connected && !lane->terminal) {
       int close_status = cnet_close(
@@ -573,7 +573,7 @@ static int external_parallel_lane_destroy(
       while (status == SALTS_OK && !lane->terminal) {
         status = external_parallel_lane_poll(lane, 10u);
         if (status == SALTS_OK &&
-            salts_monotonic_ms() >= deadline)
+            cmeta_monotonic_ms() >= deadline)
           status = SALTS_ETIMEDOUT;
       }
     }
@@ -581,7 +581,7 @@ static int external_parallel_lane_destroy(
     if (status == SALTS_OK) {
       int stop_status = cnet_client_stop_external(&lane->client);
       while (stop_status == SALTS_EBUSY &&
-             salts_monotonic_ms() < deadline) {
+             cmeta_monotonic_ms() < deadline) {
         const int progress_status =
             external_parallel_lane_poll(lane, 10u);
         if (progress_status != SALTS_OK) {
@@ -878,7 +878,7 @@ static int external_parallel_run_mode(
     goto join_threads;
   }
 
-  wall_started = salts_hrtime();
+  wall_started = cmeta_hrtime();
   gate.start = true;
   (void)pthread_cond_broadcast(&gate.changed);
   while (gate.done < thread_count &&
@@ -886,7 +886,7 @@ static int external_parallel_run_mode(
     (void)pthread_cond_wait(&gate.changed, &gate.mutex);
   while (gate.done < thread_count)
     (void)pthread_cond_wait(&gate.changed, &gate.mutex);
-  wall_ns = salts_hrtime() - wall_started;
+  wall_ns = cmeta_hrtime() - wall_started;
   if (gate.failure != SALTS_OK) status = gate.failure;
   (void)pthread_mutex_unlock(&gate.mutex);
 

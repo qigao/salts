@@ -1,4 +1,4 @@
-#include "salts_api.h"
+#include "cmeta_api.h"
 #include "platform.h"
 #include "tinytest.h"
 
@@ -10,8 +10,8 @@
 #error "SALTS_USE_SHARED must not leak to Salts consumers"
 #endif
 
-#ifdef salts_EXPORTS
-#error "salts_EXPORTS is a CMake implementation detail and must not reach consumers"
+#ifdef cmeta_EXPORTS
+#error "cmeta_EXPORTS is a CMake implementation detail and must not reach consumers"
 #endif
 
 #ifndef SALTS_API

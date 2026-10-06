@@ -2,7 +2,7 @@
 
 #include <salts/native_io_sharded.h>
 #include <salts/thread.h>
-#include <salts_buffer.h>
+#include <cmeta_buffer.h>
 
 #include <stdatomic.h>
 #include <stdint.h>

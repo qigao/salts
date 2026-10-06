@@ -118,7 +118,7 @@ static void sharded_bench_same_driver_run(native_io_sharded_context *context, vo
   (void)context;
 
   driver->status = SALTS_OK;
-  started = salts_hrtime();
+  started = cmeta_hrtime();
   for (size_t index = 0u; index < driver->iterations; ++index) {
     const int status = native_io_sharded_try_submit_to(driver->runtime, 0u, &driver->inner);
     if (status != SALTS_OK) {
@@ -126,7 +126,7 @@ static void sharded_bench_same_driver_run(native_io_sharded_context *context, vo
       break;
     }
   }
-  driver->wall_ns = salts_hrtime() - started;
+  driver->wall_ns = cmeta_hrtime() - started;
 }
 
 static int sharded_bench_runtime_create(native_io_backend_kind kind, native_io_sharded **out) {
@@ -206,22 +206,22 @@ static int sharded_bench_cross_sample(native_io_sharded *runtime, size_t iterati
 
   if (!native_io_sharded_get_stats(runtime, &before)) return SALTS_EIO;
   if (window == 0u) return SALTS_EINVAL;
-  started = salts_hrtime();
+  started = cmeta_hrtime();
   for (size_t base = 0u; base < iterations && status == SALTS_OK; base += window) {
     const size_t end = base + window < iterations ? base + window : iterations;
-    uint64_t phase_started = salts_hrtime();
+    uint64_t phase_started = cmeta_hrtime();
     for (size_t index = base; index < end; ++index) {
       status = native_io_sharded_submit_to(runtime, 1u, &task);
       if (status != SALTS_OK) break;
     }
-    submit_ns += salts_hrtime() - phase_started;
+    submit_ns += cmeta_hrtime() - phase_started;
     if (status == SALTS_OK) {
-      phase_started = salts_hrtime();
+      phase_started = cmeta_hrtime();
       status = native_io_sharded_wait(runtime);
-      wait_ns += salts_hrtime() - phase_started;
+      wait_ns += cmeta_hrtime() - phase_started;
     }
   }
-  out->wall_ns = salts_hrtime() - started;
+  out->wall_ns = cmeta_hrtime() - started;
   out->submit_ns = submit_ns;
   out->wait_ns = wait_ns;
   if (status != SALTS_OK) return status;

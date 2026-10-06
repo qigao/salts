@@ -97,6 +97,36 @@ bool cmeta_function_abi_desc_valid(const cmeta_function_abi_desc *desc) {
     return true;
 }
 
+bool cmeta_function_receiver_valid(const cmeta_function_desc *function) {
+    const cmeta_param_desc *receiver = cmeta_function_receiver(function);
+    return receiver != NULL && receiver->type->kind == CMETA_T_POINTER &&
+           cmeta_type_desc_valid(receiver->type->pointee);
+}
+
+bool cmeta_function_receiver_projection_valid(
+    const cmeta_function_desc *function,
+    const cmeta_function_desc *projected) {
+    size_t i;
+    if (!cmeta_function_receiver_valid(function) ||
+        !cmeta_function_desc_valid(projected))
+        return false;
+    if (function->param_count - 1u != projected->param_count ||
+        !cmeta_type_equal(function->return_type, projected->return_type) ||
+        function->result_flags != projected->result_flags ||
+        function->effects != projected->effects ||
+        function->properties != projected->properties)
+        return false;
+    for (i = 0u; i < projected->param_count; ++i) {
+        const cmeta_param_desc *source = &function->params[i + 1u];
+        const cmeta_param_desc *target = &projected->params[i];
+        if (strcmp(source->name, target->name) != 0 ||
+            source->flags != target->flags ||
+            !cmeta_type_equal(source->type, target->type))
+            return false;
+    }
+    return true;
+}
+
 bool cmeta_function_desc_equal(const cmeta_function_desc *left,
                                const cmeta_function_desc *right) {
     size_t i;
@@ -205,4 +235,31 @@ cmeta_function_receiver(const cmeta_function_desc *desc) {
     return (desc->params[0].flags & CMETA_PARAM_RECEIVER) != 0u
                ? &desc->params[0]
                : NULL;
+}
+
+bool cmeta_function_projection_valid(const cmeta_function_abi_desc *source,
+    const cmeta_function_abi_desc *projected, const bool *bound, size_t count) {
+    size_t i, next = 0u;
+    const cmeta_function_desc *a, *b;
+    if (!cmeta_function_abi_desc_valid(source) ||
+        !cmeta_function_abi_desc_valid(projected) || count != source->param_count ||
+        (count != 0u && bound == NULL)) return false;
+    a = source->function;
+    b = projected->function;
+    if (a->param_count != 0u && (a->params[0].flags & CMETA_PARAM_RECEIVER) != 0u &&
+        !cmeta_function_receiver_valid(a)) return false;
+    if (!cmeta_type_equal(a->return_type, b->return_type) ||
+        source->return_carrier != projected->return_carrier ||
+        a->result_flags != b->result_flags || a->effects != b->effects ||
+        a->properties != b->properties) return false;
+    for (i = 0u; i < count; ++i) {
+        if (bound[i]) continue;
+        if (next >= b->param_count ||
+            strcmp(a->params[i].name, b->params[next].name) != 0 ||
+            !cmeta_type_equal(a->params[i].type, b->params[next].type) ||
+            a->params[i].flags != b->params[next].flags ||
+            source->param_carriers[i] != projected->param_carriers[next]) return false;
+        ++next;
+    }
+    return next == b->param_count;
 }

@@ -34,12 +34,12 @@ std::string user_to_string(const User &u) {
 int main() {
   // 1. Setup logger
   // Note: We use the default logger
-  salts_console_sink_opts_t opts;
+  cmeta_console_sink_opts_t opts;
   opts.output = stdout;
   opts.use_colors = 1;
   opts.pattern = "[{time_ms}] [{level}] [{thread}] ({file}:{line}) {message}"; // Without component
 
-  salts_log_sink_t *console = salts_sink_console_create(&opts);
+  cmeta_log_sink_t *console = cmeta_sink_console_create(&opts);
   tlog_add_sink(tlog_get_default(), console);
   tlog_set_level(tlog_get_default(), SALTS_LOG_LEVEL_DEBUG);
 
@@ -113,11 +113,11 @@ int main() {
   // Custom format with chrono
   TLOG_INFOF("Chrono HH:MM:SS: {:%H:%M:%S}", now);
 
-  // salts_timeval_t auto-detection
-  salts_timeval_t tv;
+  // cmeta_timeval_t auto-detection
+  cmeta_timeval_t tv;
   tv.tv_sec = 1700000000;
   tv.tv_usec = 123000;
-  TLOG_INFOF("salts_timeval_t: {}", tv);
+  TLOG_INFOF("cmeta_timeval_t: {}", tv);
 
   TLOG_INFO("=== Test Complete ===");
 

@@ -6,38 +6,38 @@
 
 #define SALTS_DEADLINE_INDEX_NONE UINT32_MAX
 
-typedef struct salts_deadline_entry {
-  salts_deadline_event event;
+typedef struct cmeta_deadline_entry {
+  cmeta_deadline_event event;
   uint64_t order;
   uint32_t heap_index;
   uint32_t generation;
   bool active;
-} salts_deadline_entry;
+} cmeta_deadline_entry;
 
-typedef struct salts_deadline_queue_impl {
-  salts_deadline_entry *entries;
+typedef struct cmeta_deadline_queue_impl {
+  cmeta_deadline_entry *entries;
   uint32_t *heap;
   uint32_t *free_slots;
   size_t size;
   size_t free_count;
   size_t capacity;
   uint64_t next_order;
-} salts_deadline_queue_impl;
+} cmeta_deadline_queue_impl;
 
-static salts_deadline_queue_impl *salts_deadline_get(salts_deadline_queue *queue) {
-  return queue != NULL ? (salts_deadline_queue_impl *)queue->impl : NULL;
+static cmeta_deadline_queue_impl *cmeta_deadline_get(cmeta_deadline_queue *queue) {
+  return queue != NULL ? (cmeta_deadline_queue_impl *)queue->impl : NULL;
 }
 
-static const salts_deadline_queue_impl *
-salts_deadline_const_get(const salts_deadline_queue *queue) {
-  return queue != NULL ? (const salts_deadline_queue_impl *)queue->impl : NULL;
+static const cmeta_deadline_queue_impl *
+cmeta_deadline_const_get(const cmeta_deadline_queue *queue) {
+  return queue != NULL ? (const cmeta_deadline_queue_impl *)queue->impl : NULL;
 }
 
-static salts_deadline_id salts_deadline_make_id(uint32_t slot, uint32_t generation) {
+static cmeta_deadline_id cmeta_deadline_make_id(uint32_t slot, uint32_t generation) {
   return ((uint64_t)generation << 32u) | ((uint64_t)slot + 1u);
 }
 
-static bool salts_deadline_decode_id(salts_deadline_id id, uint32_t *out_slot,
+static bool cmeta_deadline_decode_id(cmeta_deadline_id id, uint32_t *out_slot,
                                      uint32_t *out_generation) {
   const uint32_t encoded_slot = (uint32_t)id;
   const uint32_t generation = (uint32_t)(id >> 32u);
@@ -47,15 +47,15 @@ static bool salts_deadline_decode_id(salts_deadline_id id, uint32_t *out_slot,
   return true;
 }
 
-static bool salts_deadline_before(const salts_deadline_queue_impl *impl, uint32_t left_slot,
+static bool cmeta_deadline_before(const cmeta_deadline_queue_impl *impl, uint32_t left_slot,
                                   uint32_t right_slot) {
-  const salts_deadline_entry *left = &impl->entries[left_slot];
-  const salts_deadline_entry *right = &impl->entries[right_slot];
+  const cmeta_deadline_entry *left = &impl->entries[left_slot];
+  const cmeta_deadline_entry *right = &impl->entries[right_slot];
   return left->event.deadline_ms < right->event.deadline_ms ||
          (left->event.deadline_ms == right->event.deadline_ms && left->order < right->order);
 }
 
-static void salts_deadline_swap(salts_deadline_queue_impl *impl, size_t left, size_t right) {
+static void cmeta_deadline_swap(cmeta_deadline_queue_impl *impl, size_t left, size_t right) {
   const uint32_t temporary = impl->heap[left];
   impl->heap[left] = impl->heap[right];
   impl->heap[right] = temporary;
@@ -63,32 +63,32 @@ static void salts_deadline_swap(salts_deadline_queue_impl *impl, size_t left, si
   impl->entries[impl->heap[right]].heap_index = (uint32_t)right;
 }
 
-static void salts_deadline_sift_up(salts_deadline_queue_impl *impl, size_t index) {
+static void cmeta_deadline_sift_up(cmeta_deadline_queue_impl *impl, size_t index) {
   while (index != 0u) {
     const size_t parent = (index - 1u) / 2u;
-    if (!salts_deadline_before(impl, impl->heap[index], impl->heap[parent])) break;
-    salts_deadline_swap(impl, index, parent);
+    if (!cmeta_deadline_before(impl, impl->heap[index], impl->heap[parent])) break;
+    cmeta_deadline_swap(impl, index, parent);
     index = parent;
   }
 }
 
-static void salts_deadline_sift_down(salts_deadline_queue_impl *impl, size_t index) {
+static void cmeta_deadline_sift_down(cmeta_deadline_queue_impl *impl, size_t index) {
   for (;;) {
     const size_t left = index * 2u + 1u;
     const size_t right = left + 1u;
     size_t earliest = index;
-    if (left < impl->size && salts_deadline_before(impl, impl->heap[left], impl->heap[earliest]))
+    if (left < impl->size && cmeta_deadline_before(impl, impl->heap[left], impl->heap[earliest]))
       earliest = left;
-    if (right < impl->size && salts_deadline_before(impl, impl->heap[right], impl->heap[earliest]))
+    if (right < impl->size && cmeta_deadline_before(impl, impl->heap[right], impl->heap[earliest]))
       earliest = right;
     if (earliest == index) break;
-    salts_deadline_swap(impl, index, earliest);
+    cmeta_deadline_swap(impl, index, earliest);
     index = earliest;
   }
 }
 
-static void salts_deadline_release_slot(salts_deadline_queue_impl *impl, uint32_t slot) {
-  salts_deadline_entry *entry = &impl->entries[slot];
+static void cmeta_deadline_release_slot(cmeta_deadline_queue_impl *impl, uint32_t slot) {
+  cmeta_deadline_entry *entry = &impl->entries[slot];
   memset(&entry->event, 0, sizeof(entry->event));
   entry->order = 0u;
   entry->heap_index = SALTS_DEADLINE_INDEX_NONE;
@@ -101,8 +101,8 @@ static void salts_deadline_release_slot(salts_deadline_queue_impl *impl, uint32_
   impl->free_slots[impl->free_count++] = slot;
 }
 
-static void salts_deadline_remove(salts_deadline_queue_impl *impl, size_t heap_index,
-                                  salts_deadline_event *out_event) {
+static void cmeta_deadline_remove(cmeta_deadline_queue_impl *impl, size_t heap_index,
+                                  cmeta_deadline_event *out_event) {
   const uint32_t removed_slot = impl->heap[heap_index];
   *out_event = impl->entries[removed_slot].event;
   --impl->size;
@@ -110,25 +110,25 @@ static void salts_deadline_remove(salts_deadline_queue_impl *impl, size_t heap_i
     impl->heap[heap_index] = impl->heap[impl->size];
     impl->entries[impl->heap[heap_index]].heap_index = (uint32_t)heap_index;
     if (heap_index != 0u &&
-        salts_deadline_before(impl, impl->heap[heap_index], impl->heap[(heap_index - 1u) / 2u]))
-      salts_deadline_sift_up(impl, heap_index);
-    else salts_deadline_sift_down(impl, heap_index);
+        cmeta_deadline_before(impl, impl->heap[heap_index], impl->heap[(heap_index - 1u) / 2u]))
+      cmeta_deadline_sift_up(impl, heap_index);
+    else cmeta_deadline_sift_down(impl, heap_index);
   }
   impl->heap[impl->size] = SALTS_DEADLINE_INDEX_NONE;
-  salts_deadline_release_slot(impl, removed_slot);
+  cmeta_deadline_release_slot(impl, removed_slot);
 }
 
-int salts_deadline_queue_init(salts_deadline_queue *queue, size_t capacity) {
-  salts_deadline_queue_impl *impl;
+int cmeta_deadline_queue_init(cmeta_deadline_queue *queue, size_t capacity) {
+  cmeta_deadline_queue_impl *impl;
   size_t index;
   if (queue == NULL || capacity == 0u) return SALTS_EINVAL;
   if (queue->impl != NULL) return SALTS_EALREADY;
-  if (capacity > UINT32_MAX || capacity > SIZE_MAX / sizeof(salts_deadline_entry) ||
+  if (capacity > UINT32_MAX || capacity > SIZE_MAX / sizeof(cmeta_deadline_entry) ||
       capacity > SIZE_MAX / sizeof(uint32_t))
     return SALTS_ERANGE;
-  impl = (salts_deadline_queue_impl *)calloc(1u, sizeof(*impl));
+  impl = (cmeta_deadline_queue_impl *)calloc(1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
-  impl->entries = (salts_deadline_entry *)calloc(capacity, sizeof(*impl->entries));
+  impl->entries = (cmeta_deadline_entry *)calloc(capacity, sizeof(*impl->entries));
   impl->heap = (uint32_t *)malloc(capacity * sizeof(*impl->heap));
   impl->free_slots = (uint32_t *)malloc(capacity * sizeof(*impl->free_slots));
   if (impl->entries == NULL || impl->heap == NULL || impl->free_slots == NULL) {
@@ -150,10 +150,10 @@ int salts_deadline_queue_init(salts_deadline_queue *queue, size_t capacity) {
   return SALTS_OK;
 }
 
-int salts_deadline_queue_schedule(salts_deadline_queue *queue, uint64_t deadline_ms, uint64_t token,
-                                  salts_deadline_id *out_id) {
-  salts_deadline_queue_impl *impl = salts_deadline_get(queue);
-  salts_deadline_entry *entry;
+int cmeta_deadline_queue_schedule(cmeta_deadline_queue *queue, uint64_t deadline_ms, uint64_t token,
+                                  cmeta_deadline_id *out_id) {
+  cmeta_deadline_queue_impl *impl = cmeta_deadline_get(queue);
+  cmeta_deadline_entry *entry;
   uint32_t slot;
   size_t heap_index;
   if (out_id == NULL) return SALTS_EINVAL;
@@ -166,34 +166,34 @@ int salts_deadline_queue_schedule(salts_deadline_queue *queue, uint64_t deadline
   if (entry->active || entry->generation == 0u) return SALTS_EPROTO;
   heap_index = impl->size++;
   entry->event =
-      (salts_deadline_event){salts_deadline_make_id(slot, entry->generation), deadline_ms, token};
+      (cmeta_deadline_event){cmeta_deadline_make_id(slot, entry->generation), deadline_ms, token};
   entry->order = impl->next_order++;
   entry->heap_index = (uint32_t)heap_index;
   entry->active = true;
   impl->heap[heap_index] = slot;
   *out_id = entry->event.id;
-  salts_deadline_sift_up(impl, heap_index);
+  cmeta_deadline_sift_up(impl, heap_index);
   return SALTS_OK;
 }
 
-int salts_deadline_queue_cancel(salts_deadline_queue *queue, salts_deadline_id id,
-                                salts_deadline_event *out_event) {
-  salts_deadline_queue_impl *impl = salts_deadline_get(queue);
-  salts_deadline_entry *entry;
+int cmeta_deadline_queue_cancel(cmeta_deadline_queue *queue, cmeta_deadline_id id,
+                                cmeta_deadline_event *out_event) {
+  cmeta_deadline_queue_impl *impl = cmeta_deadline_get(queue);
+  cmeta_deadline_entry *entry;
   uint32_t slot;
   uint32_t generation;
   if (out_event == NULL) return SALTS_EINVAL;
   memset(out_event, 0, sizeof(*out_event));
-  if (impl == NULL || !salts_deadline_decode_id(id, &slot, &generation)) return SALTS_EINVAL;
+  if (impl == NULL || !cmeta_deadline_decode_id(id, &slot, &generation)) return SALTS_EINVAL;
   if ((size_t)slot >= impl->capacity) return SALTS_ENOENT;
   entry = &impl->entries[slot];
   if (!entry->active || entry->generation != generation) return SALTS_ENOENT;
-  salts_deadline_remove(impl, entry->heap_index, out_event);
+  cmeta_deadline_remove(impl, entry->heap_index, out_event);
   return SALTS_OK;
 }
 
-int salts_deadline_queue_peek(const salts_deadline_queue *queue, salts_deadline_event *out_event) {
-  const salts_deadline_queue_impl *impl = salts_deadline_const_get(queue);
+int cmeta_deadline_queue_peek(const cmeta_deadline_queue *queue, cmeta_deadline_event *out_event) {
+  const cmeta_deadline_queue_impl *impl = cmeta_deadline_const_get(queue);
   if (out_event == NULL) return SALTS_EINVAL;
   memset(out_event, 0, sizeof(*out_event));
   if (impl == NULL) return SALTS_EINVAL;
@@ -202,25 +202,25 @@ int salts_deadline_queue_peek(const salts_deadline_queue *queue, salts_deadline_
   return SALTS_OK;
 }
 
-int salts_deadline_queue_take_ready(salts_deadline_queue *queue, uint64_t now_ms,
-                                    salts_deadline_event *out_event) {
-  salts_deadline_queue_impl *impl = salts_deadline_get(queue);
+int cmeta_deadline_queue_take_ready(cmeta_deadline_queue *queue, uint64_t now_ms,
+                                    cmeta_deadline_event *out_event) {
+  cmeta_deadline_queue_impl *impl = cmeta_deadline_get(queue);
   if (out_event == NULL) return SALTS_EINVAL;
   memset(out_event, 0, sizeof(*out_event));
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->size == 0u || impl->entries[impl->heap[0]].event.deadline_ms > now_ms)
     return SALTS_ETIMEDOUT;
-  salts_deadline_remove(impl, 0u, out_event);
+  cmeta_deadline_remove(impl, 0u, out_event);
   return SALTS_OK;
 }
 
-size_t salts_deadline_queue_size(const salts_deadline_queue *queue) {
-  const salts_deadline_queue_impl *impl = salts_deadline_const_get(queue);
+size_t cmeta_deadline_queue_size(const cmeta_deadline_queue *queue) {
+  const cmeta_deadline_queue_impl *impl = cmeta_deadline_const_get(queue);
   return impl != NULL ? impl->size : 0u;
 }
 
-int salts_deadline_queue_destroy(salts_deadline_queue *queue) {
-  salts_deadline_queue_impl *impl = salts_deadline_get(queue);
+int cmeta_deadline_queue_destroy(cmeta_deadline_queue *queue) {
+  cmeta_deadline_queue_impl *impl = cmeta_deadline_get(queue);
   if (queue == NULL) return SALTS_EINVAL;
   if (impl == NULL) return SALTS_OK;
   free(impl->free_slots);

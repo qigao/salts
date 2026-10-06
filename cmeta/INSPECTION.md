@@ -187,26 +187,34 @@ unless canonical metadata explicitly says otherwise.
 Reflection never grants generic execution authority. Dynamic execution still
 requires an exact admitted callable/invokable adapter.
 
-## Receiver methods
+## Receiver operations
 
-`cmeta_receiver_method_set` publishes:
+`cmeta_receiver_operation_set` publishes:
 
 - exact receiver type;
 - optional canonical generic owner;
-- receiver methods;
-- canonical FunctionDesc/FunctionAbi where reflected.
+- receiver operations as `{ name, abi }` rows;
+- canonical FunctionDesc through each row's FunctionAbi.
 
 Canonical queries include:
 
 ```c
-cmeta_receiver_method_set_valid(...)
-cmeta_receiver_method_find(...)
-cmeta_receiver_method_resolve(...)
+cmeta_receiver_operation_set_valid(...)
+cmeta_receiver_operation_find(...)
+cmeta_receiver_operation_resolve(...)
+cmeta_function_receiver_valid(...)
+cmeta_function_receiver_projection_valid(...)
 ```
 
 For generic operations, `set->owner` is a canonical
 `cmeta_generic_desc *`. Compare it with `cmeta_generic_desc_equal()`, never
 with descriptor address or source-name strings.
+
+Receiver shape and receiver-elided projection belong to Function metadata.
+Projection preserves result ownership/nullability, effects, properties and every
+remaining parameter's name, type and flags. Operation sets index these functions;
+they do not define a second callable contract. See
+[receiver operation migration](RECEIVER_OPERATIONS.md) for ABI and source changes.
 
 ## Interfaces
 

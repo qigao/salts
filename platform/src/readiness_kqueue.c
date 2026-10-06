@@ -18,35 +18,35 @@ enum { KQUEUE_CONTROL_IDENT = 1 };
 _Static_assert(sizeof(uintptr_t) >= sizeof(uint64_t),
                "kqueue readiness tokens require 64-bit udata");
 
-typedef struct salts_readiness_kqueue_record {
+typedef struct cmeta_readiness_kqueue_record {
   int fd;
   uint64_t registration_token;
   uint64_t event_token;
-  salts_readiness_events watched_events;
+  cmeta_readiness_events watched_events;
   int active;
   int armed;
-} salts_readiness_kqueue_record;
+} cmeta_readiness_kqueue_record;
 
-typedef struct salts_readiness_kqueue_backend {
-  salts_readiness_reactor *reactor;
-  salts_readiness_kqueue_record *records;
+typedef struct cmeta_readiness_kqueue_backend {
+  cmeta_readiness_reactor *reactor;
+  cmeta_readiness_kqueue_record *records;
   struct kevent *event_batch;
   size_t capacity;
   size_t event_batch_capacity;
-  salts_mutex_t mutex;
-  salts_cond_t changed;
-  salts_thread_t thread;
+  cmeta_mutex_t mutex;
+  cmeta_cond_t changed;
+  cmeta_thread_t thread;
   int kqueue_fd;
   int thread_started;
   int thread_exited;
   atomic_int stopping;
-} salts_readiness_kqueue_backend;
+} cmeta_readiness_kqueue_backend;
 
 static uint32_t kqueue_token_index(uint64_t token) { return (uint32_t)token; }
 
-static salts_readiness_events kqueue_native_events(
-    salts_readiness_events events) {
-  salts_readiness_events native_events =
+static cmeta_readiness_events kqueue_native_events(
+    cmeta_readiness_events events) {
+  cmeta_readiness_events native_events =
       events & (SALTS_READINESS_EVENT_READ | SALTS_READINESS_EVENT_WRITE);
   if (native_events == 0u &&
       (events & (SALTS_READINESS_EVENT_ERROR |
@@ -63,7 +63,7 @@ static int kqueue_fd_valid(int fd) {
   return status >= 0 ? SALTS_OK : -errno;
 }
 
-static int kqueue_change(salts_readiness_kqueue_backend *backend,
+static int kqueue_change(cmeta_readiness_kqueue_backend *backend,
                          uintptr_t ident, int16_t filter, uint16_t flags,
                          uint32_t fflags, intptr_t data, void *user) {
   struct kevent change;
@@ -75,17 +75,17 @@ static int kqueue_change(salts_readiness_kqueue_backend *backend,
   return status == 0 ? SALTS_OK : -errno;
 }
 
-static int kqueue_delete_filter(salts_readiness_kqueue_backend *backend,
+static int kqueue_delete_filter(cmeta_readiness_kqueue_backend *backend,
                                 int fd, int16_t filter) {
   int status = kqueue_change(backend, (uintptr_t)fd, filter, EV_DELETE,
                              0u, 0, NULL);
   return status == -ENOENT ? SALTS_OK : status;
 }
 
-static int kqueue_remove_filters(salts_readiness_kqueue_backend *backend,
+static int kqueue_remove_filters(cmeta_readiness_kqueue_backend *backend,
                                  int fd,
-                                 salts_readiness_events events) {
-  const salts_readiness_events native_events = kqueue_native_events(events);
+                                 cmeta_readiness_events events) {
+  const cmeta_readiness_events native_events = kqueue_native_events(events);
   int read_status = SALTS_OK;
   int write_status = SALTS_OK;
   if ((native_events & SALTS_READINESS_EVENT_READ) != 0)
@@ -97,8 +97,8 @@ static int kqueue_remove_filters(salts_readiness_kqueue_backend *backend,
 
 static int kqueue_register_resource(void *user, intptr_t native_resource,
                                     uint64_t token) {
-  salts_readiness_kqueue_backend *backend =
-      (salts_readiness_kqueue_backend *)user;
+  cmeta_readiness_kqueue_backend *backend =
+      (cmeta_readiness_kqueue_backend *)user;
   uint32_t index = kqueue_token_index(token);
   int fd;
   int status;
@@ -110,43 +110,43 @@ static int kqueue_register_resource(void *user, intptr_t native_resource,
   status = kqueue_fd_valid(fd);
   if (status != SALTS_OK) return status;
 
-  salts_mutex_lock(&backend->mutex);
+  cmeta_mutex_lock(&backend->mutex);
   if (backend->records[index].active) {
-    salts_mutex_unlock(&backend->mutex);
+    cmeta_mutex_unlock(&backend->mutex);
     return SALTS_EALREADY;
   }
   for (size_t i = 0u; i < backend->capacity; ++i) {
     if (backend->records[i].active && backend->records[i].fd == fd) {
-      salts_mutex_unlock(&backend->mutex);
+      cmeta_mutex_unlock(&backend->mutex);
       return SALTS_EALREADY;
     }
   }
   backend->records[index].fd = fd;
   backend->records[index].registration_token = token;
   backend->records[index].active = 1;
-  salts_mutex_unlock(&backend->mutex);
+  cmeta_mutex_unlock(&backend->mutex);
   return SALTS_OK;
 }
 
 static int kqueue_arm(void *user, uint64_t token, uint64_t arm_token,
-                      salts_readiness_events events) {
-  salts_readiness_kqueue_backend *backend =
-      (salts_readiness_kqueue_backend *)user;
+                      cmeta_readiness_events events) {
+  cmeta_readiness_kqueue_backend *backend =
+      (cmeta_readiness_kqueue_backend *)user;
   uint32_t index = kqueue_token_index(token);
   int fd;
   struct kevent changes[2];
   int change_count = 0;
   int status;
   uint64_t previous_event_token;
-  salts_readiness_events previous_watched_events;
+  cmeta_readiness_events previous_watched_events;
   int previous_armed;
-  const salts_readiness_events native_events = kqueue_native_events(events);
+  const cmeta_readiness_events native_events = kqueue_native_events(events);
 
-  salts_mutex_lock(&backend->mutex);
+  cmeta_mutex_lock(&backend->mutex);
   if ((size_t)index >= backend->capacity ||
       !backend->records[index].active ||
       backend->records[index].registration_token != token) {
-    salts_mutex_unlock(&backend->mutex);
+    cmeta_mutex_unlock(&backend->mutex);
     return SALTS_EINVAL;
   }
   fd = backend->records[index].fd;
@@ -156,7 +156,7 @@ static int kqueue_arm(void *user, uint64_t token, uint64_t arm_token,
   backend->records[index].event_token = arm_token;
   backend->records[index].watched_events = events;
   backend->records[index].armed = 1;
-  salts_mutex_unlock(&backend->mutex);
+  cmeta_mutex_unlock(&backend->mutex);
 
   if ((native_events & SALTS_READINESS_EVENT_READ) != 0) {
     const int synthetic_read =
@@ -179,7 +179,7 @@ static int kqueue_arm(void *user, uint64_t token, uint64_t arm_token,
   status = status == 0 ? SALTS_OK : -errno;
   if (status != SALTS_OK) {
     (void)kqueue_remove_filters(backend, fd, events);
-    salts_mutex_lock(&backend->mutex);
+    cmeta_mutex_lock(&backend->mutex);
     if (backend->records[index].active &&
         backend->records[index].registration_token == token &&
         backend->records[index].event_token == arm_token) {
@@ -187,34 +187,34 @@ static int kqueue_arm(void *user, uint64_t token, uint64_t arm_token,
       backend->records[index].watched_events = previous_watched_events;
       backend->records[index].armed = previous_armed;
     }
-    salts_mutex_unlock(&backend->mutex);
+    cmeta_mutex_unlock(&backend->mutex);
     return status;
   }
   return SALTS_OK;
 }
 
-static int kqueue_remove_watch(salts_readiness_kqueue_backend *backend,
+static int kqueue_remove_watch(cmeta_readiness_kqueue_backend *backend,
                                uint64_t token, int close_record) {
   uint32_t index = kqueue_token_index(token);
   int fd;
-  salts_readiness_events watched;
+  cmeta_readiness_events watched;
   int status;
 
-  salts_mutex_lock(&backend->mutex);
+  cmeta_mutex_lock(&backend->mutex);
   if ((size_t)index >= backend->capacity ||
       !backend->records[index].active ||
       backend->records[index].registration_token != token) {
-    salts_mutex_unlock(&backend->mutex);
+    cmeta_mutex_unlock(&backend->mutex);
     return SALTS_EINVAL;
   }
   fd = backend->records[index].fd;
   watched = backend->records[index].watched_events;
-  salts_mutex_unlock(&backend->mutex);
+  cmeta_mutex_unlock(&backend->mutex);
 
   status = kqueue_remove_filters(backend, fd, watched);
   if (status != SALTS_OK) return status;
 
-  salts_mutex_lock(&backend->mutex);
+  cmeta_mutex_lock(&backend->mutex);
   backend->records[index].watched_events = 0u;
   backend->records[index].event_token = 0u;
   backend->records[index].armed = 0;
@@ -223,28 +223,28 @@ static int kqueue_remove_watch(salts_readiness_kqueue_backend *backend,
     backend->records[index].registration_token = 0u;
     backend->records[index].active = 0;
   }
-  salts_mutex_unlock(&backend->mutex);
+  cmeta_mutex_unlock(&backend->mutex);
   return SALTS_OK;
 }
 
 static int kqueue_unarm(void *user, uint64_t token) {
-  return kqueue_remove_watch((salts_readiness_kqueue_backend *)user,
+  return kqueue_remove_watch((cmeta_readiness_kqueue_backend *)user,
                              token, 0);
 }
 
 static int kqueue_close_registration(void *user, uint64_t token) {
-  return kqueue_remove_watch((salts_readiness_kqueue_backend *)user,
+  return kqueue_remove_watch((cmeta_readiness_kqueue_backend *)user,
                              token, 1);
 }
 
-static int kqueue_control_trigger(salts_readiness_kqueue_backend *backend) {
+static int kqueue_control_trigger(cmeta_readiness_kqueue_backend *backend) {
   return kqueue_change(backend, KQUEUE_CONTROL_IDENT, EVFILT_USER, 0u,
                        NOTE_TRIGGER, 0, NULL);
 }
 
-static salts_readiness_events kqueue_translate_events(
+static cmeta_readiness_events kqueue_translate_events(
     const struct kevent *event) {
-  salts_readiness_events events = 0u;
+  cmeta_readiness_events events = 0u;
   if (event->filter == EVFILT_READ) events |= SALTS_READINESS_EVENT_READ;
   if (event->filter == EVFILT_WRITE) events |= SALTS_READINESS_EVENT_WRITE;
   if ((event->flags & EV_EOF) != 0) events |= SALTS_READINESS_EVENT_HANGUP;
@@ -255,16 +255,16 @@ static salts_readiness_events kqueue_translate_events(
 }
 
 static void kqueue_thread_mark_exited(
-    salts_readiness_kqueue_backend *backend) {
-  salts_mutex_lock(&backend->mutex);
+    cmeta_readiness_kqueue_backend *backend) {
+  cmeta_mutex_lock(&backend->mutex);
   backend->thread_exited = 1;
-  salts_cond_broadcast(&backend->changed);
-  salts_mutex_unlock(&backend->mutex);
+  cmeta_cond_broadcast(&backend->changed);
+  cmeta_mutex_unlock(&backend->mutex);
 }
 
 static void kqueue_thread_entry(void *user) {
-  salts_readiness_kqueue_backend *backend =
-      (salts_readiness_kqueue_backend *)user;
+  cmeta_readiness_kqueue_backend *backend =
+      (cmeta_readiness_kqueue_backend *)user;
   int terminal_status = SALTS_OK;
   for (;;) {
     int ready;
@@ -282,10 +282,10 @@ static void kqueue_thread_entry(void *user) {
       const struct kevent *event = &backend->event_batch[i];
       uint64_t event_token;
       uint64_t registration_token = 0u;
-      salts_readiness_events watched = 0u;
+      cmeta_readiness_events watched = 0u;
       uint32_t index;
       int event_status = SALTS_OK;
-      salts_readiness_events delivered;
+      cmeta_readiness_events delivered;
 
       if (event->filter == EVFILT_USER &&
           event->ident == KQUEUE_CONTROL_IDENT) {
@@ -294,7 +294,7 @@ static void kqueue_thread_entry(void *user) {
       }
       event_token = (uint64_t)(uintptr_t)event->udata;
       index = kqueue_token_index(event_token);
-      salts_mutex_lock(&backend->mutex);
+      cmeta_mutex_lock(&backend->mutex);
       if ((size_t)index < backend->capacity &&
           backend->records[index].active &&
           backend->records[index].armed &&
@@ -304,7 +304,7 @@ static void kqueue_thread_entry(void *user) {
         backend->records[index].watched_events = 0u;
         backend->records[index].armed = 0;
       }
-      salts_mutex_unlock(&backend->mutex);
+      cmeta_mutex_unlock(&backend->mutex);
       if (registration_token == 0u) continue;
       (void)kqueue_remove_filters(backend, (int)event->ident, watched);
       if ((event->flags & EV_ERROR) != 0 && event->data != 0)
@@ -314,7 +314,7 @@ static void kqueue_thread_entry(void *user) {
         delivered &= ~SALTS_READINESS_EVENT_READ;
       if ((watched & SALTS_READINESS_EVENT_WRITE) == 0u)
         delivered &= ~SALTS_READINESS_EVENT_WRITE;
-      (void)salts_readiness_backend_dispatch_generation(
+      (void)cmeta_readiness_backend_dispatch_generation(
           backend->reactor, registration_token, event_token,
           delivered, event_status);
     }
@@ -323,13 +323,13 @@ static void kqueue_thread_entry(void *user) {
       break;
   }
   if (terminal_status != SALTS_OK)
-    (void)salts_readiness_backend_fail(backend->reactor, terminal_status);
+    (void)cmeta_readiness_backend_fail(backend->reactor, terminal_status);
   kqueue_thread_mark_exited(backend);
 }
 
 static int kqueue_shutdown(void *user) {
-  salts_readiness_kqueue_backend *backend =
-      (salts_readiness_kqueue_backend *)user;
+  cmeta_readiness_kqueue_backend *backend =
+      (cmeta_readiness_kqueue_backend *)user;
   int status;
   if (!backend->thread_started) return SALTS_OK;
   atomic_store_explicit(&backend->stopping, 1, memory_order_release);
@@ -338,35 +338,35 @@ static int kqueue_shutdown(void *user) {
     atomic_store_explicit(&backend->stopping, 0, memory_order_release);
     return status;
   }
-  salts_mutex_lock(&backend->mutex);
+  cmeta_mutex_lock(&backend->mutex);
   while (!backend->thread_exited)
-    salts_cond_wait(&backend->changed, &backend->mutex);
-  salts_mutex_unlock(&backend->mutex);
-  status = salts_thread_join(&backend->thread);
+    cmeta_cond_wait(&backend->changed, &backend->mutex);
+  cmeta_mutex_unlock(&backend->mutex);
+  status = cmeta_thread_join(&backend->thread);
   if (status != SALTS_OK) return status;
   backend->thread_started = 0;
   return SALTS_OK;
 }
 
 static void kqueue_backend_destroy(void *user) {
-  salts_readiness_kqueue_backend *backend =
-      (salts_readiness_kqueue_backend *)user;
+  cmeta_readiness_kqueue_backend *backend =
+      (cmeta_readiness_kqueue_backend *)user;
   if (backend == NULL) return;
   if (backend->kqueue_fd >= 0) (void)close(backend->kqueue_fd);
-  salts_cond_destroy(&backend->changed);
-  salts_mutex_destroy(&backend->mutex);
+  cmeta_cond_destroy(&backend->changed);
+  cmeta_mutex_destroy(&backend->mutex);
   free(backend->event_batch);
   free(backend->records);
   free(backend);
 }
 
-static const salts_readiness_backend_ops kqueue_backend_ops = {
+static const cmeta_readiness_backend_ops kqueue_backend_ops = {
     kqueue_register_resource, kqueue_arm, kqueue_unarm,
     kqueue_close_registration, kqueue_shutdown, kqueue_backend_destroy};
 
-int salts_readiness_kqueue_init(salts_readiness_reactor *reactor,
-                                const salts_readiness_config *config) {
-  salts_readiness_kqueue_backend *backend;
+int cmeta_readiness_kqueue_init(cmeta_readiness_reactor *reactor,
+                                const cmeta_readiness_config *config) {
+  cmeta_readiness_kqueue_backend *backend;
   int status;
   if (config == NULL || config->registration_capacity == 0u ||
       config->event_batch_capacity == 0u)
@@ -377,21 +377,21 @@ int salts_readiness_kqueue_init(salts_readiness_reactor *reactor,
   if (config->event_batch_capacity > config->registration_capacity + 1u)
     return SALTS_EINVAL;
   if (config->registration_capacity >
-          SIZE_MAX / sizeof(salts_readiness_kqueue_record) ||
+          SIZE_MAX / sizeof(cmeta_readiness_kqueue_record) ||
       config->event_batch_capacity > SIZE_MAX / sizeof(struct kevent))
     return SALTS_ERANGE;
-  backend = (salts_readiness_kqueue_backend *)calloc(1u, sizeof(*backend));
+  backend = (cmeta_readiness_kqueue_backend *)calloc(1u, sizeof(*backend));
   if (backend == NULL) return SALTS_ENOMEM;
   backend->kqueue_fd = -1;
   backend->capacity = config->registration_capacity;
   backend->event_batch_capacity = config->event_batch_capacity;
   atomic_init(&backend->stopping, 0);
-  backend->records = (salts_readiness_kqueue_record *)calloc(
+  backend->records = (cmeta_readiness_kqueue_record *)calloc(
       backend->capacity, sizeof(*backend->records));
   backend->event_batch = (struct kevent *)calloc(
       backend->event_batch_capacity, sizeof(*backend->event_batch));
-  salts_mutex_init(&backend->mutex);
-  salts_cond_init(&backend->changed);
+  cmeta_mutex_init(&backend->mutex);
+  cmeta_cond_init(&backend->changed);
   if (backend->records == NULL || backend->event_batch == NULL ||
       backend->mutex == NULL || backend->changed == NULL) {
     kqueue_backend_destroy(backend);
@@ -409,17 +409,17 @@ int salts_readiness_kqueue_init(salts_readiness_reactor *reactor,
     kqueue_backend_destroy(backend);
     return status;
   }
-  status = salts_readiness_reactor_init_backend(
+  status = cmeta_readiness_reactor_init_backend(
       reactor, config, &kqueue_backend_ops, backend);
   if (status != SALTS_OK) {
     kqueue_backend_destroy(backend);
     return status;
   }
   backend->reactor = reactor;
-  status = salts_thread_create(&backend->thread, kqueue_thread_entry, backend);
+  status = cmeta_thread_create(&backend->thread, kqueue_thread_entry, backend);
   if (status != SALTS_OK) {
-    (void)salts_readiness_reactor_shutdown(reactor);
-    (void)salts_readiness_reactor_destroy(reactor);
+    (void)cmeta_readiness_reactor_shutdown(reactor);
+    (void)cmeta_readiness_reactor_destroy(reactor);
     return status;
   }
   backend->thread_started = 1;

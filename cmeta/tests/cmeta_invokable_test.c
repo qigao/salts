@@ -144,9 +144,8 @@ static const cmeta_function_abi_desc receiver_increment_abi = {
     .param_count = 2u
 };
 
-static const cmeta_receiver_method receiver_increment_method = {
+static const cmeta_receiver_operation receiver_increment_method = {
     .name = "increment",
-    .function = &receiver_increment_function,
     .abi = &receiver_increment_abi
 };
 
@@ -284,15 +283,15 @@ spec("CMeta invokable bridge") {
     int output = 0;
     const void *args[] = {&input};
 
-    check_true(cmeta_receiver_method_projection_valid(
-        &receiver_increment_method, &increment_function));
+    check_true(cmeta_function_receiver_projection_valid(
+        receiver_increment_abi.function, &increment_function));
 
     bound.invoke = invokable_box_bound_increment;
     bound.dispatch = CMETA_CALLABLE_DISPATCH_ADAPTER;
     bound.capture_size = sizeof(receiver);
     memcpy(bound.capture.bytes, &receiver, sizeof(receiver));
 
-    check_equal(cmeta_receiver_method_invokable_bind(
+    check_equal(cmeta_receiver_operation_invokable_bind(
                     &receiver_increment_method, &increment_data,
                     bound, &invokable),
                 CMETA_OK);
@@ -301,14 +300,14 @@ spec("CMeta invokable bridge") {
   }
 
   it("rejects malformed receiver metadata before projection matching") {
-    cmeta_receiver_method malformed = receiver_increment_method;
+    cmeta_receiver_operation malformed = receiver_increment_method;
     cmeta_function_abi_desc malformed_abi = receiver_increment_abi;
     cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
 
     malformed_abi.param_count = 1u;
     malformed.abi = &malformed_abi;
-    check_false(cmeta_receiver_method_reflection_valid(&malformed));
-    check_equal(cmeta_receiver_method_invokable_bind(
+    check_false(cmeta_receiver_operation_reflection_valid(&malformed));
+    check_equal(cmeta_receiver_operation_invokable_bind(
                     &malformed, &increment_data,
                     cmeta_invokable_increment, &invokable),
                 CMETA_INVALID_ARGUMENT);
@@ -322,12 +321,27 @@ spec("CMeta invokable bridge") {
     wrong_function.effects = CMETA_EFFECT_IO;
     wrong_data.function = &wrong_function;
     check_true(cmeta_function_data_desc_valid(&wrong_data));
-    check_false(cmeta_receiver_method_projection_valid(
-        &receiver_increment_method, &wrong_function));
-    check_equal(cmeta_receiver_method_invokable_bind(
+    check_false(cmeta_function_receiver_projection_valid(
+        receiver_increment_abi.function, &wrong_function));
+    check_equal(cmeta_receiver_operation_invokable_bind(
                     &receiver_increment_method, &wrong_data,
                     cmeta_invokable_increment, &invokable),
                 CMETA_TYPE_MISMATCH);
+  }
+
+  it("rejects changed result semantics before publishing a receiver invokable") {
+    cmeta_function_desc wrong_function = increment_function;
+    cmeta_function_data_desc wrong_data = increment_data;
+    cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
+
+    wrong_function.result_flags = CMETA_RESULT_VALUE;
+    wrong_data.function = &wrong_function;
+    check_true(cmeta_function_data_desc_valid(&wrong_data));
+    check_equal(cmeta_receiver_operation_invokable_bind(
+                    &receiver_increment_method, &wrong_data,
+                    cmeta_invokable_increment, &invokable),
+                CMETA_TYPE_MISMATCH);
+    check_false(cmeta_invokable_valid(&invokable));
   }
 
   it("joins a fully reflected interface method to the same invokable") {

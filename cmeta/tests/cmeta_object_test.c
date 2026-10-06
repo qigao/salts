@@ -221,19 +221,18 @@ static const cmeta_function_abi_desc object_add_abi = {
     .param_count = 2u
 };
 
-static const cmeta_receiver_method object_methods[] = {
+static const cmeta_receiver_operation object_methods[] = {
     {
         .name = "add",
-        .function = &object_add_function,
         .abi = &object_add_abi
     }
 };
 
-static const cmeta_receiver_method_set object_method_set = {
-    .size = sizeof(cmeta_receiver_method_set),
+static const cmeta_receiver_operation_set object_method_set = {
+    .size = sizeof(cmeta_receiver_operation_set),
     .receiver_type = &object_box_type,
-    .methods = object_methods,
-    .method_count = 1u,
+    .operations = object_methods,
+    .operation_count = 1u,
     .owner = NULL
 };
 
@@ -297,8 +296,8 @@ static bool object_box_bound_add_invoke(
 }
 
 static cmeta_status object_box_method_bind(
-    void *context, void *object, const cmeta_receiver_method *method,
-    cmeta_object_method_binding *out) {
+    void *context, void *object, const cmeta_receiver_operation *method,
+    cmeta_object_operation_binding *out) {
     object_box *receiver = (object_box *)object;
     cmeta_callable callable = object_add_callable_shape;
 
@@ -306,7 +305,7 @@ static cmeta_status object_box_method_bind(
     if (receiver == NULL || method != &object_methods[0] || out == NULL)
         return CMETA_INVALID_ARGUMENT;
 
-    *out = (cmeta_object_method_binding)CMETA_OBJECT_METHOD_BINDING_INIT;
+    *out = (cmeta_object_operation_binding)CMETA_OBJECT_OPERATION_BINDING_INIT;
     callable.invoke = object_box_bound_add_invoke;
     callable.dispatch = CMETA_CALLABLE_DISPATCH_ADAPTER;
     callable.capture_size = sizeof(receiver);
@@ -319,9 +318,9 @@ static cmeta_status object_box_method_bind(
     return CMETA_OK;
 }
 
-static const cmeta_object_method_provider object_method_provider = {
-    .size = sizeof(cmeta_object_method_provider),
-    .methods = &object_method_set,
+static const cmeta_object_operation_provider object_method_provider = {
+    .size = sizeof(cmeta_object_operation_provider),
+    .operations = &object_method_set,
     .context = NULL,
     .bind = object_box_method_bind
 };
@@ -426,10 +425,12 @@ static const cmeta_data_desc dynamic_object_data = {
     .construct_ops = NULL
 };
 
+static size_t dynamic_read_count;
 static cmeta_status dynamic_object_field_read(
     void *context, const void *object, const cmeta_data_field_desc *field,
     const void **out_value) {
     const dynamic_object_box *box = (const dynamic_object_box *)object;
+    ++dynamic_read_count;
 
     (void)context;
     if (box == NULL || field == NULL || out_value == NULL)
@@ -578,6 +579,46 @@ spec("CMeta ObjectRef Interface projection") {
 }
 
 spec("CMeta canonical borrowed object") {
+    it("admits a fixed field once without inventing assignment authority") {
+        object_box box = {7};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        cmeta_object_field_binding binding = CMETA_OBJECT_FIELD_BINDING_INIT;
+        const void *value = NULL;
+        int next = 9;
+        check_equal(cmeta_object_borrow(&object,&box,&object_box_data,NULL),CMETA_OK);
+        check_equal(cmeta_object_field_bind(&object,"value",&binding),CMETA_OK);
+        check_true(binding.field->value == &cmeta_data_int);
+        check_equal(cmeta_object_field_read_admitted(&binding,&value),CMETA_OK);
+        check_true(value == &box.value);
+        box.value = 8;
+        check_equal(cmeta_object_field_read_admitted(&binding,&value),CMETA_OK);
+        check_equal(*(const int *)value,8);
+        check_equal(cmeta_object_field_assign_admitted(&binding,&next),CMETA_TRAIT_MISSING);
+        check_equal(cmeta_object_field_bind(&object,"missing",&binding),CMETA_INVALID_ARGUMENT);
+        check_null(binding.field);
+        check_equal(cmeta_object_field_read_admitted(&binding,&value),CMETA_INVALID_ARGUMENT);
+        check_null(value);
+        cmeta_object_release(&object);
+    }
+    it("uses the same admitted provider for each dynamic read and explicit write") {
+        dynamic_object_box box = {3,{5,9}};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        cmeta_object_field_binding binding = CMETA_OBJECT_FIELD_BINDING_INIT;
+        const void *value = NULL;
+        int next = 17;
+        dynamic_read_count = 0;
+        check_equal(cmeta_object_borrow_with_providers(&object,&box,&dynamic_object_data,
+            &dynamic_object_field_provider,NULL),CMETA_OK);
+        check_equal(cmeta_object_field_bind(&object,"value",&binding),CMETA_OK);
+        check_equal(dynamic_read_count,(size_t)0);
+        check_equal(cmeta_object_field_read_admitted(&binding,&value),CMETA_OK);
+        check_equal(*(const int *)value,9);
+        check_equal(cmeta_object_field_assign_admitted(&binding,&next),CMETA_OK);
+        check_equal(cmeta_object_field_read_admitted(&binding,&value),CMETA_OK);
+        check_equal(*(const int *)value,17);
+        check_equal(dynamic_read_count,(size_t)2);
+        cmeta_object_release(&object);
+    }
     it("preserves one native identity without taking ownership") {
         object_box box = {7};
         cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
@@ -588,8 +629,8 @@ spec("CMeta canonical borrowed object") {
         check_true(cmeta_object_ref_valid(&object));
         check_true(object.object == &box);
         check_true(object.data == &object_box_data);
-        check_true(object.methods == &object_method_set);
-        check_null(object.method_provider);
+        check_true(object.operations == &object_method_set);
+        check_null(object.operation_provider);
         check_equal(object.lifetime, CMETA_OBJECT_LIFETIME_BORROWED);
 
         ((object_box *)object.object)->value = 11;
@@ -602,8 +643,8 @@ spec("CMeta canonical borrowed object") {
         check_false(cmeta_object_ref_valid(&object));
         check_null(object.object);
         check_null(object.data);
-        check_null(object.methods);
-        check_null(object.method_provider);
+        check_null(object.operations);
+        check_null(object.operation_provider);
         check_equal(object.lifetime, CMETA_OBJECT_LIFETIME_NONE);
         check_equal(box.value, 16);
     }
@@ -832,7 +873,7 @@ spec("CMeta canonical borrowed object") {
                         &object_field_provider, &object_method_provider),
                     CMETA_OK);
         check_true(object.field_provider == &object_field_provider);
-        check_true(object.method_provider == &object_method_provider);
+        check_true(object.operation_provider == &object_method_provider);
 
         check_equal(cmeta_object_field_assign(
                         &object, "value", &cmeta_data_int, &next),
@@ -878,7 +919,7 @@ spec("CMeta canonical borrowed object") {
         check_false(cmeta_object_ref_valid(&object));
     }
 
-    it("resolves methods against the bound native receiver type") {
+    it("resolves operations against the bound native receiver type") {
         object_box box = {0};
         cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
         cmeta_receiver_resolution resolution = CMETA_RECEIVER_RESOLUTION_INIT;
@@ -887,19 +928,19 @@ spec("CMeta canonical borrowed object") {
         check_equal(cmeta_object_borrow(
                         &object, &box, &object_box_data, &object_method_set),
                     CMETA_OK);
-        check_equal(cmeta_object_method_resolve(
+        check_equal(cmeta_object_operation_resolve(
                         &object, NULL, "add",
                         arguments, 1u, &resolution),
                     CMETA_RECEIVER_RESOLVE_OK);
-        check_true(resolution.method == &object_methods[0]);
+        check_true(resolution.operation == &object_methods[0]);
         check_equal(resolution.argument_index, CMETA_RECEIVER_ARGUMENT_NONE);
 
         resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
-        check_equal(cmeta_object_method_resolve(
+        check_equal(cmeta_object_operation_resolve(
                         &object, NULL, "missing",
                         arguments, 1u, &resolution),
-                    CMETA_RECEIVER_RESOLVE_METHOD_NOT_FOUND);
-        check_null(resolution.method);
+                    CMETA_RECEIVER_RESOLVE_OPERATION_NOT_FOUND);
+        check_null(resolution.operation);
     }
 
     it("binds and invokes a resolved method on the same native instance") {
@@ -915,22 +956,22 @@ spec("CMeta canonical borrowed object") {
         int result = 0;
 
         invoke_args[0] = &delta;
-        check_true(cmeta_object_method_provider_valid(&object_method_provider));
+        check_true(cmeta_object_operation_provider_valid(&object_method_provider));
         check_equal(cmeta_object_borrow_with_provider(
                         &object, &box, &object_box_data,
                         &object_method_provider),
                     CMETA_OK);
-        check_true(object.methods == &object_method_set);
-        check_true(object.method_provider == &object_method_provider);
+        check_true(object.operations == &object_method_set);
+        check_true(object.operation_provider == &object_method_provider);
 
-        check_equal(cmeta_object_method_resolve(
+        check_equal(cmeta_object_operation_resolve(
                         &object, NULL, "add",
                         arguments, 1u, &resolution),
                     CMETA_RECEIVER_RESOLVE_OK);
-        check_true(resolution.method == &object_methods[0]);
+        check_true(resolution.operation == &object_methods[0]);
 
-        check_equal(cmeta_object_method_invokable_bind(
-                        &object, resolution.method, &invokable),
+        check_equal(cmeta_object_operation_invokable_bind(
+                        &object, resolution.operation, &invokable),
                     CMETA_OK);
         check_equal(cmeta_invokable_invoke(
                         &invokable, &result, invoke_args),
@@ -949,7 +990,7 @@ spec("CMeta canonical borrowed object") {
         check_equal(box.value, 17);
     }
 
-    it("does not execute reflected methods without an executable provider") {
+    it("does not execute reflected operations without an executable provider") {
         object_box box = {1};
         cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
         cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
@@ -957,7 +998,7 @@ spec("CMeta canonical borrowed object") {
         check_equal(cmeta_object_borrow(
                         &object, &box, &object_box_data, &object_method_set),
                     CMETA_OK);
-        check_equal(cmeta_object_method_invokable_bind(
+        check_equal(cmeta_object_operation_invokable_bind(
                         &object, &object_methods[0], &invokable),
                     CMETA_TRAIT_MISSING);
         check_equal(box.value, 1);
@@ -966,15 +1007,15 @@ spec("CMeta canonical borrowed object") {
     it("rejects method entries that are not provider capability tokens") {
         object_box box = {1};
         cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
-        cmeta_receiver_method copied = object_methods[0];
+        cmeta_receiver_operation copied = object_methods[0];
         cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
 
         check_equal(cmeta_object_borrow_with_provider(
                         &object, &box, &object_box_data,
                         &object_method_provider),
                     CMETA_OK);
-        check_true(cmeta_receiver_method_reflection_valid(&copied));
-        check_equal(cmeta_object_method_invokable_bind(
+        check_true(cmeta_receiver_operation_reflection_valid(&copied));
+        check_equal(cmeta_object_operation_invokable_bind(
                         &object, &copied, &invokable),
                     CMETA_INVALID_ARGUMENT);
         check_equal(box.value, 1);
@@ -988,13 +1029,13 @@ spec("CMeta canonical borrowed object") {
                         &object, &box, &object_box_data, NULL),
                     CMETA_OK);
         check_true(cmeta_object_ref_valid(&object));
-        check_null(object.methods);
+        check_null(object.operations);
         {
             cmeta_receiver_resolution resolution =
                 CMETA_RECEIVER_RESOLUTION_INIT;
-            check_equal(cmeta_object_method_resolve(
+            check_equal(cmeta_object_operation_resolve(
                             &object, NULL, "add", NULL, 0u, &resolution),
-                        CMETA_RECEIVER_RESOLVE_INVALID_METHOD_SET);
+                        CMETA_RECEIVER_RESOLVE_INVALID_OPERATION_SET);
         }
         cmeta_object_release(&object);
         check_equal(box.value, 3);
@@ -1028,7 +1069,7 @@ spec("CMeta canonical borrowed object") {
     it("fails closed on malformed method metadata") {
         object_box box = {0};
         cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
-        cmeta_receiver_method_set malformed = object_method_set;
+        cmeta_receiver_operation_set malformed = object_method_set;
 
         malformed.size = 0u;
         check_equal(cmeta_object_borrow(

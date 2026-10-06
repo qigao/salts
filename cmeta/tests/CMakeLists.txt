@@ -15,7 +15,8 @@ if(NOT BUILD_SHARED_LIBS AND NOT CMAKE_CROSSCOMPILING)
   target_link_libraries(cmeta_fingerprint_dso_fixture PRIVATE Salts::CMeta)
   target_compile_definitions(cmeta_fingerprint_dso_fixture PRIVATE
     CMETA_FINGERPRINT_DSO_TEST=1 CMETA_FINGERPRINT_DSO_BUILD=1)
-  cmake_config_target(cmeta_fingerprint_dso_fixture FOLDER "cmeta/tests")
+  cmake_config_target(cmeta_fingerprint_dso_fixture FOLDER "cmeta/tests"
+    VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}")
   set_target_properties(cmeta_fingerprint_dso_fixture PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
     CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
@@ -32,6 +33,56 @@ endif()
 
 
 # CMeta public API regression tests.
+
+foreach(lowering_case IN ITEMS bind cleanup data_select scope_nofail_fatal)
+  cmake_add_test(cmeta_${lowering_case}_test
+    SOURCES cmeta_${lowering_case}_test.c
+    LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+  set_target_properties(cmeta_${lowering_case}_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+endforeach()
+foreach(lowering_case IN ITEMS bind cleanup object_scope data_select scope_nofail_fatal)
+  cmake_add_test(cmeta_${lowering_case}_cpp_test
+    SOURCES cmeta_${lowering_case}_cpp_test.cpp
+    LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+  set_target_properties(cmeta_${lowering_case}_cpp_test PROPERTIES
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+endforeach()
+
+cmake_add_test(cmeta_interface_arity_test
+  SOURCES cmeta_interface_arity_test.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+cmake_add_test(cmeta_interface_arity_cpp_test
+  SOURCES cmeta_interface_arity_cpp_test.cpp
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+set_target_properties(cmeta_interface_arity_test PROPERTIES C_EXTENSIONS OFF)
+set_target_properties(cmeta_interface_arity_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
+cmake_add_test(cmeta_pp_test
+  SOURCES cmeta_pp_test.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+cmake_add_test(cmeta_pp_cpp_test
+  SOURCES cmeta_pp_cpp_test.cpp
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+set_target_properties(cmeta_pp_test PROPERTIES C_EXTENSIONS OFF)
+set_target_properties(cmeta_pp_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
+# Qualify the additive standard-mode APIs without raising the library baseline.
+cmake_add_test(cmeta_pp_zero_cpp_test
+  SOURCES cmeta_pp_zero_cpp_test.cpp
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+set_target_properties(cmeta_pp_zero_cpp_test PROPERTIES
+  CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+if("c_std_23" IN_LIST CMAKE_C_COMPILE_FEATURES)
+  cmake_add_test(cmeta_pp_zero_c23_test
+    SOURCES cmeta_pp_zero_c23_test.c
+    LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+  set_target_properties(cmeta_pp_zero_c23_test PROPERTIES
+    C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  set_tests_properties(cmeta_pp_zero_c23_test PROPERTIES SKIP_RETURN_CODE 77)
+endif()
 
 cmake_add_test(cmeta_trace_test
   SOURCES cmeta_trace_test.c
@@ -65,7 +116,7 @@ cmake_add_test(cmeta_capabilities_test
 
 cmake_add_test(cmeta_capabilities_header_cpp_test
   SOURCES cmeta_capabilities_header_cpp_test.cpp cmeta_capabilities_owned.c
-  LIBS Salts::CMeta
+  LIBS Salts::TinyTest Salts::CMeta
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_test
   SOURCES cmeta_fastpath_test.c cmeta_fastpath_peer.c
@@ -116,13 +167,16 @@ endforeach()
 
 cmake_add_test(cmeta_enum_bits_test
   SOURCES cmeta_enum_bits_test.c
-  LIBS Salts::CMeta
+  LIBS Salts::TinyTest Salts::CMeta
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_core_test
   SOURCES cmeta_core_test.c cmeta_traits_peer.c
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
+if(UNIX)
+  target_link_libraries(cmeta_core_test PRIVATE m)
+endif()
 
 cmake_add_test(cmeta_type_identity_test
   SOURCES cmeta_type_identity_test.c cmeta_type_identity_peer.c
@@ -214,7 +268,7 @@ cmake_add_test(cmeta_meta_header_test
 
 cmake_add_test(cmeta_language_surface_test
   SOURCES cmeta_language_surface_test.c
-  LIBS Salts::CMeta
+  LIBS Salts::TinyTest Salts::CMeta
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_scope_test
@@ -262,8 +316,8 @@ cmake_add_test(cmeta_function_reflection_test
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
-cmake_add_test(cmeta_method_test
-  SOURCES cmeta_method_test.c
+cmake_add_test(cmeta_operation_test
+  SOURCES cmeta_operation_test.c
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
@@ -327,6 +381,94 @@ function(cmeta_add_compile_failure_test target_name source expected_diagnostic)
     RUN_SERIAL TRUE)
 endfunction()
 
+foreach(language IN ITEMS c cpp)
+  foreach(selection_rule IN ITEMS DUPLICATE DESCRIPTOR VOLATILE)
+    string(TOLOWER "${selection_rule}" selection_name)
+    set(selection_target "cmeta_data_select_${selection_name}_${language}_compile_fail")
+    if(selection_rule STREQUAL "DUPLICATE")
+      set(selection_diagnostic "compatible|already (defined|been defined)|redeclared|cannot be overloaded|redefinition|C773[0-9]")
+    elseif(selection_rule STREQUAL "DESCRIPTOR")
+      set(selection_diagnostic "CMeta data schema requires a const DataDesc pointer|no compatible type|not compatible|not match|not found")
+    else()
+      set(selection_diagnostic "negative|CMeta data schema has no exact pointer type|constant expression|size of an array|cmeta_required.*bit field")
+    endif()
+    cmeta_add_compile_failure_test(${selection_target} compile_fail/cmeta_data_select_invalid.${language}
+      "${selection_diagnostic}")
+    target_compile_definitions(${selection_target} PRIVATE "CMETA_SELECT_${selection_rule}=1")
+    if(language STREQUAL "cpp")
+      set_target_properties(${selection_target} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+    endif()
+  endforeach()
+  cmeta_add_compile_failure_test(cmeta_scope_nofail_${language}_compile_fail
+    compile_fail/cmeta_scope_nofail.${language} "CMeta nofail scope requires canonical INIT_NOFAIL")
+  cmeta_add_compile_failure_test(cmeta_data_select_unknown_${language}_compile_fail
+    compile_fail/cmeta_data_select_unknown.${language}
+    "negative|CMeta data schema has no exact pointer type|constant expression|size of an array|cmeta_required.*bit field")
+  if(language STREQUAL "cpp")
+    set_target_properties(cmeta_scope_nofail_${language}_compile_fail
+      cmeta_data_select_unknown_${language}_compile_fail PROPERTIES
+      CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+  endif()
+endforeach()
+
+foreach(lowering_rule IN ITEMS
+    "callback|CMeta lifecycle native callback mismatch"
+    "trivial|CMeta trivial scope requires canonical trivial lifecycle facts"
+    "packed|CMeta Struct field layout mismatch"
+    "result_flags|CMeta Function result flags invalid"
+    "interface_result|CMeta Interface native result carrier mismatch"
+    "native_result|CMeta Function native result carrier mismatch"
+    "capacity|CMeta bind capture exceeds inline capacity"
+    "capture_value|CMeta value capture requires a registered trivial scalar"
+    "capture_borrow|CMeta borrow capture requires an explicit borrowed object pointer"
+    "native_signature|CMeta bind source native signature mismatch")
+  string(REPLACE "|" ";" lowering_parts "${lowering_rule}")
+  list(GET lowering_parts 0 lowering_case)
+  list(GET lowering_parts 1 lowering_diagnostic)
+  foreach(lowering_language IN ITEMS c cpp)
+    set(lowering_target "cmeta_lowering_${lowering_case}_${lowering_language}_compile_fail")
+    cmeta_add_compile_failure_test(${lowering_target}
+      compile_fail/cmeta_lowering.${lowering_language} "${lowering_diagnostic}")
+    target_compile_definitions(${lowering_target} PRIVATE "CMETA_TEST_${lowering_case}=1")
+    set_target_properties(${lowering_target} PROPERTIES
+      CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+  endforeach()
+endforeach()
+
+cmeta_add_compile_failure_test(cmeta_pp_pair_count_compile_fail
+  compile_fail/cmeta_pp_pair_count.c "CMETA_PP_PAIRS_2")
+cmeta_add_compile_failure_test(cmeta_const_require_compile_fail
+  compile_fail/cmeta_const_require.c "cmeta_required")
+foreach(requirement IN ITEMS flags_require flags_negative layout_require const_runtime
+    container_member container_pointer container_const)
+  cmeta_add_compile_failure_test(cmeta_${requirement}_compile_fail
+    compile_fail/cmeta_${requirement}.c "cmeta_required|constant expression")
+  cmeta_add_compile_failure_test(cmeta_${requirement}_cpp_compile_fail
+    compile_fail/cmeta_requirement_cpp.cpp "negative|constant expression|C2975")
+  target_compile_definitions(cmeta_${requirement}_cpp_compile_fail PRIVATE
+    "CMETA_REQUIREMENT_SOURCE=\"cmeta_${requirement}.c\"")
+  set_target_properties(cmeta_${requirement}_cpp_compile_fail PROPERTIES
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+endforeach()
+cmeta_add_compile_failure_test(cmeta_pp_tuple_width_compile_fail
+  compile_fail/cmeta_pp_tuple_width.c "CMETA_PP_TUPLE_GET_4_I")
+
+foreach(native_requirement IN ITEMS native_type auto_initializer)
+  if(native_requirement STREQUAL "native_type")
+    set(native_diagnostic "native type mismatch|CMETA_SAME_TYPE unavailable")
+  else()
+    set(native_diagnostic "cmeta_auto_missing_initializer|CMETA_AUTO unavailable")
+  endif()
+  cmeta_add_compile_failure_test(cmeta_pp_${native_requirement}_compile_fail
+    compile_fail/cmeta_pp_${native_requirement}.c "${native_diagnostic}")
+  cmeta_add_compile_failure_test(cmeta_pp_${native_requirement}_cpp_compile_fail
+    compile_fail/cmeta_requirement_cpp.cpp "${native_diagnostic}")
+  target_compile_definitions(cmeta_pp_${native_requirement}_cpp_compile_fail PRIVATE
+    "CMETA_REQUIREMENT_SOURCE=\"cmeta_pp_${native_requirement}.c\"")
+  set_target_properties(cmeta_pp_${native_requirement}_cpp_compile_fail PROPERTIES
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+endforeach()
+
 cmeta_add_compile_failure_test(cmeta_capabilities_missing_trait_compile_fail
   compile_fail/cmeta_capabilities_missing_trait.c "CMeta required trait is missing")
 cmeta_add_compile_failure_test(cmeta_capabilities_callback_compile_fail
@@ -382,6 +524,30 @@ cmeta_add_compile_failure_test(
   cmeta_intrusive_type_mismatch_compile_fail
   compile_fail/cmeta_intrusive_type_mismatch.c
   "CMeta intrusive member type mismatch")
+
+foreach(lifecycle_language IN ITEMS c cpp)
+  if(lifecycle_language STREQUAL "c")
+    set(lifecycle_suffix "")
+  else()
+    set(lifecycle_suffix "_cpp")
+  endif()
+  cmeta_add_compile_failure_test(
+    cmeta_scope_lifecycle_type${lifecycle_suffix}_compile_fail
+    compile_fail/cmeta_scope_lifecycle_type.${lifecycle_language}
+    "CMeta static lifecycle native type mismatch")
+  cmeta_add_compile_failure_test(
+    cmeta_lifecycle_mutable${lifecycle_suffix}_compile_fail
+    compile_fail/cmeta_lifecycle_mutable.${lifecycle_language}
+    "CMeta static lifecycle requires immutable canonical construct ops")
+  cmeta_add_compile_failure_test(
+    cmeta_scope_lifecycle_missing${lifecycle_suffix}_compile_fail
+    compile_fail/cmeta_scope_lifecycle_missing.${lifecycle_language}
+    "ScopeValue_cmeta_lifecycle")
+  cmeta_add_compile_failure_test(
+    cmeta_lifecycle_dynamic_address${lifecycle_suffix}_compile_fail
+    compile_fail/cmeta_lifecycle_dynamic_address.${lifecycle_language}
+    "constant|constexpr")
+endforeach()
 
 cmeta_add_compile_failure_test(
   cmeta_scope_return_compile_fail
@@ -452,7 +618,7 @@ set_target_properties(cmeta_data_test PROPERTIES
   C_EXTENSIONS OFF)
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-  foreach(tgt cmeta_core_test cmeta_type_identity_test cmeta_declared_type_test cmeta_container_type_test cmeta_data_test cmeta_collector_test cmeta_function_reflection_test cmeta_method_test cmeta_object_test cmeta_function_header_test cmeta_interface_header_test cmeta_interface_function_test)
+  foreach(tgt cmeta_core_test cmeta_type_identity_test cmeta_declared_type_test cmeta_container_type_test cmeta_data_test cmeta_collector_test cmeta_function_reflection_test cmeta_operation_test cmeta_object_test cmeta_function_header_test cmeta_interface_header_test cmeta_interface_function_test)
     target_compile_options(${tgt} PRIVATE -Werror=missing-field-initializers)
   endforeach()
 endif()
@@ -482,7 +648,7 @@ set_target_properties(cmeta_infer_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
-set_target_properties(cmeta_function_reflection_test cmeta_method_test cmeta_object_test PROPERTIES
+set_target_properties(cmeta_function_reflection_test cmeta_operation_test cmeta_object_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
@@ -536,3 +702,7 @@ cmake_add_test(cmeta_pool_cpp_test SOURCES cmeta_pool_cpp_test.cpp
 set_target_properties(cmeta_pool_cpp_test PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 set_tests_properties(cmeta_pool_cpp_test PROPERTIES TIMEOUT 60)
+
+get_property(cmeta_semantic_tests DIRECTORY PROPERTY TESTS)
+list(FILTER cmeta_semantic_tests EXCLUDE REGEX "^cmeta_(native_|trace_|fastpath_|coroutine)")
+set_property(TEST ${cmeta_semantic_tests} APPEND PROPERTY LABELS cmeta-semantic)

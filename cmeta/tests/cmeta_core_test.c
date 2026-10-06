@@ -1,6 +1,8 @@
 #include <cmeta/cmeta.h>
 #include <cmeta/container.h>
 #include "tinytest.h"
+#include "cmeta_declaration_rows_cases.h"
+#include "cmeta_compiler_type_cases.h"
 
 #include <math.h>
 #include <stddef.h>

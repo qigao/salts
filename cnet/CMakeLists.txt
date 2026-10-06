@@ -35,7 +35,7 @@ set(CNET_SOURCE_FILES
   src/cnet_uri.c
   src/cnet_write_queue.c
   src/cnet_websocket.c
-  $<TARGET_OBJECTS:salts_wsparser>)
+  $<TARGET_OBJECTS:cmeta_wsparser>)
 
 function(cnet_configure_target target_name)
   target_compile_features(${target_name} PUBLIC c_std_11)
@@ -51,7 +51,7 @@ function(cnet_configure_target target_name)
   target_link_libraries(
     ${target_name}
     PUBLIC Salts::NativeIO Salts::Concurrency Salts::Core
-    PRIVATE Salts::UriParser Salts::Platform Salts::CSTL monocypher salts_reed
+    PRIVATE Salts::UriParser Salts::Platform Salts::CSTL monocypher cmeta_reed
             ${cnet_cares_link_items} kcp::kcp c-ares::cares
             GmSSL::GmSSL
             $<$<PLATFORM_ID:Windows>:crypt32>
@@ -63,6 +63,7 @@ endfunction()
 
 add_library(${TARGET_NAME} SHARED ${CNET_SOURCE_FILES})
 cmake_config_target(${TARGET_NAME}
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   ALIAS Salts::CNet
   FOLDER "cnet"
   EXPORT_NAME CNet)
@@ -70,18 +71,23 @@ set_target_properties(${TARGET_NAME} PROPERTIES
   WINDOWS_EXPORT_ALL_SYMBOLS ON)
 cnet_configure_target(${TARGET_NAME})
 
-if(BUILD_TESTS OR BUILD_BENCHMARKS OR CNET_BUILD_BENCHMARKS)
-  # Diagnostics use a private static copy so profiling and deterministic test
-  # faults add neither exported symbols nor hot-path branches to installed CNet.
-  add_library(cnet_profile STATIC ${CNET_SOURCE_FILES})
-  cnet_configure_target(cnet_profile)
+function(cnet_add_profile_target target_name)
+  # Keep diagnostic instrumentation out of the installed shared library.
+  add_library(${target_name} STATIC ${CNET_SOURCE_FILES})
+  cnet_configure_target(${target_name})
   target_compile_definitions(
-    cnet_profile
+    ${target_name}
     PUBLIC CNET_INTERNAL_PROFILING=1 CNET_INTERNAL_MULTI_OWNER_POC=1)
-  if(BUILD_TESTS)
-    target_compile_definitions(cnet_profile PUBLIC CNET_INTERNAL_TESTING=1)
-  endif()
-  set_target_properties(cnet_profile PROPERTIES FOLDER "cnet/diagnostics")
+  set_target_properties(${target_name} PROPERTIES FOLDER "cnet/diagnostics")
+endfunction()
+
+if(BUILD_BENCHMARKS OR CNET_BUILD_BENCHMARKS)
+  cnet_add_profile_target(cnet_profile)
+endif()
+if(BUILD_TESTS)
+  # Tests and benchmarks coexist in CI; fault injection must not affect timings.
+  cnet_add_profile_target(cnet_test_profile)
+  target_compile_definitions(cnet_test_profile PUBLIC CNET_INTERNAL_TESTING=1)
 endif()
 
 install(TARGETS ${TARGET_NAME} EXPORT SaltsTargets)

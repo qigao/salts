@@ -31,8 +31,8 @@ typedef struct cflow_io_publisher_state {
     cflow_executor executor;
     cflow_value_slot result;
     cflow_io_publisher_entry *entries;
-    salts_mutex_t gate;
-    salts_cond_t changed;
+    cmeta_mutex_t gate;
+    cmeta_cond_t changed;
     cflow_waker source_waker;
     cflow_io_request_id request_id;
     size_t wake_inflight;

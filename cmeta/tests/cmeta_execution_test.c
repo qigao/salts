@@ -111,7 +111,7 @@ static void acquire_payload(void *arg) {
     int ready = 0;
     while (ready == 0) {
         if (IntAtomic_load(&ctx->ready, memory_order_acquire, &ready) != CMETA_OK) return;
-        salts_thread_yield();
+        cmeta_thread_yield();
     }
     ctx->seen = ctx->payload;
 }
@@ -203,7 +203,7 @@ spec("CMeta execution primitives") {
         check_equal(atomic_load(&destroyed), 0u);
         check_equal(object_pool_allocated_count(pool.state.owner.storage), (size_t)1);
         check_equal(object_pool_owner_check(&pool.state.owner), SALTS_OK);
-        check_equal(salts_thread_affine_check(&local.state.affinity, &local), SALTS_OK);
+        check_equal(cmeta_thread_affine_check(&local.state.affinity, &local), SALTS_OK);
         check_equal(ValuePool_release(&pool, &lease), CMETA_OK);
         check_equal(ValuePool_destroy(&pool), CMETA_OK);
         check_equal(atomic_load(&destroyed), 0u);
@@ -230,7 +230,7 @@ spec("CMeta execution primitives") {
         fail_init = false;
         check_equal(ValueLocal_init(&local), CMETA_OK);
         check_equal(local_init_reentry, CMETA_BUSY);
-        check_equal(salts_thread_affine_check(&local.state.affinity, &local), SALTS_OK);
+        check_equal(cmeta_thread_affine_check(&local.state.affinity, &local), SALTS_OK);
         check_true(ValueLocal_get(&local) == &local.value);
         check_equal(ValueLocal_destroy(&local), CMETA_OK);
         check_equal(local_restore_reentry, CMETA_BUSY);
@@ -428,7 +428,7 @@ spec("CMeta execution primitives") {
     }
     it("keeps TLS isolated and rejects wrong-thread access to locals and pools") {
         ValuePool pool = {0}; ValueLocal copy;
-        salts_thread_t thread = NULL;
+        cmeta_thread_t thread = NULL;
         local_worker ctx = {0};
         check_equal(ValuePool_init(&pool, 1), CMETA_OK);
         check_equal(ValueLocal_init(&tls_value), CMETA_OK);
@@ -436,8 +436,8 @@ spec("CMeta execution primitives") {
         copy = tls_value;
         check_null(ValueLocal_get(&copy));
         ctx.foreign = &tls_value; ctx.pool = &pool;
-        check_equal(salts_thread_create(&thread, exercise_local, &ctx), 0);
-        if (thread != NULL) check_equal(salts_thread_join(&thread), 0);
+        check_equal(cmeta_thread_create(&thread, exercise_local, &ctx), 0);
+        if (thread != NULL) check_equal(cmeta_thread_join(&thread), 0);
         check_true(ctx.foreign_get_null);
         check_equal(ctx.foreign_destroy, CMETA_INVALID_ARGUMENT);
         check_equal(ctx.foreign_pool, CMETA_INVALID_ARGUMENT);
@@ -477,14 +477,14 @@ spec("CMeta execution primitives") {
         check_true(pointer_out == &second);
     }
     it("publishes payload through explicit release/acquire and exposes typed RCU ownership") {
-        publication ctx = {0}; salts_thread_t thread = NULL;
+        publication ctx = {0}; cmeta_thread_t thread = NULL;
         IntRcu domain = {0}; IntRcu_guard guard = {0};
         int first = 1, second = 2; int *out = NULL;
         check_equal(IntAtomic_init(&ctx.ready, 0), SALTS_OK);
-        check_equal(salts_thread_create(&thread, acquire_payload, &ctx), 0);
+        check_equal(cmeta_thread_create(&thread, acquire_payload, &ctx), 0);
         ctx.payload = 42;
         check_equal(IntAtomic_store(&ctx.ready, 1, memory_order_release), SALTS_OK);
-        if (thread != NULL) check_equal(salts_thread_join(&thread), 0);
+        if (thread != NULL) check_equal(cmeta_thread_join(&thread), 0);
         check_equal(ctx.seen, 42);
         check_equal(IntRcu_init(&domain, &first, 1), SALTS_OK);
         check_equal(IntRcu_read_lock(&domain, &guard), SALTS_OK);

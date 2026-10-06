@@ -153,66 +153,66 @@ spec("CSTL typed schema") {
     }
 
     it("uses canonical generic constructor identity for operation owners") {
-        const cmeta_receiver_method_set *set;
-        const cmeta_receiver_method *method;
+        const cmeta_receiver_operation_set *set;
+        const cmeta_receiver_operation *method;
         const cmeta_type_desc *int_args[] = {&cmeta_type_int};
         cmeta_receiver_resolution receiver = CMETA_RECEIVER_RESOLUTION_INIT;
         cmeta_receiver_resolution generic = CMETA_RECEIVER_RESOLUTION_INIT;
         cmeta_receiver_resolution wrong = CMETA_RECEIVER_RESOLUTION_INIT;
         cmeta_generic_desc list_clone = stl_list_generic_desc;
 
-        set = IntVec_receiver_method_set();
-        check_true(cmeta_receiver_method_set_valid(set));
+        set = IntVec_receiver_operation_set();
+        check_true(cmeta_receiver_operation_set_valid(set));
         check_true(cmeta_generic_desc_equal(set->owner, &stl_vec_generic_desc));
-        method = cmeta_receiver_method_find(set, "push");
+        method = cmeta_receiver_operation_find(set, "push");
         check_not_null(method);
-        check_true(method->function == IntVec_push_function());
+        check_true(method->abi->function == IntVec_push_function());
         check_true(method->abi == IntVec_push_function_abi());
 
-        set = IntList_receiver_method_set();
-        check_true(cmeta_receiver_method_set_valid(set));
+        set = IntList_receiver_operation_set();
+        check_true(cmeta_receiver_operation_set_valid(set));
         check_true(cmeta_generic_desc_equal(set->owner, &stl_list_generic_desc));
         check_true(cmeta_generic_desc_equal(set->owner, &list_clone));
-        method = cmeta_receiver_method_find(set, "add");
+        method = cmeta_receiver_operation_find(set, "add");
         check_not_null(method);
-        check_true(method->function == IntList_add_function());
+        check_true(method->abi->function == IntList_add_function());
         check_true(method->abi == IntList_add_function_abi());
 
         check_equal(
-            cmeta_receiver_method_resolve(
+            cmeta_receiver_operation_resolve(
                 set, &IntList_cmeta_type, NULL, "add",
                 int_args, 1u, &receiver),
             CMETA_RECEIVER_RESOLVE_OK);
         check_equal(
-            cmeta_receiver_method_resolve(
+            cmeta_receiver_operation_resolve(
                 set, &IntList_cmeta_type, &list_clone, "add",
                 int_args, 1u, &generic),
             CMETA_RECEIVER_RESOLVE_OK);
-        check_true(receiver.method == generic.method);
+        check_true(receiver.operation == generic.operation);
         check_equal(
-            cmeta_receiver_method_resolve(
+            cmeta_receiver_operation_resolve(
                 set, &IntList_cmeta_type, &stl_vec_generic_desc, "add",
                 int_args, 1u, &wrong),
             CMETA_RECEIVER_RESOLVE_OWNER_MISMATCH);
-        check_null(wrong.method);
+        check_null(wrong.operation);
 
-        set = IntSet_receiver_method_set();
-        check_true(cmeta_receiver_method_set_valid(set));
+        set = IntSet_receiver_operation_set();
+        check_true(cmeta_receiver_operation_set_valid(set));
         check_true(cmeta_generic_desc_equal(set->owner, &stl_set_generic_desc));
-        method = cmeta_receiver_method_find(set, "add");
+        method = cmeta_receiver_operation_find(set, "add");
         check_not_null(method);
-        check_true(method->function == IntSet_add_function());
+        check_true(method->abi->function == IntSet_add_function());
         check_true(method->abi == IntSet_add_function_abi());
 
-        set = IntLongMap_receiver_method_set();
-        check_true(cmeta_receiver_method_set_valid(set));
+        set = IntLongMap_receiver_operation_set();
+        check_true(cmeta_receiver_operation_set_valid(set));
         check_true(cmeta_generic_desc_equal(set->owner, &stl_map_generic_desc));
-        method = cmeta_receiver_method_find(set, "put");
+        method = cmeta_receiver_operation_find(set, "put");
         check_not_null(method);
-        check_true(method->function == IntLongMap_put_function());
+        check_true(method->abi->function == IntLongMap_put_function());
         check_true(method->abi == IntLongMap_put_function_abi());
 
-        check_null(cmeta_receiver_method_find(IntList_receiver_method_set(),
+        check_null(cmeta_receiver_operation_find(IntList_receiver_operation_set(),
                                               "missing"));
     }
 

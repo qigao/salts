@@ -189,7 +189,7 @@ static int cflow_cnet_test_send(
   const unsigned char *bytes = (const unsigned char *)data;
   size_t offset = 0u;
   const uint64_t deadline =
-      salts_monotonic_ms() + CFLOW_CNET_TEST_TIMEOUT_MS;
+      cmeta_monotonic_ms() + CFLOW_CNET_TEST_TIMEOUT_MS;
 
   while (offset < size) {
 #if defined(_WIN32)
@@ -198,9 +198,9 @@ static int cflow_cnet_test_send(
         (int)(size - offset), 0);
     if (sent == SOCKET_ERROR) {
       if (cflow_cnet_test_would_block()) {
-        if (salts_monotonic_ms() >= deadline)
+        if (cmeta_monotonic_ms() >= deadline)
           return SALTS_ETIMEDOUT;
-        salts_thread_yield();
+        cmeta_thread_yield();
         continue;
       }
       return cflow_cnet_test_socket_error();
@@ -216,9 +216,9 @@ static int cflow_cnet_test_send(
     );
     if (sent < 0) {
       if (cflow_cnet_test_would_block()) {
-        if (salts_monotonic_ms() >= deadline)
+        if (cmeta_monotonic_ms() >= deadline)
           return SALTS_ETIMEDOUT;
-        salts_thread_yield();
+        cmeta_thread_yield();
         continue;
       }
       return cflow_cnet_test_socket_error();
@@ -299,7 +299,7 @@ static bool cflow_cnet_test_adapter_state(
 static int cflow_cnet_test_poll_until_connected(
     cflow_cnet_test_session *session) {
   const uint64_t deadline =
-      salts_monotonic_ms() + CFLOW_CNET_TEST_TIMEOUT_MS;
+      cmeta_monotonic_ms() + CFLOW_CNET_TEST_TIMEOUT_MS;
 
   while (!cflow_cnet_test_adapter_state(
       &session->adapter, CNET_CONNECTION_CONNECTED)) {
@@ -318,7 +318,7 @@ static int cflow_cnet_test_poll_until_connected(
       if (status != SALTS_OK)
         return status;
     }
-    if (salts_monotonic_ms() >= deadline)
+    if (cmeta_monotonic_ms() >= deadline)
       return SALTS_ETIMEDOUT;
   }
 
@@ -330,9 +330,9 @@ static int cflow_cnet_test_poll_until_connected(
     }
     if (!cflow_cnet_test_would_block())
       return cflow_cnet_test_socket_error();
-    if (salts_monotonic_ms() >= deadline)
+    if (cmeta_monotonic_ms() >= deadline)
       return SALTS_ETIMEDOUT;
-    salts_thread_yield();
+    cmeta_thread_yield();
   }
   return SALTS_OK;
 }
@@ -340,7 +340,7 @@ static int cflow_cnet_test_poll_until_connected(
 static int cflow_cnet_test_poll_until_terminal(
     cflow_cnet_test_session *session) {
   const uint64_t deadline =
-      salts_monotonic_ms() + CFLOW_CNET_TEST_TIMEOUT_MS;
+      cmeta_monotonic_ms() + CFLOW_CNET_TEST_TIMEOUT_MS;
   cflow_io_cnet_session_adapter_stats stats = {0};
 
   for (;;) {
@@ -355,7 +355,7 @@ static int cflow_cnet_test_poll_until_terminal(
       if (status != SALTS_OK)
         return status;
     }
-    if (salts_monotonic_ms() >= deadline)
+    if (cmeta_monotonic_ms() >= deadline)
       return SALTS_ETIMEDOUT;
   }
 }
@@ -364,7 +364,7 @@ static int cflow_cnet_test_poll_until_received(
     cflow_cnet_test_session *session,
     uint64_t expected) {
   const uint64_t deadline =
-      salts_monotonic_ms() + CFLOW_CNET_TEST_TIMEOUT_MS;
+      cmeta_monotonic_ms() + CFLOW_CNET_TEST_TIMEOUT_MS;
 
   for (;;) {
     cflow_io_cnet_session_adapter_stats stats = {0};
@@ -379,7 +379,7 @@ static int cflow_cnet_test_poll_until_received(
       if (status != SALTS_OK)
         return status;
     }
-    if (salts_monotonic_ms() >= deadline)
+    if (cmeta_monotonic_ms() >= deadline)
       return SALTS_ETIMEDOUT;
   }
 }

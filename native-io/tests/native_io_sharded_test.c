@@ -59,7 +59,7 @@ static int native_io_sharded_test_create(size_t shards, size_t queue_capacity,
 static int native_io_sharded_wait_atomic(atomic_int *value, int expected) {
   for (int round = 0; round < NATIVE_IO_SHARDED_TEST_WAIT_ROUNDS; ++round) {
     if (atomic_load_explicit(value, memory_order_acquire) >= expected) return 1;
-    salts_sleep_ms(1u);
+    cmeta_sleep_ms(1u);
   }
   return 0;
 }
@@ -468,7 +468,7 @@ static void native_io_sharded_gate_run(native_io_sharded_context *context, void 
   (void)context;
   atomic_fetch_add_explicit(&state->started, 1, memory_order_release);
   while (!atomic_load_explicit(&state->gate, memory_order_acquire))
-    salts_sleep_ms(1u);
+    cmeta_sleep_ms(1u);
   atomic_fetch_add(&state->runs, 1);
 }
 
@@ -1409,7 +1409,7 @@ spec("NativeIO bounded sharded routing") {
         native_io_sharded_route_release, NULL, NULL, &state};
     native_io_sharded_ownership ownership = {
         native_io_sharded_route_terminal, native_io_sharded_route_finalize, &state};
-    salts_thread_t shutdown_thread = {0};
+    cmeta_thread_t shutdown_thread = {0};
     int status = native_io_sharded_test_create(1u, 2u, &runtime);
 
     if (status == SALTS_ENOTSUP) {
@@ -1437,14 +1437,14 @@ spec("NativeIO bounded sharded routing") {
 
       shutdown.runtime = runtime;
       check_equal(
-          salts_thread_create(&shutdown_thread, native_io_sharded_shutdown_thread, &shutdown),
+          cmeta_thread_create(&shutdown_thread, native_io_sharded_shutdown_thread, &shutdown),
           SALTS_OK);
       check_true(native_io_sharded_wait_atomic(&shutdown.entered, 1));
-      salts_sleep_ms(10u);
+      cmeta_sleep_ms(10u);
       check_equal(atomic_load_explicit(&shutdown.returned, memory_order_acquire), 0);
 
       atomic_store_explicit(&gate.gate, 1, memory_order_release);
-      check_equal(salts_thread_join(&shutdown_thread), SALTS_OK);
+      check_equal(cmeta_thread_join(&shutdown_thread), SALTS_OK);
       check_equal(shutdown.status, SALTS_EBUSY);
       check_equal(atomic_load(&gate.runs), 1);
       check_equal(atomic_load(&gate.finalizes), 1);
@@ -1744,8 +1744,8 @@ spec("NativeIO bounded sharded routing") {
         native_io_sharded_gate_finalize, &accepted};
     native_io_sharded_blocking_submit_state submitter = {0};
     native_io_sharded_shutdown_state shutdown = {0};
-    salts_thread_t submit_thread = {0};
-    salts_thread_t shutdown_thread = {0};
+    cmeta_thread_t submit_thread = {0};
+    cmeta_thread_t shutdown_thread = {0};
     int status = native_io_sharded_test_create(1u, 1u, &runtime);
 
     if (status == SALTS_ENOTSUP) {
@@ -1762,19 +1762,19 @@ spec("NativeIO bounded sharded routing") {
           native_io_sharded_gate_run, native_io_sharded_gate_cancel,
           native_io_sharded_gate_finalize, &blocked};
       check_equal(
-          salts_thread_create(&submit_thread, native_io_sharded_blocking_submit_thread, &submitter),
+          cmeta_thread_create(&submit_thread, native_io_sharded_blocking_submit_thread, &submitter),
           SALTS_OK);
       check_true(native_io_sharded_wait_atomic(&submitter.entered, 1));
-      salts_sleep_ms(10u);
+      cmeta_sleep_ms(10u);
       check_equal(atomic_load_explicit(&submitter.returned, memory_order_acquire), 0);
 
       shutdown.runtime = runtime;
       check_equal(
-          salts_thread_create(&shutdown_thread, native_io_sharded_shutdown_thread, &shutdown),
+          cmeta_thread_create(&shutdown_thread, native_io_sharded_shutdown_thread, &shutdown),
           SALTS_OK);
       check_true(native_io_sharded_wait_atomic(&shutdown.entered, 1));
 
-      check_equal(salts_thread_join(&submit_thread), SALTS_OK);
+      check_equal(cmeta_thread_join(&submit_thread), SALTS_OK);
       check_equal(submitter.status, SALTS_ESHUTDOWN);
       check_equal(atomic_load(&blocked.started), 0);
       check_equal(atomic_load(&blocked.runs), 0);
@@ -1782,7 +1782,7 @@ spec("NativeIO bounded sharded routing") {
       check_equal(atomic_load(&blocked.finalizes), 0);
 
       atomic_store_explicit(&accepted.gate, 1, memory_order_release);
-      check_equal(salts_thread_join(&shutdown_thread), SALTS_OK);
+      check_equal(cmeta_thread_join(&shutdown_thread), SALTS_OK);
       check_equal(shutdown.status, SALTS_OK);
       check_equal(native_io_sharded_wait(runtime), SALTS_OK);
       check_equal(atomic_load(&accepted.runs), 2);

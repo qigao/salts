@@ -195,220 +195,116 @@ cmeta_interface_desc_has_owning_method(const cmeta_interface_desc *desc) {
     return false;
 }
 
-#define CMETA_IFACE_ARITY_R0 0u
-#define CMETA_IFACE_ARITY_R1 1u
-#define CMETA_IFACE_ARITY_R2 2u
-#define CMETA_IFACE_ARITY_R3 3u
-#define CMETA_IFACE_ARITY_R4 4u
-#define CMETA_IFACE_ARITY_V0 0u
-#define CMETA_IFACE_ARITY_V1 1u
-#define CMETA_IFACE_ARITY_V2 2u
-#define CMETA_IFACE_ARITY_V3 3u
-#define CMETA_IFACE_ARITY_V4 4u
-#define CMETA_IFACE_ARITY_D0 0u
-#define CMETA_IFACE_ARITY_F0 0u
-#define CMETA_IFACE_ARITY_F1 1u
-#define CMETA_IFACE_ARITY_F2 2u
-#define CMETA_IFACE_ARITY_F3 3u
-#define CMETA_IFACE_ARITY_F4 4u
-#define CMETA_IFACE_ARITY_FR0 0u
-#define CMETA_IFACE_ARITY_FR1 1u
-#define CMETA_IFACE_ARITY_FR2 2u
-#define CMETA_IFACE_ARITY_FR3 3u
-#define CMETA_IFACE_ARITY_FR4 4u
-#define CMETA_IFACE_ARITY_FV0 0u
-#define CMETA_IFACE_ARITY_FV1 1u
-#define CMETA_IFACE_ARITY_FV2 2u
-#define CMETA_IFACE_ARITY_FV3 3u
-#define CMETA_IFACE_ARITY_FV4 4u
-#define CMETA_IFACE_ARITY_FD0 0u
+/* Decode source rows once into:
+ * (arity, result action, reflected, contract, result descriptor/carrier/flags,
+ *  parameter tuples). Only these adapters know the legacy spellings.
+ * Result action is authoritative; ownership is never inferred from C spelling. */
+#define CMETA_IFACE_PAIR(T,A,C) (T,A)
+#define CMETA_IFACE_DECODE_R0(M,I,R,N,_) \
+    M(I,R,N,0,result,0,value,NULL,CMETA_ABI_UNSPECIFIED,CMETA_RESULT_UNKNOWN,)
+#define CMETA_IFACE_DECODE_R1(M,I,R,N,T0,A0) \
+    M(I,R,N,1,result,0,value,NULL,CMETA_ABI_UNSPECIFIED,CMETA_RESULT_UNKNOWN,CMETA_PP_PAIR_MAP_COMMA_N(1,CMETA_IFACE_PAIR,~,T0,A0))
+#define CMETA_IFACE_DECODE_R2(M,I,R,N,T0,A0,T1,A1) \
+    M(I,R,N,2,result,0,value,NULL,CMETA_ABI_UNSPECIFIED,CMETA_RESULT_UNKNOWN,CMETA_PP_PAIR_MAP_COMMA_N(2,CMETA_IFACE_PAIR,~,T0,A0,T1,A1))
+#define CMETA_IFACE_DECODE_R3(M,I,R,N,T0,A0,T1,A1,T2,A2) \
+    M(I,R,N,3,result,0,value,NULL,CMETA_ABI_UNSPECIFIED,CMETA_RESULT_UNKNOWN,CMETA_PP_PAIR_MAP_COMMA_N(3,CMETA_IFACE_PAIR,~,T0,A0,T1,A1,T2,A2))
+#define CMETA_IFACE_DECODE_R4(M,I,R,N,T0,A0,T1,A1,T2,A2,T3,A3) \
+    M(I,R,N,4,result,0,value,NULL,CMETA_ABI_UNSPECIFIED,CMETA_RESULT_UNKNOWN,CMETA_PP_PAIR_MAP_COMMA_N(4,CMETA_IFACE_PAIR,~,T0,A0,T1,A1,T2,A2,T3,A3))
+#define CMETA_IFACE_DECODE_V0(M,I,R,N,_) \
+    M(I,void,N,0,discard,0,value,NULL,CMETA_ABI_UNSPECIFIED,CMETA_RESULT_UNKNOWN,)
+#define CMETA_IFACE_DECODE_V1(M,I,R,N,T0,A0) \
+    M(I,void,N,1,discard,0,value,NULL,CMETA_ABI_UNSPECIFIED,CMETA_RESULT_UNKNOWN,CMETA_PP_PAIR_MAP_COMMA_N(1,CMETA_IFACE_PAIR,~,T0,A0))
+#define CMETA_IFACE_DECODE_V2(M,I,R,N,T0,A0,T1,A1) \
+    M(I,void,N,2,discard,0,value,NULL,CMETA_ABI_UNSPECIFIED,CMETA_RESULT_UNKNOWN,CMETA_PP_PAIR_MAP_COMMA_N(2,CMETA_IFACE_PAIR,~,T0,A0,T1,A1))
+#define CMETA_IFACE_DECODE_V3(M,I,R,N,T0,A0,T1,A1,T2,A2) \
+    M(I,void,N,3,discard,0,value,NULL,CMETA_ABI_UNSPECIFIED,CMETA_RESULT_UNKNOWN,CMETA_PP_PAIR_MAP_COMMA_N(3,CMETA_IFACE_PAIR,~,T0,A0,T1,A1,T2,A2))
+#define CMETA_IFACE_DECODE_V4(M,I,R,N,T0,A0,T1,A1,T2,A2,T3,A3) \
+    M(I,void,N,4,discard,0,value,NULL,CMETA_ABI_UNSPECIFIED,CMETA_RESULT_UNKNOWN,CMETA_PP_PAIR_MAP_COMMA_N(4,CMETA_IFACE_PAIR,~,T0,A0,T1,A1,T2,A2,T3,A3))
+#define CMETA_IFACE_DECODE_D0(M,I,R,N,_) \
+    M(I,void,N,0,destroy,0,value,NULL,CMETA_ABI_UNSPECIFIED,CMETA_RESULT_UNKNOWN,)
+#define CMETA_IFACE_DECODE_F0(M,I,R,N,C,RD,RA) \
+    M(I,R,N,0,result,1,C,RD,RA,CMETA_RESULT_UNKNOWN,)
+#define CMETA_IFACE_DECODE_F1(M,I,R,N,C,RD,RA,P0) \
+    M(I,R,N,1,result,1,C,RD,RA,CMETA_RESULT_UNKNOWN,P0)
+#define CMETA_IFACE_DECODE_F2(M,I,R,N,C,RD,RA,P0,P1) \
+    M(I,R,N,2,result,1,C,RD,RA,CMETA_RESULT_UNKNOWN,P0,P1)
+#define CMETA_IFACE_DECODE_F3(M,I,R,N,C,RD,RA,P0,P1,P2) \
+    M(I,R,N,3,result,1,C,RD,RA,CMETA_RESULT_UNKNOWN,P0,P1,P2)
+#define CMETA_IFACE_DECODE_F4(M,I,R,N,C,RD,RA,P0,P1,P2,P3) \
+    M(I,R,N,4,result,1,C,RD,RA,CMETA_RESULT_UNKNOWN,P0,P1,P2,P3)
+#define CMETA_IFACE_DECODE_FR0(M,I,R,N,C,RD,RA,RF) \
+    M(I,R,N,0,result,1,C,RD,RA,RF,)
+#define CMETA_IFACE_DECODE_FR1(M,I,R,N,C,RD,RA,RF,P0) \
+    M(I,R,N,1,result,1,C,RD,RA,RF,P0)
+#define CMETA_IFACE_DECODE_FR2(M,I,R,N,C,RD,RA,RF,P0,P1) \
+    M(I,R,N,2,result,1,C,RD,RA,RF,P0,P1)
+#define CMETA_IFACE_DECODE_FR3(M,I,R,N,C,RD,RA,RF,P0,P1,P2) \
+    M(I,R,N,3,result,1,C,RD,RA,RF,P0,P1,P2)
+#define CMETA_IFACE_DECODE_FR4(M,I,R,N,C,RD,RA,RF,P0,P1,P2,P3) \
+    M(I,R,N,4,result,1,C,RD,RA,RF,P0,P1,P2,P3)
+#define CMETA_IFACE_DECODE_FV0(M,I,R,N,C,RD,RA) \
+    M(I,void,N,0,discard,1,C,RD,RA,CMETA_RESULT_UNKNOWN,)
+#define CMETA_IFACE_DECODE_FV1(M,I,R,N,C,RD,RA,P0) \
+    M(I,void,N,1,discard,1,C,RD,RA,CMETA_RESULT_UNKNOWN,P0)
+#define CMETA_IFACE_DECODE_FV2(M,I,R,N,C,RD,RA,P0,P1) \
+    M(I,void,N,2,discard,1,C,RD,RA,CMETA_RESULT_UNKNOWN,P0,P1)
+#define CMETA_IFACE_DECODE_FV3(M,I,R,N,C,RD,RA,P0,P1,P2) \
+    M(I,void,N,3,discard,1,C,RD,RA,CMETA_RESULT_UNKNOWN,P0,P1,P2)
+#define CMETA_IFACE_DECODE_FV4(M,I,R,N,C,RD,RA,P0,P1,P2,P3) \
+    M(I,void,N,4,discard,1,C,RD,RA,CMETA_RESULT_UNKNOWN,P0,P1,P2,P3)
+#define CMETA_IFACE_DECODE_FD0(M,I,R,N,C,RD,RA) \
+    M(I,void,N,0,destroy,1,C,RD,RA,CMETA_RESULT_UNKNOWN,)
 
-/* Fully-reflected interface parameters use the exact five-field FunctionDecl
- * row. No descriptor or ABI category is inferred from C spelling. */
-#define CMETA_IFACE_PARAM_DECL_I(type, name, flags, descriptor, abi_carrier) \
-    type name
-#define CMETA_IFACE_PARAM_DECL(row) CMETA_IFACE_PARAM_DECL_I row
-#define CMETA_IFACE_PARAM_NAME_I(type, name, flags, descriptor, abi_carrier) name
-#define CMETA_IFACE_PARAM_NAME(row) CMETA_IFACE_PARAM_NAME_I row
+#define CMETA_IFACE_DECODE(M,I,K,R,N,...) \
+    CMETA_PP_CAT(CMETA_IFACE_DECODE_,K)(M,I,R,N,__VA_ARGS__)
+#define CMETA_IFACE_PARAM_DECL(row) \
+    CMETA_FUNCTION_PARAM_DECL_APPLY(row)
+#define CMETA_IFACE_PARAM_NAME(row) CMETA_FUNCTION_PARAM_NAME(row)
+#define CMETA_IFACE_DECL_ROW(row,C) CMETA_IFACE_PARAM_DECL(row)
+#define CMETA_IFACE_ARG_ROW(row,C) CMETA_IFACE_PARAM_NAME(row)
 
-/* vtable fields */
-#define CMETA_IFACE_VT_R0(I,R,N,_) R (*N)(void *self);
-#define CMETA_IFACE_VT_R1(I,R,N,T1,A1) R (*N)(void *self, T1 A1);
-#define CMETA_IFACE_VT_R2(I,R,N,T1,A1,T2,A2) R (*N)(void *self, T1 A1, T2 A2);
-#define CMETA_IFACE_VT_R3(I,R,N,T1,A1,T2,A2,T3,A3) R (*N)(void *self, T1 A1, T2 A2, T3 A3);
-#define CMETA_IFACE_VT_R4(I,R,N,T1,A1,T2,A2,T3,A3,T4,A4) R (*N)(void *self, T1 A1, T2 A2, T3 A3, T4 A4);
-#define CMETA_IFACE_VT_V0(I,R,N,_) void (*N)(void *self);
-#define CMETA_IFACE_VT_V1(I,R,N,T1,A1) void (*N)(void *self, T1 A1);
-#define CMETA_IFACE_VT_V2(I,R,N,T1,A1,T2,A2) void (*N)(void *self, T1 A1, T2 A2);
-#define CMETA_IFACE_VT_V3(I,R,N,T1,A1,T2,A2,T3,A3) void (*N)(void *self, T1 A1, T2 A2, T3 A3);
-#define CMETA_IFACE_VT_V4(I,R,N,T1,A1,T2,A2,T3,A3,T4,A4) void (*N)(void *self, T1 A1, T2 A2, T3 A3, T4 A4);
-#define CMETA_IFACE_VT_D0(I,R,N,_) void (*N)(void *self);
-#define CMETA_IFACE_VT_F0(I,R,N,C,RD,RA) R (*N)(void *self);
-#define CMETA_IFACE_VT_F1(I,R,N,C,RD,RA,P1) \
-    R (*N)(void *self, CMETA_IFACE_PARAM_DECL(P1));
-#define CMETA_IFACE_VT_F2(I,R,N,C,RD,RA,P1,P2) \
-    R (*N)(void *self, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2));
-#define CMETA_IFACE_VT_F3(I,R,N,C,RD,RA,P1,P2,P3) \
-    R (*N)(void *self, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2), \
-           CMETA_IFACE_PARAM_DECL(P3));
-#define CMETA_IFACE_VT_F4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
-    R (*N)(void *self, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2), \
-           CMETA_IFACE_PARAM_DECL(P3), CMETA_IFACE_PARAM_DECL(P4));
-#define CMETA_IFACE_VT_FR0(I,R,N,C,RD,RA,RF) \
-    CMETA_IFACE_VT_F0(I,R,N,C,RD,RA)
-#define CMETA_IFACE_VT_FR1(I,R,N,C,RD,RA,RF,P1) \
-    CMETA_IFACE_VT_F1(I,R,N,C,RD,RA,P1)
-#define CMETA_IFACE_VT_FR2(I,R,N,C,RD,RA,RF,P1,P2) \
-    CMETA_IFACE_VT_F2(I,R,N,C,RD,RA,P1,P2)
-#define CMETA_IFACE_VT_FR3(I,R,N,C,RD,RA,RF,P1,P2,P3) \
-    CMETA_IFACE_VT_F3(I,R,N,C,RD,RA,P1,P2,P3)
-#define CMETA_IFACE_VT_FR4(I,R,N,C,RD,RA,RF,P1,P2,P3,P4) \
-    CMETA_IFACE_VT_F4(I,R,N,C,RD,RA,P1,P2,P3,P4)
-#define CMETA_IFACE_VT_FV0(I,R,N,C,RD,RA) void (*N)(void *self);
-#define CMETA_IFACE_VT_FV1(I,R,N,C,RD,RA,P1) \
-    void (*N)(void *self, CMETA_IFACE_PARAM_DECL(P1));
-#define CMETA_IFACE_VT_FV2(I,R,N,C,RD,RA,P1,P2) \
-    void (*N)(void *self, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2));
-#define CMETA_IFACE_VT_FV3(I,R,N,C,RD,RA,P1,P2,P3) \
-    void (*N)(void *self, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2), \
-              CMETA_IFACE_PARAM_DECL(P3));
-#define CMETA_IFACE_VT_FV4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
-    void (*N)(void *self, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2), \
-              CMETA_IFACE_PARAM_DECL(P3), CMETA_IFACE_PARAM_DECL(P4));
-#define CMETA_IFACE_VT_FD0(I,R,N,C,RD,RA) void (*N)(void *self);
-#define CMETA_IFACE_VT_ROW(I,K,R,N,...) CMETA_PP_CAT(CMETA_IFACE_VT_,K)(I,R,N,__VA_ARGS__)
+#define CMETA_IFACE_VT(I,R,N,A,K,F,C,RD,RA,RF,...) \
+    R (*N)(void *self CMETA_PP_MAP_PREFIX_COMMA_N(A,CMETA_IFACE_DECL_ROW,~,__VA_ARGS__));
+#define CMETA_IFACE_VT_ROW(I,K,R,N,...) \
+    CMETA_IFACE_DECODE(CMETA_IFACE_VT,I,K,R,N,__VA_ARGS__)
 
-/* wrapper definitions. D0 is an owning zero-argument destructor: it preserves
- * the V0 vtable ABI and clears the interface handle after dispatch returns. */
-#define CMETA_IFACE_IMPL_R0(I,R,N,_) CMETA_INLINE R I##_##N(I *self) { return self->vtable->N(self->self); }
-#define CMETA_IFACE_IMPL_R1(I,R,N,T1,A1) CMETA_INLINE R I##_##N(I *self, T1 A1) { return self->vtable->N(self->self, A1); }
-#define CMETA_IFACE_IMPL_R2(I,R,N,T1,A1,T2,A2) CMETA_INLINE R I##_##N(I *self, T1 A1, T2 A2) { return self->vtable->N(self->self, A1, A2); }
-#define CMETA_IFACE_IMPL_R3(I,R,N,T1,A1,T2,A2,T3,A3) CMETA_INLINE R I##_##N(I *self, T1 A1, T2 A2, T3 A3) { return self->vtable->N(self->self, A1, A2, A3); }
-#define CMETA_IFACE_IMPL_R4(I,R,N,T1,A1,T2,A2,T3,A3,T4,A4) CMETA_INLINE R I##_##N(I *self, T1 A1, T2 A2, T3 A3, T4 A4) { return self->vtable->N(self->self, A1, A2, A3, A4); }
-#define CMETA_IFACE_IMPL_V0(I,R,N,_) CMETA_INLINE void I##_##N(I *self) { self->vtable->N(self->self); }
-#define CMETA_IFACE_IMPL_V1(I,R,N,T1,A1) CMETA_INLINE void I##_##N(I *self, T1 A1) { self->vtable->N(self->self, A1); }
-#define CMETA_IFACE_IMPL_V2(I,R,N,T1,A1,T2,A2) CMETA_INLINE void I##_##N(I *self, T1 A1, T2 A2) { self->vtable->N(self->self, A1, A2); }
-#define CMETA_IFACE_IMPL_V3(I,R,N,T1,A1,T2,A2,T3,A3) CMETA_INLINE void I##_##N(I *self, T1 A1, T2 A2, T3 A3) { self->vtable->N(self->self, A1, A2, A3); }
-#define CMETA_IFACE_IMPL_V4(I,R,N,T1,A1,T2,A2,T3,A3,T4,A4) CMETA_INLINE void I##_##N(I *self, T1 A1, T2 A2, T3 A3, T4 A4) { self->vtable->N(self->self, A1, A2, A3, A4); }
-#define CMETA_IFACE_IMPL_D0(I,R,N,_) \
-    CMETA_INLINE void I##_##N(I *self) { \
-        if (!self || !self->self || !self->vtable || !self->vtable->N) return; \
-        self->vtable->N(self->self); \
-        self->self = NULL; \
-        self->vtable = NULL; \
-    }
-#define CMETA_IFACE_IMPL_F0(I,R,N,C,RD,RA) \
-    CMETA_INLINE R I##_##N(I *self) { return self->vtable->N(self->self); }
-#define CMETA_IFACE_IMPL_F1(I,R,N,C,RD,RA,P1) \
-    CMETA_INLINE R I##_##N(I *self, CMETA_IFACE_PARAM_DECL(P1)) { \
-        return self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME(P1)); \
-    }
-#define CMETA_IFACE_IMPL_F2(I,R,N,C,RD,RA,P1,P2) \
-    CMETA_INLINE R I##_##N(I *self, CMETA_IFACE_PARAM_DECL(P1), \
-                           CMETA_IFACE_PARAM_DECL(P2)) { \
-        return self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME(P1), \
-                               CMETA_IFACE_PARAM_NAME(P2)); \
-    }
-#define CMETA_IFACE_IMPL_F3(I,R,N,C,RD,RA,P1,P2,P3) \
-    CMETA_INLINE R I##_##N(I *self, CMETA_IFACE_PARAM_DECL(P1), \
-                           CMETA_IFACE_PARAM_DECL(P2), CMETA_IFACE_PARAM_DECL(P3)) { \
-        return self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME(P1), \
-                               CMETA_IFACE_PARAM_NAME(P2), CMETA_IFACE_PARAM_NAME(P3)); \
-    }
-#define CMETA_IFACE_IMPL_F4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
-    CMETA_INLINE R I##_##N(I *self, CMETA_IFACE_PARAM_DECL(P1), \
-                           CMETA_IFACE_PARAM_DECL(P2), CMETA_IFACE_PARAM_DECL(P3), \
-                           CMETA_IFACE_PARAM_DECL(P4)) { \
-        return self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME(P1), \
-                               CMETA_IFACE_PARAM_NAME(P2), CMETA_IFACE_PARAM_NAME(P3), \
-                               CMETA_IFACE_PARAM_NAME(P4)); \
-    }
-#define CMETA_IFACE_IMPL_FR0(I,R,N,C,RD,RA,RF) \
-    CMETA_IFACE_IMPL_F0(I,R,N,C,RD,RA)
-#define CMETA_IFACE_IMPL_FR1(I,R,N,C,RD,RA,RF,P1) \
-    CMETA_IFACE_IMPL_F1(I,R,N,C,RD,RA,P1)
-#define CMETA_IFACE_IMPL_FR2(I,R,N,C,RD,RA,RF,P1,P2) \
-    CMETA_IFACE_IMPL_F2(I,R,N,C,RD,RA,P1,P2)
-#define CMETA_IFACE_IMPL_FR3(I,R,N,C,RD,RA,RF,P1,P2,P3) \
-    CMETA_IFACE_IMPL_F3(I,R,N,C,RD,RA,P1,P2,P3)
-#define CMETA_IFACE_IMPL_FR4(I,R,N,C,RD,RA,RF,P1,P2,P3,P4) \
-    CMETA_IFACE_IMPL_F4(I,R,N,C,RD,RA,P1,P2,P3,P4)
-#define CMETA_IFACE_IMPL_FV0(I,R,N,C,RD,RA) \
-    CMETA_INLINE void I##_##N(I *self) { self->vtable->N(self->self); }
-#define CMETA_IFACE_IMPL_FV1(I,R,N,C,RD,RA,P1) \
-    CMETA_INLINE void I##_##N(I *self, CMETA_IFACE_PARAM_DECL(P1)) { \
-        self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME(P1)); \
-    }
-#define CMETA_IFACE_IMPL_FV2(I,R,N,C,RD,RA,P1,P2) \
-    CMETA_INLINE void I##_##N(I *self, CMETA_IFACE_PARAM_DECL(P1), \
-                              CMETA_IFACE_PARAM_DECL(P2)) { \
-        self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME(P1), \
-                        CMETA_IFACE_PARAM_NAME(P2)); \
-    }
-#define CMETA_IFACE_IMPL_FV3(I,R,N,C,RD,RA,P1,P2,P3) \
-    CMETA_INLINE void I##_##N(I *self, CMETA_IFACE_PARAM_DECL(P1), \
-                              CMETA_IFACE_PARAM_DECL(P2), CMETA_IFACE_PARAM_DECL(P3)) { \
-        self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME(P1), \
-                        CMETA_IFACE_PARAM_NAME(P2), CMETA_IFACE_PARAM_NAME(P3)); \
-    }
-#define CMETA_IFACE_IMPL_FV4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
-    CMETA_INLINE void I##_##N(I *self, CMETA_IFACE_PARAM_DECL(P1), \
-                              CMETA_IFACE_PARAM_DECL(P2), CMETA_IFACE_PARAM_DECL(P3), \
-                              CMETA_IFACE_PARAM_DECL(P4)) { \
-        self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME(P1), \
-                        CMETA_IFACE_PARAM_NAME(P2), CMETA_IFACE_PARAM_NAME(P3), \
-                        CMETA_IFACE_PARAM_NAME(P4)); \
-    }
-#define CMETA_IFACE_IMPL_FD0(I,R,N,C,RD,RA) \
-    CMETA_INLINE void I##_##N(I *self) { \
-        if (!self || !self->self || !self->vtable || !self->vtable->N) return; \
-        self->vtable->N(self->self); \
-        self->self = NULL; \
-        self->vtable = NULL; \
-    }
-#define CMETA_IFACE_IMPL_ROW(I,K,R,N,...) CMETA_PP_CAT(CMETA_IFACE_IMPL_,K)(I,R,N,__VA_ARGS__)
+#ifdef __cplusplus
+#define CMETA_IFACE_MEMBER_ADDRESS_(I,N) (&static_cast<I##_vtable *>(nullptr)->N)
+#else
+#define CMETA_IFACE_MEMBER_ADDRESS_(I,N) (&((I##_vtable *)0)->N)
+#endif
+#define CMETA_IFACE_PROOF(I,R,N,A,K,F,C,RD,RA,RF,...) \
+    CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(CMETA_IFACE_MEMBER_ADDRESS_(I,N), \
+        R (**)(void * CMETA_PP_MAP_PREFIX_COMMA_N(A,CMETA_IFACE_DECL_ROW,~,__VA_ARGS__))), \
+        "CMeta Interface native vtable member mismatch"); \
+    CMETA_STATIC_ASSERT(!(F) || (RA) == CMETA_ABI_UNSPECIFIED || \
+        CMETA_TYPE_IS_VOID(R) == ((RA) == CMETA_ABI_VOID), \
+        "CMeta Interface native result carrier mismatch");
+#define CMETA_IFACE_PROOF_ROW(I,K,R,N,...) \
+    CMETA_IFACE_DECODE(CMETA_IFACE_PROOF,I,K,R,N,__VA_ARGS__)
 
-/* required-method validation */
-#define CMETA_IFACE_VALID_R0(I,R,N,_) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_R1(I,R,N,T1,A1) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_R2(I,R,N,T1,A1,T2,A2) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_R3(I,R,N,T1,A1,T2,A2,T3,A3) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_R4(I,R,N,T1,A1,T2,A2,T3,A3,T4,A4) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_V0(I,R,N,_) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_V1(I,R,N,T1,A1) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_V2(I,R,N,T1,A1,T2,A2) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_V3(I,R,N,T1,A1,T2,A2,T3,A3) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_V4(I,R,N,T1,A1,T2,A2,T3,A3,T4,A4) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_D0(I,R,N,_) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_F0(I,R,N,C,RD,RA) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_F1(I,R,N,C,RD,RA,P1) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_F2(I,R,N,C,RD,RA,P1,P2) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_F3(I,R,N,C,RD,RA,P1,P2,P3) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_F4(I,R,N,C,RD,RA,P1,P2,P3,P4) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_FR0(I,R,N,C,RD,RA,RF) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_FR1(I,R,N,C,RD,RA,RF,P1) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_FR2(I,R,N,C,RD,RA,RF,P1,P2) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_FR3(I,R,N,C,RD,RA,RF,P1,P2,P3) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_FR4(I,R,N,C,RD,RA,RF,P1,P2,P3,P4) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_FV0(I,R,N,C,RD,RA) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_FV1(I,R,N,C,RD,RA,P1) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_FV2(I,R,N,C,RD,RA,P1,P2) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_FV3(I,R,N,C,RD,RA,P1,P2,P3) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_FV4(I,R,N,C,RD,RA,P1,P2,P3,P4) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_FD0(I,R,N,C,RD,RA) && self->vtable->N != NULL
-#define CMETA_IFACE_VALID_ROW(I,K,R,N,...) CMETA_PP_CAT(CMETA_IFACE_VALID_,K)(I,R,N,__VA_ARGS__)
-
-#define CMETA_IFACE_FUNCTION_R0(I,R,N,...)
-#define CMETA_IFACE_FUNCTION_R1(I,R,N,...)
-#define CMETA_IFACE_FUNCTION_R2(I,R,N,...)
-#define CMETA_IFACE_FUNCTION_R3(I,R,N,...)
-#define CMETA_IFACE_FUNCTION_R4(I,R,N,...)
-#define CMETA_IFACE_FUNCTION_V0(I,R,N,...)
-#define CMETA_IFACE_FUNCTION_V1(I,R,N,...)
-#define CMETA_IFACE_FUNCTION_V2(I,R,N,...)
-#define CMETA_IFACE_FUNCTION_V3(I,R,N,...)
-#define CMETA_IFACE_FUNCTION_V4(I,R,N,...)
-#define CMETA_IFACE_FUNCTION_D0(I,R,N,...)
+/* D remains a separate semantic operation: dispatch first, then invalidate. */
+#define CMETA_IFACE_BEFORE_result(N)
+#define CMETA_IFACE_BEFORE_discard(N)
+#define CMETA_IFACE_BEFORE_destroy(N) \
+    if (!self || !self->self || !self->vtable || !self->vtable->N) return;
+#define CMETA_IFACE_RETURN_result return
+#define CMETA_IFACE_RETURN_discard
+#define CMETA_IFACE_RETURN_destroy
+#define CMETA_IFACE_AFTER_result
+#define CMETA_IFACE_AFTER_discard
+#define CMETA_IFACE_AFTER_destroy self->self = NULL; self->vtable = NULL;
+#define CMETA_IFACE_IMPL(I,R,N,A,K,F,C,RD,RA,RF,...) \
+    CMETA_INLINE R I##_##N(I *self \
+        CMETA_PP_MAP_PREFIX_COMMA_N(A,CMETA_IFACE_DECL_ROW,~,__VA_ARGS__)) { \
+        CMETA_PP_CAT(CMETA_IFACE_BEFORE_,K)(N) \
+        CMETA_PP_CAT(CMETA_IFACE_RETURN_,K) self->vtable->N(self->self \
+            CMETA_PP_MAP_PREFIX_COMMA_N(A,CMETA_IFACE_ARG_ROW,~,__VA_ARGS__)); \
+        CMETA_PP_CAT(CMETA_IFACE_AFTER_,K) \
+    }
+#define CMETA_IFACE_IMPL_ROW(I,K,R,N,...) \
+    CMETA_IFACE_DECODE(CMETA_IFACE_IMPL,I,K,R,N,__VA_ARGS__)
+#define CMETA_IFACE_VALID_ROW(I,K,R,N,...) && self->vtable->N != NULL
 
 #define CMETA_IFACE_FUNCTION_GETTERS(I,N) \
     CMETA_INLINE const cmeta_function_desc *I##_##N##_function(void) { \
@@ -417,134 +313,36 @@ cmeta_interface_desc_has_owning_method(const cmeta_interface_desc *desc) {
     CMETA_INLINE const cmeta_function_abi_desc *I##_##N##_function_abi(void) { \
         return &I##_##N##__function_abi_meta; \
     }
-
-#define CMETA_IFACE_FUNCTION_REFLECTED_0(I,R,N,C,RD,RA) \
-    CMETA_FUNCTION0_METADATA_AS_ABI( \
-        I##_##N, #I "." #N, C, RD, RA); \
+#define CMETA_IFACE_FUNCTION_ZERO(I,N,C,RD,RA,RF,...) \
+    CMETA_FUNCTION0_METADATA_AS_ABI_RESULT(I##_##N, \
+        CMETA_PP_STRINGIFY(I) "." CMETA_PP_STRINGIFY(N),C,RD,RA,RF)
+#define CMETA_IFACE_FUNCTION_PARAMS(I,N,C,RD,RA,RF,...) \
+    CMETA_FUNCTION_METADATA_AS_ABI_RESULT(I##_##N, \
+        CMETA_PP_STRINGIFY(I) "." CMETA_PP_STRINGIFY(N),C,RD,RA,RF,__VA_ARGS__)
+#define CMETA_IFACE_FUNCTION_REFLECTED(I,R,N,A,K,F,C,RD,RA,RF,...) \
+    CMETA_PP_IF(A)(CMETA_IFACE_FUNCTION_PARAMS,CMETA_IFACE_FUNCTION_ZERO)( \
+        I,N,C,RD,RA,RF,__VA_ARGS__); \
     CMETA_IFACE_FUNCTION_GETTERS(I,N)
-
-#define CMETA_IFACE_FUNCTION_REFLECTED_1(I,R,N,C,RD,RA,P1) \
-    CMETA_FUNCTION_METADATA_AS_ABI( \
-        I##_##N, #I "." #N, C, RD, RA, P1); \
-    CMETA_IFACE_FUNCTION_GETTERS(I,N)
-
-#define CMETA_IFACE_FUNCTION_REFLECTED_2(I,R,N,C,RD,RA,P1,P2) \
-    CMETA_FUNCTION_METADATA_AS_ABI( \
-        I##_##N, #I "." #N, C, RD, RA, P1, P2); \
-    CMETA_IFACE_FUNCTION_GETTERS(I,N)
-
-#define CMETA_IFACE_FUNCTION_REFLECTED_3(I,R,N,C,RD,RA,P1,P2,P3) \
-    CMETA_FUNCTION_METADATA_AS_ABI( \
-        I##_##N, #I "." #N, C, RD, RA, P1, P2, P3); \
-    CMETA_IFACE_FUNCTION_GETTERS(I,N)
-
-#define CMETA_IFACE_FUNCTION_REFLECTED_4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
-    CMETA_FUNCTION_METADATA_AS_ABI( \
-        I##_##N, #I "." #N, C, RD, RA, P1, P2, P3, P4); \
-    CMETA_IFACE_FUNCTION_GETTERS(I,N)
-
-#define CMETA_IFACE_FUNCTION_RESULT_REFLECTED_0(I,R,N,C,RD,RA,RF) \
-    CMETA_FUNCTION0_METADATA_AS_ABI_RESULT( \
-        I##_##N, #I "." #N, C, RD, RA, RF); \
-    CMETA_IFACE_FUNCTION_GETTERS(I,N)
-
-#define CMETA_IFACE_FUNCTION_RESULT_REFLECTED_1(I,R,N,C,RD,RA,RF,P1) \
-    CMETA_FUNCTION_METADATA_AS_ABI_RESULT( \
-        I##_##N, #I "." #N, C, RD, RA, RF, P1); \
-    CMETA_IFACE_FUNCTION_GETTERS(I,N)
-
-#define CMETA_IFACE_FUNCTION_RESULT_REFLECTED_2(I,R,N,C,RD,RA,RF,P1,P2) \
-    CMETA_FUNCTION_METADATA_AS_ABI_RESULT( \
-        I##_##N, #I "." #N, C, RD, RA, RF, P1, P2); \
-    CMETA_IFACE_FUNCTION_GETTERS(I,N)
-
-#define CMETA_IFACE_FUNCTION_RESULT_REFLECTED_3(I,R,N,C,RD,RA,RF,P1,P2,P3) \
-    CMETA_FUNCTION_METADATA_AS_ABI_RESULT( \
-        I##_##N, #I "." #N, C, RD, RA, RF, P1, P2, P3); \
-    CMETA_IFACE_FUNCTION_GETTERS(I,N)
-
-#define CMETA_IFACE_FUNCTION_RESULT_REFLECTED_4(I,R,N,C,RD,RA,RF,P1,P2,P3,P4) \
-    CMETA_FUNCTION_METADATA_AS_ABI_RESULT( \
-        I##_##N, #I "." #N, C, RD, RA, RF, P1, P2, P3, P4); \
-    CMETA_IFACE_FUNCTION_GETTERS(I,N)
-
-#define CMETA_IFACE_FUNCTION_F0(I,R,N,C,RD,RA) \
-    CMETA_IFACE_FUNCTION_REFLECTED_0(I,R,N,C,RD,RA)
-#define CMETA_IFACE_FUNCTION_F1(I,R,N,C,RD,RA,P1) \
-    CMETA_IFACE_FUNCTION_REFLECTED_1(I,R,N,C,RD,RA,P1)
-#define CMETA_IFACE_FUNCTION_F2(I,R,N,C,RD,RA,P1,P2) \
-    CMETA_IFACE_FUNCTION_REFLECTED_2(I,R,N,C,RD,RA,P1,P2)
-#define CMETA_IFACE_FUNCTION_F3(I,R,N,C,RD,RA,P1,P2,P3) \
-    CMETA_IFACE_FUNCTION_REFLECTED_3(I,R,N,C,RD,RA,P1,P2,P3)
-#define CMETA_IFACE_FUNCTION_F4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
-    CMETA_IFACE_FUNCTION_REFLECTED_4(I,R,N,C,RD,RA,P1,P2,P3,P4)
-#define CMETA_IFACE_FUNCTION_FR0(I,R,N,C,RD,RA,RF) \
-    CMETA_IFACE_FUNCTION_RESULT_REFLECTED_0(I,R,N,C,RD,RA,RF)
-#define CMETA_IFACE_FUNCTION_FR1(I,R,N,C,RD,RA,RF,P1) \
-    CMETA_IFACE_FUNCTION_RESULT_REFLECTED_1(I,R,N,C,RD,RA,RF,P1)
-#define CMETA_IFACE_FUNCTION_FR2(I,R,N,C,RD,RA,RF,P1,P2) \
-    CMETA_IFACE_FUNCTION_RESULT_REFLECTED_2(I,R,N,C,RD,RA,RF,P1,P2)
-#define CMETA_IFACE_FUNCTION_FR3(I,R,N,C,RD,RA,RF,P1,P2,P3) \
-    CMETA_IFACE_FUNCTION_RESULT_REFLECTED_3(I,R,N,C,RD,RA,RF,P1,P2,P3)
-#define CMETA_IFACE_FUNCTION_FR4(I,R,N,C,RD,RA,RF,P1,P2,P3,P4) \
-    CMETA_IFACE_FUNCTION_RESULT_REFLECTED_4(I,R,N,C,RD,RA,RF,P1,P2,P3,P4)
-#define CMETA_IFACE_FUNCTION_FV0(I,R,N,C,RD,RA) \
-    CMETA_IFACE_FUNCTION_REFLECTED_0(I,R,N,C,RD,RA)
-#define CMETA_IFACE_FUNCTION_FV1(I,R,N,C,RD,RA,P1) \
-    CMETA_IFACE_FUNCTION_REFLECTED_1(I,R,N,C,RD,RA,P1)
-#define CMETA_IFACE_FUNCTION_FV2(I,R,N,C,RD,RA,P1,P2) \
-    CMETA_IFACE_FUNCTION_REFLECTED_2(I,R,N,C,RD,RA,P1,P2)
-#define CMETA_IFACE_FUNCTION_FV3(I,R,N,C,RD,RA,P1,P2,P3) \
-    CMETA_IFACE_FUNCTION_REFLECTED_3(I,R,N,C,RD,RA,P1,P2,P3)
-#define CMETA_IFACE_FUNCTION_FV4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
-    CMETA_IFACE_FUNCTION_REFLECTED_4(I,R,N,C,RD,RA,P1,P2,P3,P4)
-#define CMETA_IFACE_FUNCTION_FD0(I,R,N,C,RD,RA) \
-    CMETA_IFACE_FUNCTION_REFLECTED_0(I,R,N,C,RD,RA)
+#define CMETA_IFACE_FUNCTION(I,R,N,A,K,F,C,RD,RA,RF,...) \
+    CMETA_PP_IIF(F)(CMETA_IFACE_FUNCTION_REFLECTED,CMETA_PP_EMPTY)( \
+        I,R,N,A,K,F,C,RD,RA,RF,__VA_ARGS__)
 #define CMETA_IFACE_FUNCTION_ROW(I,K,R,N,...) \
-    CMETA_PP_CAT(CMETA_IFACE_FUNCTION_,K)(I,R,N,__VA_ARGS__)
+    CMETA_IFACE_DECODE(CMETA_IFACE_FUNCTION,I,K,R,N,__VA_ARGS__)
 
-#define CMETA_IFACE_META_LEGACY(I,K,R,N,flags_) \
-    { sizeof(cmeta_interface_method_desc), #N, \
-      CMETA_PP_CAT(CMETA_IFACE_ARITY_,K), (flags_), NULL, NULL },
-
-#define CMETA_IFACE_META_R0(I,R,N,...) CMETA_IFACE_META_LEGACY(I,R0,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_R1(I,R,N,...) CMETA_IFACE_META_LEGACY(I,R1,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_R2(I,R,N,...) CMETA_IFACE_META_LEGACY(I,R2,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_R3(I,R,N,...) CMETA_IFACE_META_LEGACY(I,R3,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_R4(I,R,N,...) CMETA_IFACE_META_LEGACY(I,R4,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_V0(I,R,N,...) CMETA_IFACE_META_LEGACY(I,V0,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_V1(I,R,N,...) CMETA_IFACE_META_LEGACY(I,V1,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_V2(I,R,N,...) CMETA_IFACE_META_LEGACY(I,V2,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_V3(I,R,N,...) CMETA_IFACE_META_LEGACY(I,V3,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_V4(I,R,N,...) CMETA_IFACE_META_LEGACY(I,V4,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_D0(I,R,N,...) CMETA_IFACE_META_LEGACY(I,D0,R,N,CMETA_INTERFACE_METHOD_OWNS_SELF)
-
-#define CMETA_IFACE_META_REFLECTED(I,K,R,N,flags_) \
-    { sizeof(cmeta_interface_method_desc), #N, \
-      CMETA_PP_CAT(CMETA_IFACE_ARITY_,K), (flags_), \
-      &I##_##N##__function_meta, &I##_##N##__function_abi_meta },
-
-#define CMETA_IFACE_META_F0(I,R,N,...) CMETA_IFACE_META_REFLECTED(I,F0,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_F1(I,R,N,...) CMETA_IFACE_META_REFLECTED(I,F1,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_F2(I,R,N,...) CMETA_IFACE_META_REFLECTED(I,F2,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_F3(I,R,N,...) CMETA_IFACE_META_REFLECTED(I,F3,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_F4(I,R,N,...) CMETA_IFACE_META_REFLECTED(I,F4,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_FR0(I,R,N,...) CMETA_IFACE_META_REFLECTED(I,FR0,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_FR1(I,R,N,...) CMETA_IFACE_META_REFLECTED(I,FR1,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_FR2(I,R,N,...) CMETA_IFACE_META_REFLECTED(I,FR2,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_FR3(I,R,N,...) CMETA_IFACE_META_REFLECTED(I,FR3,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_FR4(I,R,N,...) CMETA_IFACE_META_REFLECTED(I,FR4,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_FV0(I,R,N,...) CMETA_IFACE_META_REFLECTED(I,FV0,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_FV1(I,R,N,...) CMETA_IFACE_META_REFLECTED(I,FV1,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_FV2(I,R,N,...) CMETA_IFACE_META_REFLECTED(I,FV2,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_FV3(I,R,N,...) CMETA_IFACE_META_REFLECTED(I,FV3,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_FV4(I,R,N,...) CMETA_IFACE_META_REFLECTED(I,FV4,R,N,CMETA_INTERFACE_METHOD_NONE)
-#define CMETA_IFACE_META_FD0(I,R,N,...) CMETA_IFACE_META_REFLECTED(I,FD0,R,N,CMETA_INTERFACE_METHOD_OWNS_SELF)
+#define CMETA_IFACE_FLAGS_result CMETA_INTERFACE_METHOD_NONE
+#define CMETA_IFACE_FLAGS_discard CMETA_INTERFACE_METHOD_NONE
+#define CMETA_IFACE_FLAGS_destroy CMETA_INTERFACE_METHOD_OWNS_SELF
+#define CMETA_IFACE_META_REFS_0(I,N) NULL, NULL
+#define CMETA_IFACE_META_REFS_1(I,N) &I##_##N##__function_meta, &I##_##N##__function_abi_meta
+#define CMETA_IFACE_META(I,R,N,A,K,F,C,RD,RA,RF,...) \
+    { sizeof(cmeta_interface_method_desc), CMETA_PP_STRINGIFY(N), A, \
+      CMETA_PP_CAT(CMETA_IFACE_FLAGS_,K), CMETA_PP_CAT(CMETA_IFACE_META_REFS_,F)(I,N) },
 #define CMETA_IFACE_META_ROW(I,K,R,N,...) \
-    CMETA_PP_CAT(CMETA_IFACE_META_,K)(I,R,N,__VA_ARGS__)
+    CMETA_IFACE_DECODE(CMETA_IFACE_META,I,K,R,N,__VA_ARGS__)
 
 
-#define CMETA_INTERFACE(I, METHODS) \
+#define CMETA_INTERFACE(I, METHODS) CMETA_INTERFACE_I(I, METHODS)
+#define CMETA_INTERFACE_I(I, METHODS) \
     typedef struct I I; \
     typedef struct I##_vtable I##_vtable; \
     struct I##_vtable { \
@@ -553,10 +351,11 @@ cmeta_interface_desc_has_owning_method(const cmeta_interface_desc *desc) {
         METHODS(CMETA_IFACE_VT_ROW, I) \
     }; \
     struct I { void *self; const I##_vtable *vtable; }; \
+    METHODS(CMETA_IFACE_PROOF_ROW, I) \
     METHODS(CMETA_IFACE_FUNCTION_ROW, I) \
     CMETA_LOCAL const cmeta_interface_method_desc I##_method_meta[] = { METHODS(CMETA_IFACE_META_ROW, I) }; \
     CMETA_LOCAL const cmeta_interface_desc I##_interface_meta = { \
-        sizeof(cmeta_interface_desc), #I, I##_method_meta, \
+        sizeof(cmeta_interface_desc), CMETA_PP_STRINGIFY(I), I##_method_meta, \
         sizeof(I##_method_meta)/sizeof(I##_method_meta[0]) \
     }; \
     METHODS(CMETA_IFACE_IMPL_ROW, I) \

@@ -16,8 +16,11 @@ static void pool_int_move(void *destination, void *source) {
 }
 static const cmeta_data_construct_ops pool_int_ops = {
     sizeof(cmeta_data_construct_ops), CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,
-    &cmeta_type_int, pool_int_init, pool_int_restore, pool_int_move
+    &cmeta_type_int, pool_int_init, pool_int_restore, pool_int_move, 0
 };
+CMETA_DEFINE_STATIC_LIFECYCLE(PoolInt, pool_int_ops)
+static_assert(std::is_same_v<decltype(&PoolInt_cmeta_lifecycle),
+    const cmeta_data_construct_ops *(*)(const PoolInt *)>);
 static const cmeta_data_integer_shape pool_int_shape = {sizeof(PoolInt) * CHAR_BIT};
 static const cmeta_data_desc pool_int_data = {
     sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION, "test.PoolInt", "PoolInt",
@@ -63,6 +66,7 @@ suite("CMeta optional Pool lifecycle in C++") {
         PoolInt destination = 0;
         check_equal(CppPool_init(&pool, size_t{1}), CMETA_OK);
         check_true(pool.state.ops == &pool_int_ops);
+        check_true(PoolInt_cmeta_lifecycle(nullptr) == pool.state.ops);
         check_equal(CppPool_acquire(&pool, &lease), CMETA_OK);
         check_true(lease.state.owner.owner == &pool.state.owner);
         auto *value = CppPool_get(&pool, &lease);

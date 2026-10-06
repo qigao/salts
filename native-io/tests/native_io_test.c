@@ -6,7 +6,7 @@
 #include <salts/native_io.h>
 #include <salts/thread.h>
 #include <salts/clock.h>
-#include <salts_coro.h>
+#include <coro.h>
 
 #include "tinytest.h"
 
@@ -820,7 +820,7 @@ static void native_io_test_wake_owner_run(void *user) {
    */
   atomic_store_explicit(&owner->stage, 1, memory_order_release);
   while (atomic_load_explicit(&owner->stage, memory_order_acquire) == 1)
-    salts_thread_yield();
+    cmeta_thread_yield();
 
   owner->first_status =
       native_io_backend_observe(&owner->backend, &event, 1u, UINT32_MAX, &owner->first_count);
@@ -834,7 +834,7 @@ static void native_io_test_wake_owner_run(void *user) {
 
   owner->close_status = native_io_backend_close(&owner->backend);
   atomic_store_explicit(&owner->stage, 3, memory_order_release);
-  while (atomic_load_explicit(&owner->stage, memory_order_acquire) == 3) salts_thread_yield();
+  while (atomic_load_explicit(&owner->stage, memory_order_acquire) == 3) cmeta_thread_yield();
   owner->destroy_status = native_io_backend_destroy(&owner->backend);
   atomic_store_explicit(&owner->stage, 5, memory_order_release);
 }
@@ -851,11 +851,11 @@ static void native_io_test_wake_coalesces(native_io_backend_kind kind) {
       .second_count = SIZE_MAX,
       .close_status = SALTS_EIO,
       .destroy_status = SALTS_EIO};
-  salts_thread_t thread = NULL;
+  cmeta_thread_t thread = NULL;
 
   atomic_init(&owner.stage, 0);
-  check_equal(salts_thread_create(&thread, native_io_test_wake_owner_run, &owner), SALTS_OK);
-  while (atomic_load_explicit(&owner.stage, memory_order_acquire) == 0) salts_thread_yield();
+  check_equal(cmeta_thread_create(&thread, native_io_test_wake_owner_run, &owner), SALTS_OK);
+  while (atomic_load_explicit(&owner.stage, memory_order_acquire) == 0) cmeta_thread_yield();
 
   if (atomic_load_explicit(&owner.stage, memory_order_acquire) == 1) {
     check_equal(native_io_backend_wake(&owner.backend), SALTS_OK);
@@ -863,13 +863,13 @@ static void native_io_test_wake_coalesces(native_io_backend_kind kind) {
     check_equal(native_io_backend_wake(&owner.backend), SALTS_OK);
     atomic_store_explicit(&owner.stage, 6, memory_order_release);
     while (atomic_load_explicit(&owner.stage, memory_order_acquire) == 6)
-      salts_thread_yield();
+      cmeta_thread_yield();
   }
 
   if (atomic_load_explicit(&owner.stage, memory_order_acquire) == 2) {
     check_equal(native_io_backend_wake(&owner.backend), SALTS_OK);
     while (atomic_load_explicit(&owner.stage, memory_order_acquire) == 2)
-      salts_thread_yield();
+      cmeta_thread_yield();
   }
 
   if (atomic_load_explicit(&owner.stage, memory_order_acquire) == 3) {
@@ -877,7 +877,7 @@ static void native_io_test_wake_coalesces(native_io_backend_kind kind) {
     atomic_store_explicit(&owner.stage, 4, memory_order_release);
   }
 
-  check_equal(salts_thread_join(&thread), SALTS_OK);
+  check_equal(cmeta_thread_join(&thread), SALTS_OK);
   check_equal(owner.init_status, SALTS_OK);
   check_equal(owner.first_status, SALTS_OK);
   check_equal(owner.first_count, 0u);
@@ -1495,12 +1495,12 @@ static void native_io_test_count_signal(int signal_number) {
 
 static void native_io_test_interrupt_owner(void *user) {
   native_io_test_interrupts *probe = (native_io_test_interrupts *)user;
-  const uint64_t started_ms = salts_monotonic_ms();
+  const uint64_t started_ms = cmeta_monotonic_ms();
   do {
-    salts_sleep_ms(NATIVE_IO_TEST_SIGNAL_INTERVAL_MS);
+    cmeta_sleep_ms(NATIVE_IO_TEST_SIGNAL_INTERVAL_MS);
     probe->status = pthread_kill(probe->owner, SIGUSR1);
     if (probe->status != 0) return;
-  } while (salts_monotonic_ms() - started_ms < NATIVE_IO_TEST_SIGNAL_DURATION_MS);
+  } while (cmeta_monotonic_ms() - started_ms < NATIVE_IO_TEST_SIGNAL_DURATION_MS);
 }
 
 static void native_io_test_interrupted_timeout(native_io_backend_kind kind) {
@@ -1510,7 +1510,7 @@ static void native_io_test_interrupted_timeout(native_io_backend_kind kind) {
   native_io_test_interrupts probe = {.owner = pthread_self()};
   struct sigaction action = {0}, previous = {0};
   sigset_t signals, previous_mask;
-  salts_thread_t thread;
+  cmeta_thread_t thread;
   size_t count = SIZE_MAX;
   uint64_t started_ms, elapsed_ms;
 
@@ -1522,12 +1522,12 @@ static void native_io_test_interrupted_timeout(native_io_backend_kind kind) {
   native_io_test_signal_count = 0;
   check_equal(sigaction(SIGUSR1, &action, &previous), 0);
   check_equal(pthread_sigmask(SIG_UNBLOCK, &signals, &previous_mask), 0);
-  check_equal(salts_thread_create(&thread, native_io_test_interrupt_owner, &probe), SALTS_OK);
-  started_ms = salts_monotonic_ms();
+  check_equal(cmeta_thread_create(&thread, native_io_test_interrupt_owner, &probe), SALTS_OK);
+  started_ms = cmeta_monotonic_ms();
   check_equal(native_io_backend_observe(&backend, &event, 1u,
                                        NATIVE_IO_TEST_INTERRUPTED_TIMEOUT_MS, &count), SALTS_ETIMEDOUT);
-  elapsed_ms = salts_monotonic_ms() - started_ms;
-  check_equal(salts_thread_join(&thread), SALTS_OK);
+  elapsed_ms = cmeta_monotonic_ms() - started_ms;
+  check_equal(cmeta_thread_join(&thread), SALTS_OK);
   check_equal(pthread_sigmask(SIG_SETMASK, &previous_mask, NULL), 0);
   check_equal(sigaction(SIGUSR1, &previous, NULL), 0);
   check_equal(probe.status, 0);

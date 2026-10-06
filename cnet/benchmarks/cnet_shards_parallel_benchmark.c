@@ -371,7 +371,7 @@ static int shards_parallel_drain_events(shards_parallel_lane *lane) {
         if (lane->receive_offset == lane->payload_size) {
           if (lane->latency_out != NULL)
             *lane->latency_out =
-                salts_hrtime() - lane->started_ns;
+                cmeta_hrtime() - lane->started_ns;
           lane->receive_offset = 0u;
           lane->receive_done = true;
           ++lane->measured_receives;
@@ -398,12 +398,12 @@ static int shards_parallel_poll_lane(
 static int shards_parallel_wait_connected(
     shards_parallel_lane *lane) {
   const uint64_t deadline =
-      salts_monotonic_ms() + SHARDS_PARALLEL_TIMEOUT_MS;
+      cmeta_monotonic_ms() + SHARDS_PARALLEL_TIMEOUT_MS;
 
   while (!lane->connected) {
     int status = shards_parallel_poll_lane(lane, 10u);
     if (status != SALTS_OK) return status;
-    if (salts_monotonic_ms() >= deadline)
+    if (cmeta_monotonic_ms() >= deadline)
       return SALTS_ETIMEDOUT;
   }
   return SALTS_OK;
@@ -413,7 +413,7 @@ static int shards_parallel_cycle(
     shards_parallel_lane *lane, uint64_t *latency_out,
     bool measuring) {
   const uint64_t deadline =
-      salts_monotonic_ms() + SHARDS_PARALLEL_TIMEOUT_MS;
+      cmeta_monotonic_ms() + SHARDS_PARALLEL_TIMEOUT_MS;
   size_t sends_before = lane->measured_sends;
   size_t receives_before = lane->measured_receives;
   int status;
@@ -422,7 +422,7 @@ static int shards_parallel_cycle(
   lane->receive_done = false;
   lane->receive_offset = 0u;
   lane->latency_out = latency_out;
-  lane->started_ns = salts_hrtime();
+  lane->started_ns = cmeta_hrtime();
   if (latency_out != NULL) *latency_out = 0u;
 
   status = cnet_shards_send_buffer_direct(
@@ -432,7 +432,7 @@ static int shards_parallel_cycle(
   while (!lane->send_done || !lane->receive_done) {
     status = shards_parallel_poll_lane(lane, 10u);
     if (status != SALTS_OK) return status;
-    if (salts_monotonic_ms() >= deadline)
+    if (cmeta_monotonic_ms() >= deadline)
       return SALTS_ETIMEDOUT;
   }
 
@@ -473,7 +473,7 @@ static int shards_parallel_measure(
 static int shards_parallel_close_and_recycle(
     shards_parallel_lane *lane) {
   const uint64_t deadline =
-      salts_monotonic_ms() + SHARDS_PARALLEL_TIMEOUT_MS;
+      cmeta_monotonic_ms() + SHARDS_PARALLEL_TIMEOUT_MS;
   cnet_session_terminal terminal = {0};
   int status = cnet_shards_close(
       lane->shards, lane->connection);
@@ -483,7 +483,7 @@ static int shards_parallel_close_and_recycle(
   while (!lane->terminal) {
     status = shards_parallel_poll_lane(lane, 10u);
     if (status != SALTS_OK) return status;
-    if (salts_monotonic_ms() >= deadline)
+    if (cmeta_monotonic_ms() >= deadline)
       return SALTS_ETIMEDOUT;
   }
   status = cnet_shards_recycle(
@@ -750,7 +750,7 @@ static int shards_parallel_run_repeat(
     goto join_threads;
   }
 
-  wall_started = salts_hrtime();
+  wall_started = cmeta_hrtime();
   gate.start = true;
   (void)pthread_cond_broadcast(&gate.changed);
   while (gate.done < SHARDS_PARALLEL_LANES &&
@@ -758,7 +758,7 @@ static int shards_parallel_run_repeat(
     (void)pthread_cond_wait(&gate.changed, &gate.mutex);
   while (gate.done < SHARDS_PARALLEL_LANES)
     (void)pthread_cond_wait(&gate.changed, &gate.mutex);
-  wall_ns = salts_hrtime() - wall_started;
+  wall_ns = cmeta_hrtime() - wall_started;
   if (gate.failure != SALTS_OK) status = gate.failure;
   (void)pthread_mutex_unlock(&gate.mutex);
 

@@ -114,7 +114,7 @@ release success 只允许 relaxed failure，acq_rel success 至多允许 acquire
 typed acquire/get/move/release、TLS 退出清理、release/acquire 发布和 typed RCU 所有权交回。
 [`rcu_test.c`](../concurrency/tests/rcu_test.c) 展示跨线程 guard 交接、旧 epoch 背压和并发回收。
 
-本地 Windows 使用已有 `win-dev-user`（MSVC + ASan）或 `win-clang-user`：
+本地 Windows 使用已有 `win-dev-user`（MSVC + ASan）：
 
 ```powershell
 cmake --preset win-dev-user

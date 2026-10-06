@@ -158,6 +158,83 @@ cmeta_function_test_box *cmeta_function_test_owned_result(void) {
 }
 
 suite("CMeta function reflection") {
+    it("validates receiver projections using Function metadata alone") {
+        const cmeta_function_desc *source = FunctionMeta(cmeta_function_test_box_add);
+        cmeta_function_desc projected = *source;
+        cmeta_param_desc parameter = source->params[1];
+
+        projected.name = "bound_add";
+        projected.params = &parameter;
+        projected.param_count = 1u;
+        check_true(cmeta_function_receiver_valid(source));
+        check_true(cmeta_function_receiver_projection_valid(source, &projected));
+        check_false(cmeta_function_receiver_valid(&projected));
+        check_false(cmeta_function_receiver_valid(NULL));
+        check_false(cmeta_function_receiver_projection_valid(source, NULL));
+
+        parameter.name = "other";
+        check_false(cmeta_function_receiver_projection_valid(source, &projected));
+        parameter = source->params[1];
+        parameter.flags = 0u;
+        check_true(cmeta_function_desc_valid(&projected));
+        check_false(cmeta_function_receiver_projection_valid(source, &projected));
+        parameter = source->params[1];
+        parameter.type = &cmeta_type_long;
+        check_false(cmeta_function_receiver_projection_valid(source, &projected));
+        parameter = source->params[1];
+
+        projected.return_type = &cmeta_type_long;
+        check_false(cmeta_function_receiver_projection_valid(source, &projected));
+        projected.return_type = source->return_type;
+        projected.effects ^= CMETA_EFFECT_IO;
+        check_true(cmeta_function_desc_valid(&projected));
+        check_false(cmeta_function_receiver_projection_valid(source, &projected));
+        projected.effects = source->effects;
+        projected.properties ^= CMETA_PROP_DETERMINISTIC;
+        check_true(cmeta_function_desc_valid(&projected));
+        check_false(cmeta_function_receiver_projection_valid(source, &projected));
+        projected.properties = source->properties;
+        projected.param_count = 0u;
+        check_false(cmeta_function_receiver_projection_valid(source, &projected));
+
+        {
+            cmeta_function_desc receiver_only = *source;
+            receiver_only.param_count = 1u;
+            projected.params = NULL;
+            check_true(cmeta_function_receiver_projection_valid(
+                &receiver_only, &projected));
+        }
+    }
+
+    it("preserves every result ownership and nullability in receiver projections") {
+        const cmeta_result_flags results[] = {
+            CMETA_RESULT_UNKNOWN, CMETA_RESULT_VALUE,
+            CMETA_RESULT_BORROWED, CMETA_RESULT_SHARED, CMETA_RESULT_OWNED,
+            CMETA_RESULT_BORROWED | CMETA_RESULT_NULLABLE,
+            CMETA_RESULT_SHARED | CMETA_RESULT_NULLABLE,
+            CMETA_RESULT_OWNED | CMETA_RESULT_NULLABLE
+        };
+        cmeta_function_desc source = *FunctionMeta(cmeta_function_test_box_add);
+        cmeta_function_desc projected = source;
+        size_t i;
+        size_t j;
+
+        source.return_type = &cmeta_function_test_box_ptr_type;
+        projected.return_type = source.return_type;
+        projected.params = &source.params[1];
+        projected.param_count = source.param_count - 1u;
+        for (i = 0u; i < sizeof(results) / sizeof(results[0]); ++i) {
+            source.result_flags = results[i];
+            check_true(cmeta_function_desc_valid(&source));
+            for (j = 0u; j < sizeof(results) / sizeof(results[0]); ++j) {
+                projected.result_flags = results[j];
+                check_true(cmeta_function_desc_valid(&projected));
+                check_equal(cmeta_function_receiver_projection_valid(
+                    &source, &projected), i == j);
+            }
+        }
+    }
+
     it("publishes ordinary function metadata without consumer signature duplication") {
         const cmeta_function_desc *fn = FunctionMeta(cmeta_function_test_sum);
         const cmeta_param_desc *left = cmeta_function_param(fn, 0u);

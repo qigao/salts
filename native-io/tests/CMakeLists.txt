@@ -9,7 +9,7 @@ set_target_properties(native_io_test PROPERTIES
 
 cmake_add_test(native_io_accept_escrow_test
   SOURCES native_io_accept_escrow_test.c
-  LIBS Salts::NativeIO
+  LIBS Salts::TinyTest Salts::NativeIO
   FOLDER "native-io/tests")
 set_target_properties(native_io_accept_escrow_test PROPERTIES
   C_STANDARD 11
@@ -19,7 +19,7 @@ add_dependencies(native_io_test native_io_accept_escrow_test)
 
 cmake_add_test(native_io_internal_accept_test
   SOURCES native_io_internal_accept_test.c
-  LIBS Salts::NativeIO
+  LIBS Salts::TinyTest Salts::NativeIO
   FOLDER "native-io/tests")
 target_include_directories(native_io_internal_accept_test
   PRIVATE "${PROJECT_SOURCE_DIR}/native-io/src")
@@ -48,7 +48,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
   cmake_add_test(native_io_uring_accept_test
     SOURCES native_io_uring_accept_test.c
-    LIBS Salts::NativeIO
+    LIBS Salts::TinyTest Salts::NativeIO
     FOLDER "native-io/tests")
   target_include_directories(native_io_uring_accept_test
     PRIVATE "${PROJECT_SOURCE_DIR}/native-io/src")
@@ -56,6 +56,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF)
+  set_tests_properties(native_io_uring_accept_test PROPERTIES SKIP_RETURN_CODE 77)
   add_dependencies(native_io_test native_io_uring_accept_test)
 endif()
 
@@ -64,7 +65,7 @@ if(WIN32)
 
   cmake_add_test(native_io_iocp_accept_test
     SOURCES native_io_iocp_accept_test.c
-    LIBS Salts::NativeIO ws2_32
+    LIBS Salts::TinyTest Salts::NativeIO ws2_32
     FOLDER "native-io/tests")
   target_include_directories(native_io_iocp_accept_test
     PRIVATE "${PROJECT_SOURCE_DIR}/native-io/src")
@@ -78,7 +79,7 @@ endif()
 if(NOT WIN32)
   cmake_add_test(native_io_readiness_accept_test
     SOURCES native_io_readiness_accept_test.c
-    LIBS Salts::NativeIO
+    LIBS Salts::TinyTest Salts::NativeIO
     FOLDER "native-io/tests")
   target_include_directories(native_io_readiness_accept_test
     PRIVATE "${PROJECT_SOURCE_DIR}/native-io/src")
@@ -91,7 +92,7 @@ endif()
 
 cmake_add_test(native_io_header_cpp_test
   SOURCES native_io_header_cpp_test.cpp
-  LIBS Salts::NativeIO
+  LIBS Salts::TinyTest Salts::NativeIO
   FOLDER "native-io/tests")
 set_target_properties(native_io_header_cpp_test PROPERTIES
   CXX_STANDARD 17
@@ -109,7 +110,7 @@ set_target_properties(native_ipc_test PROPERTIES
 
 cmake_add_test(native_ipc_header_cpp_test
   SOURCES native_ipc_header_cpp_test.cpp
-  LIBS Salts::NativeIO
+  LIBS Salts::TinyTest Salts::NativeIO
   FOLDER "native-io/tests")
 set_target_properties(native_ipc_header_cpp_test PROPERTIES
   CXX_STANDARD 17

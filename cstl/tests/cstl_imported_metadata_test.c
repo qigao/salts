@@ -1,5 +1,5 @@
 #include <cstl/typed.h>
-#include <salts_cmeta_data.h>
+#include <cmeta_cmeta_data.h>
 #include <tinytest.h>
 
 #include <string.h>
@@ -19,9 +19,9 @@ spec("CSTL imported semantic metadata") {
 
     check_not_null(source);
     check_true(cmeta_type_equal(
-        SALTS_TSTR_CMETA_TYPE_REF, &salts_tstr_cmeta_type));
+        SALTS_TSTR_CMETA_TYPE_REF, &cmeta_tstr_cmeta_type));
     check_true(cmeta_data_desc_equal(
-        SALTS_TSTR_CMETA_DATA_REF, &salts_tstr_cmeta_data));
+        SALTS_TSTR_CMETA_DATA_REF, &cmeta_tstr_cmeta_data));
     check_true(cmeta_data_collection_element_data(
                    &ImportSafeTstrVec_collection_data) ==
                SALTS_TSTR_CMETA_DATA_REF);
@@ -58,28 +58,28 @@ spec("CSTL imported semantic metadata") {
 
     check_not_null(alpha);
     check_not_null(beta);
-    check_not_null(salts_tstr_cmeta_type.traits);
+    check_not_null(cmeta_tstr_cmeta_type.traits);
     check_not_null(SALTS_TSTR_CMETA_TYPE_REF->traits);
-    check_true((salts_tstr_cmeta_type.traits->flags &
+    check_true((cmeta_tstr_cmeta_type.traits->flags &
                 CMETA_TRAIT_COMPARE) != 0u);
     check_true((SALTS_TSTR_CMETA_TYPE_REF->traits->flags &
                 CMETA_TRAIT_COMPARE) != 0u);
-    check_not_null(salts_tstr_cmeta_type.traits->compare);
+    check_not_null(cmeta_tstr_cmeta_type.traits->compare);
     check_not_null(SALTS_TSTR_CMETA_TYPE_REF->traits->compare);
 
-    check(salts_tstr_cmeta_type.traits->compare(&alpha, &beta) < 0);
+    check(cmeta_tstr_cmeta_type.traits->compare(&alpha, &beta) < 0);
     check(SALTS_TSTR_CMETA_TYPE_REF->traits->compare(&beta, &alpha) > 0);
     check_equal(
-        salts_tstr_cmeta_type.traits->compare(&alpha, &alpha), 0);
+        cmeta_tstr_cmeta_type.traits->compare(&alpha, &alpha), 0);
     check_equal(
         SALTS_TSTR_CMETA_TYPE_REF->traits->compare(&zero, &zero), 0);
     check(
         SALTS_TSTR_CMETA_TYPE_REF->traits->compare(&zero, &alpha) < 0);
 
     check_true(cmeta_type_equal(
-        SALTS_TSTR_CMETA_TYPE_REF, &salts_tstr_cmeta_type));
+        SALTS_TSTR_CMETA_TYPE_REF, &cmeta_tstr_cmeta_type));
     check_true(cmeta_data_desc_equal(
-        SALTS_TSTR_CMETA_DATA_REF, &salts_tstr_cmeta_data));
+        SALTS_TSTR_CMETA_DATA_REF, &cmeta_tstr_cmeta_data));
 
     tstr_free(alpha);
     tstr_free(beta);
@@ -132,24 +132,24 @@ spec("CSTL imported semantic metadata") {
   }
 
   it("preserves canonical Map receiver reflection for tstr keys") {
-    const cmeta_receiver_method_set *set =
-        ImportSafeTstrIntMap_receiver_method_set();
-    const cmeta_receiver_method *method;
+    const cmeta_receiver_operation_set *set =
+        ImportSafeTstrIntMap_receiver_operation_set();
+    const cmeta_receiver_operation *method;
 
-    check_true(cmeta_receiver_method_set_valid(set));
+    check_true(cmeta_receiver_operation_set_valid(set));
     check_true(cmeta_generic_desc_equal(set->owner, &stl_map_generic_desc));
 
-    method = cmeta_receiver_method_find(set, "put");
+    method = cmeta_receiver_operation_find(set, "put");
     check_not_null(method);
     check_true(
-        method->function == ImportSafeTstrIntMap_put_function());
+        method->abi->function == ImportSafeTstrIntMap_put_function());
     check_true(
         method->abi == ImportSafeTstrIntMap_put_function_abi());
     check_true(cmeta_type_equal(
-        cmeta_function_param(method->function, 1u)->type,
+        cmeta_function_param(method->abi->function, 1u)->type,
         SALTS_TSTR_CMETA_TYPE_REF));
     check_true(cmeta_type_equal(
-        cmeta_function_param(method->function, 2u)->type,
+        cmeta_function_param(method->abi->function, 2u)->type,
         &cmeta_type_int));
   }
 }

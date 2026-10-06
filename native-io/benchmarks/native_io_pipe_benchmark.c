@@ -305,12 +305,12 @@ static int native_pipe_raw_post(native_pipe_fixture *fixture, native_pipe_raw_re
   uint64_t started;
   if (length > (size_t)MAXDWORD) return SALTS_ERANGE;
   memset(request, 0, sizeof(*request));
-  started = salts_hrtime();
+  started = cmeta_hrtime();
   submitted = read ? ReadFile(fixture->handles[0], buffer, (DWORD)length, &immediate_bytes,
                               &request->overlapped)
                    : WriteFile(fixture->handles[1], buffer, (DWORD)length, &immediate_bytes,
                                &request->overlapped);
-  native_pipe_counter_add(&stages->submit_ns, salts_hrtime() - started);
+  native_pipe_counter_add(&stages->submit_ns, cmeta_hrtime() - started);
   ++stages->submits;
   if (submitted) return SALTS_OK;
   error = GetLastError();
@@ -337,10 +337,10 @@ static int native_pipe_raw_transfer(native_pipe_fixture *fixture, native_pipe_st
       ULONG_PTR completion_key = 0u;
       OVERLAPPED *overlapped = NULL;
       DWORD error;
-      const uint64_t started = salts_hrtime();
+      const uint64_t started = cmeta_hrtime();
       const BOOL completed = GetQueuedCompletionStatus(fixture->port, &bytes, &completion_key,
                                                        &overlapped, NATIVE_PIPE_TIMEOUT_MS);
-      native_pipe_counter_add(&stages->observe_ns, salts_hrtime() - started);
+      native_pipe_counter_add(&stages->observe_ns, cmeta_hrtime() - started);
       ++stages->observes;
       error = completed ? ERROR_SUCCESS : GetLastError();
       (void)completion_key;
@@ -368,11 +368,11 @@ static int native_pipe_raw_transfer(native_pipe_fixture *fixture, native_pipe_st
   while (sent_offset < fixture->payload_size || received_offset < fixture->payload_size) {
     bool progressed = false;
     if (received_offset < fixture->payload_size) {
-      const uint64_t started = salts_hrtime();
+      const uint64_t started = cmeta_hrtime();
       const ssize_t bytes = read(fixture->handles[0], fixture->received + received_offset,
                                  fixture->payload_size - received_offset);
       const int native_error = bytes < 0 ? errno : 0;
-      native_pipe_counter_add(&stages->submit_ns, salts_hrtime() - started);
+      native_pipe_counter_add(&stages->submit_ns, cmeta_hrtime() - started);
       ++stages->submits;
       if (bytes > 0) {
         received_offset += (size_t)bytes;
@@ -384,11 +384,11 @@ static int native_pipe_raw_transfer(native_pipe_fixture *fixture, native_pipe_st
       }
     }
     if (sent_offset < fixture->payload_size) {
-      const uint64_t started = salts_hrtime();
+      const uint64_t started = cmeta_hrtime();
       const ssize_t bytes = write(fixture->handles[1], fixture->sent + sent_offset,
                                   fixture->payload_size - sent_offset);
       const int native_error = bytes < 0 ? errno : 0;
-      native_pipe_counter_add(&stages->submit_ns, salts_hrtime() - started);
+      native_pipe_counter_add(&stages->submit_ns, cmeta_hrtime() - started);
       ++stages->submits;
       if (bytes > 0) {
         sent_offset += (size_t)bytes;
@@ -407,9 +407,9 @@ static int native_pipe_raw_transfer(native_pipe_fixture *fixture, native_pipe_st
 
 static int native_pipe_submit(native_pipe_fixture *fixture, const native_io_operation *operation,
                               native_io_request *request, native_pipe_stages *stages) {
-  const uint64_t started = salts_hrtime();
+  const uint64_t started = cmeta_hrtime();
   const int status = native_io_backend_submit(&fixture->backend, operation, request);
-  native_pipe_counter_add(&stages->submit_ns, salts_hrtime() - started);
+  native_pipe_counter_add(&stages->submit_ns, cmeta_hrtime() - started);
   ++stages->submits;
   return status;
 }
@@ -446,10 +446,10 @@ static int native_pipe_native_transfer(native_pipe_fixture *fixture, native_pipe
       write_pending = true;
     }
     {
-      const uint64_t started = salts_hrtime();
+      const uint64_t started = cmeta_hrtime();
       status = native_io_backend_observe(&fixture->backend, events, NATIVE_PIPE_BATCH_CAPACITY,
                                         NATIVE_PIPE_TIMEOUT_MS, &event_count);
-      native_pipe_counter_add(&stages->observe_ns, salts_hrtime() - started);
+      native_pipe_counter_add(&stages->observe_ns, cmeta_hrtime() - started);
       ++stages->observes;
     }
     if (status != SALTS_OK) return status;
@@ -513,9 +513,9 @@ static int native_pipe_measure_batch(native_pipe_fixture *fixture, native_pipe_r
     uint64_t elapsed;
     int status;
     if (result->latency_count >= result->latency_capacity) return SALTS_ENOBUFS;
-    started = salts_hrtime();
+    started = cmeta_hrtime();
     status = native_pipe_transfer(fixture, &result->stages);
-    elapsed = salts_hrtime() - started;
+    elapsed = cmeta_hrtime() - started;
     if (status != SALTS_OK) return status;
     result->latencies[result->latency_count++] = elapsed;
     native_pipe_counter_add(&result->wall_ns, elapsed);

@@ -45,7 +45,7 @@ typedef struct qd_fixture {
   native_io_endpoint endpoints[QD_BENCH_MAX_QD];
   int local[QD_BENCH_MAX_QD];
   qd_peer peer;
-  salts_thread_t peer_thread;
+  cmeta_thread_t peer_thread;
   unsigned char *sent;
   unsigned char *received;
   size_t qd;
@@ -155,7 +155,7 @@ static int qd_cycle(qd_fixture *fixture, uint64_t *latencies, size_t latency_bas
   size_t recv_offsets[QD_BENCH_MAX_QD] = {0};
   native_io_completion completions[QD_BENCH_MAX_QD * 2u];
   const size_t completion_capacity = fixture->qd * 2u;
-  const uint64_t started = salts_hrtime();
+  const uint64_t started = cmeta_hrtime();
   size_t sends_done = 0u;
   size_t recvs_done = 0u;
   native_io_backend_stats stats;
@@ -205,7 +205,7 @@ static int qd_cycle(qd_fixture *fixture, uint64_t *latencies, size_t latency_bas
           ++sends_done;
         } else {
           ++recvs_done;
-          if (latencies != NULL) latencies[latency_base + index] = salts_hrtime() - started;
+          if (latencies != NULL) latencies[latency_base + index] = cmeta_hrtime() - started;
         }
       } else {
         status = qd_prepare(fixture, index, send, *offset, &request);
@@ -262,7 +262,7 @@ static int qd_fixture_init(qd_fixture *fixture, size_t qd, size_t payload_size, 
   fixture->peer.payload_size = payload_size;
   fixture->peer.cycles = cycles;
   atomic_init(&fixture->peer.status, SALTS_OK);
-  status = salts_thread_create(&fixture->peer_thread, qd_peer_run, &fixture->peer);
+  status = cmeta_thread_create(&fixture->peer_thread, qd_peer_run, &fixture->peer);
   return status;
 }
 
@@ -280,7 +280,7 @@ static int qd_fixture_destroy(qd_fixture *fixture, bool abort_peer) {
   }
 
   if (fixture->peer_thread != NULL) {
-    int join_status = salts_thread_join(&fixture->peer_thread);
+    int join_status = cmeta_thread_join(&fixture->peer_thread);
     if (join_status != SALTS_OK && status == SALTS_OK) status = join_status;
     peer_status = atomic_load_explicit(&fixture->peer.status, memory_order_acquire);
     if (peer_status != SALTS_OK && status == SALTS_OK) status = peer_status;
@@ -350,7 +350,7 @@ static int qd_run_cell(size_t qd, size_t payload_size, qd_result *out) {
   fprintf(stderr, "NATIVE_IO_QD_MEASURE_BEGIN qd=%zu payload=%zu samples=%u\n",
           qd, payload_size, (unsigned)QD_BENCH_SAMPLES);
   fflush(stderr);
-  wall_started = salts_hrtime();
+  wall_started = cmeta_hrtime();
   cpu_started = qd_thread_cpu_ns();
 
   for (size_t sample = 0u; sample < QD_BENCH_SAMPLES; ++sample) {
@@ -359,7 +359,7 @@ static int qd_run_cell(size_t qd, size_t payload_size, qd_result *out) {
   }
 
   out->cpu_ns = qd_thread_cpu_ns() - cpu_started;
-  out->wall_ns = salts_hrtime() - wall_started;
+  out->wall_ns = cmeta_hrtime() - wall_started;
   fprintf(stderr, "NATIVE_IO_QD_MEASURE_END qd=%zu payload=%zu\n", qd, payload_size);
   fflush(stderr);
 

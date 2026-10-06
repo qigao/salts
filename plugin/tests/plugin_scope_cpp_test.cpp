@@ -1,0 +1,128 @@
+#include <salts/plugin_scope.h>
+#include "tinytest.hpp"
+#include <type_traits>
+
+static_assert(!std::is_copy_constructible<salts::plugin_lease_scope>::value,"lease has one owner");
+static_assert(!std::is_copy_assignable<salts::plugin_lease_scope>::value,"lease cannot be copied");
+static_assert(std::is_nothrow_move_constructible<salts::plugin_lease_scope>::value,"move transfers ownership");
+static_assert(!std::is_move_assignable<salts::plugin_lease_scope>::value,"close a live target explicitly");
+
+suite("Plugin C++ lease ownership") {
+    static cmeta_plugin_registry registry;
+    static cmeta_plugin_ref ref;
+    before_each() {
+        registry = {};
+        ref = {};
+        const cmeta_plugin_registry_config config = {1u};
+        check_equal(cmeta_plugin_registry_init(&registry,&config),CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_load(&registry,PLUGIN_SCOPE_PATH,&ref),CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_start(&registry,ref),CMETA_PLUGIN_OK);
+    }
+    after_each() {
+        cmeta_plugin_lifecycle_info info = {};
+        check_equal(cmeta_plugin_registry_get_lifecycle(&registry,ref,&info),CMETA_PLUGIN_OK);
+        check_equal(info.active_leases,(size_t)0u);
+        if (info.state == CMETA_PLUGIN_LIFECYCLE_STARTED)
+            check_equal(cmeta_plugin_registry_request_stop(&registry,ref),CMETA_PLUGIN_OK);
+        bool quiet = false;
+        check_equal(cmeta_plugin_registry_poll_quiescent(&registry,ref,&quiet),CMETA_PLUGIN_OK);
+        check_true(quiet);
+        check_equal(cmeta_plugin_registry_unload(&registry,ref),CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_destroy(&registry),CMETA_PLUGIN_OK);
+    }
+    it("releases on early return and can reuse an explicitly closed owner") {
+        const auto early_return = []() -> cmeta_plugin_status {
+            salts::plugin_lease_scope owner;
+            const cmeta_plugin_status status = owner.acquire(registry,ref);
+            if (status != CMETA_PLUGIN_OK) return status;
+            return CMETA_PLUGIN_BUSY;
+        };
+        check_equal(early_return(),CMETA_PLUGIN_BUSY);
+        cmeta_plugin_lifecycle_info info = {};
+        check_equal(cmeta_plugin_registry_get_lifecycle(&registry,ref,&info),CMETA_PLUGIN_OK);
+        check_equal(info.active_leases,(size_t)0u);
+        salts::plugin_lease_scope owner;
+        check_equal(owner.acquire(registry,ref),CMETA_PLUGIN_OK);
+        check_equal(owner.close(),CMETA_PLUGIN_OK);
+        check_equal(owner.acquire(registry,ref),CMETA_PLUGIN_OK);
+    }
+    it("orders dependent obligations before its authoritative lease release") {
+        cmeta_plugin_lease lease = {};
+        const cmeta_plugin_manifest *manifest = nullptr;
+        check_equal(cmeta_plugin_registry_acquire(&registry,ref,&lease,&manifest),CMETA_PLUGIN_OK);
+        cmeta_plugin_cleanup_lease owner{&registry,&lease};
+        cmeta_cleanup obligations[2] = {CMETA_CLEANUP_INIT,CMETA_CLEANUP_INIT};
+        struct dependent {
+            cmeta_plugin_registry *registry;
+            cmeta_plugin_ref ref;
+            bool observed;
+        } view{&registry,ref,false};
+        check_equal(cmeta_plugin_cleanup_arm(&obligations[0],&owner),CMETA_OK);
+        check_equal(cmeta_cleanup_arm(&obligations[1],[](void *,void *resource) {
+            auto *value = static_cast<dependent *>(resource);
+            cmeta_plugin_lifecycle_info info = {};
+            value->observed = cmeta_plugin_registry_get_lifecycle(value->registry,value->ref,&info) ==
+                CMETA_PLUGIN_OK && info.active_leases == 1u;
+        },nullptr,&view),CMETA_OK);
+        cmeta_cleanup_reverse(obligations,2);
+        cmeta_cleanup_reverse(obligations,2);
+        check_true(view.observed);
+    }
+    it("moves exactly one lease and keeps unload blocked until scope exit") {
+        salts::plugin_lease_scope first;
+        check_equal(first.acquire(registry,ref),CMETA_PLUGIN_OK);
+        const cmeta_plugin_manifest *borrow = first.manifest();
+        salts::plugin_lease_scope second(std::move(first));
+        check_false(static_cast<bool>(first));
+        check_null(first.manifest());
+        check_equal(second.manifest(),borrow);
+        check_equal(second.acquire(registry,ref),CMETA_PLUGIN_INVALID_STATE);
+        check_equal(cmeta_plugin_registry_request_stop(&registry,ref),CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_unload(&registry,ref),CMETA_PLUGIN_BUSY);
+        salts::plugin_lease_scope denied;
+        check_equal(denied.acquire(registry,ref),CMETA_PLUGIN_INVALID_STATE);
+        check_false(static_cast<bool>(denied));
+        check_null(denied.manifest());
+        cmeta_plugin_lifecycle_info info = {};
+        check_equal(cmeta_plugin_registry_get_lifecycle(&registry,ref,&info),CMETA_PLUGIN_OK);
+        check_equal(info.active_leases,(size_t)1u);
+    }
+    it("releases on an exception after dependent borrowed values are destroyed") {
+        struct dependent {
+            cmeta_plugin_registry *registry;
+            cmeta_plugin_ref ref;
+            bool *observed;
+            ~dependent() {
+                cmeta_plugin_lifecycle_info info = {};
+                *observed = cmeta_plugin_registry_get_lifecycle(registry,ref,&info) == CMETA_PLUGIN_OK &&
+                    info.active_leases == 1u;
+            }
+        };
+        bool observed = false;
+        try {
+            salts::plugin_lease_scope owner;
+            check_equal(owner.acquire(registry,ref),CMETA_PLUGIN_OK);
+            dependent view{&registry,ref,&observed};
+            throw CMETA_PLUGIN_BUSY;
+        } catch (cmeta_plugin_status status) {
+            check_equal(status,CMETA_PLUGIN_BUSY);
+        }
+        check_true(observed);
+    }
+    it("preserves ownership on explicit close failure and permits a corrected retry") {
+        salts::plugin_lease_scope owner;
+        check_equal(owner.acquire(registry,ref),CMETA_PLUGIN_OK);
+        const cmeta_plugin_manifest *borrow = owner.manifest();
+        void *saved = registry.impl;
+        registry.impl = nullptr;
+        const cmeta_plugin_status failure = owner.close();
+        registry.impl = saved;
+        check_equal(failure,CMETA_PLUGIN_INVALID_ARGUMENT);
+        check_true(static_cast<bool>(owner));
+        check_equal(owner.manifest(),borrow);
+        check_equal(owner.close(),CMETA_PLUGIN_OK);
+        check_null(owner.manifest());
+        check_false(static_cast<bool>(owner));
+        check_equal(owner.close(),CMETA_PLUGIN_OK);
+    }
+}

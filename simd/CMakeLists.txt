@@ -1,4 +1,4 @@
-set(TARGET_NAME salts_simd)
+set(TARGET_NAME cmeta_simd)
 
 # SIMDe is supplied by the repository's vcpkg contract and warmed by
 # qigao/vcpkg-cache. It remains a private implementation dependency.
@@ -9,6 +9,7 @@ add_library(${TARGET_NAME}
 
 cmake_config_target(
   ${TARGET_NAME}
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   ALIAS Salts::SIMD
   FOLDER "simd"
   EXPORT_NAME SIMD)

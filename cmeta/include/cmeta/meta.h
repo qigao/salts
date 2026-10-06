@@ -1,35 +1,38 @@
 #ifndef CMETA_META_H
 #define CMETA_META_H
+
 #include <cmeta/cmeta.h>
+#include <cmeta/collector.h>
+#include <cmeta/compute.h>
 #include <cmeta/data.h>
 #include <cmeta/data_select.h>
 #include <cmeta/declared_type.h>
 #include <cmeta/entry.h>
+#include <cmeta/enum.h>
+#include <cmeta/fingerprint.h>
+#include <cmeta/flags.h>
 #include <cmeta/function.h>
-#include <cmeta/method.h>
-#include <cmeta/object.h>
 #include <cmeta/infer.h>
 #include <cmeta/manifest.h>
 #include <cmeta/manifest_view.h>
-#include <cmeta/fingerprint.h>
+#include <cmeta/object.h>
+#include <cmeta/operation.h>
 #include <cmeta/plugin.h>
-#include <cmeta/collector.h>
-#include <cmeta/compute.h>
-#include <cmeta/enum.h>
-#include <cmeta/flags.h>
 #include <cmeta/pp.h>
 #include <cmeta/status.h>
 #include <cmeta/struct.h>
 #include <cmeta/type_select.h>
 #include <cmeta/type_traits.h>
-#include <cmeta/vector.h>
 #include <cmeta/variant.h>
+#include <cmeta/vector.h>
+
 #ifndef __cplusplus
   #include <cmeta/contract.h>
   #include <cmeta/generic.h>
   #include <cmeta/interface.h>
-#include <cmeta/invokable.h>
+  #include <cmeta/invokable.h>
   #include <cmeta/range.h>
   #include <cmeta/value.h>
 #endif
+
 #endif

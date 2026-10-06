@@ -62,7 +62,7 @@ static int32_t ac_byte_new_node(ac_automaton_t *ac, int *out_error) {
 
   stl_status status = vec_push(&ac->nodes, &node);
   if (status != STL_OK) {
-    if (out_error) *out_error = salts_core_status_from_stl(status);
+    if (out_error) *out_error = cmeta_core_status_from_stl(status);
     return -1;
   }
 
@@ -86,7 +86,7 @@ static int32_t ac_new_output(ac_automaton_t *ac, uint32_t pattern_id, uint32_t p
 
   stl_status status = vec_push(&ac->outputs, &output);
   if (status != STL_OK) {
-    if (out_error) *out_error = salts_core_status_from_stl(status);
+    if (out_error) *out_error = cmeta_core_status_from_stl(status);
     return -1;
   }
   return (int32_t)(vec_size(&ac->outputs) - 1U);
@@ -100,12 +100,12 @@ static int ac_automaton_init_common(ac_automaton_t *ac) {
 
   status = vec_init_bytes(&ac->nodes, sizeof(ac_byte_node_t),
                                 _Alignof(ac_byte_node_t), AC_AUTOMATON_ENTRY_LIMIT);
-  if (status != STL_OK) return salts_core_status_from_stl(status);
+  if (status != STL_OK) return cmeta_core_status_from_stl(status);
   status = vec_init_bytes(&ac->outputs, sizeof(ac_output_t),
                                 _Alignof(ac_output_t), AC_AUTOMATON_ENTRY_LIMIT);
   if (status != STL_OK) {
     vec_destroy(&ac->nodes);
-    return salts_core_status_from_stl(status);
+    return cmeta_core_status_from_stl(status);
   }
 
   if (ac_byte_new_node(ac, &error) < 0) {
@@ -196,7 +196,7 @@ int ac_automaton_build(ac_automaton_t *ac) {
   {
     stl_status status = vec_init_bytes(
         &queue, sizeof(uint32_t), _Alignof(uint32_t), vec_size(&ac->nodes));
-    if (status != STL_OK) return salts_core_status_from_stl(status);
+    if (status != STL_OK) return cmeta_core_status_from_stl(status);
   }
 
   for (size_t ch = 0; ch < 256; ++ch) {
@@ -212,7 +212,7 @@ int ac_automaton_build(ac_automaton_t *ac) {
         stl_status status = vec_push(&queue, &child);
         if (status != STL_OK) {
           vec_destroy(&queue);
-          return salts_core_status_from_stl(status);
+          return cmeta_core_status_from_stl(status);
         }
       }
     }
@@ -259,7 +259,7 @@ int ac_automaton_build(ac_automaton_t *ac) {
         stl_status status = vec_push(&queue, &child);
         if (status != STL_OK) {
           vec_destroy(&queue);
-          return salts_core_status_from_stl(status);
+          return cmeta_core_status_from_stl(status);
         }
       }
     }
@@ -330,7 +330,7 @@ static int32_t ac_utf8_new_node(ac_utf8_automaton_t *ac, int *out_error) {
 
   stl_status status = vec_push(&ac->nodes, &node);
   if (status != STL_OK) {
-    if (out_error) *out_error = salts_core_status_from_stl(status);
+    if (out_error) *out_error = cmeta_core_status_from_stl(status);
     return -1;
   }
   return (int32_t)(vec_size(&ac->nodes) - 1U);
@@ -345,7 +345,7 @@ static int32_t ac_utf8_new_edge(ac_utf8_automaton_t *ac, uint32_t cp, int32_t ch
 
   stl_status status = vec_push(&ac->edges, &edge);
   if (status != STL_OK) {
-    if (out_error) *out_error = salts_core_status_from_stl(status);
+    if (out_error) *out_error = cmeta_core_status_from_stl(status);
     return -1;
   }
   return (int32_t)(vec_size(&ac->edges) - 1U);
@@ -408,19 +408,19 @@ int ac_utf8_automaton_init(ac_utf8_automaton_t *ac) {
 
   status = vec_init_bytes(&ac->nodes, sizeof(ac_utf8_node_t),
                                 _Alignof(ac_utf8_node_t), AC_AUTOMATON_ENTRY_LIMIT);
-  if (status != STL_OK) return salts_core_status_from_stl(status);
+  if (status != STL_OK) return cmeta_core_status_from_stl(status);
   status = vec_init_bytes(&ac->outputs, sizeof(ac_output_t),
                                 _Alignof(ac_output_t), AC_AUTOMATON_ENTRY_LIMIT);
   if (status != STL_OK) {
     vec_destroy(&ac->nodes);
-    return salts_core_status_from_stl(status);
+    return cmeta_core_status_from_stl(status);
   }
   status = vec_init_bytes(&ac->edges, sizeof(ac_utf8_edge_t),
                                 _Alignof(ac_utf8_edge_t), AC_AUTOMATON_ENTRY_LIMIT);
   if (status != STL_OK) {
     vec_destroy(&ac->outputs);
     vec_destroy(&ac->nodes);
-    return salts_core_status_from_stl(status);
+    return cmeta_core_status_from_stl(status);
   }
 
   if (ac_utf8_new_node(ac, &error) < 0) {
@@ -491,7 +491,7 @@ int ac_utf8_automaton_add_pattern(ac_utf8_automaton_t *ac, vstr pattern, uint32_
                                     .pattern_len = cp_count,
                                     .next_output = terminal->outputs});
     if (status != STL_OK) {
-      return salts_core_status_from_stl(status);
+      return cmeta_core_status_from_stl(status);
     }
   }
   terminal->outputs = (int32_t)(vec_size(&ac->outputs) - 1U);
@@ -510,7 +510,7 @@ int ac_utf8_automaton_build(ac_utf8_automaton_t *ac) {
   {
     stl_status status = vec_init_bytes(
         &queue, sizeof(uint32_t), _Alignof(uint32_t), vec_size(&ac->nodes));
-    if (status != STL_OK) return salts_core_status_from_stl(status);
+    if (status != STL_OK) return cmeta_core_status_from_stl(status);
   }
 
   for (int32_t edge_idx = ac_utf8_node_at_const(ac, 0U)->first_edge; edge_idx >= 0;
@@ -530,7 +530,7 @@ int ac_utf8_automaton_build(ac_utf8_automaton_t *ac) {
       stl_status status = vec_push(&queue, &edge->child);
       if (status != STL_OK) {
         vec_destroy(&queue);
-        return salts_core_status_from_stl(status);
+        return cmeta_core_status_from_stl(status);
       }
     }
   }
@@ -585,7 +585,7 @@ int ac_utf8_automaton_build(ac_utf8_automaton_t *ac) {
         stl_status status = vec_push(&queue, &edge->child);
         if (status != STL_OK) {
           vec_destroy(&queue);
-          return salts_core_status_from_stl(status);
+          return cmeta_core_status_from_stl(status);
         }
       }
     }

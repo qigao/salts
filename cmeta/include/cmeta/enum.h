@@ -126,16 +126,16 @@ CMETA_INLINE bool cmeta_enum_from_string(const cmeta_enum_desc *desc,
  */
 
 #define CMETA_ENUM_ITEM_DECL(...) \
-    CMETA_PP_CAT(CMETA_ENUM_ITEM_DECL_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+    CMETA_PP_OVERLOAD(CMETA_ENUM_ITEM_DECL_,__VA_ARGS__)(__VA_ARGS__)
 #define CMETA_ENUM_ITEM_DECL_2(symbol, text) symbol,
 #define CMETA_ENUM_ITEM_DECL_3(symbol, value, text) symbol = (value),
 
 #define CMETA_ENUM_ITEM_DESC(...) \
-    CMETA_PP_CAT(CMETA_ENUM_ITEM_DESC_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+    CMETA_PP_OVERLOAD(CMETA_ENUM_ITEM_DESC_,__VA_ARGS__)(__VA_ARGS__)
 #define CMETA_ENUM_ITEM_DESC_2(symbol, text) \
-    { CMETA_ENUM_TO_INT64(symbol), #symbol, (text) },
+    { CMETA_ENUM_TO_INT64(symbol), CMETA_PP_STRINGIFY(symbol), (text) },
 #define CMETA_ENUM_ITEM_DESC_3(symbol, value, text) \
-    { CMETA_ENUM_TO_INT64(symbol), #symbol, (text) },
+    CMETA_ENUM_ITEM_DESC_2(symbol,text)
 
 /* Single-declaration enum schema.
  *
@@ -147,7 +147,8 @@ CMETA_INLINE bool cmeta_enum_from_string(const cmeta_enum_desc *desc,
  *
  * The declaration generates the enum, immutable reflection metadata and typed
  * helpers. No X-list #define and no implementation replay are required. */
-#define CMETA_ENUM(type, ...) \
+#define CMETA_ENUM(...) CMETA_ENUM_I(__VA_ARGS__)
+#define CMETA_ENUM_I(type, ...) \
     typedef enum type { \
         Schema(CMETA_ENUM_ITEM_DECL, __VA_ARGS__) \
     } type; \
@@ -155,7 +156,7 @@ CMETA_INLINE bool cmeta_enum_from_string(const cmeta_enum_desc *desc,
         Schema(CMETA_ENUM_ITEM_DESC, __VA_ARGS__) \
     }; \
     CMETA_LOCAL const cmeta_enum_desc type##__enum_meta = { \
-        #type, type##__enum_items, \
+        CMETA_PP_STRINGIFY(type), type##__enum_items, \
         sizeof(type##__enum_items) / sizeof(type##__enum_items[0]) \
     }; \
     CMETA_INLINE const char *type##_to_string(type value) { \
@@ -184,11 +185,11 @@ CMETA_INLINE bool cmeta_enum_from_string(const cmeta_enum_desc *desc,
 #define Enum(type, ...) cmeta_enum(type, __VA_ARGS__)
 #endif
 
-#define EnumMeta(type) (&type##__enum_meta)
+#define EnumMeta(type) (&CMETA_PP_CAT(type,__enum_meta))
 #define EnumString(type, value) \
     cmeta_enum_to_string(EnumMeta(type), CMETA_ENUM_TO_INT64(value))
 #define EnumSymbol(type, value) \
     cmeta_enum_to_symbol(EnumMeta(type), CMETA_ENUM_TO_INT64(value))
-#define EnumParse(type, text, out) type##_from_string((text), (out))
+#define EnumParse(type, text, out) CMETA_PP_CAT(type,_from_string)((text), (out))
 
 #endif

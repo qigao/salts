@@ -92,7 +92,7 @@ typedef struct object_pool_lease {
 
 static inline int object_pool_owner_check(object_pool_owner_state *pool) {
   if (pool == NULL || pool->self != pool || pool->storage == NULL ||
-      pool->thread != salts_thread_current_token())
+      pool->thread != cmeta_thread_current_token())
     return SALTS_EINVAL;
   return pool->busy ? SALTS_EBUSY : SALTS_OK;
 }
@@ -109,7 +109,7 @@ static inline int object_pool_owner_begin(object_pool_owner_state *pool) {
 
 static inline int object_pool_owner_end(object_pool_owner_state *pool) {
   if (pool == NULL || pool->self != pool || pool->storage == NULL ||
-      pool->thread != salts_thread_current_token() || !pool->busy)
+      pool->thread != cmeta_thread_current_token() || !pool->busy)
     return SALTS_EINVAL;
   pool->busy = false;
   return SALTS_OK;
@@ -143,7 +143,7 @@ static inline int object_pool_owner_init(
     return SALTS_ENOMEM;
 
   pool->self = pool;
-  pool->thread = salts_thread_current_token();
+  pool->thread = cmeta_thread_current_token();
   pool->busy = false;
   return SALTS_OK;
 }

@@ -1,6 +1,6 @@
 #include <cmeta/invokable.h>
 #include <cmeta/interface.h>
-#include <cmeta/method.h>
+#include <cmeta/operation.h>
 
 bool cmeta_function_data_desc_valid(
     const cmeta_function_data_desc *desc) {
@@ -118,60 +118,61 @@ cmeta_status cmeta_interface_method_invokable_bind(
     return cmeta_invokable_bind_data(data, callable, out);
 }
 
-cmeta_status cmeta_receiver_method_invokable_bind(
-    const cmeta_receiver_method *method,
+cmeta_status cmeta_receiver_operation_invokable_bind(
+    const cmeta_receiver_operation *operation,
     const cmeta_function_data_desc *data,
     cmeta_callable callable, cmeta_invokable *out) {
-    if (method == NULL || data == NULL || out == NULL ||
-        !cmeta_receiver_method_reflection_valid(method) ||
+    if (operation == NULL || data == NULL || out == NULL ||
+        !cmeta_receiver_operation_reflection_valid(operation) ||
         !cmeta_function_data_desc_valid(data))
         return CMETA_INVALID_ARGUMENT;
-    if (!cmeta_receiver_method_projection_valid(method, data->function))
+    if (!cmeta_function_receiver_projection_valid(
+            operation->abi->function, data->function))
         return CMETA_TYPE_MISMATCH;
     return cmeta_invokable_bind_data(data, callable, out);
 }
 
-static bool cmeta_object_method_member(
-    const cmeta_receiver_method_set *set,
-    const cmeta_receiver_method *method) {
+static bool cmeta_object_operation_member(
+    const cmeta_receiver_operation_set *set,
+    const cmeta_receiver_operation *operation) {
     size_t i;
-    if (!cmeta_receiver_method_set_valid(set) || method == NULL)
+    if (!cmeta_receiver_operation_set_valid(set) || operation == NULL)
         return false;
-    for (i = 0u; i < set->method_count; ++i)
-        if (&set->methods[i] == method)
+    for (i = 0u; i < set->operation_count; ++i)
+        if (&set->operations[i] == operation)
             return true;
     return false;
 }
 
-cmeta_status cmeta_object_method_invokable_bind(
+cmeta_status cmeta_object_operation_invokable_bind(
     const cmeta_object_ref *object,
-    const cmeta_receiver_method *method,
+    const cmeta_receiver_operation *operation,
     cmeta_invokable *out) {
-    const cmeta_object_method_provider *provider;
-    cmeta_object_method_binding binding = CMETA_OBJECT_METHOD_BINDING_INIT;
+    const cmeta_object_operation_provider *provider;
+    cmeta_object_operation_binding binding = CMETA_OBJECT_OPERATION_BINDING_INIT;
     cmeta_status status;
 
     if (out == NULL)
         return CMETA_INVALID_ARGUMENT;
     *out = (cmeta_invokable)CMETA_INVOKABLE_INIT;
-    if (!cmeta_object_ref_valid(object) || method == NULL)
+    if (!cmeta_object_ref_valid(object) || operation == NULL)
         return CMETA_INVALID_ARGUMENT;
-    provider = object->method_provider;
-    if (!cmeta_object_method_provider_valid(provider))
+    provider = object->operation_provider;
+    if (!cmeta_object_operation_provider_valid(provider))
         return CMETA_TRAIT_MISSING;
-    if (provider->methods != object->methods ||
-        !cmeta_object_method_member(object->methods, method))
+    if (provider->operations != object->operations ||
+        !cmeta_object_operation_member(object->operations, operation))
         return CMETA_INVALID_ARGUMENT;
 
     status = provider->bind(
-        provider->context, object->object, method, &binding);
+        provider->context, object->object, operation, &binding);
     if (status != CMETA_OK)
         return status;
     if (binding.size < sizeof(binding) || binding.data == NULL)
         return CMETA_INVALID_ARGUMENT;
 
-    return cmeta_receiver_method_invokable_bind(
-        method, binding.data, binding.callable, out);
+    return cmeta_receiver_operation_invokable_bind(
+        operation, binding.data, binding.callable, out);
 }
 
 bool cmeta_invokable_valid(const cmeta_invokable *invokable) {
@@ -189,13 +190,20 @@ bool cmeta_invokable_valid(const cmeta_invokable *invokable) {
 cmeta_status cmeta_invokable_invoke(
     const cmeta_invokable *invokable, void *out,
     const void *const *args) {
+    if (!cmeta_invokable_valid(invokable)) return CMETA_INVALID_ARGUMENT;
+    return cmeta_invokable_invoke_admitted(invokable, out, args);
+}
+
+cmeta_status cmeta_invokable_invoke_admitted(
+    const cmeta_invokable *invokable, void *out, const void *const *args) {
     const cmeta_type_desc *return_type;
     size_t i;
 
-    if (!cmeta_invokable_valid(invokable))
+    if (invokable == NULL || invokable->function == NULL ||
+        invokable->callable.invoke == NULL)
         return CMETA_INVALID_ARGUMENT;
     return_type = invokable->function->return_type;
-    if (!cmeta_type_equal(return_type, &cmeta_type_void) && out == NULL)
+    if (return_type->kind != CMETA_T_VOID && out == NULL)
         return CMETA_INVALID_ARGUMENT;
     if (invokable->function->param_count != 0u && args == NULL)
         return CMETA_INVALID_ARGUMENT;

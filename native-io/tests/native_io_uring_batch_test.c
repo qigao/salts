@@ -90,9 +90,9 @@ static long batch_test_syscall(long number, ...) {
 
 #define syscall batch_test_syscall
 #define poll batch_test_poll
-#define salts_io_uring_backend_init batch_test_backend_init
+#define cmeta_io_uring_backend_init batch_test_backend_init
 #include "../src/native_io_io_uring.c"
-#undef salts_io_uring_backend_init
+#undef cmeta_io_uring_backend_init
 #undef poll
 #undef syscall
 
@@ -127,7 +127,7 @@ static void batch_test_requests(bool prepared, unsigned accepted, int expected_s
   check_equal(native_io_backend_close(&backend), SALTS_OK);
   check_equal(native_io_backend_flush(&backend), expected_status);
   check_equal(native_io_backend_release_pipe(&backend, endpoints[0]), SALTS_EBUSY);
-  salts_io_uring_impl *impl = backend.impl;
+  cmeta_io_uring_impl *impl = backend.impl;
   check_equal(*impl->sq_head, *impl->sq_tail);
   check_equal(impl->staged_head, SALTS_IO_URING_INDEX_NONE);
   check_equal(impl->active_requests, (size_t)BATCH_TEST_COUNT);
@@ -207,7 +207,7 @@ spec("io_uring explicit batch submission") {
     check_true((setup_flags[0] & IORING_SETUP_TASKRUN_FLAG) != 0u);
     check_equal(setup_flags[1],
                 (unsigned)(IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN));
-    salts_io_uring_impl *impl = backend.impl;
+    cmeta_io_uring_impl *impl = backend.impl;
     check_true(impl->defer_taskrun);
     check_false(impl->taskrun_flag);
     check_equal(native_io_backend_close(&backend), SALTS_OK);
@@ -235,7 +235,7 @@ spec("io_uring explicit batch submission") {
     check_true((setup_flags[0] & IORING_SETUP_DEFER_TASKRUN) != 0u);
     check_equal(setup_flags[1], (unsigned)IORING_SETUP_SINGLE_ISSUER);
 #endif
-    salts_io_uring_impl *impl = backend.impl;
+    cmeta_io_uring_impl *impl = backend.impl;
     check_false(impl->defer_taskrun);
     check_false(impl->taskrun_flag);
     check_equal(native_io_backend_close(&backend), SALTS_OK);
@@ -337,7 +337,7 @@ spec("io_uring explicit batch submission") {
 
     enable_ring_wait = true;
     check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
-    salts_io_uring_impl *impl = backend.impl;
+    cmeta_io_uring_impl *impl = backend.impl;
     if (!impl->defer_taskrun) {
       check_equal(native_io_backend_close(&backend), SALTS_OK);
       check_equal(native_io_backend_destroy(&backend), SALTS_OK);
@@ -423,7 +423,7 @@ spec("io_uring explicit batch submission") {
     size_t count = 0u;
     enable_ring_wait = true;
     check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
-    salts_io_uring_impl *impl = backend.impl;
+    cmeta_io_uring_impl *impl = backend.impl;
     if (!impl->ring_native_wait) {
       check_equal(native_io_backend_close(&backend), SALTS_OK);
       check_equal(native_io_backend_destroy(&backend), SALTS_OK);

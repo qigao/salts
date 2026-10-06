@@ -18,7 +18,8 @@ target_link_libraries(cserde_recording_support PUBLIC Salts::CSerde)
 target_include_directories(
   cserde_recording_support
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/support)
-cmake_config_target(cserde_recording_support FOLDER "cserde/tests")
+cmake_config_target(cserde_recording_support FOLDER "cserde/tests"
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}")
 
 cmake_add_test(cserde_recording_test
   SOURCES cserde_recording_test.c

@@ -34,7 +34,12 @@ typedef int cnet_listener_socket;
   #define CNET_LISTENER_INVALID_SOCKET (-1)
 #endif
 
-enum { CNET_LISTENER_ADDRESS_CAPACITY = 128 };
+enum {
+  CNET_LISTENER_ADDRESS_CAPACITY = 128,
+  CNET_LISTENER_TCP_OPTION_COUNT = CNET_TCP_SOCKET_NODELAY + 1
+};
+_Static_assert(CNET_LISTENER_TCP_OPTION_COUNT <= sizeof(uint16_t) * CHAR_BIT,
+               "listener TCP option mask must cover every recorded option");
 
 typedef enum cnet_listener_kind {
   CNET_LISTENER_KIND_NONE = 0,
@@ -54,8 +59,8 @@ typedef struct cnet_listener_impl {
   int native_family;
   uint16_t port;
   size_t backlog;
-  uint64_t tcp_option_values[8];
-  uint8_t tcp_option_set_mask;
+  uint64_t tcp_option_values[CNET_LISTENER_TCP_OPTION_COUNT];
+  uint16_t tcp_option_set_mask;
 
   native_io_backend *external_backend;
   native_io_endpoint external_endpoint;
@@ -636,11 +641,11 @@ int cnet_listener_tcp_option_set(cnet_listener *listener,
       option, value);
   if (status == SALTS_OK &&
       option >= CNET_TCP_SOCKET_KEEPALIVE_ENABLED &&
-      option <= CNET_TCP_SOCKET_SEND_BUFFER_BYTES) {
+      (unsigned int)option < CNET_LISTENER_TCP_OPTION_COUNT) {
     impl->tcp_option_values[(unsigned int)option] = value;
     impl->tcp_option_set_mask =
-        (uint8_t)(impl->tcp_option_set_mask |
-                  (uint8_t)(1u << (unsigned int)option));
+        (uint16_t)(impl->tcp_option_set_mask |
+                   (uint16_t)(1u << (unsigned int)option));
   }
   return status;
 }
@@ -651,11 +656,11 @@ static int cnet_listener_apply_tcp_options(
   unsigned int option;
   if (impl == NULL) return SALTS_EINVAL;
   for (option = (unsigned int)CNET_TCP_SOCKET_KEEPALIVE_ENABLED;
-       option <= (unsigned int)CNET_TCP_SOCKET_SEND_BUFFER_BYTES;
+       option < CNET_LISTENER_TCP_OPTION_COUNT;
        ++option) {
     int status;
     if ((impl->tcp_option_set_mask &
-         (uint8_t)(1u << option)) == 0u)
+         (uint16_t)(1u << option)) == 0u)
       continue;
     status = cnet_transport_tcp_native_option_set_family(
         (uintptr_t)socket_value, impl->native_family,
@@ -1039,7 +1044,7 @@ int cnet_listener_wait(cnet_listener *listener, uint32_t timeout_ms, int *out_re
 #else
   {
     struct pollfd poll_fd = {impl->socket_value, POLLIN, 0};
-    const uint64_t started_ms = salts_monotonic_ms();
+    const uint64_t started_ms = cmeta_monotonic_ms();
     for (;;) {
       poll_fd.revents = 0;
       result = poll(&poll_fd, 1u, native_timeout);
@@ -1049,7 +1054,7 @@ int cnet_listener_wait(cnet_listener *listener, uint32_t timeout_ms, int *out_re
         break;
       }
       {
-        const uint64_t elapsed_ms = salts_monotonic_ms() - started_ms;
+        const uint64_t elapsed_ms = cmeta_monotonic_ms() - started_ms;
         const uint64_t remaining_ms =
             elapsed_ms >= timeout_ms ? 0u : (uint64_t)timeout_ms - elapsed_ms;
         if (remaining_ms == 0u) {
@@ -1167,6 +1172,7 @@ int cnet_listener_accept_peer(cnet_listener *listener, cnet_client *client,
                               cnet_connection *out_connection,
                               cnet_stream_peer *out_peer) {
   cnet_accepted_stream accepted = CNET_ACCEPTED_STREAM_INIT;
+  uintptr_t native_socket;
   int status;
   if (out_connection == NULL) return SALTS_EINVAL;
   *out_connection = (cnet_connection){0};
@@ -1178,8 +1184,11 @@ int cnet_listener_accept_peer(cnet_listener *listener, cnet_client *client,
   status = cnet_listener_accept_detached(listener, &accepted);
   if (status != SALTS_OK) return status;
   *out_peer = accepted.peer;
-  status = cnet_client_adopt_accepted(client, &accepted, observer,
-                                      out_connection);
+  native_socket = accepted.internal_socket;
+  accepted.internal_socket = 0u;
+  accepted.internal_active = 0u;
+  /* Direct accept preserves listener policy; detached handoff applies client policy. */
+  status = cnet_client_adopt_tcp(client, native_socket, observer, out_connection);
   if (status != SALTS_OK) *out_peer = (cnet_stream_peer){0};
   return status;
 }
@@ -1252,6 +1261,7 @@ int cnet_listener_accept_tls_peer(cnet_listener *listener, cnet_client *client,
                                   cnet_connection *out_connection,
                                   cnet_stream_peer *out_peer) {
   cnet_accepted_stream accepted = CNET_ACCEPTED_STREAM_INIT;
+  uintptr_t native_socket;
   int status;
   if (out_connection == NULL) return SALTS_EINVAL;
   *out_connection = (cnet_connection){0};
@@ -1264,8 +1274,12 @@ int cnet_listener_accept_tls_peer(cnet_listener *listener, cnet_client *client,
   status = cnet_listener_accept_detached(listener, &accepted);
   if (status != SALTS_OK) return status;
   *out_peer = accepted.peer;
-  status = cnet_client_adopt_accepted_tls(client, &accepted, server, observer,
-                                          out_connection);
+  native_socket = accepted.internal_socket;
+  accepted.internal_socket = 0u;
+  accepted.internal_active = 0u;
+  status = cnet_client_adopt_tls_server(client, native_socket,
+                                       cnet_tls_server_context(server), observer,
+                                       out_connection);
   if (status != SALTS_OK) *out_peer = (cnet_stream_peer){0};
   return status;
 }

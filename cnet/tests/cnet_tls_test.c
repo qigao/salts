@@ -1,7 +1,7 @@
 #include "cnet_test_internal.h"
 #include "cnet_tls.h"
 #if defined(CNET_INTERNAL_PROFILING)
-#include "cnet_client_internal.h"
+  #include "cnet_client_internal.h"
 #endif
 #include "tinytest.h"
 
@@ -11,8 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int cnet_tls_test_send_bytes(cnet_client *client,
-                                    cnet_connection connection,
+static int cnet_tls_test_send_bytes(cnet_client *client, cnet_connection connection,
                                     const void *data, size_t size) {
   mem_buffer_t *buffer;
   int status;
@@ -27,23 +26,19 @@ static int cnet_tls_test_send_bytes(cnet_client *client,
 }
 
 #if defined(CNET_INTERNAL_PROFILING)
-static size_t cnet_tls_test_trace_index(
-    const cnet_owner_trace_event *events, size_t count,
-    cnet_owner_trace_kind kind) {
+static size_t cnet_tls_test_trace_index(const cnet_owner_trace_event *events, size_t count,
+                                        cnet_owner_trace_kind kind) {
   for (size_t index = 0u; index < count; ++index)
     if (events[index].kind == kind) return index;
   return SIZE_MAX;
 }
 
-static uint64_t cnet_tls_test_trace_bytes(
-    const cnet_owner_trace_event *events, size_t count,
-    cnet_owner_trace_kind kind) {
+static uint64_t cnet_tls_test_trace_bytes(const cnet_owner_trace_event *events, size_t count,
+                                          cnet_owner_trace_kind kind) {
   uint64_t total = 0u;
   for (size_t index = 0u; index < count; ++index) {
     if (events[index].kind != kind) continue;
-    total = events[index].bytes > UINT64_MAX - total
-                ? UINT64_MAX
-                : total + events[index].bytes;
+    total = events[index].bytes > UINT64_MAX - total ? UINT64_MAX : total + events[index].bytes;
   }
   return total;
 }
@@ -69,13 +64,12 @@ static const char CNET_TLS_TEST_CERTIFICATE[] =
     "x9YTzT8UMLc26vY1RiF6uwODUJzmSaqmefmapVsWrgi3\n"
     "-----END CERTIFICATE-----\n";
 
-static int cnet_tls_test_read_fixture(const char *path, uint8_t *buffer,
-                                      size_t capacity, size_t *out_size) {
+static int cnet_tls_test_read_fixture(const char *path, uint8_t *buffer, size_t capacity,
+                                      size_t *out_size) {
   FILE *file;
   size_t size;
   int trailing;
-  if (path == NULL || buffer == NULL || capacity == 0u || out_size == NULL)
-    return SALTS_EINVAL;
+  if (path == NULL || buffer == NULL || capacity == 0u || out_size == NULL) return SALTS_EINVAL;
   *out_size = 0u;
   file = fopen(path, "rb");
   if (file == NULL) return SALTS_EIO;
@@ -155,10 +149,8 @@ static int cnet_tls_test_pair_init(cnet_tls_test_pair *pair) {
   return status;
 }
 
-static int cnet_tls_test_fixture_pair_init(cnet_tls_test_pair *pair,
-                                           const char *ca_file,
-                                           const char *cert_file,
-                                           const char *key_file,
+static int cnet_tls_test_fixture_pair_init(cnet_tls_test_pair *pair, const char *ca_file,
+                                           const char *cert_file, const char *key_file,
                                            const char *server_name) {
   cnet_tls_server_config server_config;
   cnet_tls_client_config client_config;
@@ -166,32 +158,29 @@ static int cnet_tls_test_fixture_pair_init(cnet_tls_test_pair *pair,
   cnet_tls_context *server_context;
   int status;
 
-  if (pair == NULL || ca_file == NULL || cert_file == NULL ||
-      key_file == NULL || server_name == NULL)
+  if (pair == NULL || ca_file == NULL || cert_file == NULL || key_file == NULL ||
+      server_name == NULL)
     return SALTS_EINVAL;
   memset(pair, 0, sizeof(*pair));
   pair->ca_path = ca_file;
   pair->cert_path = cert_file;
   pair->key_path = key_file;
 
-  server_config = (cnet_tls_server_config){
-      .size = sizeof(server_config),
-      .cert_file = cert_file,
-      .key_file = key_file,
-      .client_auth = CNET_TLS_CLIENT_AUTH_NONE};
+  server_config = (cnet_tls_server_config){.size = sizeof(server_config),
+                                           .cert_file = cert_file,
+                                           .key_file = key_file,
+                                           .client_auth = CNET_TLS_CLIENT_AUTH_NONE};
   status = cnet_tls_server_init(&pair->server_context, &server_config);
   if (status != SALTS_OK) return status;
 
-  client_config = (cnet_tls_client_config){
-      .size = sizeof(client_config),
-      .ca_file = ca_file};
+  client_config = (cnet_tls_client_config){.size = sizeof(client_config), .ca_file = ca_file};
   status = cnet_tls_client_context_create(&client_config, &client_context);
   if (status != SALTS_OK) {
     (void)cnet_tls_server_destroy(&pair->server_context);
     return status;
   }
-  status = cnet_tls_state_init(&pair->client, client_context, false,
-                               server_name, CNET_TLS_MIN_IO_BUFFER_BYTES);
+  status = cnet_tls_state_init(&pair->client, client_context, false, server_name,
+                               CNET_TLS_MIN_IO_BUFFER_BYTES);
   if (status != SALTS_OK) {
     cnet_tls_context_release(client_context);
     (void)cnet_tls_server_destroy(&pair->server_context);
@@ -200,8 +189,8 @@ static int cnet_tls_test_fixture_pair_init(cnet_tls_test_pair *pair,
 
   server_context = cnet_tls_server_context(&pair->server_context);
   cnet_tls_context_retain(server_context);
-  status = cnet_tls_state_init(&pair->server, server_context, true, NULL,
-                               CNET_TLS_MIN_IO_BUFFER_BYTES);
+  status =
+      cnet_tls_state_init(&pair->server, server_context, true, NULL, CNET_TLS_MIN_IO_BUFFER_BYTES);
   if (status != SALTS_OK) {
     cnet_tls_context_release(server_context);
     cnet_tls_state_destroy(&pair->client);
@@ -235,12 +224,11 @@ static int cnet_tls_test_handshake(cnet_tls_test_pair *pair) {
   return SALTS_ETIMEDOUT;
 }
 
-static int cnet_tls_test_transfer_available(
-    cnet_tls_state *source, cnet_tls_state *target, size_t *out_transferred) {
+static int cnet_tls_test_transfer_available(cnet_tls_state *source, cnet_tls_state *target,
+                                            size_t *out_transferred) {
   unsigned char buffer[1024];
   size_t transferred = 0u;
-  if (source == NULL || target == NULL || out_transferred == NULL)
-    return SALTS_EINVAL;
+  if (source == NULL || target == NULL || out_transferred == NULL) return SALTS_EINVAL;
   *out_transferred = 0u;
   for (;;) {
     size_t capacity = cnet_tls_cipher_input_capacity(target);
@@ -260,17 +248,15 @@ static int cnet_tls_test_transfer_available(
   return SALTS_OK;
 }
 
-static int cnet_tls_test_round_trip(
-    cnet_tls_state *source, cnet_tls_state *target,
-    const unsigned char *payload, size_t payload_size) {
+static int cnet_tls_test_round_trip(cnet_tls_state *source, cnet_tls_state *target,
+                                    const unsigned char *payload, size_t payload_size) {
   unsigned char *received = NULL;
   size_t received_size = 0u;
   bool write_complete = false;
   size_t iteration;
   int status = SALTS_OK;
 
-  if (source == NULL || target == NULL || payload == NULL ||
-      payload_size == 0u)
+  if (source == NULL || target == NULL || payload == NULL || payload_size == 0u)
     return SALTS_EINVAL;
   received = (unsigned char *)malloc(payload_size);
   if (received == NULL) return SALTS_ENOMEM;
@@ -281,9 +267,8 @@ static int cnet_tls_test_round_trip(
     while (received_size < payload_size) {
       size_t size = 0u;
       bool peer_closed = false;
-      status = cnet_tls_read(
-          target, received + received_size,
-          payload_size - received_size, &size, &peer_closed);
+      status = cnet_tls_read(target, received + received_size, payload_size - received_size, &size,
+                             &peer_closed);
       if (status != SALTS_OK) goto cleanup;
       if (peer_closed) {
         status = SALTS_ECONNABORTED;
@@ -295,23 +280,19 @@ static int cnet_tls_test_round_trip(
     }
 
     if (!write_complete) {
-      status = cnet_tls_write(
-          source, payload, payload_size, &write_complete);
+      status = cnet_tls_write(source, payload, payload_size, &write_complete);
       if (status != SALTS_OK) goto cleanup;
     }
 
     {
       size_t transferred = 0u;
-      status = cnet_tls_test_transfer_available(
-          source, target, &transferred);
+      status = cnet_tls_test_transfer_available(source, target, &transferred);
       if (status != SALTS_OK) goto cleanup;
       if (transferred != 0u) progressed = true;
     }
 
     if (write_complete && received_size == payload_size) {
-      status = memcmp(received, payload, payload_size) == 0
-                   ? SALTS_OK
-                   : SALTS_EPROTO;
+      status = memcmp(received, payload, payload_size) == 0 ? SALTS_OK : SALTS_EPROTO;
       goto cleanup;
     }
     if (!progressed && !write_complete) {
@@ -340,9 +321,8 @@ static int cnet_tls_test_reset_client(cnet_tls_test_pair *pair,
   return status;
 }
 
-static int cnet_tls_test_mtls_pair_init(cnet_tls_test_pair *pair,
-                                       cnet_tls_client_auth client_auth,
-                                       bool client_identity) {
+static int cnet_tls_test_mtls_pair_init(cnet_tls_test_pair *pair, cnet_tls_client_auth client_auth,
+                                        bool client_identity) {
   cnet_tls_server_config server_config;
   cnet_tls_client_config client_config;
   cnet_tls_context *server_context;
@@ -353,22 +333,22 @@ static int cnet_tls_test_mtls_pair_init(cnet_tls_test_pair *pair,
   status = cnet_tls_server_destroy(&pair->server_context);
   if (status != SALTS_OK) goto cleanup;
   server_config = (cnet_tls_server_config){.size = sizeof(server_config),
-                                         .cert_file = pair->cert_path,
-                                         .key_file = pair->key_path,
-                                         .ca_file = pair->ca_path,
-                                         .client_auth = client_auth};
+                                           .cert_file = pair->cert_path,
+                                           .key_file = pair->key_path,
+                                           .ca_file = pair->ca_path,
+                                           .client_auth = client_auth};
   status = cnet_tls_server_init(&pair->server_context, &server_config);
   if (status != SALTS_OK) goto cleanup;
   client_config = (cnet_tls_client_config){.size = sizeof(client_config),
-                                         .ca_file = pair->ca_path,
-                                         .cert_file = client_identity ? pair->cert_path : NULL,
-                                         .key_file = client_identity ? pair->key_path : NULL};
+                                           .ca_file = pair->ca_path,
+                                           .cert_file = client_identity ? pair->cert_path : NULL,
+                                           .key_file = client_identity ? pair->key_path : NULL};
   status = cnet_tls_test_reset_client(pair, &client_config, "localhost");
   if (status != SALTS_OK) goto cleanup;
   server_context = cnet_tls_server_context(&pair->server_context);
   cnet_tls_context_retain(server_context);
-  status = cnet_tls_state_init(&pair->server, server_context, true, NULL,
-                              CNET_TLS_MIN_IO_BUFFER_BYTES);
+  status =
+      cnet_tls_state_init(&pair->server, server_context, true, NULL, CNET_TLS_MIN_IO_BUFFER_BYTES);
   if (status == SALTS_OK) return SALTS_OK;
   cnet_tls_context_release(server_context);
 cleanup:
@@ -448,8 +428,7 @@ static void cnet_tls_network_receive(void *user, cnet_connection connection,
       probe->failed = 1;
       return;
     }
-    memcpy(probe->dynamic_received + probe->received_size,
-           view->data, view->size);
+    memcpy(probe->dynamic_received + probe->received_size, view->data, view->size);
   } else {
     if (view->size > sizeof(probe->received) - probe->received_size) {
       probe->failed = 1;
@@ -460,15 +439,12 @@ static void cnet_tls_network_receive(void *user, cnet_connection connection,
   probe->received_size += view->size;
 }
 
-static void cnet_tls_network_receive_owned(void *user,
-                                           cnet_connection connection,
-                                           mem_slice_t slice,
-                                           cnet_message_kind kind) {
+static void cnet_tls_network_receive_owned(void *user, cnet_connection connection,
+                                           mem_slice_t slice, cnet_message_kind kind) {
   cnet_tls_network_probe *probe = (cnet_tls_network_probe *)user;
   (void)connection;
-  if (kind != CNET_MESSAGE_BYTES || slice.buffer == NULL ||
-      slice.data == NULL || slice.length == 0u ||
-      probe->owned_slice.buffer != NULL) {
+  if (kind != CNET_MESSAGE_BYTES || slice.buffer == NULL || slice.data == NULL ||
+      slice.length == 0u || probe->owned_slice.buffer != NULL) {
     probe->failed = 1;
     mem_slice_release(&slice);
     return;
@@ -549,8 +525,7 @@ static int cnet_tls_network_drive(cnet_client *client, cnet_client *server, cnet
 spec("CNet bounded TLS engine") {
 
   it("round-trips repeated TLS records across plaintext boundaries") {
-    static const size_t sizes[] = {
-        1024u, 16383u, 16384u, 16385u, 65535u, 65536u, 131072u};
+    static const size_t sizes[] = {1024u, 16383u, 16384u, 16385u, 65535u, 65536u, 131072u};
     cnet_tls_test_pair pair;
     unsigned char *payload = NULL;
     size_t index;
@@ -564,16 +539,9 @@ spec("CNet bounded TLS engine") {
     for (index = 0u; index < sizeof(sizes) / sizeof(sizes[0]); ++index) {
       const size_t size = sizes[index];
       for (byte_index = 0u; byte_index < size; ++byte_index)
-        payload[byte_index] =
-            (unsigned char)((byte_index * 131u + index * 17u) & 0xffu);
-      check_equal(
-          cnet_tls_test_round_trip(
-              &pair.client, &pair.server, payload, size),
-          SALTS_OK);
-      check_equal(
-          cnet_tls_test_round_trip(
-              &pair.server, &pair.client, payload, size),
-          SALTS_OK);
+        payload[byte_index] = (unsigned char)((byte_index * 131u + index * 17u) & 0xffu);
+      check_equal(cnet_tls_test_round_trip(&pair.client, &pair.server, payload, size), SALTS_OK);
+      check_equal(cnet_tls_test_round_trip(&pair.server, &pair.client, payload, size), SALTS_OK);
     }
 
     cnet_tls_test_pair_destroy(&pair);
@@ -600,8 +568,7 @@ spec("CNet bounded TLS engine") {
     check_not_null(payload);
     check_not_null(received);
     for (iteration = 0u; iteration < payload_size; ++iteration)
-      payload[iteration] =
-          (unsigned char)((iteration * 43u + 13u) & 0xffu);
+      payload[iteration] = (unsigned char)((iteration * 43u + 13u) & 0xffu);
 
     check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
     check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
@@ -611,21 +578,14 @@ spec("CNet bounded TLS engine") {
      * bounded output ring at once, so the provider must retain a pending
      * application record and report an incomplete logical write.
      */
-    check_equal(
-        cnet_tls_write(
-            &pair.server, payload, payload_size, &payload_complete),
-        SALTS_OK);
+    check_equal(cnet_tls_write(&pair.server, payload, payload_size, &payload_complete), SALTS_OK);
     check_false(payload_complete);
 
-    check_equal(
-        cnet_tls_write(
-            &pair.client, control, sizeof(control), &control_complete),
-        SALTS_OK);
+    check_equal(cnet_tls_write(&pair.client, control, sizeof(control), &control_complete),
+                SALTS_OK);
     check_true(control_complete);
-    check_equal(
-        cnet_tls_test_transfer_available(
-            &pair.client, &pair.server, &transferred),
-        SALTS_OK);
+    check_equal(cnet_tls_test_transfer_available(&pair.client, &pair.server, &transferred),
+                SALTS_OK);
     check_greater(transferred, (size_t)0u);
 
     /*
@@ -634,30 +594,24 @@ spec("CNet bounded TLS engine") {
      * record. CNet must leave the ciphertext buffered until the application
      * write has been fully accepted.
      */
-    check_equal(
-        cnet_tls_read(
-            &pair.server, control_received, sizeof(control_received),
-            &control_size, &peer_closed),
-        SALTS_OK);
+    check_equal(cnet_tls_read(&pair.server, control_received, sizeof(control_received),
+                              &control_size, &peer_closed),
+                SALTS_OK);
     check_equal(control_size, (size_t)0u);
     check_false(peer_closed);
 
     for (iteration = 0u; iteration < 65536u; ++iteration) {
       bool progressed = false;
 
-      check_equal(
-          cnet_tls_test_transfer_available(
-              &pair.server, &pair.client, &transferred),
-          SALTS_OK);
+      check_equal(cnet_tls_test_transfer_available(&pair.server, &pair.client, &transferred),
+                  SALTS_OK);
       if (transferred != 0u) progressed = true;
 
       while (received_size < payload_size) {
         size_t size = 0u;
-        check_equal(
-            cnet_tls_read(
-                &pair.client, received + received_size,
-                payload_size - received_size, &size, &peer_closed),
-            SALTS_OK);
+        check_equal(cnet_tls_read(&pair.client, received + received_size,
+                                  payload_size - received_size, &size, &peer_closed),
+                    SALTS_OK);
         check_false(peer_closed);
         if (size == 0u) break;
         received_size += size;
@@ -665,10 +619,8 @@ spec("CNet bounded TLS engine") {
       }
 
       if (!payload_complete) {
-        check_equal(
-            cnet_tls_write(
-                &pair.server, payload, payload_size, &payload_complete),
-            SALTS_OK);
+        check_equal(cnet_tls_write(&pair.server, payload, payload_size, &payload_complete),
+                    SALTS_OK);
       }
 
       if (payload_complete && received_size == payload_size) break;
@@ -684,11 +636,9 @@ spec("CNet bounded TLS engine") {
 
     control_size = 0u;
     peer_closed = false;
-    check_equal(
-        cnet_tls_read(
-            &pair.server, control_received, sizeof(control_received),
-            &control_size, &peer_closed),
-        SALTS_OK);
+    check_equal(cnet_tls_read(&pair.server, control_received, sizeof(control_received),
+                              &control_size, &peer_closed),
+                SALTS_OK);
     check_false(peer_closed);
     check_equal(control_size, sizeof(control));
     check_equal(memcmp(control_received, control, sizeof(control)), 0);
@@ -706,8 +656,7 @@ spec("CNet bounded TLS engine") {
       first_payload_bytes = 16383,
       frame_payload_bytes = 16384,
       frame_count = 4,
-      second_total_bytes =
-          frame_count * (frame_prefix_bytes + frame_payload_bytes)
+      second_total_bytes = frame_count * (frame_prefix_bytes + frame_payload_bytes)
     };
     cnet_client client = {0};
     cnet_client server = {0};
@@ -717,23 +666,18 @@ spec("CNet bounded TLS engine") {
     cnet_client_config client_config = cnet_tls_large_network_config();
     cnet_client_config server_config = cnet_tls_large_network_config();
     cnet_listener_config listener_config = {
-        .backend = client_config.backend,
-        .host = "127.0.0.1",
-        .port = 0u,
-        .backlog = 2u};
-    cnet_tls_server_config tls_server_config = {
-        .size = sizeof(tls_server_config),
-        .cert_file = CNET_TLS_TEST_IP_CERT,
-        .key_file = CNET_TLS_TEST_IP_KEY,
-        .client_auth = CNET_TLS_CLIENT_AUTH_NONE,
-        .alpn_protocols = server_alpn,
-        .alpn_protocol_count = 1u};
-    cnet_tls_client_config tls_client_config = {
-        .size = sizeof(tls_client_config),
-        .ca_file = CNET_TLS_TEST_IP_CA,
-        .server_name = "localhost",
-        .alpn_protocols = client_alpn,
-        .alpn_protocol_count = 1u};
+        .backend = client_config.backend, .host = "127.0.0.1", .port = 0u, .backlog = 2u};
+    cnet_tls_server_config tls_server_config = {.size = sizeof(tls_server_config),
+                                                .cert_file = CNET_TLS_TEST_IP_CERT,
+                                                .key_file = CNET_TLS_TEST_IP_KEY,
+                                                .client_auth = CNET_TLS_CLIENT_AUTH_NONE,
+                                                .alpn_protocols = server_alpn,
+                                                .alpn_protocol_count = 1u};
+    cnet_tls_client_config tls_client_config = {.size = sizeof(tls_client_config),
+                                                .ca_file = CNET_TLS_TEST_IP_CA,
+                                                .server_name = "localhost",
+                                                .alpn_protocols = client_alpn,
+                                                .alpn_protocol_count = 1u};
     cnet_tls_network_probe client_probe = {.client = &client};
     cnet_tls_network_probe server_probe = {.client = &server};
     cnet_connect_options connect_options;
@@ -753,10 +697,8 @@ spec("CNet bounded TLS engine") {
     cnet_client_poll_profile server_profile = {0};
 #endif
 
-    received = (unsigned char *)calloc(
-        second_total_bytes, sizeof(*received));
-    expected = (unsigned char *)calloc(
-        second_total_bytes, sizeof(*expected));
+    received = (unsigned char *)calloc(second_total_bytes, sizeof(*received));
+    expected = (unsigned char *)calloc(second_total_bytes, sizeof(*expected));
     check_not_null(received);
     check_not_null(expected);
     server_probe.dynamic_received = received;
@@ -768,30 +710,21 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_client_init(&server, &server_config), SALTS_OK);
     check_equal(cnet_listener_init(&listener, &listener_config), SALTS_OK);
     check_equal(cnet_listener_port(&listener, &port), SALTS_OK);
-    check_greater(
-        snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u",
-                 (unsigned int)port),
-        0);
-    connect_options = (cnet_connect_options){
-        .uri = uri,
-        .observer = {.on_state = cnet_tls_network_state,
-                     .on_receive = cnet_tls_network_receive,
-                     .user = &client_probe,
-                     .on_send = cnet_tls_network_send},
-        .tls_client = &tls_client};
-    check_equal(
-        cnet_connect(&client, &connect_options, &client_connection),
-        SALTS_OK);
+    check_greater(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u", (unsigned int)port), 0);
+    connect_options = (cnet_connect_options){.uri = uri,
+                                             .observer = {.on_state = cnet_tls_network_state,
+                                                          .on_receive = cnet_tls_network_receive,
+                                                          .user = &client_probe,
+                                                          .on_send = cnet_tls_network_send},
+                                             .tls_client = &tls_client};
+    check_equal(cnet_connect(&client, &connect_options, &client_connection), SALTS_OK);
     check_equal(cnet_tls_client_destroy(&tls_client), SALTS_OK);
 
-    deadline = salts_monotonic_ms() + 5000u;
-    while ((!client_probe.connected || !server_probe.connected) &&
-           salts_monotonic_ms() < deadline)
-      check_equal(
-          cnet_tls_network_drive(
-              &client, &server, &listener, &tls_server,
-              &server_probe, &accepted),
-          SALTS_OK);
+    deadline = cmeta_monotonic_ms() + 5000u;
+    while ((!client_probe.connected || !server_probe.connected) && cmeta_monotonic_ms() < deadline)
+      check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
+                                         &accepted),
+                  SALTS_OK);
     check_true(accepted);
     check_true(client_probe.connected);
     check_true(server_probe.connected);
@@ -799,10 +732,8 @@ spec("CNet bounded TLS engine") {
     check_false(server_probe.failed);
 
     {
-      mem_buffer_t *prefix = mem_get_buffer(
-          mem_global(), frame_prefix_bytes);
-      mem_buffer_t *payload = mem_get_buffer(
-          mem_global(), first_payload_bytes);
+      mem_buffer_t *prefix = mem_get_buffer(mem_global(), frame_prefix_bytes);
+      mem_buffer_t *payload = mem_get_buffer(mem_global(), first_payload_bytes);
       mem_slice_t slices[2] = {{0}};
       unsigned char *prefix_data;
       unsigned char *payload_data;
@@ -825,65 +756,46 @@ spec("CNet bounded TLS engine") {
       mem_set_used(prefix, frame_prefix_bytes);
       mem_set_used(payload, first_payload_bytes);
       memcpy(expected, prefix_data, frame_prefix_bytes);
-      memcpy(expected + frame_prefix_bytes,
-             payload_data, first_payload_bytes);
+      memcpy(expected + frame_prefix_bytes, payload_data, first_payload_bytes);
       slices[0] = mem_slice(prefix, 0u, frame_prefix_bytes);
       slices[1] = mem_slice(payload, 0u, first_payload_bytes);
       check_not_null(slices[0].buffer);
       check_not_null(slices[1].buffer);
 
-      check_equal(
-          cnet_receive(&server, server_probe.connection, 8u),
-          SALTS_OK);
+      check_equal(cnet_receive(&server, server_probe.connection, 8u), SALTS_OK);
       sent_before = (size_t)client_probe.sent;
-      check_equal(
-          cnet_send_slicev(
-              &client, client_connection, slices, 2u),
-          SALTS_OK);
+      check_equal(cnet_send_slicev(&client, client_connection, slices, 2u), SALTS_OK);
       mem_slice_release(&slices[0]);
       mem_slice_release(&slices[1]);
       mem_buffer_release(prefix);
       mem_buffer_release(payload);
 
-      deadline = salts_monotonic_ms() + 5000u;
-      while ((server_probe.received_size <
-                  frame_prefix_bytes + first_payload_bytes ||
+      deadline = cmeta_monotonic_ms() + 5000u;
+      while ((server_probe.received_size < frame_prefix_bytes + first_payload_bytes ||
               (size_t)client_probe.sent < sent_before + 1u) &&
-             !server_probe.failed && !client_probe.failed &&
-             salts_monotonic_ms() < deadline)
-        check_equal(
-            cnet_tls_network_drive(
-                &client, &server, &listener, &tls_server,
-                &server_probe, &accepted),
-            SALTS_OK);
+             !server_probe.failed && !client_probe.failed && cmeta_monotonic_ms() < deadline)
+        check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
+                                           &accepted),
+                    SALTS_OK);
       check_false(client_probe.failed);
       check_false(server_probe.failed);
-      check_equal(
-          server_probe.received_size,
-          (size_t)(frame_prefix_bytes + first_payload_bytes));
-      check_equal(
-          memcmp(received, expected, server_probe.received_size),
-          0);
+      check_equal(server_probe.received_size, (size_t)(frame_prefix_bytes + first_payload_bytes));
+      check_equal(memcmp(received, expected, server_probe.received_size), 0);
     }
 
     server_probe.received_size = 0u;
     memset(received, 0, second_total_bytes);
     memset(expected, 0, second_total_bytes);
-    check_equal(
-        cnet_receive(&server, server_probe.connection, 24u),
-        SALTS_OK);
+    check_equal(cnet_receive(&server, server_probe.connection, 24u), SALTS_OK);
     sent_before = (size_t)client_probe.sent;
 
     for (size_t frame = 0u; frame < frame_count; ++frame) {
-      mem_buffer_t *prefix = mem_get_buffer(
-          mem_global(), frame_prefix_bytes);
-      mem_buffer_t *payload = mem_get_buffer(
-          mem_global(), frame_payload_bytes);
+      mem_buffer_t *prefix = mem_get_buffer(mem_global(), frame_prefix_bytes);
+      mem_buffer_t *payload = mem_get_buffer(mem_global(), frame_payload_bytes);
       mem_slice_t slices[2] = {{0}};
       unsigned char *prefix_data;
       unsigned char *payload_data;
-      const size_t offset =
-          frame * (frame_prefix_bytes + frame_payload_bytes);
+      const size_t offset = frame * (frame_prefix_bytes + frame_payload_bytes);
       const uint32_t stream_id = (uint32_t)(frame * 2u + 1u);
 
       check_not_null(prefix);
@@ -900,41 +812,32 @@ spec("CNet bounded TLS engine") {
       prefix_data[7] = (unsigned char)((stream_id >> 8u) & 0xffu);
       prefix_data[8] = (unsigned char)(stream_id & 0xffu);
       for (index = 0u; index < frame_payload_bytes; ++index)
-        payload_data[index] =
-            (unsigned char)((index * 31u + frame * 19u + 3u) & 0xffu);
+        payload_data[index] = (unsigned char)((index * 31u + frame * 19u + 3u) & 0xffu);
       mem_set_used(prefix, frame_prefix_bytes);
       mem_set_used(payload, frame_payload_bytes);
       memcpy(expected + offset, prefix_data, frame_prefix_bytes);
-      memcpy(expected + offset + frame_prefix_bytes,
-             payload_data, frame_payload_bytes);
+      memcpy(expected + offset + frame_prefix_bytes, payload_data, frame_payload_bytes);
       slices[0] = mem_slice(prefix, 0u, frame_prefix_bytes);
       slices[1] = mem_slice(payload, 0u, frame_payload_bytes);
       check_not_null(slices[0].buffer);
       check_not_null(slices[1].buffer);
-      check_equal(
-          cnet_send_slicev(
-              &client, client_connection, slices, 2u),
-          SALTS_OK);
+      check_equal(cnet_send_slicev(&client, client_connection, slices, 2u), SALTS_OK);
       mem_slice_release(&slices[0]);
       mem_slice_release(&slices[1]);
       mem_buffer_release(prefix);
       mem_buffer_release(payload);
     }
 
-    deadline = salts_monotonic_ms() + 5000u;
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((server_probe.received_size < second_total_bytes ||
             (size_t)client_probe.sent < sent_before + frame_count) &&
-           !server_probe.failed && !client_probe.failed &&
-           salts_monotonic_ms() < deadline)
-      check_equal(
-          cnet_tls_network_drive(
-              &client, &server, &listener, &tls_server,
-              &server_probe, &accepted),
-          SALTS_OK);
+           !server_probe.failed && !client_probe.failed && cmeta_monotonic_ms() < deadline)
+      check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
+                                         &accepted),
+                  SALTS_OK);
     check_false(client_probe.failed);
     check_false(server_probe.failed);
-    check_equal(server_probe.received_size,
-                (size_t)second_total_bytes);
+    check_equal(server_probe.received_size, (size_t)second_total_bytes);
     check_equal(memcmp(received, expected, second_total_bytes), 0);
 
     /*
@@ -949,8 +852,7 @@ spec("CNet bounded TLS engine") {
     memset(received, 0, second_total_bytes);
     memset(expected, 0, second_total_bytes);
     {
-      const size_t wire_size =
-          frame_prefix_bytes + first_payload_bytes;
+      const size_t wire_size = frame_prefix_bytes + first_payload_bytes;
       mem_buffer_t *wire = mem_get_buffer(mem_global(), wire_size);
       unsigned char *wire_data;
       check_not_null(wire);
@@ -965,82 +867,67 @@ spec("CNet bounded TLS engine") {
       wire_data[7] = 0u;
       wire_data[8] = 1u;
       for (index = frame_prefix_bytes; index < wire_size; ++index)
-        wire_data[index] =
-            (unsigned char)(((index - frame_prefix_bytes) * 37u + 11u) &
-                            0xffu);
+        wire_data[index] = (unsigned char)(((index - frame_prefix_bytes) * 37u + 11u) & 0xffu);
       mem_set_used(wire, wire_size);
       memcpy(expected, wire_data, wire_size);
 
 #if defined(CNET_INTERNAL_PROFILING)
       check_equal(cnet_client_profile_begin(&client), SALTS_OK);
-      check_equal(cnet_client_profile_trace_bind(
-                      &client, client_trace,
-                      sizeof(client_trace) / sizeof(client_trace[0])),
+      check_equal(cnet_client_profile_trace_bind(&client, client_trace,
+                                                 sizeof(client_trace) / sizeof(client_trace[0])),
                   SALTS_OK);
       check_equal(cnet_client_profile_begin(&server), SALTS_OK);
-      check_equal(cnet_client_profile_trace_bind(
-                      &server, server_trace,
-                      sizeof(server_trace) / sizeof(server_trace[0])),
+      check_equal(cnet_client_profile_trace_bind(&server, server_trace,
+                                                 sizeof(server_trace) / sizeof(server_trace[0])),
                   SALTS_OK);
 #endif
       check_equal(cnet_receive(&client, client_connection, 8u), SALTS_OK);
       sent_before = (size_t)server_probe.sent;
-      check_equal(
-          cnet_send_buffer(&server, server_probe.connection, wire),
-          SALTS_OK);
+      check_equal(cnet_send_buffer(&server, server_probe.connection, wire), SALTS_OK);
       mem_buffer_release(wire);
 
-      deadline = salts_monotonic_ms() + 5000u;
+      deadline = cmeta_monotonic_ms() + 5000u;
       while ((client_probe.received_size < wire_size ||
               (size_t)server_probe.sent < sent_before + 1u) &&
-             !server_probe.failed && !client_probe.failed &&
-             salts_monotonic_ms() < deadline)
-        check_equal(
-            cnet_tls_network_drive(
-                &client, &server, &listener, &tls_server,
-                &server_probe, &accepted),
-            SALTS_OK);
+             !server_probe.failed && !client_probe.failed && cmeta_monotonic_ms() < deadline)
+        check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
+                                           &accepted),
+                    SALTS_OK);
       check_false(client_probe.failed);
       check_false(server_probe.failed);
       check_equal(client_probe.received_size, wire_size);
       check_equal(memcmp(received, expected, wire_size), 0);
 #if defined(CNET_INTERNAL_PROFILING)
-      check_equal(cnet_client_profile_take(&client, &client_profile),
-                  SALTS_OK);
-      check_equal(cnet_client_profile_take(&server, &server_profile),
-                  SALTS_OK);
+      check_equal(cnet_client_profile_take(&client, &client_profile), SALTS_OK);
+      check_equal(cnet_client_profile_take(&server, &server_profile), SALTS_OK);
       check_equal(client_profile.owner.trace_dropped, UINT64_C(0));
       check_equal(server_profile.owner.trace_dropped, UINT64_C(0));
       {
-        const size_t read_arm = cnet_tls_test_trace_index(
-            client_trace, (size_t)client_profile.owner.trace_event_count,
-            CNET_OWNER_TRACE_TLS_READ_ARM);
-        const size_t read_completion = cnet_tls_test_trace_index(
-            client_trace, (size_t)client_profile.owner.trace_event_count,
-            CNET_OWNER_TRACE_TLS_READ_COMPLETION);
-        const size_t decrypt = cnet_tls_test_trace_index(
-            client_trace, (size_t)client_profile.owner.trace_event_count,
-            CNET_OWNER_TRACE_TLS_DECRYPT);
-        const size_t publish = cnet_tls_test_trace_index(
-            client_trace, (size_t)client_profile.owner.trace_event_count,
-            CNET_OWNER_TRACE_PLAINTEXT_PUBLISH);
-        const size_t write_submit = cnet_tls_test_trace_index(
-            server_trace, (size_t)server_profile.owner.trace_event_count,
-            CNET_OWNER_TRACE_TLS_WRITE_SUBMIT);
-        const size_t write_completion = cnet_tls_test_trace_index(
-            server_trace, (size_t)server_profile.owner.trace_event_count,
-            CNET_OWNER_TRACE_TLS_WRITE_COMPLETION);
-        const size_t client_trace_count =
-            (size_t)client_profile.owner.trace_event_count;
-        const size_t server_trace_count =
-            (size_t)server_profile.owner.trace_event_count;
+        const size_t read_arm =
+            cnet_tls_test_trace_index(client_trace, (size_t)client_profile.owner.trace_event_count,
+                                      CNET_OWNER_TRACE_TLS_READ_ARM);
+        const size_t read_completion =
+            cnet_tls_test_trace_index(client_trace, (size_t)client_profile.owner.trace_event_count,
+                                      CNET_OWNER_TRACE_TLS_READ_COMPLETION);
+        const size_t decrypt =
+            cnet_tls_test_trace_index(client_trace, (size_t)client_profile.owner.trace_event_count,
+                                      CNET_OWNER_TRACE_TLS_DECRYPT);
+        const size_t publish =
+            cnet_tls_test_trace_index(client_trace, (size_t)client_profile.owner.trace_event_count,
+                                      CNET_OWNER_TRACE_PLAINTEXT_PUBLISH);
+        const size_t write_submit =
+            cnet_tls_test_trace_index(server_trace, (size_t)server_profile.owner.trace_event_count,
+                                      CNET_OWNER_TRACE_TLS_WRITE_SUBMIT);
+        const size_t write_completion =
+            cnet_tls_test_trace_index(server_trace, (size_t)server_profile.owner.trace_event_count,
+                                      CNET_OWNER_TRACE_TLS_WRITE_COMPLETION);
+        const size_t client_trace_count = (size_t)client_profile.owner.trace_event_count;
+        const size_t server_trace_count = (size_t)server_profile.owner.trace_event_count;
         const bool client_events_present =
-            read_arm < client_trace_count &&
-            read_completion < client_trace_count &&
+            read_arm < client_trace_count && read_completion < client_trace_count &&
             decrypt < client_trace_count && publish < client_trace_count;
         const bool server_events_present =
-            write_submit < server_trace_count &&
-            write_completion < server_trace_count;
+            write_submit < server_trace_count && write_completion < server_trace_count;
         check_true(client_events_present);
         check_true(server_events_present);
         if (client_events_present) {
@@ -1049,17 +936,14 @@ spec("CNet bounded TLS engine") {
           check_true(decrypt < publish);
           check_true(client_trace[read_completion].bytes > 0u);
         }
-        if (server_events_present)
-          check_true(write_submit < write_completion);
-        check_equal(cnet_tls_test_trace_bytes(
-                        client_trace,
-                        (size_t)client_profile.owner.trace_event_count,
-                        CNET_OWNER_TRACE_TLS_DECRYPT),
+        if (server_events_present) check_true(write_submit < write_completion);
+        check_equal(cnet_tls_test_trace_bytes(client_trace,
+                                              (size_t)client_profile.owner.trace_event_count,
+                                              CNET_OWNER_TRACE_TLS_DECRYPT),
                     (uint64_t)wire_size);
-        check_equal(cnet_tls_test_trace_bytes(
-                        client_trace,
-                        (size_t)client_profile.owner.trace_event_count,
-                        CNET_OWNER_TRACE_PLAINTEXT_PUBLISH),
+        check_equal(cnet_tls_test_trace_bytes(client_trace,
+                                              (size_t)client_profile.owner.trace_event_count,
+                                              CNET_OWNER_TRACE_PLAINTEXT_PUBLISH),
                     (uint64_t)wire_size);
       }
 #endif
@@ -1069,28 +953,22 @@ spec("CNet bounded TLS engine") {
     memset(received, 0, second_total_bytes);
     memset(expected, 0, second_total_bytes);
     {
-      mem_buffer_t *wire =
-          mem_get_buffer(mem_global(), second_total_bytes);
+      mem_buffer_t *wire = mem_get_buffer(mem_global(), second_total_bytes);
       unsigned char *wire_data;
       check_not_null(wire);
       wire_data = (unsigned char *)mem_buffer_data(wire);
       for (size_t frame = 0u; frame < frame_count; ++frame) {
-        const size_t offset =
-            frame * (frame_prefix_bytes + frame_payload_bytes);
+        const size_t offset = frame * (frame_prefix_bytes + frame_payload_bytes);
         const uint32_t stream_id = (uint32_t)(frame * 2u + 1u);
         wire_data[offset + 0u] = 0u;
         wire_data[offset + 1u] = 0x40u;
         wire_data[offset + 2u] = 0u;
         wire_data[offset + 3u] = 0u;
         wire_data[offset + 4u] = 0u;
-        wire_data[offset + 5u] =
-            (unsigned char)((stream_id >> 24u) & 0x7fu);
-        wire_data[offset + 6u] =
-            (unsigned char)((stream_id >> 16u) & 0xffu);
-        wire_data[offset + 7u] =
-            (unsigned char)((stream_id >> 8u) & 0xffu);
-        wire_data[offset + 8u] =
-            (unsigned char)(stream_id & 0xffu);
+        wire_data[offset + 5u] = (unsigned char)((stream_id >> 24u) & 0x7fu);
+        wire_data[offset + 6u] = (unsigned char)((stream_id >> 16u) & 0xffu);
+        wire_data[offset + 7u] = (unsigned char)((stream_id >> 8u) & 0xffu);
+        wire_data[offset + 8u] = (unsigned char)(stream_id & 0xffu);
         for (index = 0u; index < frame_payload_bytes; ++index)
           wire_data[offset + frame_prefix_bytes + index] =
               (unsigned char)((index * 41u + frame * 23u + 5u) & 0xffu);
@@ -1100,37 +978,28 @@ spec("CNet bounded TLS engine") {
 
       check_equal(cnet_receive(&client, client_connection, 24u), SALTS_OK);
       sent_before = (size_t)server_probe.sent;
-      check_equal(
-          cnet_send_buffer(&server, server_probe.connection, wire),
-          SALTS_OK);
+      check_equal(cnet_send_buffer(&server, server_probe.connection, wire), SALTS_OK);
       mem_buffer_release(wire);
 
-      deadline = salts_monotonic_ms() + 5000u;
+      deadline = cmeta_monotonic_ms() + 5000u;
       while ((client_probe.received_size < second_total_bytes ||
               (size_t)server_probe.sent < sent_before + 1u) &&
-             !server_probe.failed && !client_probe.failed &&
-             salts_monotonic_ms() < deadline)
-        check_equal(
-            cnet_tls_network_drive(
-                &client, &server, &listener, &tls_server,
-                &server_probe, &accepted),
-            SALTS_OK);
+             !server_probe.failed && !client_probe.failed && cmeta_monotonic_ms() < deadline)
+        check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
+                                           &accepted),
+                    SALTS_OK);
       check_false(client_probe.failed);
       check_false(server_probe.failed);
-      check_equal(
-          client_probe.received_size, (size_t)second_total_bytes);
+      check_equal(client_probe.received_size, (size_t)second_total_bytes);
       check_equal(memcmp(received, expected, second_total_bytes), 0);
     }
 
     check_equal(cnet_close(&client, client_connection), SALTS_OK);
-    deadline = salts_monotonic_ms() + 5000u;
-    while ((!client_probe.terminal || !server_probe.terminal) &&
-           salts_monotonic_ms() < deadline)
-      check_equal(
-          cnet_tls_network_drive(
-              &client, &server, &listener, &tls_server,
-              &server_probe, &accepted),
-          SALTS_OK);
+    deadline = cmeta_monotonic_ms() + 5000u;
+    while ((!client_probe.terminal || !server_probe.terminal) && cmeta_monotonic_ms() < deadline)
+      check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
+                                         &accepted),
+                  SALTS_OK);
     check_true(client_probe.terminal);
     check_true(server_probe.terminal);
     check_false(client_probe.failed);
@@ -1155,8 +1024,8 @@ spec("CNet bounded TLS engine") {
 
     check_not_null(directory);
     check_greater(snprintf(ca_path, sizeof(ca_path), "%s/ca.pem", directory), 0);
-    check_equal(tt_write_file(ca_path, CNET_TLS_TEST_CERTIFICATE,
-                              sizeof(CNET_TLS_TEST_CERTIFICATE)), 0);
+    check_equal(
+        tt_write_file(ca_path, CNET_TLS_TEST_CERTIFICATE, sizeof(CNET_TLS_TEST_CERTIFICATE)), 0);
 
     config.ca_file = ca_path;
     check_equal(cnet_tls_client_context_create(&config, &context), SALTS_OK);
@@ -1175,14 +1044,14 @@ spec("CNet bounded TLS engine") {
     cnet_tls_context *context = NULL;
 
     check_not_null(directory);
-    check_greater(snprintf(hashed_path, sizeof(hashed_path), "%s/0123abcd.0",
-                           directory), 0);
-    check_greater(snprintf(ignored_path, sizeof(ignored_path), "%s/not-a-hash.pem",
-                           directory), 0);
+    check_greater(snprintf(hashed_path, sizeof(hashed_path), "%s/0123abcd.0", directory), 0);
+    check_greater(snprintf(ignored_path, sizeof(ignored_path), "%s/not-a-hash.pem", directory), 0);
     check_equal(tt_write_file(hashed_path, CNET_TLS_TEST_CERTIFICATE,
-                              sizeof(CNET_TLS_TEST_CERTIFICATE) - 1u), 0);
+                              sizeof(CNET_TLS_TEST_CERTIFICATE) - 1u),
+                0);
     check_equal(tt_write_file(ignored_path, CNET_TLS_TEST_CERTIFICATE,
-                              sizeof(CNET_TLS_TEST_CERTIFICATE) - 1u), 0);
+                              sizeof(CNET_TLS_TEST_CERTIFICATE) - 1u),
+                0);
 
     config.ca_path = directory;
     check_equal(cnet_tls_client_context_create(&config, &context), SALTS_OK);
@@ -1202,11 +1071,11 @@ spec("CNet bounded TLS engine") {
     static const char *five_protocols[] = {"p1", "p2", "p3", "p4", "p5"};
     char max_name[256];
     const char *overflow_protocols[256];
-    cnet_tls_client_config config = {
-        .size = sizeof(config),
-        .ca_file = CNET_TLS_TEST_IP_CA,
-        .alpn_protocols = five_protocols,
-        .alpn_protocol_count = sizeof(five_protocols) / sizeof(five_protocols[0])};
+    cnet_tls_client_config config = {.size = sizeof(config),
+                                     .ca_file = CNET_TLS_TEST_IP_CA,
+                                     .alpn_protocols = five_protocols,
+                                     .alpn_protocol_count =
+                                         sizeof(five_protocols) / sizeof(five_protocols[0])};
     cnet_tls_context *context = NULL;
     size_t index;
 
@@ -1216,12 +1085,10 @@ spec("CNet bounded TLS engine") {
 
     memset(max_name, 'a', sizeof(max_name) - 1u);
     max_name[sizeof(max_name) - 1u] = '\0';
-    for (index = 0u; index < sizeof(overflow_protocols) / sizeof(overflow_protocols[0]);
-         ++index)
+    for (index = 0u; index < sizeof(overflow_protocols) / sizeof(overflow_protocols[0]); ++index)
       overflow_protocols[index] = max_name;
     config.alpn_protocols = overflow_protocols;
-    config.alpn_protocol_count =
-        sizeof(overflow_protocols) / sizeof(overflow_protocols[0]);
+    config.alpn_protocol_count = sizeof(overflow_protocols) / sizeof(overflow_protocols[0]);
     context = NULL;
     check_equal(cnet_tls_client_context_create(&config, &context), SALTS_ERANGE);
     check_null(context);
@@ -1229,11 +1096,10 @@ spec("CNet bounded TLS engine") {
 
   it("loads an unencrypted P-256 PKCS8 identity when key_password is null") {
     cnet_tls_server server = {0};
-    cnet_tls_server_config config = {
-        .size = sizeof(config),
-        .cert_file = CNET_TLS_TEST_P256_CERT,
-        .key_file = CNET_TLS_TEST_P256_KEY,
-        .client_auth = CNET_TLS_CLIENT_AUTH_NONE};
+    cnet_tls_server_config config = {.size = sizeof(config),
+                                     .cert_file = CNET_TLS_TEST_P256_CERT,
+                                     .key_file = CNET_TLS_TEST_P256_KEY,
+                                     .client_auth = CNET_TLS_CLIENT_AUTH_NONE};
     check_equal(cnet_tls_server_init(&server, &config), SALTS_OK);
     check_equal(cnet_tls_server_destroy(&server), SALTS_OK);
   }
@@ -1252,9 +1118,8 @@ spec("CNet bounded TLS engine") {
 
   it("verifies an IP literal against subjectAltName iPAddress without SNI") {
     cnet_tls_test_pair pair;
-    check_equal(cnet_tls_test_fixture_pair_init(
-                    &pair, CNET_TLS_TEST_IP_CA, CNET_TLS_TEST_IP_CERT,
-                    CNET_TLS_TEST_IP_KEY, "127.0.0.1"),
+    check_equal(cnet_tls_test_fixture_pair_init(&pair, CNET_TLS_TEST_IP_CA, CNET_TLS_TEST_IP_CERT,
+                                                CNET_TLS_TEST_IP_KEY, "127.0.0.1"),
                 SALTS_OK);
     check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
     cnet_tls_test_pair_destroy(&pair);
@@ -1262,9 +1127,8 @@ spec("CNet bounded TLS engine") {
 
   it("rejects a mismatched IP literal without falling back to DNS identity") {
     cnet_tls_test_pair pair;
-    check_equal(cnet_tls_test_fixture_pair_init(
-                    &pair, CNET_TLS_TEST_IP_CA, CNET_TLS_TEST_IP_CERT,
-                    CNET_TLS_TEST_IP_KEY, "127.0.0.2"),
+    check_equal(cnet_tls_test_fixture_pair_init(&pair, CNET_TLS_TEST_IP_CA, CNET_TLS_TEST_IP_CERT,
+                                                CNET_TLS_TEST_IP_KEY, "127.0.0.2"),
                 SALTS_OK);
     check_equal(cnet_tls_test_handshake(&pair), SALTS_ECONNABORTED);
     cnet_tls_test_pair_destroy(&pair);
@@ -1278,14 +1142,12 @@ spec("CNet bounded TLS engine") {
     size_t leaf_size;
 
     check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
-    check_equal(cnet_tls_state_peer_certificate_chain(&pair.client, &chain),
-                SALTS_ENOTCONN);
+    check_equal(cnet_tls_state_peer_certificate_chain(&pair.client, &chain), SALTS_ENOTCONN);
     check_equal(chain.count, (size_t)0u);
     check_equal(chain.total_bytes, (size_t)0u);
 
     check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
-    check_equal(cnet_tls_state_peer_certificate_chain(&pair.client, &chain),
-                SALTS_OK);
+    check_equal(cnet_tls_state_peer_certificate_chain(&pair.client, &chain), SALTS_OK);
     check_greater(chain.count, (size_t)0u);
     check_true(chain.count <= CNET_TLS_PEER_CHAIN_MAX_CERTIFICATES);
     check_greater(chain.total_bytes, (size_t)0u);
@@ -1300,8 +1162,7 @@ spec("CNet bounded TLS engine") {
     memcpy(duplicated, chain.certificates[0].data, leaf_size);
     memcpy(duplicated + leaf_size, chain.certificates[0].data, leaf_size);
 
-    check_equal(cnet_tls_peer_certificate_chain_parse(
-                    duplicated, leaf_size * 2u, &parsed),
+    check_equal(cnet_tls_peer_certificate_chain_parse(duplicated, leaf_size * 2u, &parsed),
                 SALTS_OK);
     check_equal(parsed.count, (size_t)2u);
     check_equal(parsed.total_bytes, leaf_size * 2u);
@@ -1311,16 +1172,15 @@ spec("CNet bounded TLS engine") {
     check_equal(parsed.certificates[1].size, leaf_size);
 
     memset(&parsed, 0x5a, sizeof(parsed));
-    check_equal(cnet_tls_peer_certificate_chain_parse(
-                    duplicated, leaf_size * 2u - 1u, &parsed),
+    check_equal(cnet_tls_peer_certificate_chain_parse(duplicated, leaf_size * 2u - 1u, &parsed),
                 SALTS_EPROTO);
     check_equal(parsed.count, (size_t)0u);
     check_equal(parsed.total_bytes, (size_t)0u);
     check_null(parsed.certificates[0].data);
 
     memset(&parsed, 0x5a, sizeof(parsed));
-    check_equal(cnet_tls_peer_certificate_chain_parse(
-                    duplicated, CNET_TLS_PEER_CHAIN_MAX_BYTES + 1u, &parsed),
+    check_equal(cnet_tls_peer_certificate_chain_parse(duplicated,
+                                                      CNET_TLS_PEER_CHAIN_MAX_BYTES + 1u, &parsed),
                 SALTS_ERANGE);
     check_equal(parsed.count, (size_t)0u);
     check_equal(parsed.total_bytes, (size_t)0u);
@@ -1346,8 +1206,8 @@ spec("CNet bounded TLS engine") {
                                                   sizeof(client_version), &client_version_size),
                 SALTS_ENOTCONN);
     check_equal(client_version_size, (size_t)0u);
-    check_equal(cnet_tls_state_negotiated_cipher(&pair.client, client_cipher,
-                                                 sizeof(client_cipher), &client_cipher_size),
+    check_equal(cnet_tls_state_negotiated_cipher(&pair.client, client_cipher, sizeof(client_cipher),
+                                                 &client_cipher_size),
                 SALTS_ENOTCONN);
     check_equal(client_cipher_size, (size_t)0u);
 
@@ -1359,25 +1219,24 @@ spec("CNet bounded TLS engine") {
                                                   sizeof(server_version), &server_version_size),
                 SALTS_OK);
     check_equal(strcmp(client_version, server_version), 0);
-    check_true(strcmp(client_version, "TLSv1.2") == 0 ||
-               strcmp(client_version, "TLSv1.3") == 0);
+    check_true(strcmp(client_version, "TLSv1.2") == 0 || strcmp(client_version, "TLSv1.3") == 0);
     check_equal(client_version_size, strlen(client_version));
     check_equal(server_version_size, strlen(server_version));
 
-    check_equal(cnet_tls_state_negotiated_cipher(&pair.client, client_cipher,
-                                                 sizeof(client_cipher), &client_cipher_size),
+    check_equal(cnet_tls_state_negotiated_cipher(&pair.client, client_cipher, sizeof(client_cipher),
+                                                 &client_cipher_size),
                 SALTS_OK);
-    check_equal(cnet_tls_state_negotiated_cipher(&pair.server, server_cipher,
-                                                 sizeof(server_cipher), &server_cipher_size),
+    check_equal(cnet_tls_state_negotiated_cipher(&pair.server, server_cipher, sizeof(server_cipher),
+                                                 &server_cipher_size),
                 SALTS_OK);
     check_equal(strcmp(client_cipher, server_cipher), 0);
     check_greater(client_cipher_size, (size_t)0u);
     check_equal(client_cipher_size, strlen(client_cipher));
     check_equal(server_cipher_size, strlen(server_cipher));
 
-    check_equal(cnet_tls_state_negotiated_version(&pair.client, client_version, 1u,
-                                                  &client_version_size),
-                SALTS_EMSGSIZE);
+    check_equal(
+        cnet_tls_state_negotiated_version(&pair.client, client_version, 1u, &client_version_size),
+        SALTS_EMSGSIZE);
     check_equal(client_version_size, (size_t)0u);
     cnet_tls_test_pair_destroy(&pair);
   }
@@ -1388,18 +1247,16 @@ spec("CNet bounded TLS engine") {
     size_t version_size = 0u;
 
     check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
-    check_equal(cnet_tls_state_set_protocol_range(&pair.client,
-                                                   CNET_TLS_PROTOCOL_VERSION_DEFAULT,
-                                                   CNET_TLS_PROTOCOL_VERSION_1_2),
+    check_equal(cnet_tls_state_set_protocol_range(&pair.client, CNET_TLS_PROTOCOL_VERSION_DEFAULT,
+                                                  CNET_TLS_PROTOCOL_VERSION_1_2),
                 SALTS_OK);
-    check_equal(cnet_tls_state_set_protocol_range(&pair.server,
-                                                   CNET_TLS_PROTOCOL_VERSION_DEFAULT,
-                                                   CNET_TLS_PROTOCOL_VERSION_1_2),
+    check_equal(cnet_tls_state_set_protocol_range(&pair.server, CNET_TLS_PROTOCOL_VERSION_DEFAULT,
+                                                  CNET_TLS_PROTOCOL_VERSION_1_2),
                 SALTS_OK);
     check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
-    check_equal(cnet_tls_state_negotiated_version(&pair.client, version, sizeof(version),
-                                                  &version_size),
-                SALTS_OK);
+    check_equal(
+        cnet_tls_state_negotiated_version(&pair.client, version, sizeof(version), &version_size),
+        SALTS_OK);
     check_equal(strcmp(version, "TLSv1.2"), 0);
     check_equal(version_size, strlen(version));
     cnet_tls_test_pair_destroy(&pair);
@@ -1411,18 +1268,16 @@ spec("CNet bounded TLS engine") {
     size_t version_size = 0u;
 
     check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
-    check_equal(cnet_tls_state_set_protocol_range(&pair.client,
-                                                   CNET_TLS_PROTOCOL_VERSION_1_3,
-                                                   CNET_TLS_PROTOCOL_VERSION_DEFAULT),
+    check_equal(cnet_tls_state_set_protocol_range(&pair.client, CNET_TLS_PROTOCOL_VERSION_1_3,
+                                                  CNET_TLS_PROTOCOL_VERSION_DEFAULT),
                 SALTS_OK);
-    check_equal(cnet_tls_state_set_protocol_range(&pair.server,
-                                                   CNET_TLS_PROTOCOL_VERSION_1_3,
-                                                   CNET_TLS_PROTOCOL_VERSION_DEFAULT),
+    check_equal(cnet_tls_state_set_protocol_range(&pair.server, CNET_TLS_PROTOCOL_VERSION_1_3,
+                                                  CNET_TLS_PROTOCOL_VERSION_DEFAULT),
                 SALTS_OK);
     check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
-    check_equal(cnet_tls_state_negotiated_version(&pair.client, version, sizeof(version),
-                                                  &version_size),
-                SALTS_OK);
+    check_equal(
+        cnet_tls_state_negotiated_version(&pair.client, version, sizeof(version), &version_size),
+        SALTS_OK);
     check_equal(strcmp(version, "TLSv1.3"), 0);
     check_equal(version_size, strlen(version));
     cnet_tls_test_pair_destroy(&pair);
@@ -1446,14 +1301,12 @@ spec("CNet bounded TLS engine") {
 
     check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
     check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
-    check_equal(cnet_tls_state_io_buffer_bytes(&pair.client),
-                (size_t)CNET_TLS_MIN_IO_BUFFER_BYTES);
+    check_equal(cnet_tls_state_io_buffer_bytes(&pair.client), (size_t)CNET_TLS_MIN_IO_BUFFER_BYTES);
 
     check_equal(cnet_tls_write(&pair.client, payload, payload_size, &complete), SALTS_OK);
     check_true(complete);
     check_equal(cnet_tls_test_transfer(&pair.client, &pair.server), SALTS_OK);
-    check_equal(cnet_tls_read(&pair.server, received, payload_size, &received_size,
-                              &peer_closed),
+    check_equal(cnet_tls_read(&pair.server, received, payload_size, &received_size, &peer_closed),
                 SALTS_OK);
     check_equal(received_size, (size_t)payload_size);
     check_equal(memcmp(received, payload, payload_size), 0);
@@ -1476,16 +1329,17 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
     check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
 
-    check_equal(cnet_tls_probe_peer_close(&pair.client, &peer_closed, &plaintext_pending), SALTS_OK);
+    check_equal(cnet_tls_probe_peer_close(&pair.client, &peer_closed, &plaintext_pending),
+                SALTS_OK);
     check_false(peer_closed);
     check_false(plaintext_pending);
 
     check_equal(cnet_tls_write(&pair.client, &payload, sizeof(payload), &complete), SALTS_OK);
     check_true(complete);
     check_equal(cnet_tls_test_transfer(&pair.client, &pair.server), SALTS_OK);
-    check_equal(cnet_tls_read(&pair.server, &received, sizeof(received), &received_size,
-                              &peer_closed),
-                SALTS_OK);
+    check_equal(
+        cnet_tls_read(&pair.server, &received, sizeof(received), &received_size, &peer_closed),
+        SALTS_OK);
     check_equal(received_size, sizeof(received));
     check_equal(received, payload);
     check_false(peer_closed);
@@ -1509,13 +1363,14 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_tls_write(&pair.client, &payload, sizeof(payload), &complete), SALTS_OK);
     check_true(complete);
     check_equal(cnet_tls_test_transfer(&pair.client, &pair.server), SALTS_OK);
-    check_equal(cnet_tls_probe_peer_close(&pair.server, &peer_closed, &plaintext_pending), SALTS_OK);
+    check_equal(cnet_tls_probe_peer_close(&pair.server, &peer_closed, &plaintext_pending),
+                SALTS_OK);
     check_false(peer_closed);
     check_true(plaintext_pending);
 
-    check_equal(cnet_tls_read(&pair.server, &received, sizeof(received), &received_size,
-                              &peer_closed),
-                SALTS_OK);
+    check_equal(
+        cnet_tls_read(&pair.server, &received, sizeof(received), &received_size, &peer_closed),
+        SALTS_OK);
     check_equal(received_size, sizeof(received));
     check_equal(received, payload);
     check_false(peer_closed);
@@ -1524,7 +1379,8 @@ spec("CNet bounded TLS engine") {
     check_true(notify_generated);
     check_equal(cnet_tls_test_transfer(&pair.client, &pair.server), SALTS_OK);
     plaintext_pending = false;
-    check_equal(cnet_tls_probe_peer_close(&pair.server, &peer_closed, &plaintext_pending), SALTS_OK);
+    check_equal(cnet_tls_probe_peer_close(&pair.server, &peer_closed, &plaintext_pending),
+                SALTS_OK);
     check_true(peer_closed);
     check_false(plaintext_pending);
 
@@ -1609,46 +1465,44 @@ spec("CNet bounded TLS engine") {
     after_each() { cnet_tls_test_pair_destroy(&pair); }
 
     it("requires and verifies a configured client certificate") {
-      check_equal(cnet_tls_test_mtls_pair_init(&pair, CNET_TLS_CLIENT_AUTH_REQUIRED, true), SALTS_OK);
+      check_equal(cnet_tls_test_mtls_pair_init(&pair, CNET_TLS_CLIENT_AUTH_REQUIRED, true),
+                  SALTS_OK);
       check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
     }
 
     it("rejects an absent client identity when client authentication is required") {
-      check_equal(cnet_tls_test_mtls_pair_init(&pair, CNET_TLS_CLIENT_AUTH_REQUIRED, false), SALTS_OK);
+      check_equal(cnet_tls_test_mtls_pair_init(&pair, CNET_TLS_CLIENT_AUTH_REQUIRED, false),
+                  SALTS_OK);
       check_equal(cnet_tls_test_handshake(&pair), SALTS_ECONNABORTED);
     }
   }
 
   it("derives RFC 5929 tls-server-end-point from a SHA-384 certificate signature") {
     static const uint8_t expected[] = {
-        0xf9u, 0xccu, 0xacu, 0x9fu, 0xefu, 0x55u, 0x8cu, 0x77u,
-        0x04u, 0xd2u, 0x37u, 0x4au, 0xa6u, 0x00u, 0xe0u, 0x95u,
-        0x46u, 0xc9u, 0xb3u, 0x6cu, 0xe5u, 0xd6u, 0x09u, 0xafu,
-        0xcdu, 0x49u, 0xacu, 0xfbu, 0xd6u, 0x9fu, 0x37u, 0xa4u,
-        0x28u, 0x94u, 0x4fu, 0x2bu, 0x63u, 0x3fu, 0x7fu, 0xdbu,
-        0x6bu, 0x30u, 0xecu, 0xa2u, 0xc3u, 0x01u, 0x16u, 0x06u};
+        0xf9u, 0xccu, 0xacu, 0x9fu, 0xefu, 0x55u, 0x8cu, 0x77u, 0x04u, 0xd2u, 0x37u, 0x4au,
+        0xa6u, 0x00u, 0xe0u, 0x95u, 0x46u, 0xc9u, 0xb3u, 0x6cu, 0xe5u, 0xd6u, 0x09u, 0xafu,
+        0xcdu, 0x49u, 0xacu, 0xfbu, 0xd6u, 0x9fu, 0x37u, 0xa4u, 0x28u, 0x94u, 0x4fu, 0x2bu,
+        0x63u, 0x3fu, 0x7fu, 0xdbu, 0x6bu, 0x30u, 0xecu, 0xa2u, 0xc3u, 0x01u, 0x16u, 0x06u};
     uint8_t certificate[2048] = {0};
     uint8_t binding[CNET_TLS_SERVER_END_POINT_MAX_BYTES] = {0};
     uint8_t short_binding[47] = {0};
     size_t certificate_size = 0u;
     size_t binding_size = 0u;
 
-    check_equal(cnet_tls_test_read_fixture(
-                    CNET_TLS_TEST_SHA384_DER, certificate,
-                    sizeof(certificate), &certificate_size),
+    check_equal(cnet_tls_test_read_fixture(CNET_TLS_TEST_SHA384_DER, certificate,
+                                           sizeof(certificate), &certificate_size),
                 SALTS_OK);
     check_equal(cnet_tls_server_end_point_binding_from_certificate(
-                    certificate, certificate_size, binding, sizeof(binding),
-                    &binding_size),
+                    certificate, certificate_size, binding, sizeof(binding), &binding_size),
                 SALTS_OK);
     check_equal(binding_size, sizeof(expected));
     check_equal(memcmp(binding, expected, sizeof(expected)), 0);
 
     binding_size = 0u;
-    check_equal(cnet_tls_server_end_point_binding_from_certificate(
-                    certificate, certificate_size, short_binding,
-                    sizeof(short_binding), &binding_size),
-                SALTS_EMSGSIZE);
+    check_equal(
+        cnet_tls_server_end_point_binding_from_certificate(
+            certificate, certificate_size, short_binding, sizeof(short_binding), &binding_size),
+        SALTS_EMSGSIZE);
     check_equal(binding_size, sizeof(expected));
   }
 
@@ -1681,10 +1535,9 @@ spec("CNet bounded TLS engine") {
     cnet_connection client_connection = {0};
     mem_buffer_t *final_buffer = NULL;
     static const uint8_t expected_server_end_point[] = {
-        0xe5u, 0xbbu, 0xecu, 0x0eu, 0x49u, 0x9du, 0xc1u, 0x00u,
-        0xdbu, 0xc2u, 0x41u, 0x4eu, 0x7au, 0x09u, 0xc6u, 0x87u,
-        0xe0u, 0xefu, 0xbeu, 0x47u, 0x38u, 0x16u, 0x26u, 0x2cu,
-        0x16u, 0xacu, 0x85u, 0xd1u, 0xd7u, 0xb6u, 0x71u, 0xdau};
+        0xe5u, 0xbbu, 0xecu, 0x0eu, 0x49u, 0x9du, 0xc1u, 0x00u, 0xdbu, 0xc2u, 0x41u,
+        0x4eu, 0x7au, 0x09u, 0xc6u, 0x87u, 0xe0u, 0xefu, 0xbeu, 0x47u, 0x38u, 0x16u,
+        0x26u, 0x2cu, 0x16u, 0xacu, 0x85u, 0xd1u, 0xd7u, 0xb6u, 0x71u, 0xdau};
     char peer_certificate_sha256[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY] = {0};
     uint8_t server_end_point[CNET_TLS_SERVER_END_POINT_MAX_BYTES] = {0};
     size_t server_end_point_size = 0u;
@@ -1717,6 +1570,7 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_client_init(&client, &client_config), SALTS_OK);
     check_equal(cnet_client_init(&server, &server_client_config), SALTS_OK);
     check_equal(cnet_listener_init(&listener, &listener_config), SALTS_OK);
+    check_equal(cnet_listener_tcp_option_set(&listener, CNET_TCP_SOCKET_NODELAY, 1u), SALTS_OK);
     check_equal(cnet_listener_port(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u", (unsigned int)port), 0);
     connect_options = (cnet_connect_options){.uri = uri,
@@ -1729,14 +1583,13 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_tls_client_destroy(&tls_client), SALTS_OK);
     check_null(tls_client.impl);
     client_probe.connection = client_connection;
-    check_equal(cnet_tls_server_end_point_binding(
-                    &client, client_connection, server_end_point,
-                    sizeof(server_end_point), &server_end_point_size),
+    check_equal(cnet_tls_server_end_point_binding(&client, client_connection, server_end_point,
+                                                  sizeof(server_end_point), &server_end_point_size),
                 SALTS_ENOTCONN);
     check_equal(server_end_point_size, (size_t)0u);
 
-    deadline = salts_monotonic_ms() + 5000u;
-    while ((!client_probe.connected || !server_probe.connected) && salts_monotonic_ms() < deadline)
+    deadline = cmeta_monotonic_ms() + 5000u;
+    while ((!client_probe.connected || !server_probe.connected) && cmeta_monotonic_ms() < deadline)
       check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
                                          &accepted),
                   SALTS_OK);
@@ -1744,6 +1597,12 @@ spec("CNet bounded TLS engine") {
     check_true(client_probe.connected);
     check_true(server_probe.connected);
     upgrade.server_name = "localhost";
+    {
+      uint64_t nodelay = 0u;
+      check_equal(cnet_connection_tcp_option_get(
+                      &server, server_probe.connection, CNET_TCP_SOCKET_NODELAY, &nodelay), SALTS_OK);
+      check_equal(nodelay, UINT64_C(1));
+    }
     check_equal(cnet_start_tls(&client, client_connection, &upgrade), SALTS_ENOTSUP);
     check_equal(cnet_start_tls_server(&server, server_probe.connection, &tls_server),
                 SALTS_ENOTSUP);
@@ -1766,38 +1625,34 @@ spec("CNet bounded TLS engine") {
     check_equal(strcmp(client_probe.tls_cipher, server_probe.tls_cipher), 0);
     check_equal(client_probe.tls_cipher_size, strlen(client_probe.tls_cipher));
     check_equal(server_probe.tls_cipher_size, strlen(server_probe.tls_cipher));
-    check_equal(cnet_tls_peer_certificate_sha256(&client, client_connection,
-                                                 peer_certificate_sha256),
-                SALTS_OK);
+    check_equal(
+        cnet_tls_peer_certificate_sha256(&client, client_connection, peer_certificate_sha256),
+        SALTS_OK);
     check_equal(strcmp(peer_certificate_sha256,
                        "e5bbec0e499dc100dbc2414e7a09c687e0efbe473816262c16ac85d1d7b671da"),
                 0);
-    check_equal(cnet_tls_peer_certificate_sha256(&server, server_probe.connection,
-                                                 peer_certificate_sha256),
-                SALTS_ENOENT);
-    check_equal(cnet_tls_server_end_point_binding(
-                    &client, client_connection, server_end_point,
-                    sizeof(server_end_point), &server_end_point_size),
+    check_equal(
+        cnet_tls_peer_certificate_sha256(&server, server_probe.connection, peer_certificate_sha256),
+        SALTS_ENOENT);
+    check_equal(cnet_tls_server_end_point_binding(&client, client_connection, server_end_point,
+                                                  sizeof(server_end_point), &server_end_point_size),
                 SALTS_OK);
     check_equal(server_end_point_size, sizeof(expected_server_end_point));
-    check_equal(memcmp(server_end_point, expected_server_end_point,
-                       sizeof(expected_server_end_point)),
-                0);
+    check_equal(
+        memcmp(server_end_point, expected_server_end_point, sizeof(expected_server_end_point)), 0);
     server_end_point_size = 0u;
-    check_equal(cnet_tls_server_end_point_binding(
-                    &server, server_probe.connection, server_end_point,
-                    sizeof(server_end_point), &server_end_point_size),
+    check_equal(cnet_tls_server_end_point_binding(&server, server_probe.connection,
+                                                  server_end_point, sizeof(server_end_point),
+                                                  &server_end_point_size),
                 SALTS_ENOENT);
     check_equal(server_end_point_size, (size_t)0u);
-    check_equal(cnet_tls_export_channel_binding(&client, client_connection,
-                                                client_channel_binding),
+    check_equal(cnet_tls_export_channel_binding(&client, client_connection, client_channel_binding),
                 SALTS_OK);
-    check_equal(cnet_tls_export_channel_binding(&server, server_probe.connection,
-                                                server_channel_binding),
-                SALTS_OK);
-    check_equal(memcmp(client_channel_binding, server_channel_binding,
-                       CNET_TLS_CHANNEL_BINDING_BYTES),
-                0);
+    check_equal(
+        cnet_tls_export_channel_binding(&server, server_probe.connection, server_channel_binding),
+        SALTS_OK);
+    check_equal(
+        memcmp(client_channel_binding, server_channel_binding, CNET_TLS_CHANNEL_BINDING_BYTES), 0);
 
     /* TLS records and receive callbacks are not aligned with one logical slicev send.
      * Retained vectors feed plaintext spans independently, so request enough bounded
@@ -1828,32 +1683,34 @@ spec("CNet bounded TLS engine") {
     mem_buffer_release(request_second);
     request_first = NULL;
     request_second = NULL;
-    check_equal(cnet_tls_test_send_bytes(&client, client_connection, second_request, sizeof(second_request) - 1u),
+    check_equal(cnet_tls_test_send_bytes(&client, client_connection, second_request,
+                                         sizeof(second_request) - 1u),
                 SALTS_OK);
-    deadline = salts_monotonic_ms() + 5000u;
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((server_probe.received_size < sizeof(combined_requests) - 1u || client_probe.sent < 2) &&
-           salts_monotonic_ms() < deadline)
+           cmeta_monotonic_ms() < deadline)
       check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
                                          &accepted),
                   SALTS_OK);
     check_equal(server_probe.received_size, sizeof(combined_requests) - 1u);
-    check_equal(memcmp(server_probe.received, combined_requests, sizeof(combined_requests) - 1u), 0);
+    check_equal(memcmp(server_probe.received, combined_requests, sizeof(combined_requests) - 1u),
+                0);
     check_equal(client_probe.sent, 2);
 
     /*
      * Switch one verified TLS plaintext receive to the explicit owned surface.
      * The old borrowed callback must remain silent for this admitted demand.
      */
-    check_equal(cnet_set_receive_slice_handler(
-                    &client, client_connection,
-                    cnet_tls_network_receive_owned, &client_probe),
+    check_equal(cnet_set_receive_slice_handler(&client, client_connection,
+                                               cnet_tls_network_receive_owned, &client_probe),
                 SALTS_OK);
     check_equal(cnet_receive(&client, client_connection, 1u), SALTS_OK);
-    check_equal(cnet_tls_test_send_bytes(&server, server_probe.connection, response, sizeof(response) - 1u),
-                SALTS_OK);
-    deadline = salts_monotonic_ms() + 5000u;
+    check_equal(
+        cnet_tls_test_send_bytes(&server, server_probe.connection, response, sizeof(response) - 1u),
+        SALTS_OK);
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((client_probe.owned_received_size == 0u || server_probe.sent == 0) &&
-           salts_monotonic_ms() < deadline)
+           cmeta_monotonic_ms() < deadline)
       check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
                                          &accepted),
                   SALTS_OK);
@@ -1877,12 +1734,13 @@ spec("CNet bounded TLS engine") {
     check_equal(mem_buffer_ref_count(final_buffer), UINT32_C(2));
     mem_buffer_release(final_buffer);
     final_buffer = NULL;
-    check_equal(cnet_tls_test_send_bytes(&client, client_connection, request, sizeof(request) - 1u), SALTS_EBUSY);
+    check_equal(cnet_tls_test_send_bytes(&client, client_connection, request, sizeof(request) - 1u),
+                SALTS_EBUSY);
     check_equal(cnet_receive(&client, client_connection, 1u), SALTS_EBUSY);
-    deadline = salts_monotonic_ms() + 5000u;
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((!client_probe.terminal || !server_probe.terminal ||
             server_probe.received_size < sizeof(final_request) - 1u) &&
-           salts_monotonic_ms() < deadline)
+           cmeta_monotonic_ms() < deadline)
       check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
                                          &accepted),
                   SALTS_OK);
@@ -1893,9 +1751,9 @@ spec("CNet bounded TLS engine") {
     check_true(server_probe.terminal);
     check_false(client_probe.failed);
     check_false(server_probe.failed);
-    check_equal(cnet_tls_peer_certificate_sha256(&client, client_connection,
-                                                 peer_certificate_sha256),
-                SALTS_ENOENT);
+    check_equal(
+        cnet_tls_peer_certificate_sha256(&client, client_connection, peer_certificate_sha256),
+        SALTS_ENOENT);
 
     check_equal(cnet_listener_close(&listener), SALTS_OK);
     check_equal(cnet_listener_destroy(&listener), SALTS_OK);
@@ -1967,9 +1825,9 @@ spec("CNet bounded TLS engine") {
     connect_options = (cnet_connect_options){.uri = uri, .observer = client_observer};
     check_equal(cnet_connect(&client, &connect_options, &client_connection), SALTS_OK);
 
-    deadline = salts_monotonic_ms() + 5000u;
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((!client_probe.connected || !server_probe.connected) &&
-           salts_monotonic_ms() < deadline) {
+           cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       int ready = 0;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
@@ -1990,12 +1848,12 @@ spec("CNet bounded TLS engine") {
     check_equal(server_probe.connected_count, 1);
 
     check_equal(cnet_receive(&server, server_connection, 1u), SALTS_OK);
-    check_equal(
-        cnet_tls_test_send_bytes(&client, client_connection, plaintext_request, sizeof(plaintext_request) - 1u),
-        SALTS_OK);
-    deadline = salts_monotonic_ms() + 5000u;
+    check_equal(cnet_tls_test_send_bytes(&client, client_connection, plaintext_request,
+                                         sizeof(plaintext_request) - 1u),
+                SALTS_OK);
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((server_probe.received_size == 0u || client_probe.sent == 0) &&
-           salts_monotonic_ms() < deadline) {
+           cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
@@ -2006,12 +1864,12 @@ spec("CNet bounded TLS engine") {
 
     client_probe.received_size = 0u;
     check_equal(cnet_receive(&client, client_connection, 1u), SALTS_OK);
-    check_equal(
-        cnet_tls_test_send_bytes(&server, server_connection, plaintext_response, sizeof(plaintext_response) - 1u),
-        SALTS_OK);
-    deadline = salts_monotonic_ms() + 5000u;
+    check_equal(cnet_tls_test_send_bytes(&server, server_connection, plaintext_response,
+                                         sizeof(plaintext_response) - 1u),
+                SALTS_OK);
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((client_probe.received_size == 0u || server_probe.sent == 0) &&
-           salts_monotonic_ms() < deadline) {
+           cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
@@ -2026,9 +1884,9 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_start_tls(&client, client_connection, &tls_options), SALTS_OK);
     check_equal(cnet_tls_server_destroy(&tls_server), SALTS_OK);
 
-    deadline = salts_monotonic_ms() + 5000u;
+    deadline = cmeta_monotonic_ms() + 5000u;
     while ((client_probe.connected_count != 2 || server_probe.connected_count != 2) &&
-           !client_probe.terminal && !server_probe.terminal && salts_monotonic_ms() < deadline) {
+           !client_probe.terminal && !server_probe.terminal && cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
@@ -2041,12 +1899,12 @@ spec("CNet bounded TLS engine") {
     check_false(server_probe.failed);
 
     check_equal(cnet_receive(&server, server_connection, 1u), SALTS_OK);
-    check_equal(cnet_tls_test_send_bytes(&client, client_connection, secure_request, sizeof(secure_request) - 1u),
+    check_equal(cnet_tls_test_send_bytes(&client, client_connection, secure_request,
+                                         sizeof(secure_request) - 1u),
                 SALTS_OK);
-    deadline = salts_monotonic_ms() + 5000u;
-    while ((server_probe.received_size == 0u || client_probe.sent < 2) &&
-           !client_probe.terminal && !server_probe.terminal &&
-           salts_monotonic_ms() < deadline) {
+    deadline = cmeta_monotonic_ms() + 5000u;
+    while ((server_probe.received_size == 0u || client_probe.sent < 2) && !client_probe.terminal &&
+           !server_probe.terminal && cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
@@ -2061,8 +1919,8 @@ spec("CNet bounded TLS engine") {
 
     check_equal(cnet_receive(&server, server_connection, 1u), SALTS_OK);
     check_equal(cnet_close(&client, client_connection), SALTS_OK);
-    deadline = salts_monotonic_ms() + 5000u;
-    while ((!client_probe.terminal || !server_probe.terminal) && salts_monotonic_ms() < deadline) {
+    deadline = cmeta_monotonic_ms() + 5000u;
+    while ((!client_probe.terminal || !server_probe.terminal) && cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
@@ -2119,8 +1977,8 @@ spec("CNet bounded TLS engine") {
                                                   .on_send = cnet_tls_network_send},
                                      .tls = &tls_config};
     check_equal(cnet_connect(&client, &options, &client_connection), SALTS_OK);
-    deadline = salts_monotonic_ms() + 2000u;
-    while (!client_probe.terminal && salts_monotonic_ms() < deadline) {
+    deadline = cmeta_monotonic_ms() + 2000u;
+    while (!client_probe.terminal && cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       int ready = 0;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
@@ -2190,8 +2048,8 @@ spec("CNet bounded TLS engine") {
                                      .tls = &tls_config};
     check_equal(cnet_connect(&client, &options, &client_connection), SALTS_OK);
 
-    deadline = salts_monotonic_ms() + 2000u;
-    while (!accepted && salts_monotonic_ms() < deadline) {
+    deadline = cmeta_monotonic_ms() + 2000u;
+    while (!accepted && cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       int ready = 0;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
@@ -2209,8 +2067,8 @@ spec("CNet bounded TLS engine") {
     check_false(client_probe.connected);
     check_equal(cnet_close(&client, client_connection), SALTS_OK);
 
-    deadline = salts_monotonic_ms() + 2000u;
-    while (!client_probe.terminal && salts_monotonic_ms() < deadline) {
+    deadline = cmeta_monotonic_ms() + 2000u;
+    while (!client_probe.terminal && cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       check_equal(cnet_client_poll(&raw_server, 1u, &events), SALTS_OK);

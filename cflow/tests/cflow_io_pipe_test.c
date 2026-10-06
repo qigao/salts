@@ -35,14 +35,14 @@ typedef struct pipe_client_thread_probe {
 
 static void pipe_client_connect_until_available(void *user) {
   pipe_client_thread_probe *probe = (pipe_client_thread_probe *)user;
-  const uint64_t started = salts_hrtime();
+  const uint64_t started = cmeta_hrtime();
   InterlockedExchange(&probe->started, 1);
   do {
     probe->status =
         cflow_io_pipe_client_connect(probe->name, CFLOW_IO_PIPE_DUPLEX, &probe->endpoint);
     if (probe->status != SALTS_ENOENT && probe->status != SALTS_EBUSY) return;
-    salts_thread_yield();
-  } while (salts_hrtime() - started <= UINT64_C(2000000000));
+    cmeta_thread_yield();
+  } while (cmeta_hrtime() - started <= UINT64_C(2000000000));
   probe->status = SALTS_ETIMEDOUT;
 }
 #endif
@@ -61,13 +61,13 @@ static void pipe_accept_completion(void *user, cflow_io_request_id request_id,
 
 #if defined(_WIN32)
 static int pipe_wait(cflow_io_pipe_server *server, pipe_completion_probe *probe, size_t expected) {
-  const uint64_t started = salts_hrtime();
+  const uint64_t started = cmeta_hrtime();
   while (probe->count < expected) {
     size_t progressed = 0u;
     int status = cflow_io_pipe_server_run_ready(server, 8u, &progressed);
     if (status != SALTS_OK) return status;
-    if (salts_hrtime() - started > UINT64_C(5000000000)) return SALTS_ETIMEDOUT;
-    if (progressed == 0u) salts_thread_yield();
+    if (cmeta_hrtime() - started > UINT64_C(5000000000)) return SALTS_ETIMEDOUT;
+    if (progressed == 0u) cmeta_thread_yield();
   }
   return SALTS_OK;
 }
@@ -115,7 +115,7 @@ spec("CFlow pipe rendezvous") {
     pipe_completion_probe probe = {0};
 
     snprintf(name, sizeof(name), "\\\\.\\pipe\\cflow-rendezvous-%lu-%llu",
-             (unsigned long)GetCurrentProcessId(), (unsigned long long)salts_hrtime());
+             (unsigned long)GetCurrentProcessId(), (unsigned long long)cmeta_hrtime());
     cflow_io_pipe_endpoint_init(&client);
     cflow_io_pipe_endpoint_init(&probe.endpoints[0]);
     config.name = name;
@@ -155,7 +155,7 @@ spec("CFlow pipe rendezvous") {
     pipe_completion_probe probe = {0};
 
     snprintf(name, sizeof(name), "\\\\.\\pipe\\cflow-capacity-%lu-%llu",
-             (unsigned long)GetCurrentProcessId(), (unsigned long long)salts_hrtime());
+             (unsigned long)GetCurrentProcessId(), (unsigned long long)cmeta_hrtime());
     config.name = name;
     config.direction = CFLOW_IO_PIPE_DUPLEX;
     config.request_capacity = 2u;
@@ -203,7 +203,7 @@ spec("CFlow pipe rendezvous") {
     pipe_completion_probe probe = {0};
 
     snprintf(name, sizeof(name), "\\\\.\\pipe\\cflow-busy-%lu-%llu",
-             (unsigned long)GetCurrentProcessId(), (unsigned long long)salts_hrtime());
+             (unsigned long)GetCurrentProcessId(), (unsigned long long)cmeta_hrtime());
     cflow_io_pipe_endpoint_init(&first_client);
     cflow_io_pipe_endpoint_init(&second_client);
     check_equal(cflow_io_pipe_client_connect(name, CFLOW_IO_PIPE_DUPLEX, &first_client),
@@ -239,7 +239,7 @@ spec("CFlow pipe rendezvous") {
 
     check_true(GetProcessHandleCount(GetCurrentProcess(), &handles_before));
     snprintf(name, sizeof(name), "\\\\.\\pipe\\cflow-close-%lu-%llu",
-             (unsigned long)GetCurrentProcessId(), (unsigned long long)salts_hrtime());
+             (unsigned long)GetCurrentProcessId(), (unsigned long long)cmeta_hrtime());
     config.name = name;
     config.direction = CFLOW_IO_PIPE_DUPLEX;
     config.request_capacity = 1u;
@@ -268,10 +268,10 @@ spec("CFlow pipe rendezvous") {
     pipe_client_thread_probe client = {0};
     pipe_completion_probe probe = {0};
     cflow_io_pipe_submit_result submitted;
-    salts_thread_t thread = NULL;
+    cmeta_thread_t thread = NULL;
 
     snprintf(name, sizeof(name), "\\\\.\\pipe\\cflow-race-%lu-%llu",
-             (unsigned long)GetCurrentProcessId(), (unsigned long long)salts_hrtime());
+             (unsigned long)GetCurrentProcessId(), (unsigned long long)cmeta_hrtime());
     cflow_io_pipe_endpoint_init(&client.endpoint);
     client.name = name;
     client.status = SALTS_EBUSY;
@@ -283,13 +283,13 @@ spec("CFlow pipe rendezvous") {
     config.completion = pipe_accept_completion;
     config.completion_user = &probe;
     check_equal(cflow_io_pipe_server_init(&server, &config), SALTS_OK);
-    check_equal(salts_thread_create(&thread, pipe_client_connect_until_available, &client),
+    check_equal(cmeta_thread_create(&thread, pipe_client_connect_until_available, &client),
                 SALTS_OK);
     while (InterlockedCompareExchange(&client.started, 1, 1) == 0)
-      salts_thread_yield();
+      cmeta_thread_yield();
     submitted = cflow_io_pipe_server_try_accept(&server);
     check_equal(submitted.status, CFLOW_IO_PIPE_SUBMIT_ACCEPTED);
-    check_equal(salts_thread_join(&thread), SALTS_OK);
+    check_equal(cmeta_thread_join(&thread), SALTS_OK);
     check_equal(client.status, SALTS_OK);
     check_equal(pipe_wait(&server, &probe, 1u), SALTS_OK);
     check_equal(probe.count, (size_t)1u);

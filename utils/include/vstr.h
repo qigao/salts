@@ -14,7 +14,7 @@
 
 #include "platform.h"
 #include "memory_pool.h"
-#include "salts_buffer.h"
+#include "cmeta_buffer.h"
 #include <cmeta/struct.h>
 #include <stddef.h>
 #include <stdint.h>

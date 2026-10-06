@@ -1,7 +1,7 @@
 #ifndef CMETA_COROUTINE_H
 #define CMETA_COROUTINE_H
 
-#include <salts_coro_executor.h>
+#include <coro_executor.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -16,7 +16,7 @@ extern "C" {
  * Application coroutine code uses cmeta_* names; Salts::Coroutine remains the
  * runtime owner and vendor/minicoro remains private behind that module.
  */
-typedef salts_coro_executor_t cmeta_executor;
+typedef coro_executor_t cmeta_executor;
 /**
  * Copyable borrowed token naming one executor-owned wait slot.
  *
@@ -24,11 +24,11 @@ typedef salts_coro_executor_t cmeta_executor;
  * task return invalidate the generation. The token owns no operation payload.
  * The executor must outlive every producer that can call cmeta_wait_complete.
  */
-typedef salts_coro_executor_await_t cmeta_wait_handle;
+typedef coro_executor_await_t cmeta_wait_handle;
 
 /** Yield the current coroutine on its owner shard; outside it returns SALTS_EINVAL. */
 static inline int cmeta_yield(void) {
-  return salts_coro_executor_yield();
+  return coro_executor_yield();
 }
 
 /**
@@ -37,7 +37,7 @@ static inline int cmeta_yield(void) {
  * or SALTS_EINVAL outside a coroutine/for NULL. Failure clears out_wait.
  */
 static inline int cmeta_wait_begin(cmeta_wait_handle *out_wait) {
-  return salts_coro_executor_await_begin(out_wait);
+  return coro_executor_await_begin(out_wait);
 }
 
 /**
@@ -49,7 +49,7 @@ static inline int cmeta_wait_begin(cmeta_wait_handle *out_wait) {
  * A non-NULL out_status is cleared on entry.
  */
 static inline int cmeta_wait(cmeta_wait_handle wait, int *out_status) {
-  return salts_coro_executor_await(wait, out_status);
+  return coro_executor_await(wait, out_status);
 }
 
 /**
@@ -64,7 +64,7 @@ static inline int cmeta_wait(cmeta_wait_handle wait, int *out_status) {
  */
 static inline int cmeta_wait_for(cmeta_wait_handle wait, uint32_t timeout_ms,
                                  int *out_status) {
-  return salts_coro_executor_await_for(wait, timeout_ms, out_status);
+  return coro_executor_await_for(wait, timeout_ms, out_status);
 }
 
 /**
@@ -75,7 +75,7 @@ static inline int cmeta_wait_for(cmeta_wait_handle wait, uint32_t timeout_ms,
  * and an already suspended reservation SALTS_EBUSY. This never cancels I/O.
  */
 static inline int cmeta_wait_abort(cmeta_wait_handle wait) {
-  return salts_coro_executor_await_abort(wait);
+  return coro_executor_await_abort(wait);
 }
 
 /**
@@ -88,7 +88,7 @@ static inline int cmeta_wait_abort(cmeta_wait_handle wait) {
  */
 static inline int cmeta_wait_complete(cmeta_executor *executor,
                                       cmeta_wait_handle wait, int status) {
-  return salts_coro_executor_await_complete(executor, wait, status);
+  return coro_executor_await_complete(executor, wait, status);
 }
 
 /**
@@ -96,12 +96,12 @@ static inline int cmeta_wait_complete(cmeta_executor *executor,
  * Worker context alone does not imply a running coroutine may suspend.
  */
 static inline cmeta_executor *cmeta_current_executor(void) {
-  return salts_coro_executor_current();
+  return coro_executor_current();
 }
 
 /** Return the current shard for executor, or SIZE_MAX outside it. */
 static inline size_t cmeta_current_shard(const cmeta_executor *executor) {
-  return salts_coro_executor_current_shard(executor);
+  return coro_executor_current_shard(executor);
 }
 
 #ifdef __cplusplus

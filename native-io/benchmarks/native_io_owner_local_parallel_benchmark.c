@@ -132,7 +132,7 @@ static void owner_local_parallel_run(native_io_sharded_context *context,
   while (atomic_load_explicit(&state->gate->start, memory_order_acquire) == 0 &&
          atomic_load_explicit(&state->gate->failure_status,
                               memory_order_acquire) == SALTS_OK)
-    salts_thread_yield();
+    cmeta_thread_yield();
 
   if (atomic_load_explicit(&state->gate->failure_status,
                            memory_order_acquire) != SALTS_OK)
@@ -161,7 +161,7 @@ static int owner_local_parallel_wait_ready(owner_local_parallel_gate *gate,
     if (atomic_load_explicit(&gate->ready, memory_order_acquire) ==
         expected_ready)
       return 1;
-    salts_sleep_ms(1u);
+    cmeta_sleep_ms(1u);
   }
   return 0;
 }
@@ -264,10 +264,10 @@ static int owner_local_parallel_run_mode(
       break;
     }
 
-    started = salts_hrtime();
+    started = cmeta_hrtime();
     atomic_store_explicit(&gate.start, 1, memory_order_release);
     status = native_io_sharded_wait(runtime);
-    elapsed = salts_hrtime() - started;
+    elapsed = cmeta_hrtime() - started;
     if (status == SALTS_OK)
       status = atomic_load_explicit(&gate.failure_status,
                                     memory_order_acquire);

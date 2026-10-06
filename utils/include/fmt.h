@@ -48,7 +48,7 @@ extern "C" {
          (FMT_TYPE_SIZE, 11, "size", size_t, sz, fmt_arg_size),                                  \
          (FMT_TYPE_BOOL, 12, "bool", int, b, fmt_arg_bool),                                      \
          (FMT_TYPE_STRV, 13, "strv", vstr, sv, fmt_arg_strv),                                   \
-         (FMT_TYPE_TIME, 14, "time", salts_timeval_t, tv, fmt_arg_timeval))
+         (FMT_TYPE_TIME, 14, "time", cmeta_timeval_t, tv, fmt_arg_timeval))
 
 #define FMT_TYPE_ITEM(name, value, text, type, member, constructor) name = value,
 typedef enum {
@@ -211,7 +211,7 @@ static inline fmt_arg_t fmt_arg_uchar(unsigned char x) {
          (void *, fmt_arg_ptr),                                                                   \
          (const void *, fmt_arg_ptr),                                                             \
          (vstr, fmt_arg_strv),                                                                    \
-         (salts_timeval_t, fmt_arg_timeval))
+         (cmeta_timeval_t, fmt_arg_timeval))
 
 #ifdef __cplusplus
 } /* End extern "C" to allow C++ overloading */
@@ -240,7 +240,7 @@ static inline fmt_arg_t fmt_arg_detect(std::chrono::system_clock::time_point tp)
   auto dur = tp.time_since_epoch();
   auto sec = std::chrono::duration_cast<std::chrono::seconds>(dur);
   auto usec = std::chrono::duration_cast<std::chrono::microseconds>(dur - sec);
-  salts_timeval_t tv;
+  cmeta_timeval_t tv;
   tv.tv_sec = static_cast<int64_t>(sec.count());
   tv.tv_usec = static_cast<int32_t>(usec.count());
   return fmt_arg_timeval(tv);

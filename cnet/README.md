@@ -8,7 +8,7 @@ to depend on NativeIO directly.
 
 The canonical lower-layer contract is [NativeIO execution and endpoint architecture](../native-io/ARCHITECTURE.md). CNet is an optional network/session semantic consumer: raw TCP/UDP/VSOCK/PIPE data paths do not require CNet, and CNet does not own NativeIO execution-style or terminal-completion truth.
 
-CNet is built unconditionally. Its source-tree target is `salts_cnet`; installed
+CNet is built unconditionally. Its source-tree target is `cmeta_cnet`; installed
 consumers link `Salts::CNet` and include `<cnet/cnet.h>`. The independent
 WebSocket session API is declared by `<cnet/websocket.h>`.
 
@@ -189,6 +189,9 @@ exposes OS receive/send buffers, explicit `TCP_NODELAY` via `nodelay`,
 keepalive enable plus idle/interval/probe count, and linger. Generic native
 socket adoption preserves an externally configured live policy; only
 `cnet_accepted_stream` handoff applies the final client's configured policy.
+Direct `cnet_listener_accept*()` calls, including TLS accept, preserve the
+listener's TCP policy without applying the receiving client's future-connection
+policy.
 `cnet_datagram_config.reuse_port` exposes the same listener-port
 sharing decision for UDP and the unified UDP/KCP packet endpoint.
 
@@ -711,6 +714,14 @@ CI 保存 CSV，不把所有样本灌入 step summary，并运行
 路径与 NativeIO direct 比较和设门禁。CNet copied-send benchmark mode 已随
 copied stream API 一起移除。NativeIO 自身仍可保留 flatten-vs-SG 诊断，用于隔离
 payload memcpy 与 vectored submit 成本，但这不代表 CNet 存在 copied data plane。
+
+Linux `cnet_scaling_benchmark` 每个场景保留 5 次配对测量。
+`verify_scaling_benchmark.ps1` 对 16 连接、32/64 KiB 场景的 owner residual、
+observer framework 和 client poll wrapper，分别以 5 次中位数检查
+`2/1/1 us/op` 上限，并报告 MAD 和最大值。单次超限保留警告，持续超限仍失败；
+该门禁衡量典型开销，不保证每次运行都低于上限。墙钟计时可能包含调度停顿，
+仅凭单个尖峰不能归因于框架回归。非有限值、负耗时和嵌套区间错误仍逐行拒绝，
+不参与中位数聚合。NativeIO 配对吞吐/延迟的 MAD 稳定性门禁独立保留。
 
 ### Linux 系统调用证据
 

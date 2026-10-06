@@ -15,7 +15,7 @@ suite("CMeta trace and fault Release benchmarks") {
     bench("compares disabled trace and fault gates with plain branch and static key") {
         check_equal(cmeta_trace_bind(trace_benchmark_event, trace_benchmark_backend), CMETA_OK);
         check_equal(cmeta_trace_disable(trace_benchmark_event), CMETA_OK);
-        check_equal(salts_fast_disable(&trace_benchmark_fault), SALTS_OK);
+        check_equal(cmeta_fast_disable(&trace_benchmark_fault), SALTS_OK);
         benchmark_ops("plain disabled branch", TRACE_BENCH_SAMPLES, TRACE_BENCH_OPERATIONS) {
             uint64_t sum = 0u;
             for (uint64_t i = 0u; i < TRACE_BENCH_OPERATIONS; ++i)
@@ -26,7 +26,7 @@ suite("CMeta trace and fault Release benchmarks") {
         benchmark_ops("disabled static key", TRACE_BENCH_SAMPLES, TRACE_BENCH_OPERATIONS) {
             uint64_t sum = 0u;
             for (uint64_t i = 0u; i < TRACE_BENCH_OPERATIONS; ++i)
-                if (salts_fast_branch(&trace_benchmark_key)) sum += i;
+                if (cmeta_fast_branch(&trace_benchmark_key)) sum += i;
             trace_benchmark_sink = sum;
         }
         check_equal(trace_benchmark_sink, UINT64_C(0));
@@ -39,7 +39,7 @@ suite("CMeta trace and fault Release benchmarks") {
         benchmark_ops("disabled fault point", TRACE_BENCH_SAMPLES, TRACE_BENCH_OPERATIONS) {
             uint64_t sum = 0u;
             for (uint64_t i = 0u; i < TRACE_BENCH_OPERATIONS; ++i)
-                if (salts_fast_key_consume(&trace_benchmark_fault)) sum += i;
+                if (cmeta_fast_key_consume(&trace_benchmark_fault)) sum += i;
             trace_benchmark_sink = sum;
         }
         check_equal(trace_benchmark_sink, UINT64_C(0));

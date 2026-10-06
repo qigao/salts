@@ -2,33 +2,33 @@
 
 static int fixture_state;
 
-static salts_plugin_status SALTS_PLUGIN_CALL
+static cmeta_plugin_status CMETA_PLUGIN_CALL
 fixture_start(void *self) {
     (void)self;
-    return SALTS_PLUGIN_BUSY;
+    return CMETA_PLUGIN_BUSY;
 }
 
-static salts_plugin_status SALTS_PLUGIN_CALL
+static cmeta_plugin_status CMETA_PLUGIN_CALL
 fixture_request_stop(void *self) {
     (void)self;
-    return SALTS_PLUGIN_OK;
+    return CMETA_PLUGIN_OK;
 }
 
-static bool SALTS_PLUGIN_CALL
+static bool CMETA_PLUGIN_CALL
 fixture_is_quiescent(const void *self) {
     (void)self;
     return true;
 }
 
-static void SALTS_PLUGIN_CALL
+static void CMETA_PLUGIN_CALL
 fixture_destroy(void *self) {
     int *state = (int *)self;
     ++*state;
 }
 
-static const salts_plugin_manifest fixture_manifest = {
-    .struct_size = SALTS_PLUGIN_MANIFEST_SIZE,
-    .abi_version = SALTS_PLUGIN_ABI_VERSION,
+static const cmeta_plugin_manifest fixture_manifest = {
+    .struct_size = CMETA_PLUGIN_MANIFEST_SIZE,
+    .abi_version = CMETA_PLUGIN_ABI_VERSION,
     .plugin_id = "test.lifecycle.start_fail",
     .version = {1u, 0u, 0u},
     .self = &fixture_state,
@@ -38,8 +38,8 @@ static const salts_plugin_manifest fixture_manifest = {
     .destroy = fixture_destroy,
 };
 
-SALTS_PLUGIN_QUERY_EXPORT
-const salts_plugin_manifest *SALTS_PLUGIN_CALL
-salts_plugin_query(uint32_t host_abi) {
-    return host_abi == SALTS_PLUGIN_ABI_VERSION ? &fixture_manifest : NULL;
+CMETA_PLUGIN_QUERY_EXPORT
+const cmeta_plugin_manifest *CMETA_PLUGIN_CALL
+cmeta_plugin_query(uint32_t host_abi) {
+    return host_abi == CMETA_PLUGIN_ABI_VERSION ? &fixture_manifest : NULL;
 }

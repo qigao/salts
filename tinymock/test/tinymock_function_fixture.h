@@ -90,26 +90,31 @@ static const cmeta_type_desc tinymock_fixture_box_type = {
   .identity = NULL
 };
 
-FunctionDecl(value, int, tinymock_fixture_add,
+FunctionDeclResult(value, int, CMETA_RESULT_VALUE, tinymock_fixture_add,
     (int, left, CMETA_PARAM_IN),
     (int, right, CMETA_PARAM_IN));
 
-Function0Decl(value, int, tinymock_fixture_answer);
+FunctionDeclResult(stateful, int, CMETA_RESULT_VALUE, tinymock_fixture_receiver,
+    (int *, self, CMETA_PARAM_INOUT | CMETA_PARAM_BORROWED | CMETA_PARAM_RECEIVER,
+     &cmeta_type_int_ptr, CMETA_ABI_OBJECT_POINTER),
+    (int, delta, CMETA_PARAM_IN));
 
-FunctionDecl(value, int, tinymock_fixture_pointer,
+Function0DeclResult(value, int, CMETA_RESULT_VALUE, tinymock_fixture_answer);
+
+FunctionDeclResult(value, int, CMETA_RESULT_VALUE, tinymock_fixture_pointer,
     (int *, value, CMETA_PARAM_IN, &cmeta_type_int_ptr, CMETA_ABI_OBJECT_POINTER));
 
-FunctionDecl(value, int, tinymock_fixture_write_size,
+FunctionDeclResult(value, int, CMETA_RESULT_VALUE, tinymock_fixture_write_size,
     (int, input, CMETA_PARAM_IN),
     (size_t *, written, CMETA_PARAM_OUT, &cmeta_type_size_ptr, CMETA_ABI_OBJECT_POINTER));
 
-FunctionDecl(value, int, tinymock_fixture_adjust_int,
+FunctionDeclResult(value, int, CMETA_RESULT_VALUE, tinymock_fixture_adjust_int,
     (int *, value, CMETA_PARAM_INOUT, &cmeta_type_int_ptr, CMETA_ABI_OBJECT_POINTER));
 
-FunctionDecl(value, int, tinymock_fixture_unknown_ptr,
+FunctionDeclResult(value, int, CMETA_RESULT_VALUE, tinymock_fixture_unknown_ptr,
     (int *, value, CMETA_PARAM_UNKNOWN, &cmeta_type_int_ptr, CMETA_ABI_OBJECT_POINTER));
 
-FunctionDecl(value, int, tinymock_fixture_nullable_out,
+FunctionDeclResult(value, int, CMETA_RESULT_VALUE, tinymock_fixture_nullable_out,
     (size_t *, written, CMETA_PARAM_OUT | CMETA_PARAM_NULLABLE,
      &cmeta_type_size_ptr, CMETA_ABI_OBJECT_POINTER));
 
@@ -119,30 +124,30 @@ FunctionDecl(value, void, tinymock_fixture_notify,
 
 Function0Decl(value, void, tinymock_fixture_shutdown);
 
-FunctionDeclAsAbi(value, tinymock_fixture_box,
+FunctionDeclAsAbiResult(value, tinymock_fixture_box,
                   &tinymock_fixture_box_type, CMETA_ABI_AGGREGATE,
-                  tinymock_fixture_box_copy,
+                  CMETA_RESULT_VALUE, tinymock_fixture_box_copy,
     (tinymock_fixture_box, input, CMETA_PARAM_IN,
      &tinymock_fixture_box_type, CMETA_ABI_AGGREGATE));
 
-Function0DeclAsAbi(value, int *, &cmeta_type_int_ptr,
+Function0DeclAsAbiResult(value, int *, &cmeta_type_int_ptr,
                    CMETA_ABI_OBJECT_POINTER,
-                   tinymock_fixture_pointer_answer);
+                   CMETA_RESULT_BORROWED, tinymock_fixture_pointer_answer);
 
-FunctionDeclAsAbi(value, int, &cmeta_type_int, CMETA_ABI_SCALAR,
-                  tinymock_fixture_apply_callback,
+FunctionDeclAsAbiResult(value, int, &cmeta_type_int, CMETA_ABI_SCALAR,
+                  CMETA_RESULT_VALUE, tinymock_fixture_apply_callback,
     (tinymock_fixture_callback, callback, CMETA_PARAM_IN,
      &tinymock_fixture_callback_type, CMETA_ABI_FUNCTION_POINTER),
     (int, value, CMETA_PARAM_IN));
 
-Function0DeclAsAbi(value, tinymock_fixture_callback,
+Function0DeclAsAbiResult(value, tinymock_fixture_callback,
                    &tinymock_fixture_callback_type,
                    CMETA_ABI_FUNCTION_POINTER,
-                   tinymock_fixture_callback_answer);
+                   CMETA_RESULT_VALUE, tinymock_fixture_callback_answer);
 
-FunctionDeclAsAbi(value, tinymock_fixture_mode,
+FunctionDeclAsAbiResult(value, tinymock_fixture_mode,
                   &tinymock_fixture_mode_type, CMETA_ABI_ENUM,
-                  tinymock_fixture_mode_echo,
+                  CMETA_RESULT_VALUE, tinymock_fixture_mode_echo,
     (tinymock_fixture_mode, input, CMETA_PARAM_IN,
      &tinymock_fixture_mode_type, CMETA_ABI_ENUM));
 

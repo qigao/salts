@@ -69,6 +69,7 @@ if ($pairedRows.Count -ne $expectedPaired) {
 }
 
 $rawByKey = @{}
+$overheadByKey = @{}
 foreach ($row in $rows) {
     $backend = [string]$row.backend
     $driver = [string]$row.driver
@@ -122,9 +123,20 @@ foreach ($row in $rows) {
     $payloadCheck = [double]$row.benchmark_payload_check_ns
 
     if ($driver -eq "CNet retained") {
+        foreach ($value in @(
+            $ownerDrive, $ownerObserve, $clientPoll, $requestLifecycle, $requestStart,
+            $requestResubmit, $requestCompletion, $eventPublish, $dispatcherPrepare,
+            $dispatcherInvoke, $dispatcherObserver, $dispatcherRelease, $benchmarkCallback,
+            $payloadCheck
+        )) {
+            if ([double]::IsNaN($value) -or [double]::IsInfinity($value) -or $value -lt 0) {
+                throw "invalid CNet attribution for $key"
+            }
+        }
         if ($ownerDrive -le 0 -or $ownerObserve -le 0 -or $clientPoll -le 0) {
             throw "missing CNet owner/poll attribution for $key"
         }
+        if ($clientPoll -lt $ownerDrive) { throw "owner drive exceeds client poll for $key" }
         $ownerNested = $requestLifecycle + $requestResubmit + $ownerObserve + $requestCompletion
         if ($ownerDrive -lt $ownerNested) { throw "owner stage nesting exceeds owner drive for $key" }
         if ($requestLifecycle -lt $requestStart) { throw "request start exceeds lifecycle for $key" }
@@ -144,20 +156,10 @@ foreach ($row in $rows) {
         if ($benchmarkCallback -lt $payloadCheck) {
             throw "payload check exceeds benchmark callback for $key"
         }
-        if ($driver -eq "CNet retained" -and $connectionCount -eq 16 -and
-            $payload -in @(32768, 65536)) {
-            $ownerResidualUs = ($ownerDrive - $ownerNested) / $operations / 1000.0
-            $observerFrameworkUs = ($dispatcherObserver - $benchmarkCallback) / $operations / 1000.0
-            $clientPollWrapperUs = ($clientPoll - $ownerDrive) / $operations / 1000.0
-            if ($ownerResidualUs -gt 2.0) {
-                throw "stable retained owner residual regression for $($key): $ownerResidualUs us/op"
-            }
-            if ($observerFrameworkUs -gt 1.0) {
-                throw "stable retained observer framework regression for $($key): $observerFrameworkUs us/op"
-            }
-            if ($clientPollWrapperUs -gt 1.0) {
-                throw "stable retained client poll wrapper regression for $($key): $clientPollWrapperUs us/op"
-            }
+        $overheadByKey[$key] = @{
+            Owner = ($ownerDrive - $ownerNested) / $operations / 1000.0
+            Observer = ($dispatcherObserver - $benchmarkCallback) / $operations / 1000.0
+            Poll = ($clientPoll - $ownerDrive) / $operations / 1000.0
         }
     } else {
         foreach ($value in @(
@@ -167,6 +169,36 @@ foreach ($row in $rows) {
             $payloadCheck
         )) {
             if ($value -ne 0) { throw "NativeIO row unexpectedly contains CNet attribution for $key" }
+        }
+    }
+}
+
+# These wall-clock spans can contain a single scheduling stall. Match the
+# benchmark report's five-run median; keep every raw nesting check above and
+# expose spikes even when they do not constitute a sustained regression.
+$overheadGates = @(
+    @{ Metric = "Owner"; Label = "owner residual"; Limit = 2.0 },
+    @{ Metric = "Observer"; Label = "observer framework"; Limit = 1.0 },
+    @{ Metric = "Poll"; Label = "client poll wrapper"; Limit = 1.0 }
+)
+foreach ($payload in @(32768, 65536)) {
+    $cell = "CNet retained|16|$payload"
+    foreach ($gate in $overheadGates) {
+        $values = [double[]]@(foreach ($repeat in $repeats) {
+            $key = "$cell|$repeat"
+            if (-not $overheadByKey.ContainsKey($key)) { throw "missing retained overhead row $key" }
+            $overheadByKey[$key][$gate.Metric]
+        })
+        $median = Get-Median $values
+        $mad = Get-Mad $values
+        $maximum = ($values | Measure-Object -Maximum).Maximum
+        $details = "median=$median MAD=$mad max=$maximum limit=$($gate.Limit) us/op"
+        if ($median -gt $gate.Limit) {
+            throw "retained $($gate.Label) regression for $($cell): $details"
+        }
+        Write-Host "Retained $($gate.Label) $($cell): $details"
+        if ($maximum -gt $gate.Limit) {
+            Write-Warning "Retained $($gate.Label) single-run limit exceeded for $($cell): $details"
         }
     }
 }

@@ -5,7 +5,7 @@
 
 #ifdef __cplusplus
 extern "C" {
-extern salts_fast_key_state fastpath_shared_key;
+extern cmeta_fast_key_state fastpath_shared_key;
 int fastpath_cpp_invoke(int value);
 }
 #else
@@ -43,7 +43,7 @@ Function0Decl(value, int, fastpath_unpublished);
 Function0Decl(value, int, fastpath_published);
 extern int fastpath_target_payload;
 extern int fastpath_void_sink;
-extern salts_fast_key_state fastpath_shared_key;
+extern cmeta_fast_key_state fastpath_shared_key;
 const cmeta_function_abi_desc *fastpath_peer_abi(void);
 int fastpath_cpp_invoke(int value);
 #endif

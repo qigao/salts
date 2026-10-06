@@ -44,7 +44,7 @@ struct cnet_client_impl {
   cnet_dispatcher dispatcher;
   cnet_client_record *records;
   /** Synchronizes only poll/profile/wake/stop/destroy control-plane overlap. */
-  salts_mutex_t control_lock;
+  cmeta_mutex_t control_lock;
   size_t shard_count;
   size_t capacity_per_shard;
   size_t record_count;
@@ -100,7 +100,7 @@ static bool cnet_client_config_valid(const cnet_client_config *config) {
 }
 
 static uint32_t cnet_client_remaining_ms(uint64_t started_ms, uint32_t timeout_ms) {
-  const uint64_t elapsed = salts_monotonic_ms() - started_ms;
+  const uint64_t elapsed = cmeta_monotonic_ms() - started_ms;
   return elapsed >= timeout_ms ? 0u : timeout_ms - (uint32_t)elapsed;
 }
 
@@ -115,7 +115,7 @@ static int cnet_client_dispatch(void *context, uint32_t shard, const cnet_event 
   return cnet_dispatcher_publish((cnet_dispatcher *)context, shard, event);
 }
 
-static bool cnet_client_salts_status(int status) {
+static bool cnet_client_cmeta_status(int status) {
   if (status == SALTS_OK) return true;
   switch (status) {
 #define CNET_STATUS_CASE(name, value, name_text, message_text)                                     \
@@ -267,8 +267,8 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
       }
     }
     if (view->state == CNET_EVENT_STATE_FAILED) {
-      error.status = cnet_client_salts_status(view->status) ? view->status : SALTS_EIO;
-      error.native_status = cnet_client_salts_status(view->status) ? 0 : view->status;
+      error.status = cnet_client_cmeta_status(view->status) ? view->status : SALTS_EIO;
+      error.native_status = cnet_client_cmeta_status(view->status) ? 0 : view->status;
       error.stage = cnet_client_stage_name(view->stage);
       error_view = &error;
     }
@@ -305,7 +305,7 @@ static void cnet_client_cleanup_init(cnet_client_impl *impl) {
     (void)cnet_dispatcher_destroy(&impl->dispatcher);
   }
   if (impl->shards.impl != NULL) (void)cnet_shards_destroy(&impl->shards);
-  salts_mutex_destroy(&impl->control_lock);
+  cmeta_mutex_destroy(&impl->control_lock);
   free(impl->records);
   free(impl);
   (void)cnet_module_shutdown();
@@ -350,7 +350,7 @@ static int cnet_client_init_impl(cnet_client *client,
   impl->admission_open = true;
   atomic_init(&impl->callback_error, SALTS_OK);
   atomic_init(&impl->external_wake_pending, 0);
-  salts_mutex_init(&impl->control_lock);
+  cmeta_mutex_init(&impl->control_lock);
   impl->records = (cnet_client_record *)calloc(impl->record_count, sizeof(*impl->records));
   if (impl->records == NULL) {
     cnet_client_cleanup_init(impl);
@@ -1602,7 +1602,7 @@ static int cnet_client_external_progress_begin(cnet_client_impl *impl) {
   if (!impl->external_progress) return SALTS_ENOTSUP;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
 
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   if (!impl->admission_open || impl->stopped)
     status = SALTS_ESHUTDOWN;
   else if (impl->poll_active || impl->stop_active)
@@ -1612,7 +1612,7 @@ static int cnet_client_external_progress_begin(cnet_client_impl *impl) {
     impl->poll_callback_count = 0u;
     status = SALTS_OK;
   }
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
   return status;
 }
 
@@ -1622,13 +1622,13 @@ static int cnet_client_external_progress_finish(
     size_t *out_events) {
   int callback_status;
 
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   if (out_events != NULL)
     *out_events = impl->poll_callback_count;
   callback_status =
       atomic_load_explicit(&impl->callback_error, memory_order_acquire);
   impl->poll_active = false;
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
 
   return status == SALTS_OK && callback_status != SALTS_OK
       ? callback_status
@@ -1683,7 +1683,7 @@ int cnet_client_external_timeout(cnet_client *client,
   if (!impl->external_progress) return SALTS_ENOTSUP;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
 
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   if (impl->stopped)
     status = SALTS_ESHUTDOWN;
   else if (impl->poll_active || impl->stop_active)
@@ -1691,7 +1691,7 @@ int cnet_client_external_timeout(cnet_client *client,
   else
     status = cnet_shards_external_timeout(
         &impl->shards, max_wait_ms, out_timeout_ms);
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
   return status;
 }
 
@@ -1711,7 +1711,7 @@ int cnet_client_external_requests(cnet_client *client,
   if (!impl->external_progress) return SALTS_ENOTSUP;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
 
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   if (impl->stopped)
     status = SALTS_ESHUTDOWN;
   else if (impl->poll_active || impl->stop_active)
@@ -1725,7 +1725,7 @@ int cnet_client_external_requests(cnet_client *client,
               &impl->shards, internal,
               out_requests, capacity, out_count);
   }
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
   return status;
 }
 
@@ -1746,7 +1746,7 @@ int cnet_client_external_request_snapshots(
   if (!impl->external_progress) return SALTS_ENOTSUP;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
 
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   if (impl->stopped)
     status = SALTS_ESHUTDOWN;
   else if (impl->poll_active || impl->stop_active)
@@ -1760,7 +1760,7 @@ int cnet_client_external_request_snapshots(
               &impl->shards, internal,
               out_requests, capacity, out_count);
   }
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
   return status;
 }
 
@@ -1774,19 +1774,19 @@ int cnet_client_stop_external(cnet_client *client) {
   if (!impl->external_progress) return SALTS_ENOTSUP;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
 
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   if (impl->stopped) {
-    salts_mutex_unlock(&impl->control_lock);
+    cmeta_mutex_unlock(&impl->control_lock);
     return SALTS_EALREADY;
   }
   if (impl->poll_active || impl->stop_active ||
       impl->active_count != 0u) {
-    salts_mutex_unlock(&impl->control_lock);
+    cmeta_mutex_unlock(&impl->control_lock);
     return SALTS_EBUSY;
   }
   impl->stop_active = true;
   impl->admission_open = false;
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
 
   status = cnet_dispatcher_drain(&impl->dispatcher, 0u);
   if (status == SALTS_EALREADY) status = SALTS_OK;
@@ -1802,16 +1802,16 @@ int cnet_client_stop_external(cnet_client *client) {
   fully_stopped =
       cnet_dispatcher_drained(&impl->dispatcher) &&
       cnet_shards_stopped(&impl->shards);
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   impl->stop_active = false;
   if (fully_stopped) impl->stopped = true;
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
   return first_status;
 }
 
 int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_events) {
   cnet_client_impl *impl = cnet_client_get(client);
-  const uint64_t started_ms = salts_monotonic_ms();
+  const uint64_t started_ms = cmeta_monotonic_ms();
   uint32_t remaining_ms = timeout_ms;
   int status;
 #if defined(CNET_INTERNAL_PROFILING)
@@ -1822,7 +1822,7 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->external_progress) return SALTS_ENOTSUP;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   if (!impl->admission_open || impl->stopped) status = SALTS_ESHUTDOWN;
   else if (impl->poll_active || impl->stop_active) status = SALTS_EBUSY;
   else {
@@ -1830,10 +1830,10 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
     impl->poll_callback_count = 0u;
     status = SALTS_OK;
   }
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
   if (status != SALTS_OK) return status;
 #if defined(CNET_INTERNAL_PROFILING)
-  if (impl->profile_active) profile_started = salts_hrtime();
+  if (impl->profile_active) profile_started = cmeta_hrtime();
 #endif
 
   for (;;) {
@@ -1854,22 +1854,22 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
         externally_woken)
       break;
     {
-      const uint64_t elapsed_ms = salts_monotonic_ms() - started_ms;
+      const uint64_t elapsed_ms = cmeta_monotonic_ms() - started_ms;
       if (elapsed_ms >= timeout_ms) break;
       remaining_ms = timeout_ms - (uint32_t)elapsed_ms;
     }
   }
 
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   *out_events = impl->poll_callback_count;
 #if defined(CNET_INTERNAL_PROFILING)
   if (profile_started != 0u) {
-    impl->profile_client_poll_ns += salts_hrtime() - profile_started;
+    impl->profile_client_poll_ns += cmeta_hrtime() - profile_started;
     ++impl->profile_client_poll_calls;
   }
 #endif
   impl->poll_active = false;
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
   return status;
 }
 
@@ -1881,7 +1881,7 @@ int cnet_client_profile_begin(cnet_client *client) {
   int status;
   if (impl == NULL) return SALTS_EINVAL;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   if (!impl->admission_open || impl->stopped) status = SALTS_ESHUTDOWN;
   else if (impl->poll_active || impl->stop_active || impl->profile_active) status = SALTS_EBUSY;
   else {
@@ -1898,7 +1898,7 @@ int cnet_client_profile_begin(cnet_client *client) {
       (void)cnet_shards_profile_take(&impl->shards, &ignored_owner);
     }
   }
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
   return status;
 }
 
@@ -1910,13 +1910,13 @@ int cnet_client_profile_trace_bind(cnet_client *client,
   if (impl == NULL || events == NULL || capacity == 0u)
     return SALTS_EINVAL;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   if (impl->poll_active || impl->stop_active || !impl->profile_active)
     status = SALTS_EBUSY;
   else
     status = cnet_shards_profile_trace_bind(&impl->shards, events,
                                             capacity);
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
   return status;
 }
 
@@ -1926,7 +1926,7 @@ int cnet_client_profile_take(cnet_client *client, cnet_client_poll_profile *out_
   int status;
   if (impl == NULL || out_profile == NULL) return SALTS_EINVAL;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   if (impl->poll_active || impl->stop_active || !impl->profile_active) status = SALTS_EBUSY;
   else {
     memset(out_profile, 0, sizeof(*out_profile));
@@ -1947,7 +1947,7 @@ int cnet_client_profile_take(cnet_client *client, cnet_client_poll_profile *out_
       impl->profile_active = false;
     }
   }
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
   return status;
 }
 #endif
@@ -1956,9 +1956,9 @@ int cnet_client_wake(cnet_client *client) {
   cnet_client_impl *impl = cnet_client_get(client);
   bool admission_open;
   if (impl == NULL) return SALTS_EINVAL;
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   admission_open = impl->admission_open && !impl->stopped;
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
   if (!admission_open) return SALTS_ESHUTDOWN;
   atomic_store_explicit(&impl->external_wake_pending, 1, memory_order_release);
   return cnet_shards_wake(&impl->shards);
@@ -1966,25 +1966,25 @@ int cnet_client_wake(cnet_client *client) {
 
 int cnet_client_stop(cnet_client *client, uint32_t timeout_ms) {
   cnet_client_impl *impl = cnet_client_get(client);
-  const uint64_t started_ms = salts_monotonic_ms();
+  const uint64_t started_ms = cmeta_monotonic_ms();
   bool fully_stopped;
   int first_status = SALTS_OK;
   int status;
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->external_progress) return SALTS_ENOTSUP;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   if (impl->stopped) {
-    salts_mutex_unlock(&impl->control_lock);
+    cmeta_mutex_unlock(&impl->control_lock);
     return SALTS_EALREADY;
   }
   if (impl->stop_active) {
-    salts_mutex_unlock(&impl->control_lock);
+    cmeta_mutex_unlock(&impl->control_lock);
     return SALTS_EBUSY;
   }
   impl->stop_active = true;
   impl->admission_open = false;
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
 
   status =
       cnet_dispatcher_drain(&impl->dispatcher, cnet_client_remaining_ms(started_ms, timeout_ms));
@@ -1999,10 +1999,10 @@ int cnet_client_stop(cnet_client *client, uint32_t timeout_ms) {
   }
 
   fully_stopped = cnet_dispatcher_drained(&impl->dispatcher) && cnet_shards_stopped(&impl->shards);
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   impl->stop_active = false;
   if (fully_stopped) impl->stopped = true;
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
   return first_status;
 }
 
@@ -2012,18 +2012,18 @@ int cnet_client_destroy(cnet_client *client) {
   if (client == NULL) return SALTS_EINVAL;
   if (impl == NULL) return SALTS_OK;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
-  salts_mutex_lock(&impl->control_lock);
+  cmeta_mutex_lock(&impl->control_lock);
   if (!impl->stopped || impl->stop_active) {
-    salts_mutex_unlock(&impl->control_lock);
+    cmeta_mutex_unlock(&impl->control_lock);
     return SALTS_EBUSY;
   }
-  salts_mutex_unlock(&impl->control_lock);
+  cmeta_mutex_unlock(&impl->control_lock);
 
   status = cnet_dispatcher_destroy(&impl->dispatcher);
   if (status != SALTS_OK) return status;
   status = cnet_shards_destroy(&impl->shards);
   if (status != SALTS_OK) return status;
-  salts_mutex_destroy(&impl->control_lock);
+  cmeta_mutex_destroy(&impl->control_lock);
   free(impl->records);
   free(impl);
   client->impl = NULL;

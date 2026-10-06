@@ -1,17 +1,17 @@
 #include "tlog.h"
-#include "tinytest.h"
+#include "tinytest.hpp"
 #include <string>
 #include <cstdio>
 
 spec("TLog C++ Tests") {
 
   it("should expose log entry metadata to C++ consumers") {
-    const cmeta_struct_desc *meta = salts_log_entry_t_meta();
+    const cmeta_struct_desc *meta = cmeta_log_entry_t_meta();
 
     check_not_null(meta);
     check(meta->field_count == static_cast<size_t>(7));
-    check(meta->fields[0].offset == offsetof(salts_log_entry_t, level));
-    check(meta->fields[6].offset == offsetof(salts_log_entry_t, message));
+    check(meta->fields[0].offset == offsetof(cmeta_log_entry_t, level));
+    check(meta->fields[6].offset == offsetof(cmeta_log_entry_t, message));
     check(cmeta_struct_find_field(meta, "message_len") == nullptr);
   }
 

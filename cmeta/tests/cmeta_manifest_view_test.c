@@ -1,5 +1,6 @@
 #include "cmeta_manifest_view_fixture.h"
 #include "tinytest.h"
+#include "cmeta_manifest_declaration_cases.h"
 
 static const cmeta_manifest_limits view_limits = {
     CMETA_MANIFEST_DEFAULT_ITEMS, CMETA_MANIFEST_DEFAULT_DEPTH, CMETA_MANIFEST_DEFAULT_NODES

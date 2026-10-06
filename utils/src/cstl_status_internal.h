@@ -1,10 +1,10 @@
 #ifndef SALTS_STL_STATUS_INTERNAL_H
 #define SALTS_STL_STATUS_INTERNAL_H
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <cstl/status.h>
 
-static inline int salts_core_status_from_stl(stl_status status) {
+static inline int cmeta_core_status_from_stl(stl_status status) {
   switch (status) {
     case STL_OK: return SALTS_OK;
     case STL_INVALID_ARGUMENT: return SALTS_EINVAL;

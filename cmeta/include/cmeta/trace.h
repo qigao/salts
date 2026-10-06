@@ -15,7 +15,7 @@
     cmeta_struct(name_##_payload, __VA_ARGS__); \
     typedef void (*name_##_backend_type)(const name_##_payload *); \
     SALTS_FAST_KEY(name_##_key, false); \
-    static _Atomic(name_##_backend_type) name_##_backend = NULL; \
+    static _Atomic(name_##_backend_type) name_##_backend = (name_##_backend_type)0; \
     CMETA_INLINE cmeta_status name_##_bind(name_##_backend_type target_) { \
         if (target_ == NULL) return CMETA_INVALID_ARGUMENT; \
         atomic_store_explicit(&name_##_backend, target_, memory_order_release); \
@@ -24,7 +24,7 @@
     CMETA_INLINE cmeta_status name_##_enable(void) { \
         if (atomic_load_explicit(&name_##_backend, memory_order_acquire) == NULL) \
             return CMETA_INVALID_ARGUMENT; \
-        return salts_fast_enable(&name_##_key) == SALTS_OK ? CMETA_OK : CMETA_INVALID_ARGUMENT; \
+        return cmeta_fast_enable(&name_##_key) == SALTS_OK ? CMETA_OK : CMETA_INVALID_ARGUMENT; \
     } \
     typedef char name_##_trace_declaration_complete[1]
 
@@ -32,9 +32,9 @@
     name_##_bind(_Generic((target_), name_##_backend_type: (target_)))
 #define cmeta_trace_enable(name_) name_##_enable()
 #define cmeta_trace_disable(name_) \
-    (salts_fast_disable(&name_##_key) == SALTS_OK ? CMETA_OK : CMETA_INVALID_ARGUMENT)
+    (cmeta_fast_disable(&name_##_key) == SALTS_OK ? CMETA_OK : CMETA_INVALID_ARGUMENT)
 #define cmeta_trace_emit(name_, ...) do { \
-    if (salts_fast_branch(&name_##_key)) { \
+    if (cmeta_fast_branch(&name_##_key)) { \
         name_##_backend_type cmeta_trace_target_ = \
             atomic_load_explicit(&name_##_backend, memory_order_acquire); \
         if (cmeta_trace_target_ != NULL) { \

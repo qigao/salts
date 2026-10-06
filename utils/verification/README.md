@@ -23,9 +23,9 @@
 - `../concurrency/include/salts/spsc_ring.h` 与
   `../concurrency/src/spsc_ring.c`：SPSC 角色和原子游标的事实源；
 - `include/ring_buffer_spsc.h` 与 `src/ring_buffer_spsc.c`：旧 Core API 的兼容包装；
-- `include/salts_buffer.h` 与 `src/salts_buffer.c`：buffer/slice 引用和 pool 生命周期；
+- `include/cmeta_buffer.h` 与 `src/cmeta_buffer.c`：buffer/slice 引用和 pool 生命周期；
 - `src/bucket_priority_queue_mpmc.c`：优先级队列对 Disruptor 和条件变量的包装。
-- `include/salts_byte_buffer.h`、`src/salts_byte_buffer.c` 与 `tests/test_salts_byte_buffer.c`：单 owner 字节缓冲的游标、容量、view 和错误语义。
+- `include/cmeta_byte_buffer.h`、`src/cmeta_byte_buffer.c` 与 `tests/test_cmeta_byte_buffer.c`：单 owner 字节缓冲的游标、容量、view 和错误语义。
 - `tests/test_disruptor.c`：worker wait/wake、consumer dependency 和 topology cycle 测试；
 - `include/bucket_priority_queue_mpmc.h`、`src/bucket_priority_queue_mpmc.c` 与 `tests/test_bucket_priority_queue_mpmc.c`：MPMC try/blocking/timeout 语义。
 

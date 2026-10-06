@@ -259,7 +259,8 @@ if(WIN32 AND NOT BUILD_SHARED_LIBS)
     PRIVATE Salts::CFlow)
   target_compile_definitions(cflow_executor_dso_fixture
     PRIVATE CFLOW_EXECUTOR_DSO_FIXTURE_BUILD=1)
-  cmake_config_target(cflow_executor_dso_fixture FOLDER "cflow/tests")
+  cmake_config_target(cflow_executor_dso_fixture FOLDER "cflow/tests"
+    VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}")
 
   cmake_add_test(cflow_executor_dso_test
     SOURCES cflow_executor_dso_test.c

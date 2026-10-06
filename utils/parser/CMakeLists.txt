@@ -1,6 +1,7 @@
 # Log pattern lexer using re2c
 
 cmake_add_grammar(LOG_PATTERN
+  RE2C_EXECUTABLE "${RE2C_EXECUTABLE}"
   LEXER_RE ${CMAKE_CURRENT_SOURCE_DIR}/log_pattern_lexer.re
   LEXER_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/log_pattern_lexer.h
   FOLDER "utils/parser/grammar")
@@ -10,6 +11,7 @@ add_library(log_pattern_lexer STATIC ${LOG_PATTERN_LEXER_GEN})
 add_dependencies(log_pattern_lexer ${LOG_PATTERN_LEXER_TARGET})
 
 cmake_config_target(log_pattern_lexer
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   FOLDER "utils/parser"
   OUTPUT_NAME "log_pattern_lexer")
 
@@ -33,6 +35,7 @@ set(LOG_PATTERN_LEXER_INCLUDE_DIRS
 # ============================================================================
 
 cmake_add_grammar(FMT
+  RE2C_EXECUTABLE "${RE2C_EXECUTABLE}"
   LEXER_RE ${CMAKE_CURRENT_SOURCE_DIR}/fmt_lexer.re
   LEXER_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/fmt_lexer.h
   FOLDER "utils/parser/grammar")
@@ -42,6 +45,7 @@ add_library(fmt_lexer STATIC ${FMT_LEXER_GEN})
 add_dependencies(fmt_lexer ${FMT_LEXER_TARGET})
 
 cmake_config_target(fmt_lexer
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   FOLDER "utils/parser"
   OUTPUT_NAME "fmt_lexer")
 

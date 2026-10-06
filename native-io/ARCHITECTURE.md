@@ -292,7 +292,7 @@ It must not:
 - silently switch to a worker, another backend or another transport.
 
 A successful NativeIPC rendezvous produces a move-owned
-`salts_ipc_pipe_endpoint`. Its native identity can then be attached to
+`cmeta_ipc_pipe_endpoint`. Its native identity can then be attached to
 NativeIO, after which NativeIO owns the data-plane operation/completion
 contract while the endpoint wrapper retains native-handle close ownership as
 documented.

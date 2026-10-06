@@ -543,7 +543,7 @@ static void cmeta_data_test_failing_move(void *destination, void *source) {
 static const cmeta_data_construct_ops cmeta_data_test_failing_construct = {
     sizeof(cmeta_data_construct_ops), CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,
     &cmeta_type_int, cmeta_data_test_failing_init,
-    cmeta_data_test_failing_restore, cmeta_data_test_failing_move
+    cmeta_data_test_failing_restore, cmeta_data_test_failing_move, 0
 };
 static const cmeta_data_desc cmeta_data_test_failing_data = {
     .struct_size = sizeof(cmeta_data_desc),
@@ -1180,6 +1180,31 @@ spec("CMeta semantic data descriptors") {
     check_equal(cmeta_data_buffer_assign(&cmeta_data_test_buffer_desc, &object,
                                          input, sizeof(input), sizeof(input)),
                 CMETA_CALLBACK_ERROR);
+    check_equal(object, 0);
+  }
+
+  it("requires the complete buffer lifecycle before admitting a provider") {
+    cmeta_data_buffer_ops ops = cmeta_data_test_buffer_ops;
+    cmeta_data_desc desc = cmeta_data_test_buffer_desc;
+    int object = 0;
+    desc.buffer_ops = &ops;
+
+    ops.struct_size = offsetof(cmeta_data_buffer_ops, init_zero);
+    check_null(cmeta_data_buffer_ops_of(&desc));
+    check_equal(cmeta_data_buffer_assign(&desc, &object, NULL, 0u, 0u),
+                CMETA_INVALID_ARGUMENT);
+
+    ops = cmeta_data_test_buffer_ops;
+    ops.init_zero = NULL;
+    check_null(cmeta_data_buffer_ops_of(&desc));
+    check_equal(cmeta_data_buffer_init_zero(&desc, &object),
+                CMETA_INVALID_ARGUMENT);
+
+    ops = cmeta_data_test_buffer_ops;
+    ops.move = NULL;
+    check_null(cmeta_data_buffer_ops_of(&desc));
+    check_equal(cmeta_data_buffer_restore_zero(&desc, &object),
+                CMETA_INVALID_ARGUMENT);
     check_equal(object, 0);
   }
 

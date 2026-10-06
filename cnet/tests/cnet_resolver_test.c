@@ -19,11 +19,11 @@
 enum { CNET_RESOLVER_TEST_TIMEOUT_MS = 5000 };
 
 static int cnet_resolver_test_wait(cnet_resolver *resolver, cnet_resolver_result *out_result) {
-  const uint64_t deadline = salts_monotonic_ms() + CNET_RESOLVER_TEST_TIMEOUT_MS;
+  const uint64_t deadline = cmeta_monotonic_ms() + CNET_RESOLVER_TEST_TIMEOUT_MS;
   for (;;) {
     const int status = cnet_resolver_take(resolver, out_result);
     if (status != SALTS_ETIMEDOUT) return status;
-    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+    if (cmeta_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
     if (cnet_resolver_poll(resolver) != SALTS_OK) return SALTS_EAI_FAIL;
   }
 }

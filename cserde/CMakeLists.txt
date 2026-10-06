@@ -1,4 +1,4 @@
-set(TARGET_NAME salts_cserde)
+set(TARGET_NAME cmeta_cserde)
 
 add_library(${TARGET_NAME}
   src/token.c
@@ -7,6 +7,7 @@ add_library(${TARGET_NAME}
 
 cmake_config_target(
   ${TARGET_NAME}
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   ALIAS Salts::CSerde
   FOLDER "cserde"
   EXPORT_NAME CSerde)

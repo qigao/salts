@@ -22,7 +22,7 @@ if(WIN32)
   add_executable(cstl_imported_tstr_map_smoke
     cstl_imported_tstr_map_smoke.c)
   target_link_libraries(cstl_imported_tstr_map_smoke
-    PRIVATE Salts::Core Salts::CSTL)
+    PRIVATE Salts::Core Salts::CSTL Salts::TinyTest)
   set_target_properties(cstl_imported_tstr_map_smoke PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
@@ -44,7 +44,7 @@ cmake_add_test(cstl_header_typed_cpp_test
 
 cmake_add_test(cstl_typed_decl_cpp_test
   SOURCES cstl_typed_decl_c.c cstl_typed_decl_cpp.cpp
-  LIBS Salts::CSTL
+  LIBS Salts::TinyTest Salts::CSTL
   FOLDER "cstl/tests")
 
 cmake_add_test(cstl_stack_type_collision_test
