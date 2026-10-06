@@ -89,6 +89,15 @@ jobs:
     with:
       version: ${{ needs.scope.outputs.version }}
     secrets: inherit
+  sdk-tests:
+    needs:
+      - scope
+      - package
+    if: github.event_name == 'workflow_dispatch' && inputs.prepare_release
+    uses: ./.github/workflows/sdk-tests.yml
+    with:
+      version: ${{ needs.scope.outputs.version }}
+    secrets: inherit
   result:
     name: CI result
     needs:
@@ -98,6 +107,7 @@ jobs:
       - formal
       - benchmarks
       - package
+      - sdk-tests
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

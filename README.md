@@ -216,9 +216,11 @@ Documentation-only changes run scope/result jobs. PRs use the full
 merge-base-to-head diff; a documentation follow-up still validates preceding
 code changes. Invalid comparison bases fail explicitly.
 
-`native-build.yml` owns native compilation. Each selected configuration builds
-all platform-supported modules and all tests once, then uploads the complete
-build. `native-tests.yml` downloads that build in separate jobs for each
+`native-build.yml` owns native and cross compilation. Each selected configuration
+builds all platform-supported modules once, then uploads the complete build.
+Host configurations also compile all tests; Android/iOS keep their existing
+SDK-only configure profiles because no device/emulator test runner is configured.
+`native-tests.yml` downloads host builds in separate jobs for each
 selected CTest suite (execution, Plugin, projection, fastpath, or ARM headers).
 No native test runs before the build artifacts have been uploaded. Production Release
 configurations also compile the NativeIO/CNet/Coroutine benchmarks. CNet
@@ -230,11 +232,18 @@ A configuration includes platform, architecture, compiler, build type,
 sanitizer and native-fastpath setting. ASan, TSan and Release cannot share
 binaries. Native-fastpath assembly requires a distinct build from portable
 SDK code and cannot be enabled under TSan. Both TSan suites now consume one
-`linux-tsan-ci` build. With all checks selected, native build jobs decrease
-from 19 (5 fastpath + 1 portable TSan + 6 execution + 1 projection + 2 Plugin
-+ 4 benchmark) to 11 (6 portable/compiler profiles + 5 native-fastpath profiles).
+`linux-tsan-ci` build. With all checks selected, the matrix contains 11 host
+configurations (6 portable/compiler profiles + 5 native-fastpath profiles)
+and 3 mobile configurations (Android ARM64, iOS ARM64 and iOS Simulator ARM64).
 The five fastpath builds retain previous coverage without changing SDK features
 to merge incompatible configurations.
+
+Mobile configurations participate in ordinary PR/push CI when native modules
+or shared build inputs change, and in every manual validation run. Documentation
+or Lean-only changes do not trigger them. They use the existing Android/iOS
+presets and upload SDK artifacts in the build stage, independently of
+`prepare_release`. The package workflow consumes those artifacts without
+compiling platform modules.
 
 Test and benchmark jobs download the build tree, matching vcpkg dependencies,
 and source snapshot. Linux epoll and io_uring consume the same `native-linux-release`
@@ -266,11 +275,11 @@ Release preparation and publication are separate:
 
 1. Run **Salts CI** on the default branch with `prepare_release=true`.
    This runs native and formal checks, installs the existing Linux x64/Windows/macOS Release
-   builds, adds Linux ARM64 to the same native producer/consumer matrix,
-   builds the additional Android/iOS configurations, and
-   packages the seven SDK variants as the `salts-native-nuget` artifact.
+   builds, adds Linux ARM64 to the same producer/consumer matrix, and packages
+   the seven SDK variants uploaded by that matrix as `salts-native-nuget`.
    Linux ARM64 tests and SDK installation use one module build; installed
-   package qualification uses existing CMeta/Plugin tests through CTest.
+   package qualification runs separately in `sdk-tests.yml`, building and
+   executing the existing CMeta/Plugin consumer tests through CTest.
 2. Wait for the entire CI run to succeed. Create the matching immutable
    version tag, then manually run **Salts native SDK release** with `ci_run_id`,
    exact `release_sha`, and `tag`.
@@ -280,7 +289,8 @@ Release preparation and publication are separate:
    manifests, and publishes the unchanged package. It does not compile or pack.
 
 Ordinary pushes, tag pushes, and manual CI with `prepare_release=false` never
-publish. The latter also avoids additional SDK platform builds. Existing
+publish. Manual CI with `prepare_release=false` includes the three mobile builds
+but skips Linux ARM64 release preparation and NuGet packaging. Existing
 release callers must supply the new `ci_run_id`; runs without the prepared
 package cannot be promoted. Release preparation has its own concurrency group
 so subsequent ordinary pushes do not cancel it. `CI result` remains the stable

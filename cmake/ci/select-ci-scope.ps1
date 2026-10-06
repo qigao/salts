@@ -30,7 +30,8 @@ function Test-Changed([string]$Pattern) {
 
 # Shared build inputs invalidate all native suites. Formal checks only depend
 # on the Lean package, checked-in generated outputs, and their workflow.
-$shared = $full -or (Test-Changed '^(CMakeLists\.txt|CMakeOptions\.cmake|CMake(User)?Presets\.json|vcpkg(-configuration)?\.json|presets/|vendor/|\.github/actions/|\.github/workflows/(ci|native-build|native-tests|sdk-package)\.yml|cmake/(?!ci/)|cmake/ci/select-ci-scope\.ps1)')
+$shared = $full -or (Test-Changed '^(CMakeLists\.txt|CMakeOptions\.cmake|CMake(User)?Presets\.json|vcpkg(-configuration)?\.json|presets/|vendor/|\.github/actions/|\.github/workflows/(ci|native-build|native-tests|sdk-package|sdk-tests)\.yml|cmake/(?!ci/)|cmake/ci/select-ci-scope\.ps1)')
+$mobile = $shared -or (Test-Changed '^(tools|tinytest|platform|concurrency|coroutine|native-io|uri|cmeta|plugin|simd|tinymock|cflow|cstl|cnet|cserde|utils)/')
 $contractsChanged = Test-Changed '^\.github/workflows/cmeta-cflow-calculus\.yml$'
 $cmetaRuntime = Test-Changed '^cmeta/(include/|src/|CMakeLists\.txt$|tests/CMakeLists\.txt$)'
 $platformRuntime = Test-Changed '^platform/(include/|src/|arch/|CMakeLists\.txt$)'
@@ -95,6 +96,7 @@ $checks = [ordered]@{
   projection = $projection
   lean = $lean
   plugin = $plugin
+  mobile = $mobile
   work = $work
   evidence = $work
   cnet_compare = $compare
@@ -126,7 +128,10 @@ $profiles = @(
   @{ id = 'linux-tsan'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-tsan-ci'; build_dir = 'build/linux-gcc-tsan'; sdk = '' },
   @{ id = 'windows-release'; runner = 'windows-2025'; family = 'windows'; preset = 'win-release-ci'; build_dir = 'build/Msvc-Release'; sdk = 'windows-x64' },
   @{ id = 'windows-clang'; runner = 'windows-2025'; family = 'windows'; preset = 'win-clang-release-ci'; build_dir = 'build/Clang-Release'; sdk = '' },
-  @{ id = 'macos-release'; runner = 'macos-15'; family = 'mac'; preset = 'mac-arm64-release-ci'; build_dir = 'build/mac-arm64-clang-release'; sdk = 'macos-arm64' }
+  @{ id = 'macos-release'; runner = 'macos-15'; family = 'mac'; preset = 'mac-arm64-release-ci'; build_dir = 'build/mac-arm64-clang-release'; sdk = 'macos-arm64' },
+  @{ id = 'android-arm64-v8a-release'; runner = 'ubuntu-24.04'; family = 'android'; preset = 'android-arm64-v8a-release-ci'; build_dir = 'build/android-arm64-v8a-release'; sdk = 'android-arm64-v8a' },
+  @{ id = 'ios-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-arm64-release-ci'; build_dir = 'build/ios-arm64'; sdk = 'ios-arm64'; triplet = 'arm64-ios' },
+  @{ id = 'ios-simulator-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-simulator-arm64-release-ci'; build_dir = 'build/ios-simulator-arm64'; sdk = 'ios-simulator-arm64'; triplet = 'arm64-ios-simulator' }
 )
 if ($PrepareRelease) {
   $profiles += @{ id = 'linux-arm64-release'; runner = 'ubuntu-24.04-arm'; family = 'linux'; preset = 'linux-arm64-release-ci'; build_dir = 'build/linux-arm64-release'; sdk = 'linux-arm64' }
@@ -134,9 +139,10 @@ if ($PrepareRelease) {
 $builds = @()
 foreach ($profile in $profiles) {
   $entry = $profile.Clone()
+  $entry.cross = $entry.family -in @('android', 'ios')
   $entry.fastpath = 'OFF'
   $entry.native = $false
-  $entry.execution = $execution -and $entry.id -ne 'linux-arm64-release'
+  $entry.execution = $execution -and -not $entry.cross -and $entry.id -ne 'linux-arm64-release'
   $entry.armheaders = $entry.id -eq 'linux-arm64-release'
   $entry.portable = $native -and $entry.id -eq 'linux-tsan'
   $entry.plugin = $plugin -and $entry.id -in @('linux-release', 'windows-release')
@@ -144,13 +150,14 @@ foreach ($profile in $profiles) {
   $entry.benchmarks = if ($entry.id -in @('linux-release', 'windows-release', 'macos-release')) { 'ON' } else { 'OFF' }
   $entry.package = $PrepareRelease -and [bool]$entry.sdk
   $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
-  $entry.artifact = $work -and [bool]$entry.sdk
+  $entry.artifact = if ($entry.cross) { $mobile } else { $work -and [bool]$entry.sdk }
   if ($entry.execution -or $entry.portable -or $entry.plugin -or $entry.projection -or $entry.package -or $entry.artifact) {
     $builds += $entry
   }
-  if ($native -and $profile.id -notin @('linux-tsan', 'linux-arm64-release')) {
+  if ($native -and -not $entry.cross -and $profile.id -notin @('linux-tsan', 'linux-arm64-release')) {
     $entry = $profile.Clone()
     $entry.id += '-fastpath'
+    $entry.cross = $false
     $entry.fastpath = 'ON'
     $entry.native = $true
     $entry.execution = $false

@@ -1,0 +1,50 @@
+name: Test installed release package
+'on':
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+permissions:
+  contents: read
+  packages: read
+jobs:
+  qualify_linux_arm64:
+    name: Qualify restored Linux arm64 package
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore shared re2c binary
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - name: Configure shared vcpkg cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - name: Prepare build host
+        uses: ./.github/actions/setup-build-host
+      - uses: actions/download-artifact@v4
+        with:
+          name: salts-native-nuget
+          path: dist
+      - name: Restore packed Linux arm64 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "aarch64"
+          unzip -q "dist/Salts.Native.${{ inputs.version }}.nupkg" -d restored
+          test -f restored/sdk/linux-arm64/lib/cmake/Salts/SaltsConfig.cmake
+          echo "SALTS_ARM64_PREFIX=$GITHUB_WORKSPACE/restored/sdk/linux-arm64" >> "$GITHUB_ENV"
+      - name: Run installed SDK tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CMETA_PACKAGE_ROOT="$SALTS_ARM64_PREFIX"
+          cd cmeta/tests/installed
+          cmake --preset installed-linux-arm64-release
+          cmake --build --preset installed-linux-arm64-release --parallel 2
+          ctest --preset installed-linux-arm64-release --no-tests=error --output-on-failure --timeout 60
+    env:
+      PROJECT_ROOT: ${{ github.workspace }}

@@ -26,6 +26,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Select iOS cache namespace
+        if: matrix.family == 'ios'
+        shell: bash
+        run: echo "X_VCPKG_NUGET_ID_PREFIX=vcpkg-cache" >> "$GITHUB_ENV"
       - name: Restore shared re2c binary
         uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
       - name: Configure shared vcpkg cache
@@ -35,6 +39,30 @@ jobs:
           mode: read
       - name: Prepare build host
         uses: ./.github/actions/setup-build-host
+      - name: Setup build environment
+        if: matrix.family == 'android'
+        id: android_env
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${VCPKG_ROOT:-}"
+          test -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+          test -n "${ANDROID_NDK_HOME:-}"
+          cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
+          mkdir -p "$cache"
+          ndk_revision="$(awk -F'= ' '/Pkg.Revision/ {print $2}' "$ANDROID_NDK_HOME/source.properties")"
+          echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "triplet=arm64-android" >> "$GITHUB_OUTPUT"
+          echo "ndk=$ndk_revision" >> "$GITHUB_OUTPUT"
+      - name: Restore vcpkg binary cache
+        if: matrix.family == 'android'
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg-binary-cache
+          key: vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.android_env.outputs.image }}-${{ steps.android_env.outputs.triplet }}-ndk-${{ steps.android_env.outputs.ndk }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision
+            }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: |
+            vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.android_env.outputs.image }}-${{ steps.android_env.outputs.triplet }}-ndk-${{ steps.android_env.outputs.ndk }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
       - name: Discover Visual Studio
         if: matrix.family == 'windows'
         shell: pwsh
@@ -45,7 +73,7 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) { throw "Visual Studio with the x64 C++ toolchain was not found" }
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
       - name: Configure and build all modules
-        if: matrix.family != 'windows'
+        if: matrix.family != 'windows' && !matrix.cross
         shell: bash
         run: |
           set -euo pipefail
@@ -63,6 +91,13 @@ jobs:
           if errorlevel 1 exit /b 1
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
           if errorlevel 1 exit /b 1
+      - name: Configure and build all cross-platform modules
+        if: matrix.cross
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON
+          cmake --build --preset "${{ matrix.preset }}" --parallel 2
       - name: Compile PR-base modules for the CNet comparison
         if: matrix.compare
         shell: cmd
@@ -302,6 +337,86 @@ jobs:
           if-no-files-found: error
           compression-level: 9
         if: matrix.package && matrix.id == 'linux-arm64-release'
+      - name: Install Android SDK
+        if: matrix.family == 'android'
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$GITHUB_WORKSPACE/stage/sdk/android-arm64-v8a"
+          cmake --build --preset install-android-arm64-v8a-release-ci --parallel 2
+          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/include/cmeta/function.h"
+          test -f "$prefix/include/cflow/function_projection.h"
+          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
+          test -f "$prefix/include/cmeta/interface.h"
+          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
+          grep -F "cmeta_interface_desc_valid" "$prefix/include/cmeta/interface.h"
+          grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
+          grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
+          test -f "$prefix/include/tinytest/detail/equality.h"
+          test -f "$prefix/include/tinymock.h"
+          test -f "$prefix/include/tinymock_support.h"
+          test -f "$prefix/include/tinymock_cmeta.h"
+          test -f "$prefix/include/tinymock_value.h"
+          test -f "$prefix/include/tinymock_function.h"
+          test -f "$prefix/include/tinymock_history.h"
+          test -f "$prefix/include/tinymock_actions.h"
+          test -f "$prefix/include/tinymock_return.h"
+          grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
+          version=${{ inputs.version }}
+          commit=$(git rev-parse HEAD)
+          os=android
+          abi=arm64-v8a
+          api=android-24
+          profile=release
+          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
+          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: matrix.family == 'android'
+        with:
+          name: salts-sdk-android-arm64-v8a
+          path: stage/sdk
+          if-no-files-found: error
+          compression-level: 9
+      - name: Install iOS SDK
+        if: matrix.family == 'ios'
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$GITHUB_WORKSPACE/stage/sdk/${{ matrix.sdk }}"
+          cmake --build --preset "install-strip-${{ matrix.sdk }}-release-ci" --parallel 2
+          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/cmeta/function.h"
+          test -f "$prefix/include/cflow/function_projection.h"
+          test -f "$prefix/include/cmeta/interface.h"
+          test -f "$prefix/include/tinytest/detail/equality.h"
+          test -f "$prefix/include/tinymock.h"
+          test -f "$prefix/include/tinymock_cmeta.h"
+          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
+          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
+          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
+          version=${{ inputs.version }}
+          commit=$(git rev-parse HEAD)
+          os=ios
+          rid=${{ matrix.sdk }}
+          triplet=${{ matrix.triplet }}
+          profile=release
+          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
+          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: matrix.family == 'ios'
+        with:
+          name: salts-sdk-${{ matrix.sdk }}
+          path: stage/sdk
+          if-no-files-found: error
+          compression-level: 9
       - name: Archive the complete build and source timestamps
         shell: bash
         run: |
