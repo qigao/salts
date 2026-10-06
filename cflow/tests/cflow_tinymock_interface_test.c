@@ -31,7 +31,7 @@ suite("TinyMock existing CMeta interface") {
 
     tinymock_cflow_subscriber_init(&mock);
     subscriber = tinymock_cflow_subscriber_as_interface(&mock);
-    type = cmeta_type_find("int");
+    type = cmeta_builtin_type_find("int");
 
     check_true(cflow_subscriber_valid(&subscriber));
     check_not_null(type);
