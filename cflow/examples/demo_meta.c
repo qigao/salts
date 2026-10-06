@@ -79,7 +79,7 @@ static int check_builtin_enum_meta(void) {
     if (cmeta_type_kind_meta()->count != 6u) return 0;
     if (strcmp(cmeta_gen_status_to_string(CMETA_GEN_VALUE_AND_DONE), "value_and_done") != 0)
         return 0;
-    if (cmeta_type_registry_count() < 5u || cmeta_type_find("int") != &cmeta_type_int) return 0;
+    if (cmeta_builtin_type_count() < 5u || cmeta_builtin_type_find("int") != &cmeta_type_int) return 0;
     {
         cmeta_callable bound;
         if (!cmeta_callable_bind(square.fn, &bound)) return 0;

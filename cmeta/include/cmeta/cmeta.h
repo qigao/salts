@@ -117,9 +117,9 @@ extern const cmeta_type_desc cmeta_type_gen_status;
 CMETA_PP_FOR_EACH_A(CMETA_DECLARE_TYPE, ~, CMETA_KNOWN_TYPE_LIST)
 #undef CMETA_DECLARE_TYPE
 
-size_t cmeta_type_registry_count(void);
-const cmeta_type_desc *cmeta_type_registry_at(size_t index);
-const cmeta_type_desc *cmeta_type_find(const char *name);
+size_t cmeta_builtin_type_count(void);
+const cmeta_type_desc *cmeta_builtin_type_at(size_t index);
+const cmeta_type_desc *cmeta_builtin_type_find(const char *name);
 
 #define CMETA_DECL_U(in, ret) \
     typedef CMETA_TYPE_CTYPE(ret) (*CMETA_FN_TYPE(CMETA_U_ID(in, ret)))(CMETA_TYPE_CTYPE(in));
@@ -219,7 +219,7 @@ typedef union cmeta_raw_call {
 #undef CMETA_UNION_G
 } cmeta_raw_call;
 
-/* Low-level signature descriptor used by the C11 type registry.  User-facing
+/* Low-level signature descriptor used by the C11 builtin type catalog.  User-facing
  * Graph APIs use cmeta_callable below; this raw descriptor remains the typed
  * adapter substrate. */
 typedef struct cmeta_fn {
