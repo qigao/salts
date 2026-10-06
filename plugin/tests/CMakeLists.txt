@@ -1,3 +1,28 @@
+add_library(salts_plugin_manifest_fixture_c SHARED
+  fixture_plugin_manifest_bridge.c fixture_plugin_manifest_c.c)
+add_library(salts_plugin_manifest_fixture_cpp SHARED
+  fixture_plugin_manifest_bridge.c fixture_plugin_manifest_cpp.cpp)
+foreach(manifest_target IN ITEMS salts_plugin_manifest_fixture_c salts_plugin_manifest_fixture_cpp)
+  target_include_directories(${manifest_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../include")
+  target_link_libraries(${manifest_target} PRIVATE Salts::CMeta)
+  set_target_properties(${manifest_target} PROPERTIES FOLDER "plugin/tests/fixtures"
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+endforeach()
+target_compile_definitions(salts_plugin_manifest_fixture_c PRIVATE
+  "PLUGIN_DECLARATION_ID=\"test.plugin.manifest.c\"")
+target_compile_definitions(salts_plugin_manifest_fixture_cpp PRIVATE
+  "PLUGIN_DECLARATION_ID=\"test.plugin.manifest.cpp\"")
+cmake_add_test(salts_plugin_manifest_test SOURCES plugin_manifest_test.c
+  LIBS Salts::Plugin Salts::TinyTest
+  DEFS "PLUGIN_MANIFEST_C_PATH=\"$<TARGET_FILE:salts_plugin_manifest_fixture_c>\""
+       "PLUGIN_MANIFEST_CPP_PATH=\"$<TARGET_FILE:salts_plugin_manifest_fixture_cpp>\""
+  FOLDER "plugin/tests")
+add_dependencies(salts_plugin_manifest_test salts_plugin_manifest_fixture_c salts_plugin_manifest_fixture_cpp)
+set_target_properties(salts_plugin_manifest_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_tests_properties(salts_plugin_manifest_test PROPERTIES TIMEOUT 60)
+
 add_library(salts_plugin_interface_representation_a SHARED
   interface_representation_a.c)
 add_library(salts_plugin_interface_representation_b SHARED

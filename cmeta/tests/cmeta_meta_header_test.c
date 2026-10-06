@@ -25,6 +25,13 @@
 #error "cmeta/meta.h must not expose structured lifetime facade"
 #endif
 
+
+#if defined(CMETA_POOL_H) || defined(CMETA_LOCAL_H) || \
+    defined(SALTS_FASTPATH_H) || defined(SALTS_THREAD_PRIMITIVES_H) || \
+    defined(SALTS_OBJECT_POOL_H) || defined(SALTS_ATOMIC_H) || defined(SALTS_RCU_H)
+#error "core Reflection must not expose migrated runtime owners"
+#endif
+
 suite("CMeta aggregate public header") {
     it("exposes range metadata without container facade generators") {
         cmeta_range range = {0};

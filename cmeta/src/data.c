@@ -19,8 +19,6 @@
     CMETA_FIELD_END(cmeta_data_desc, enum_bits_ops)
 #define CMETA_DATA_ENUM_BITS_OPS_PREFIX_SIZE \
     CMETA_FIELD_END(cmeta_data_enum_bits_ops, restore_zero)
-#define CMETA_ENUM_DOMAIN_PREFIX_SIZE \
-    CMETA_FIELD_END(cmeta_enum_domain, declared_mask)
 #define CMETA_DATA_BUFFER_OPS_PREFIX_SIZE \
     CMETA_FIELD_END(cmeta_data_buffer_ops, restore_zero)
 #define CMETA_DATA_BUFFER_OPS_READ_SIZE \
@@ -91,30 +89,6 @@ static bool cmeta_data_enum_shape_valid(const cmeta_data_enum_shape *shape) {
 
 static uint64_t cmeta_data_enum_width_mask(uint8_t bits) {
     return bits == 64u ? UINT64_MAX : (UINT64_C(1) << bits) - 1u;
-}
-
-static bool cmeta_data_enum_domain_valid(const cmeta_enum_domain *domain) {
-    size_t i;
-    uint64_t mask = 0u;
-    uint64_t width_mask;
-    if (domain == NULL || domain->struct_size < CMETA_ENUM_DOMAIN_PREFIX_SIZE ||
-        domain->abi_version != CMETA_ENUM_DOMAIN_ABI_VERSION ||
-        !cmeta_data_integer_bits_valid(domain->bits) ||
-        (domain->signedness != CMETA_ENUM_SIGNED &&
-         domain->signedness != CMETA_ENUM_UNSIGNED) ||
-        (domain->kind != CMETA_ENUM_ORDINARY && domain->kind != CMETA_ENUM_FLAGS) ||
-        (domain->count != 0u && domain->items == NULL))
-        return false;
-    width_mask = cmeta_data_enum_width_mask(domain->bits);
-    for (i = 0u; i < domain->count; ++i) {
-        const cmeta_enum_bits_item *item = &domain->items[i];
-        if ((item->bits & ~width_mask) != 0u ||
-            !cmeta_data_nonempty(item->symbol) || !cmeta_data_nonempty(item->text))
-            return false;
-        mask |= item->bits;
-    }
-    return domain->declared_mask ==
-           (domain->kind == CMETA_ENUM_FLAGS ? mask : 0u);
 }
 
 static bool cmeta_data_enum_bits_valid(const cmeta_enum_domain *domain,
@@ -315,7 +289,7 @@ bool cmeta_data_desc_valid(const cmeta_data_desc *desc) {
                 return desc->shape == NULL && desc->enum_ops == NULL &&
                        ops->struct_size >= CMETA_DATA_ENUM_BITS_OPS_PREFIX_SIZE &&
                        ops->abi_version == CMETA_DATA_ENUM_BITS_OPS_ABI_VERSION &&
-                       cmeta_data_enum_domain_valid(ops->domain);
+                       cmeta_enum_domain_valid(ops->domain);
             }
             return cmeta_data_enum_shape_valid(
                 (const cmeta_data_enum_shape *)desc->shape);

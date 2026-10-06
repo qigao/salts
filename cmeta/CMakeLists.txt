@@ -6,6 +6,9 @@ add_library(${TARGET_NAME}
   src/container_type.c
   src/data_v2.c
   src/declared_type.c
+  src/enum.c
+  src/fingerprint.c
+  src/manifest_view.c
   src/entry.c
   src/function.c
   src/fixed_array.c

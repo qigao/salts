@@ -52,8 +52,8 @@ sequence）才建立对此前数据的可见性；bool 反复切换不是版本�
 
 `<salts/fastpath.h>` 暴露 Platform-owned static key；`<cmeta/fastpath.h>` 显式暴露 CMeta typed static-call projection。`<cmeta/meta.h>` 不暴露这些 optional runtime/control-plane 能力。C11 的
 `SALTS_FAST_KEY(name, initial)` 定义原子 gate；`salts_fast_branch(&name)`
-读取，`cmeta_static_enable` / `disable` 发布新值，`salts_fast_key_set` 可显式
-指定状态。NULL 更新返回 `CMETA_INVALID_ARGUMENT`；读取要求非 NULL 活对象。
+读取，`salts_fast_enable` / `salts_fast_disable` 发布新值，`salts_fast_key_set` 可显式
+指定状态。NULL 更新返回 `SALTS_EINVAL`；读取要求非 NULL 活对象。
 C++17 只借用 C 定义的 opaque key，通过同名读取和控制 API 访问。
 
 `cmeta_static_call(slot, default_function)` 必须位于 C 文件作用域；在一个 TU

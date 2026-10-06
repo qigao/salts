@@ -61,6 +61,16 @@ typedef struct cmeta_enum_domain {
 } cmeta_enum_domain;
 
 #ifdef __cplusplus
+extern "C" {
+#endif
+/* Canonical domain validation shared by DataDesc and contract projections.
+ * Requires live ABI-compatible storage; does not retain the provider. */
+bool cmeta_enum_domain_valid(const cmeta_enum_domain *domain);
+#ifdef __cplusplus
+}
+#endif
+
+#ifdef __cplusplus
 #define CMETA_ENUM_TO_INT64(value) static_cast<int64_t>(value)
 #define CMETA_ENUM_FROM_INT64(type, value) static_cast<type>(value)
 #else

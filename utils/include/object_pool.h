@@ -62,6 +62,10 @@ SALTS_C_API size_t object_pool_max_alignment(void);
  * Does not dereference obj. It shares the pool's mutation/lifetime constraints. */
 SALTS_C_API bool object_pool_is_allocated(const object_pool_t *pool, const void *obj);
 
+/** True for any byte in live pool storage, including free slots/interiors.
+ * Read-only, O(chunks), same single-threaded lifetime constraints as the pool. */
+SALTS_C_API bool object_pool_contains(const object_pool_t *pool, const void *obj);
+
 SALTS_C_API void object_pool_destroy(object_pool_t *pool);
 SALTS_C_API void *object_pool_alloc(object_pool_t *pool);
 SALTS_C_API void object_pool_free(object_pool_t *pool, void *obj);
@@ -91,6 +95,24 @@ static inline int object_pool_owner_check(object_pool_owner_state *pool) {
       pool->thread != salts_thread_current_token())
     return SALTS_EINVAL;
   return pool->busy ? SALTS_EBUSY : SALTS_OK;
+}
+
+/** Begin/end a synchronous payload operation on the owner thread. No callback
+ * runs here. Every successful begin requires one end; raw storage/state mutation
+ * during the operation is forbidden. Reentrant owner commands report EBUSY. */
+static inline int object_pool_owner_begin(object_pool_owner_state *pool) {
+  int status = object_pool_owner_check(pool);
+  if (status != SALTS_OK) return status;
+  pool->busy = true;
+  return SALTS_OK;
+}
+
+static inline int object_pool_owner_end(object_pool_owner_state *pool) {
+  if (pool == NULL || pool->self != pool || pool->storage == NULL ||
+      pool->thread != salts_thread_current_token() || !pool->busy)
+    return SALTS_EINVAL;
+  pool->busy = false;
+  return SALTS_OK;
 }
 
 static inline int object_pool_owner_init(
@@ -173,6 +195,19 @@ static inline int object_pool_owner_release(
   lease->value = NULL;
   lease->owner = NULL;
   lease->self = NULL;
+  return SALTS_OK;
+}
+
+/** Validate an external move target without borrowing or mutating payload.
+ * It must not overlap any byte of this pool's storage, even a free slot.
+ * The caller separately guarantees destination size and semantic-zero state. */
+static inline int object_pool_owner_check_destination(
+    object_pool_owner_state *pool, object_pool_lease *lease,
+    const void *destination) {
+  int status = object_pool_lease_check(pool, lease);
+  if (status != SALTS_OK) return status;
+  if (destination == NULL || object_pool_contains(pool->storage, destination))
+    return SALTS_EINVAL;
   return SALTS_OK;
 }
 

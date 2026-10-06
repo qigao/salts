@@ -436,8 +436,9 @@ cmeta_function_receiver(const cmeta_function_desc *desc);
         contract, return_type, CMETA_FUNCTION_RETURN_TYPEOF(return_type), \
         CMETA_FUNCTION_RETURN_ABI(return_type), name)
 
-#define CMETA_FUNCTION_META(name) (name##_function())
-#define CMETA_FUNCTION_ABI(name) (name##_function_abi())
+/* Static discovery needs the canonical symbol as a constant initializer. */
+#define CMETA_FUNCTION_META(name) (&name##__function_meta)
+#define CMETA_FUNCTION_ABI(name) (&name##__function_abi_meta)
 
 #ifndef FunctionDecl
 #define FunctionDecl(...) CMETA_FUNCTION_DECL(__VA_ARGS__)

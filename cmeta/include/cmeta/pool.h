@@ -52,8 +52,8 @@ CMETA_INLINE cmeta_status cmeta_pool_init(
 
     status = cmeta_lifecycle_bind(data, size, align, &ops);
     if (status != CMETA_OK) {
-        (void)object_pool_owner_destroy(&pool->owner);
-        return status;
+        owner_status = object_pool_owner_destroy(&pool->owner);
+        return owner_status == SALTS_OK ? status : cmeta_pool_owner_status(owner_status);
     }
 
     pool->ops = ops;
@@ -75,20 +75,21 @@ CMETA_INLINE cmeta_status cmeta_pool_acquire(
 
     value = object_pool_lease_get(&pool->owner, &lease->owner);
     if (value == NULL) {
-        object_pool_owner_release(&pool->owner, &lease->owner);
-        return CMETA_INVALID_ARGUMENT;
+        owner_status = object_pool_owner_release(&pool->owner, &lease->owner);
+        return owner_status == SALTS_OK ? CMETA_INVALID_ARGUMENT : cmeta_pool_owner_status(owner_status);
     }
 
-    pool->owner.busy = true;
+    owner_status = object_pool_owner_begin(&pool->owner);
+    if (owner_status != SALTS_OK) return cmeta_pool_owner_status(owner_status);
     status = pool->ops->init_zero(value);
+    if (status != CMETA_OK) pool->ops->restore_zero(value);
+    owner_status = object_pool_owner_end(&pool->owner);
+    if (owner_status != SALTS_OK) return cmeta_pool_owner_status(owner_status);
     if (status != CMETA_OK) {
-        pool->ops->restore_zero(value);
-        pool->owner.busy = false;
-        object_pool_owner_release(&pool->owner, &lease->owner);
-        return status;
+        owner_status = object_pool_owner_release(&pool->owner, &lease->owner);
+        if (owner_status != SALTS_OK) return cmeta_pool_owner_status(owner_status);
     }
-    pool->owner.busy = false;
-    return CMETA_OK;
+    return status;
 }
 
 CMETA_INLINE cmeta_status cmeta_pool_lease_check(
@@ -114,9 +115,11 @@ CMETA_INLINE cmeta_status cmeta_pool_release(
     if (status != CMETA_OK)
         return status;
 
-    pool->owner.busy = true;
+    owner_status = object_pool_owner_begin(&pool->owner);
+    if (owner_status != SALTS_OK) return cmeta_pool_owner_status(owner_status);
     pool->ops->restore_zero(lease->owner.value);
-    pool->owner.busy = false;
+    owner_status = object_pool_owner_end(&pool->owner);
+    if (owner_status != SALTS_OK) return cmeta_pool_owner_status(owner_status);
 
     owner_status = object_pool_owner_release(&pool->owner, &lease->owner);
     return cmeta_pool_owner_status(owner_status);
@@ -130,16 +133,16 @@ CMETA_INLINE cmeta_status cmeta_pool_move_out(
 
     if (status != CMETA_OK)
         return status;
-    if (destination == NULL || destination == lease->owner.value ||
-        object_pool_is_allocated(pool->owner.storage, destination))
-        return CMETA_INVALID_ARGUMENT;
+    int owner_status = object_pool_owner_check_destination(
+        &pool->owner, &lease->owner, destination);
+    if (owner_status != SALTS_OK) return cmeta_pool_owner_status(owner_status);
     if (pool->ops == NULL || pool->ops->move == NULL)
         return CMETA_TRAIT_MISSING;
 
-    pool->owner.busy = true;
+    owner_status = object_pool_owner_begin(&pool->owner);
+    if (owner_status != SALTS_OK) return cmeta_pool_owner_status(owner_status);
     pool->ops->move(destination, lease->owner.value);
-    pool->owner.busy = false;
-    return CMETA_OK;
+    return cmeta_pool_owner_status(object_pool_owner_end(&pool->owner));
 }
 
 CMETA_INLINE cmeta_status cmeta_pool_destroy(cmeta_pool_state *pool) {

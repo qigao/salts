@@ -26,7 +26,7 @@ Backend 同步借用 `const payload *`，指针在 callback 返回时失效。Pa
 cmeta_tracepoint(http_request,
     cmeta_field(uint64_t, request_id)
     cmeta_field(int, status));
-cmeta_fault_point(alloc_fail);
+SALTS_FAST_KEY(alloc_fail, false);
 
 cmeta_registry(telemetry_manifest,
     cmeta_manifest_entry("http_request", CMETA_MANIFEST_TRACEPOINT,
@@ -45,15 +45,15 @@ int main(void) {
         return 1;
     cmeta_trace_emit(http_request, (uint64_t)EXAMPLE_REQUEST_ID, EXAMPLE_STATUS);
     if (cmeta_trace_disable(http_request) != CMETA_OK ||
-        cmeta_fault_arm(alloc_fail) != CMETA_OK)
+        salts_fast_enable(&alloc_fail) != SALTS_OK)
         return 1;
-    if (!cmeta_fault_hit(&alloc_fail) || cmeta_fault_hit(&alloc_fail))
+    if (!salts_fast_key_consume(&alloc_fail) || salts_fast_key_consume(&alloc_fail))
         return 1;
     return last_request == EXAMPLE_REQUEST_ID && telemetry_manifest.count == 1u ? 0 : 1;
 }
 ```
 
-示例行为由 `cmeta_trace_test` 的正式 TinyTest 用例验证，另外覆盖失败和并发边界。独立示例需链接 `Salts::CMeta`。Manifest 的零 fingerprint 表示未声明 fingerprint，不是新的算法或有效性检查。
+示例行为由 `cmeta_trace_test` 的正式 TinyTest 用例验证，另外覆盖失败和并发边界。独立示例需链接 `Salts::CMeta` 与 `Salts::Platform`。Manifest 的零 fingerprint 表示未声明 fingerprint，不是新的算法或有效性检查。
 
 ## 控制入口
 
@@ -61,16 +61,16 @@ int main(void) {
 - `cmeta_trace_bind(name, callback)` 要求 `void (*)(const name_payload *)`，不兼容签名在编译时拒绝；成功返回 `CMETA_OK`。生成的 `name_bind(NULL)` 返回 `CMETA_INVALID_ARGUMENT`，不改变现有 backend。
 - `cmeta_trace_enable(name)` 成功返回 `CMETA_OK`，未绑定返回 `CMETA_INVALID_ARGUMENT`；`cmeta_trace_disable(name)` 关闭 key 并返回 `CMETA_OK`，保留 backend。
 - `cmeta_trace_emit(name, values...)` 无返回值；关闭时无参数副作用，启用时同步调用 exact typed backend，不查询 Reflection。
-- `cmeta_fault_point(name)` 声明默认关闭的 key；`cmeta_fault_arm(name)` / `cmeta_fault_disarm(name)` 返回既有 static-key 状态码。
-- `cmeta_fault_hit(key)` 要求 live、非 NULL 的 key，返回是否消费了许可；C++ 通过 `cmeta_fault_consume(key)` 使用 C-owned opaque 原子存储。它不是事件计数器，重复 arm 不累积次数。
+- `SALTS_FAST_KEY(name, false)` 在 C 模块声明默认关闭的 Platform key；`salts_fast_enable(&name)` / `salts_fast_disable(&name)` 返回 `SALTS_OK` 或 `SALTS_EINVAL`。
+- `salts_fast_key_consume(key)` 要求 live、非 NULL key，C/C++ 都返回是否消费一次许可。C++ 借用 C-owned opaque 存储；重复 enable 合并，不累积次数。
 
 ## 兼容性与验证
 
-新增 facade 不改变既有 descriptor 布局、manifest 格式、fingerprint 版本或 Plugin ABI，也不增加依赖。Disabled 路径保持调用方原有行为，开启 fault 后如何注入失败由所属模块显式决定。
+新增 facade 不改变既有 descriptor 布局、manifest 格式、fingerprint 版本或 Plugin ABI，CMeta core 保持无 runtime 依赖；consumer 显式选择 Platform。Disabled 路径保持调用方原有行为，开启 fault 后如何注入失败由所属模块显式决定。
 
-采用已有 portable atomic gate，而不是在这里增加汇编、JIT 或全局注册器。替换 backend 所需的一次 typed 间接调用由 enabled-path benchmark 测量；disabled 路径在 backend load、payload 初始化和调用前返回。只新增 CMeta 入口、测试和文档，移除新增入口即可回滚，不迁移数据。
+采用已有 portable atomic gate，而不是在这里增加汇编、JIT 或全局注册器。替换 backend 所需的一次 typed 间接调用由 enabled-path benchmark 测量；disabled 路径在 backend load、payload 初始化和调用前返回。纯 fault 控制归 Platform；#957 删除无 metadata 价值的 CMeta 同义入口（HIGH source compatibility）。回滚须成套恢复调用点与 owner，不迁移数据。
 
-正式测试覆盖默认关闭、参数不求值/只求值一次、精确 payload metadata、immutable manifest 借用、未绑定 enable、NULL bind 保留原后端、替换/关闭、并发发布与一次性 fault、C++ opaque 消费以及错误签名编译拒绝。五平台 gate 和 portable TSan 使用这些正式测试；Release benchmark 比较 plain branch、static key、tracepoint 和 fault point，不设置机器相关阈值。Plugin/capability manifest 和完整 ABI fingerprint 投影仍属于 #926 的后续范围。
+正式测试覆盖默认关闭、参数不求值/只求值一次、精确 payload metadata、immutable manifest 借用、未绑定 enable、NULL bind 保留原后端、替换/关闭、并发发布与一次性 fault、C++ opaque 消费以及错误签名编译拒绝。五平台 gate 和 portable TSan 使用这些正式测试；Release benchmark 比较 plain branch、static key、tracepoint 和 fault point，不设置机器相关阈值。Plugin/capability manifest 和 canonical fingerprint 已通过同版本组合验证，契约见 PLUGIN_MANIFESTS.md 与 FINGERPRINTS.md。
 
 本地验证在 Visual Studio `VsDevCmd.bat -arch=x64 -host_arch=x64` 环境中使用版本化 user preset。设置该环境要求的 `PROJECT_ROOT`、`VCPKG_ROOT`、`VCPKG_WINDOWS_TRIPLET` 和 `VCPKG_WINDOWS_HOST_TRIPLET` 后，复验命令为：
 

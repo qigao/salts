@@ -11,12 +11,21 @@
 #define CMETA_MANIFEST_U8(value_) static_cast<uint8_t>(value_)
 #define CMETA_MANIFEST_BYTES(value_) reinterpret_cast<const uint8_t *>(value_)
 #define CMETA_MANIFEST_VOID_PTR(value_) static_cast<const void *>(value_)
+extern "C++" {
+template<class T> constexpr const T *cmeta_manifest_checked_pointer(const T *ptr) {
+    return ptr;
+}
+}
+#define CMETA_MANIFEST_TYPED_POINTER_(type_, pointer_) \
+    cmeta_manifest_checked_pointer<type_>(pointer_)
 extern "C" {
 #else
 #define CMETA_MANIFEST_U64(value_) ((uint64_t)(value_))
 #define CMETA_MANIFEST_U8(value_) ((uint8_t)(value_))
 #define CMETA_MANIFEST_BYTES(value_) ((const uint8_t *)(value_))
 #define CMETA_MANIFEST_VOID_PTR(value_) (value_)
+#define CMETA_MANIFEST_TYPED_POINTER_(type_, pointer_) \
+    _Generic((pointer_), type_ *: (pointer_), const type_ *: (pointer_))
 #endif
 
 #define CMETA_MANIFEST_FORMAT_VERSION UINT32_C(1)
@@ -27,7 +36,12 @@ typedef enum cmeta_manifest_kind {
     CMETA_MANIFEST_PLUGIN = 1,
     CMETA_MANIFEST_CAPABILITY = 2,
     CMETA_MANIFEST_TRACEPOINT = 3,
-    CMETA_MANIFEST_FAULT_POINT = 4
+    CMETA_MANIFEST_FAULT_POINT = 4,
+    CMETA_MANIFEST_TYPE = 5,
+    CMETA_MANIFEST_STRUCT = 6,
+    CMETA_MANIFEST_FUNCTION = 7,
+    CMETA_MANIFEST_INTERFACE = 8,
+    CMETA_MANIFEST_ENUM_DOMAIN = 9
 } cmeta_manifest_kind;
 
 typedef struct cmeta_manifest_entry {
