@@ -28,9 +28,10 @@
 这些入口没有自动生成序列化、allocator 或 plugin 行为。
 
 `cmeta_require_field(Owner, member, Type)` 检查原生字段的精确类型，保留
-const/volatile 和数组 typedef 的长度。不存在的字段、不可取址的 bitfield
-或类型不符均不能编译。C11 使用 `_Generic`，C++17 使用 `std::is_same`，
-不求值对象表达式，也不读取 Reflection 元数据。
+const/volatile 和数组 typedef 的长度。不存在的字段或类型不符均不能编译。
+C11 使用 `_Generic`，要求字段可取址，因此不支持 bitfield；C++17 使用
+`std::is_same` 检查成员声明类型。两者均不求值对象表达式，也不读取
+Reflection 元数据。
 
 ## Tagged variant
 
@@ -43,6 +44,8 @@ ID 必须是非空字符串字面量；payload DataDesc 指针必须能用于静
 生命周期至少覆盖生成元数据。provider 必须与 PayloadType 的实际 C 类型
 兼容。接纳检查验证 native size/alignment 及 canonical copy/move/destroy
 能力；相同 size/alignment 本身不能证明两个 C 类型语义相同。
+provider 接纳失败表示尚未建立可用对象，不能随后调用其生命周期操作；
+应先修正声明或 provider。
 
 | 生成入口 | 参数、结果及失败语义 |
 | --- | --- |
