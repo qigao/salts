@@ -14,7 +14,7 @@ ELF x86_64 汇编入口保留 ENDBR64 与 IBT/SHSTK property，目标调用仍�
 修改和平台策略依赖，当前不实现。这里借用 Linux static-key 的控制面/数据面分离，
 不承诺 Linux 内核指令 patch 的零 load 成本。
 
-`CMETA_NATIVE_FASTPATH=ON` 编译独立汇编：Windows x64 MASM、Unix x86_64、
+`SALTS_PLATFORM_NATIVE_FASTPATH=ON` 编译独立汇编：Windows x64 MASM、Unix x86_64、
 Unix AArch64。它们通过普通平台 C ABI 返回原子槽中的值，最终调用仍保留精确 C
 签名及平台对 scalar、aggregate、浮点和函数指针的传参/返回约定。x86_64 使用
 对齐 load，AArch64 使用 `LDARB` / `LDAR` acquire load。只接受始终 lock-free、
@@ -51,8 +51,8 @@ sequence）才建立对此前数据的可见性；bool 反复切换不是版本�
 ## 公开使用
 
 `<cmeta/fastpath.h>` 和聚合头 `<cmeta/meta.h>` 暴露此能力。C11 的
-`cmeta_static_key(name, initial)` 定义原子 gate；`cmeta_static_branch(&name)`
-读取，`cmeta_static_enable` / `disable` 发布新值，`cmeta_static_key_set` 可显式
+`SALTS_FAST_KEY(name, initial)` 定义原子 gate；`salts_fast_branch(&name)`
+读取，`cmeta_static_enable` / `disable` 发布新值，`salts_fast_key_set` 可显式
 指定状态。NULL 更新返回 `CMETA_INVALID_ARGUMENT`；读取要求非 NULL 活对象。
 C++17 只借用 C 定义的 opaque key，通过同名读取和控制 API 访问。
 
@@ -60,7 +60,7 @@ C++17 只借用 C 定义的 opaque key，通过同名读取和控制 API 访问�
 定义槽，不能放进被多个 TU 包含的头中重复定义。默认目标需先有 `FunctionDecl`
 或 `Function0Decl`。`cmeta_static_invoke(slot, args...)` 调用精确签名；零参数用
 `cmeta_static_invoke0(slot)`，避免 C11 空 variadic 参数扩展。显式 native API 是
-`cmeta_static_branch_native`、`cmeta_static_native_invoke` / `invoke0`，仅 native
+`salts_fast_key_read_native`、`cmeta_static_native_invoke` / `invoke0`，仅 native
 构建暴露。默认 invoke 始终使用参考实现，开启构建选项也不改变它。
 
 `cmeta_static_update(slot, target_function)` 从同一声明取 pointer 和 ABI，编译期
@@ -101,7 +101,7 @@ native 增加一次普通外部 C 调用，可能比内联原子更慢。默认�
 
 此结果不支持默认开启 native。用 user preset 复验：进入 Visual Studio x64
 开发环境，设置现有 vcpkg 环境后执行
-`cmake --preset win-release-user -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=ON -DCMETA_NATIVE_FASTPATH=ON`、
+`cmake --preset win-release-user -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=ON -DSALTS_PLATFORM_NATIVE_FASTPATH=ON`、
 `cmake --build --preset win-release-user --target cmeta_fastpath_benchmark`、
 `ctest --preset win-release-user -V -R '^cmeta_fastpath_benchmark$'`。
 
