@@ -83,6 +83,25 @@ typedef struct cnet_owner_config {
 } cnet_owner_config;
 
 #if defined(CNET_INTERNAL_PROFILING)
+typedef enum cnet_owner_trace_kind {
+  CNET_OWNER_TRACE_TLS_WRITE_SUBMIT = 1,
+  CNET_OWNER_TRACE_TLS_WRITE_COMPLETION,
+  CNET_OWNER_TRACE_TLS_READ_ARM,
+  CNET_OWNER_TRACE_TLS_READ_COMPLETION,
+  CNET_OWNER_TRACE_TLS_DECRYPT,
+  CNET_OWNER_TRACE_PLAINTEXT_PUBLISH
+} cnet_owner_trace_kind;
+
+/** One bounded, owner-local timestamp used only by private diagnostic builds. */
+typedef struct cnet_owner_trace_event {
+  uint64_t timestamp_ns;
+  cnet_session_handle session;
+  native_io_request request;
+  native_io_endpoint endpoint;
+  uint64_t bytes;
+  cnet_owner_trace_kind kind;
+} cnet_owner_trace_event;
+
 /** Diagnostic timings collected only during an explicit quiescent sample. */
 typedef struct cnet_owner_profile {
   uint64_t owner_drive_ns;
@@ -129,6 +148,8 @@ typedef struct cnet_owner_profile {
   uint64_t command_queue_publish_calls;
   uint64_t command_queue_payload_publish_calls;
   uint64_t command_queue_payload_copy_calls;
+  uint64_t trace_event_count;
+  uint64_t trace_dropped;
 } cnet_owner_profile;
 #endif
 
@@ -267,6 +288,9 @@ int cnet_owner_test_set_send_chunk_bytes(cnet_owner *owner, size_t bytes);
 #if defined(CNET_INTERNAL_PROFILING)
 /** Begins/takes a quiescent, single-owner diagnostic sample. */
 int cnet_owner_profile_begin(cnet_owner *owner);
+int cnet_owner_profile_trace_bind(cnet_owner *owner,
+                                  cnet_owner_trace_event *events,
+                                  size_t capacity);
 int cnet_owner_profile_take(cnet_owner *owner, cnet_owner_profile *out_profile);
 #endif
 int cnet_owner_tcp_local_peer(cnet_owner *owner, cnet_session_handle session,

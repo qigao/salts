@@ -92,6 +92,9 @@ int cnet_shards_poll_owner(cnet_shards *shards, uint32_t shard,
 #if defined(CNET_INTERNAL_PROFILING)
 /** Internal diagnostic sampling; caller must exclude concurrent poll/stop operations. */
 int cnet_shards_profile_begin(cnet_shards *shards);
+int cnet_shards_profile_trace_bind(cnet_shards *shards,
+                                   cnet_owner_trace_event *events,
+                                   size_t capacity);
 int cnet_shards_profile_take(cnet_shards *shards, cnet_owner_profile *out_profile);
 #endif
 

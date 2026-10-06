@@ -1,5 +1,8 @@
 #include "cnet_test_internal.h"
 #include "cnet_tls.h"
+#if defined(CNET_INTERNAL_PROFILING)
+#include "cnet_client_internal.h"
+#endif
 #include "tinytest.h"
 
 #include <salts/clock.h>
@@ -22,6 +25,29 @@ static int cnet_tls_test_send_bytes(cnet_client *client,
   mem_buffer_release(buffer);
   return status;
 }
+
+#if defined(CNET_INTERNAL_PROFILING)
+static size_t cnet_tls_test_trace_index(
+    const cnet_owner_trace_event *events, size_t count,
+    cnet_owner_trace_kind kind) {
+  for (size_t index = 0u; index < count; ++index)
+    if (events[index].kind == kind) return index;
+  return SIZE_MAX;
+}
+
+static uint64_t cnet_tls_test_trace_bytes(
+    const cnet_owner_trace_event *events, size_t count,
+    cnet_owner_trace_kind kind) {
+  uint64_t total = 0u;
+  for (size_t index = 0u; index < count; ++index) {
+    if (events[index].kind != kind) continue;
+    total = events[index].bytes > UINT64_MAX - total
+                ? UINT64_MAX
+                : total + events[index].bytes;
+  }
+  return total;
+}
+#endif
 
 static const char CNET_TLS_TEST_CERTIFICATE[] =
     "-----BEGIN CERTIFICATE-----\n"
@@ -720,6 +746,12 @@ spec("CNet bounded TLS engine") {
     bool accepted = false;
     size_t sent_before;
     size_t index;
+#if defined(CNET_INTERNAL_PROFILING)
+    cnet_owner_trace_event client_trace[64] = {{0}};
+    cnet_owner_trace_event server_trace[64] = {{0}};
+    cnet_client_poll_profile client_profile = {0};
+    cnet_client_poll_profile server_profile = {0};
+#endif
 
     received = (unsigned char *)calloc(
         second_total_bytes, sizeof(*received));
@@ -939,6 +971,18 @@ spec("CNet bounded TLS engine") {
       mem_set_used(wire, wire_size);
       memcpy(expected, wire_data, wire_size);
 
+#if defined(CNET_INTERNAL_PROFILING)
+      check_equal(cnet_client_profile_begin(&client), SALTS_OK);
+      check_equal(cnet_client_profile_trace_bind(
+                      &client, client_trace,
+                      sizeof(client_trace) / sizeof(client_trace[0])),
+                  SALTS_OK);
+      check_equal(cnet_client_profile_begin(&server), SALTS_OK);
+      check_equal(cnet_client_profile_trace_bind(
+                      &server, server_trace,
+                      sizeof(server_trace) / sizeof(server_trace[0])),
+                  SALTS_OK);
+#endif
       check_equal(cnet_receive(&client, client_connection, 8u), SALTS_OK);
       sent_before = (size_t)server_probe.sent;
       check_equal(
@@ -960,6 +1004,65 @@ spec("CNet bounded TLS engine") {
       check_false(server_probe.failed);
       check_equal(client_probe.received_size, wire_size);
       check_equal(memcmp(received, expected, wire_size), 0);
+#if defined(CNET_INTERNAL_PROFILING)
+      check_equal(cnet_client_profile_take(&client, &client_profile),
+                  SALTS_OK);
+      check_equal(cnet_client_profile_take(&server, &server_profile),
+                  SALTS_OK);
+      check_equal(client_profile.owner.trace_dropped, UINT64_C(0));
+      check_equal(server_profile.owner.trace_dropped, UINT64_C(0));
+      {
+        const size_t read_arm = cnet_tls_test_trace_index(
+            client_trace, (size_t)client_profile.owner.trace_event_count,
+            CNET_OWNER_TRACE_TLS_READ_ARM);
+        const size_t read_completion = cnet_tls_test_trace_index(
+            client_trace, (size_t)client_profile.owner.trace_event_count,
+            CNET_OWNER_TRACE_TLS_READ_COMPLETION);
+        const size_t decrypt = cnet_tls_test_trace_index(
+            client_trace, (size_t)client_profile.owner.trace_event_count,
+            CNET_OWNER_TRACE_TLS_DECRYPT);
+        const size_t publish = cnet_tls_test_trace_index(
+            client_trace, (size_t)client_profile.owner.trace_event_count,
+            CNET_OWNER_TRACE_PLAINTEXT_PUBLISH);
+        const size_t write_submit = cnet_tls_test_trace_index(
+            server_trace, (size_t)server_profile.owner.trace_event_count,
+            CNET_OWNER_TRACE_TLS_WRITE_SUBMIT);
+        const size_t write_completion = cnet_tls_test_trace_index(
+            server_trace, (size_t)server_profile.owner.trace_event_count,
+            CNET_OWNER_TRACE_TLS_WRITE_COMPLETION);
+        const size_t client_trace_count =
+            (size_t)client_profile.owner.trace_event_count;
+        const size_t server_trace_count =
+            (size_t)server_profile.owner.trace_event_count;
+        const bool client_events_present =
+            read_arm < client_trace_count &&
+            read_completion < client_trace_count &&
+            decrypt < client_trace_count && publish < client_trace_count;
+        const bool server_events_present =
+            write_submit < server_trace_count &&
+            write_completion < server_trace_count;
+        check_true(client_events_present);
+        check_true(server_events_present);
+        if (client_events_present) {
+          check_true(read_arm < read_completion);
+          check_true(read_completion < decrypt);
+          check_true(decrypt < publish);
+          check_true(client_trace[read_completion].bytes > 0u);
+        }
+        if (server_events_present)
+          check_true(write_submit < write_completion);
+        check_equal(cnet_tls_test_trace_bytes(
+                        client_trace,
+                        (size_t)client_profile.owner.trace_event_count,
+                        CNET_OWNER_TRACE_TLS_DECRYPT),
+                    (uint64_t)wire_size);
+        check_equal(cnet_tls_test_trace_bytes(
+                        client_trace,
+                        (size_t)client_profile.owner.trace_event_count,
+                        CNET_OWNER_TRACE_PLAINTEXT_PUBLISH),
+                    (uint64_t)wire_size);
+      }
+#endif
     }
 
     client_probe.received_size = 0u;
