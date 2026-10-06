@@ -263,6 +263,8 @@ cmeta_add_compile_failure_test(cmeta_capabilities_field_missing_compile_fail
   compile_fail/cmeta_capabilities_field_missing.c "absent_member")
 cmeta_add_compile_failure_test(cmeta_capabilities_zero_tag_compile_fail
   compile_fail/cmeta_capabilities_zero_tag.c "CMeta variant tag must be nonzero and fit int")
+cmeta_add_compile_failure_test(cmeta_capabilities_tag_range_compile_fail
+  compile_fail/cmeta_capabilities_tag_range.c "CMeta variant tag must be nonzero and fit int")
 cmeta_add_compile_failure_test(cmeta_capabilities_duplicate_tag_compile_fail
   compile_fail/cmeta_capabilities_duplicate_tag.c "duplicate case|case value.*already|case.*already")
 cmeta_add_compile_failure_test(cmeta_capabilities_flags_type_compile_fail

@@ -36,7 +36,7 @@ cmeta_variant(CapabilityNested, "test.CapabilityNested",
 
 cmeta_variant(CapabilityBoundary, "test.CapabilityBoundary",
     cmeta_case(Min, INT_MIN, int, &cmeta_data_int)
-    cmeta_case(A, 1, int, &cmeta_data_int)
+    cmeta_case(A, 1u, int, &cmeta_data_int)
     cmeta_case(B, 2, int, &cmeta_data_int)
     cmeta_case(C, 3, int, &cmeta_data_int)
     cmeta_case(D, 4, int, &cmeta_data_int)

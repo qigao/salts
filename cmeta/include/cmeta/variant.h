@@ -8,9 +8,11 @@
 #ifdef __cplusplus
 #define CMETA_VARIANT_ASSERT_(condition_, message_) static_assert(condition_, message_)
 #define CMETA_VARIANT_CAST_(type_, value_) static_cast<type_ *>(value_)
+#define CMETA_VARIANT_INTEGER_(type_, value_) static_cast<type_>(value_)
 #else
 #define CMETA_VARIANT_ASSERT_(condition_, message_) _Static_assert(condition_, message_)
 #define CMETA_VARIANT_CAST_(type_, value_) ((type_ *)(value_))
+#define CMETA_VARIANT_INTEGER_(type_, value_) ((type_)(value_))
 #endif
 
 #define CMETA_VARIANT_ROW_(mapper_, owner_, row_) \
@@ -21,8 +23,11 @@
 #define CMETA_VARIANT_STORAGE_(row_, owner_) CMETA_VARIANT_ROW_(CMETA_VARIANT_STORAGE_I_, owner_, row_)
 #define CMETA_VARIANT_STORAGE_I_(owner_, case_, tag_, type_, data_) type_ case_;
 #define CMETA_VARIANT_CHECK_(row_, owner_) CMETA_VARIANT_ROW_(CMETA_VARIANT_CHECK_I_, owner_, row_)
+/* Unsigned literals must not convert INT_MIN to an unsigned lower bound. */
 #define CMETA_VARIANT_CHECK_I_(owner_, case_, tag_, type_, data_) \
-    CMETA_VARIANT_ASSERT_((tag_) != 0 && (tag_) >= INT_MIN && (tag_) <= INT_MAX, \
+    CMETA_VARIANT_ASSERT_((tag_) != 0 && ((tag_) > 0 \
+        ? CMETA_VARIANT_INTEGER_(uintmax_t, tag_) <= INT_MAX \
+        : CMETA_VARIANT_INTEGER_(intmax_t, tag_) >= INT_MIN), \
                          "CMeta variant tag must be nonzero and fit int");
 #define CMETA_VARIANT_META_(row_, context_) \
     CMETA_VARIANT_META_E_(CMETA_PP_UNPAREN context_, CMETA_PP_UNPAREN row_)
