@@ -410,6 +410,25 @@ static void cflow_closing_destroy(void *self) {
   salts_mutex_destroy(&state->mutex);
 }
 
+static cflow_admission_status cflow_closing_task_admit(
+    void *self, const cflow_executor_task *task) {
+  if (!task || !task->run || task->cancel || task->finalize)
+    return CFLOW_ADMISSION_INVALID_ARGUMENT;
+  return cflow_closing_try_post(self, task->run, task->user);
+}
+
+static bool cflow_closing_project_control(
+    void *self, struct cflow_executor_control *out) {
+  (void)self;
+  (void)out;
+  return false;
+}
+
+static bool cflow_closing_is_current(void *self) {
+  (void)self;
+  return false;
+}
+
 CMETA_IMPLEMENTS(cflow_executor, cflow_closing_executor,
     CMETA_EXEC_CAP_CONCURRENT,
     .try_post = cflow_closing_try_post,
@@ -420,7 +439,10 @@ CMETA_IMPLEMENTS(cflow_executor, cflow_closing_executor,
     .pending = cflow_closing_pending,
     .shutdown = cflow_closing_shutdown,
     .get_stats = cflow_closing_get_stats,
-    .destroy = cflow_closing_destroy
+    .destroy = cflow_closing_destroy,
+    .task_admit = cflow_closing_task_admit,
+    .project_control = cflow_closing_project_control,
+    .is_current = cflow_closing_is_current
 );
 
 static bool cflow_closing_executor_init(cflow_executor *executor,

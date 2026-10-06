@@ -9,6 +9,8 @@
 
 #include <stdatomic.h>
 
+extern bool cflow_executor_is_current_internal(const cflow_executor *executor);
+
 static atomic_int executor_counter;
 static atomic_int active_callbacks;
 static atomic_int max_active_callbacks;
@@ -41,6 +43,11 @@ typedef struct cflow_wait_probe {
   atomic_int done;
   cflow_executor_wait_status status;
 } cflow_wait_probe;
+
+typedef struct cflow_current_probe {
+  cflow_executor *executor;
+  atomic_int seen_current;
+} cflow_current_probe;
 
 static void count_task(void *user) {
   (void)user;
@@ -87,6 +94,12 @@ static void cflow_wait_for_executor(void *user) {
   atomic_store(&probe->entered, 1);
   probe->status = cflow_executor_control_wait_idle(probe->control);
   atomic_store(&probe->done, 1);
+}
+
+static void cflow_check_current_executor(void *user) {
+  cflow_current_probe *probe = (cflow_current_probe *)user;
+  atomic_store(&probe->seen_current,
+               cflow_executor_is_current_internal(probe->executor) ? 1 : -1);
 }
 
 static void serial_probe(void *user) {
@@ -330,6 +343,47 @@ spec("CFlow execution foundation") {
     check_true(cflow_executor_post(&executor, count_task, NULL));
     check_true(cflow_executor_wait_idle(&executor));
     check_equal(atomic_load(&executor_counter), 2);
+    cflow_executor_destroy(&executor);
+  }
+
+  it("dispatches WorkerExecutor protocol through provider vtables") {
+    cflow_executor executor = {0};
+    cflow_executor_control control = {0};
+    cflow_executor_vtable foreign_executor_vtable;
+    cflow_executor_control_vtable foreign_control_vtable;
+    cflow_task_lifecycle_probe lifecycle = {0};
+    cflow_current_probe current = {
+        .executor = &executor,
+    };
+    cflow_executor_task task = {
+        .run = cflow_lifecycle_run,
+        .cancel = cflow_lifecycle_cancel,
+        .finalize = cflow_lifecycle_finalize,
+        .user = &lifecycle,
+    };
+
+    check_true(cflow_executor_worker_init_with_capacity(&executor, 1u, 4u));
+    foreign_executor_vtable = *executor.vtable;
+    executor.vtable = &foreign_executor_vtable;
+
+    check_true(cflow_executor_as_control(&executor, &control));
+    foreign_control_vtable = *control.vtable;
+    control.vtable = &foreign_control_vtable;
+
+    check_equal(cflow_executor_try_post_task(&executor, &task),
+                CFLOW_ADMISSION_ACCEPTED);
+    check_equal(cflow_executor_control_post_task(&control, &task),
+                CFLOW_EXECUTOR_POST_ACCEPTED);
+    check_equal(cflow_executor_control_post(
+                    &control, cflow_check_current_executor, &current),
+                CFLOW_EXECUTOR_POST_ACCEPTED);
+    check_equal(cflow_executor_control_wait_idle(&control),
+                CFLOW_EXECUTOR_WAIT_IDLE);
+
+    check_equal(atomic_load(&lifecycle.run_count), 2);
+    check_equal(atomic_load(&lifecycle.cancel_count), 0);
+    check_equal(atomic_load(&lifecycle.finalize_count), 2);
+    check_equal(atomic_load(&current.seen_current), 1);
     cflow_executor_destroy(&executor);
   }
 

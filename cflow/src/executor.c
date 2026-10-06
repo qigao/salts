@@ -59,7 +59,33 @@ CFLOW_EXECUTOR_VALUE_DESC(
 CFLOW_EXECUTOR_VALUE_DESC(
     cflow_type_executor_protocol_stats,
     cflow_executor_protocol_stats, CMETA_T_OBJECT);
+CFLOW_EXECUTOR_VALUE_DESC(
+    cflow_type_executor_task,
+    cflow_executor_task, CMETA_T_OBJECT);
+CFLOW_EXECUTOR_VALUE_DESC(
+    cflow_type_executor_control,
+    cflow_executor_control, CMETA_T_OBJECT);
 #undef CFLOW_EXECUTOR_VALUE_DESC
+
+const cmeta_type_desc cflow_type_executor_task_ptr = {
+    .name = "cflow_executor_task *",
+    .size = sizeof(cflow_executor_task *),
+    .align = _Alignof(cflow_executor_task *),
+    .kind = CMETA_T_POINTER,
+    .pointee = &cflow_type_executor_task,
+    .traits = NULL,
+    .identity = NULL
+};
+
+const cmeta_type_desc cflow_type_executor_control_ptr = {
+    .name = "cflow_executor_control *",
+    .size = sizeof(cflow_executor_control *),
+    .align = _Alignof(cflow_executor_control *),
+    .kind = CMETA_T_POINTER,
+    .pointee = &cflow_type_executor_control,
+    .traits = NULL,
+    .identity = NULL
+};
 
 const cmeta_type_desc cflow_type_executor_stats_ptr = {
     .name = "cflow_executor_stats *",
@@ -327,6 +353,25 @@ static void manual_destroy(void *self) {
     free(state);
 }
 
+static cflow_admission_status manual_task_admit(
+    void *self, const cflow_executor_task *task) {
+    return manual_try_post_task_state(
+        (cflow_manual_executor_state *)self, task);
+}
+
+static cflow_executor_post_status manual_control_task_post(
+    void *self, const cflow_executor_task *task) {
+    return manual_control_post_task_state(
+        (cflow_manual_executor_state *)self, task);
+}
+
+static bool manual_project_control(
+    void *self, struct cflow_executor_control *out);
+
+static bool manual_is_current(void *self) {
+    return self != NULL && self == manual_current;
+}
+
 CMETA_IMPLEMENTS(cflow_executor, manual_executor,
     CMETA_EXEC_CAP_MANUAL | CMETA_EXEC_CAP_SERIAL,
     .try_post = manual_try_post,
@@ -337,7 +382,10 @@ CMETA_IMPLEMENTS(cflow_executor, manual_executor,
     .pending = manual_pending,
     .shutdown = manual_shutdown,
     .get_stats = manual_get_stats,
-    .destroy = manual_destroy
+    .destroy = manual_destroy,
+    .task_admit = manual_task_admit,
+    .project_control = manual_project_control,
+    .is_current = manual_is_current
 );
 
 CMETA_IMPLEMENTS(cflow_executor_control, manual_control,
@@ -345,8 +393,16 @@ CMETA_IMPLEMENTS(cflow_executor_control, manual_control,
     .post = manual_control_post,
     .wait_idle = manual_control_wait_idle,
     .shutdown = manual_control_shutdown,
-    .get_stats = manual_control_get_stats
+    .get_stats = manual_control_get_stats,
+    .task_post = manual_control_task_post
 );
+
+static bool manual_project_control(
+    void *self, struct cflow_executor_control *out) {
+    if (!self || !out || out->self || out->vtable) return false;
+    *out = manual_control_as_cflow_executor_control(self);
+    return true;
+}
 
 static cflow_admission_status pool_admission_status(int status) {
     switch (status) {
@@ -408,6 +464,11 @@ static cflow_admission_status pool_try_post_task_state(
     return status;
 }
 
+static cflow_admission_status pool_task_admit(
+    void *self, const cflow_executor_task *task) {
+    return pool_try_post_task_state((cflow_pool_executor_state *)self, task);
+}
+
 static cflow_admission_status pool_try_post(void *self, cflow_task_fn fn,
                                             void *user) {
     cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
@@ -436,6 +497,12 @@ static cflow_executor_post_status pool_control_post_task_state(
     else if (status == CFLOW_EXECUTOR_POST_WOULD_BLOCK)
         atomic_fetch_add(&state->rejected_would_block, 1u);
     return status;
+}
+
+static cflow_executor_post_status pool_control_task_post(
+    void *self, const cflow_executor_task *task) {
+    return pool_control_post_task_state(
+        (cflow_pool_executor_state *)self, task);
 }
 
 static cflow_executor_post_status pool_control_post(
@@ -568,6 +635,17 @@ static void pool_destroy(void *self) {
     free(state);
 }
 
+static bool serial_project_control(
+    void *self, struct cflow_executor_control *out);
+static bool worker_project_control(
+    void *self, struct cflow_executor_control *out);
+
+static bool pool_is_current(void *self) {
+    cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
+    return state && state->pool &&
+           salts_threadpool_is_current_internal(state->pool) != 0;
+}
+
 CMETA_IMPLEMENTS(cflow_executor, serial_executor,
     CMETA_EXEC_CAP_SERIAL,
     .try_post = pool_try_post,
@@ -578,7 +656,10 @@ CMETA_IMPLEMENTS(cflow_executor, serial_executor,
     .pending = pool_pending,
     .shutdown = pool_shutdown,
     .get_stats = pool_get_stats,
-    .destroy = pool_destroy
+    .destroy = pool_destroy,
+    .task_admit = pool_task_admit,
+    .project_control = serial_project_control,
+    .is_current = pool_is_current
 );
 
 CMETA_IMPLEMENTS(cflow_executor, worker_executor,
@@ -591,7 +672,10 @@ CMETA_IMPLEMENTS(cflow_executor, worker_executor,
     .pending = pool_pending,
     .shutdown = pool_shutdown,
     .get_stats = pool_get_stats,
-    .destroy = pool_destroy
+    .destroy = pool_destroy,
+    .task_admit = pool_task_admit,
+    .project_control = worker_project_control,
+    .is_current = pool_is_current
 );
 
 CMETA_IMPLEMENTS(cflow_executor_control, serial_control,
@@ -599,7 +683,8 @@ CMETA_IMPLEMENTS(cflow_executor_control, serial_control,
     .post = pool_control_post,
     .wait_idle = pool_control_wait_idle,
     .shutdown = pool_control_shutdown,
-    .get_stats = pool_control_get_stats
+    .get_stats = pool_control_get_stats,
+    .task_post = pool_control_task_post
 );
 
 CMETA_IMPLEMENTS(cflow_executor_control, worker_control,
@@ -607,68 +692,48 @@ CMETA_IMPLEMENTS(cflow_executor_control, worker_control,
     .post = pool_control_post,
     .wait_idle = pool_control_wait_idle,
     .shutdown = pool_control_shutdown,
-    .get_stats = pool_control_get_stats
+    .get_stats = pool_control_get_stats,
+    .task_post = pool_control_task_post
 );
+
+static bool serial_project_control(
+    void *self, struct cflow_executor_control *out) {
+    if (!self || !out || out->self || out->vtable) return false;
+    *out = serial_control_as_cflow_executor_control(self);
+    return true;
+}
+
+static bool worker_project_control(
+    void *self, struct cflow_executor_control *out) {
+    if (!self || !out || out->self || out->vtable) return false;
+    *out = worker_control_as_cflow_executor_control(self);
+    return true;
+}
 
 bool cflow_executor_as_control(cflow_executor *executor,
                                cflow_executor_control *out) {
     if (!cflow_executor_valid(executor) || !out || out->self || out->vtable)
         return false;
-    if (executor->vtable == &manual_executor_vtable) {
-        *out = manual_control_as_cflow_executor_control(executor->self);
-        return true;
-    }
-    if (executor->vtable == &serial_executor_vtable) {
-        *out = serial_control_as_cflow_executor_control(executor->self);
-        return true;
-    }
-    if (executor->vtable == &worker_executor_vtable) {
-        *out = worker_control_as_cflow_executor_control(executor->self);
-        return true;
-    }
-    return false;
+    return executor->vtable->project_control(executor->self, out);
 }
 
 cflow_admission_status cflow_executor_try_post_task(
     cflow_executor *executor, const cflow_executor_task *task) {
     if (!cflow_executor_valid(executor) || !task || !task->run)
         return CFLOW_ADMISSION_INVALID_ARGUMENT;
-    if (executor->vtable == &manual_executor_vtable)
-        return manual_try_post_task_state(
-            (cflow_manual_executor_state *)executor->self, task);
-    if (executor->vtable == &serial_executor_vtable ||
-        executor->vtable == &worker_executor_vtable)
-        return pool_try_post_task_state(
-            (cflow_pool_executor_state *)executor->self, task);
-    return CFLOW_ADMISSION_INVALID_ARGUMENT;
+    return executor->vtable->task_admit(executor->self, task);
 }
 
 cflow_executor_post_status cflow_executor_control_post_task(
     cflow_executor_control *control, const cflow_executor_task *task) {
     if (!cflow_executor_control_valid(control) || !task || !task->run)
         return CFLOW_EXECUTOR_POST_INVALID_ARGUMENT;
-    if (control->vtable == &manual_control_vtable)
-        return manual_control_post_task_state(
-            (cflow_manual_executor_state *)control->self, task);
-    if (control->vtable == &serial_control_vtable ||
-        control->vtable == &worker_control_vtable)
-        return pool_control_post_task_state(
-            (cflow_pool_executor_state *)control->self, task);
-    return CFLOW_EXECUTOR_POST_INVALID_ARGUMENT;
+    return control->vtable->task_post(control->self, task);
 }
 
 bool cflow_executor_is_current_internal(const cflow_executor *executor) {
     if (!cflow_executor_valid(executor)) return false;
-    if (executor->vtable == &manual_executor_vtable)
-        return executor->self == manual_current;
-    if (executor->vtable == &serial_executor_vtable ||
-        executor->vtable == &worker_executor_vtable) {
-        const cflow_pool_executor_state *state =
-            (const cflow_pool_executor_state *)executor->self;
-        return state &&
-            salts_threadpool_is_current_internal(state->pool) != 0;
-    }
-    return false;
+    return executor->vtable->is_current(executor->self);
 }
 
 bool cflow_executor_manual_init_with_capacity(cflow_executor *executor,

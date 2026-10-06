@@ -1,6 +1,6 @@
 set(TARGET_NAME salts_cflow)
-set(CFLOW_LIBRARY_VERSION 4.1.0)
-set(CFLOW_ABI_VERSION 4)
+set(CFLOW_LIBRARY_VERSION 5.0.0)
+set(CFLOW_ABI_VERSION 5)
 
 set(CFLOW_MACHINE_MAX_STATES 65536 CACHE STRING
     "Maximum state declarations accepted by one CFlow Machine")

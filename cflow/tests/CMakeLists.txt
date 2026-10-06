@@ -251,6 +251,22 @@ cmake_add_test(cflow_execution_test
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
+if(WIN32 AND NOT BUILD_SHARED_LIBS)
+  add_library(cflow_executor_dso_fixture SHARED
+    cflow_executor_dso_fixture.c
+    cflow_executor_dso_fixture.h)
+  target_link_libraries(cflow_executor_dso_fixture
+    PRIVATE Salts::CFlow)
+  target_compile_definitions(cflow_executor_dso_fixture
+    PRIVATE CFLOW_EXECUTOR_DSO_FIXTURE_BUILD=1)
+  cmake_config_target(cflow_executor_dso_fixture FOLDER "cflow/tests")
+
+  cmake_add_test(cflow_executor_dso_test
+    SOURCES cflow_executor_dso_test.c
+    LIBS cflow_executor_dso_fixture Salts::CFlow Salts::TinyTest
+    FOLDER "cflow/tests")
+endif()
+
 cmake_add_test(cflow_scheduler_compat_test
   SOURCES cflow_scheduler_compat_test.c
   LIBS Salts::CFlow Salts::TinyTest

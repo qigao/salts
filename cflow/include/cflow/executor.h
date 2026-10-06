@@ -31,6 +31,13 @@ typedef struct cflow_executor_task {
     void *user;
 } cflow_executor_task;
 
+extern const cmeta_type_desc cflow_type_executor_task;
+extern const cmeta_type_desc cflow_type_executor_task_ptr;
+
+struct cflow_executor_control;
+extern const cmeta_type_desc cflow_type_executor_control;
+extern const cmeta_type_desc cflow_type_executor_control_ptr;
+
 typedef enum cflow_executor_lifecycle {
     CFLOW_EXECUTOR_OPEN = 0,
     CFLOW_EXECUTOR_CLOSING,
@@ -120,7 +127,18 @@ enum {
       (cflow_executor_stats *,out,CMETA_PARAM_OUT | CMETA_PARAM_BORROWED, \
        &cflow_type_executor_stats_ptr,CMETA_ABI_OBJECT_POINTER)) \
     X(I,FD0,void,destroy,stateful, \
-      &cmeta_type_void,CMETA_ABI_VOID)
+      &cmeta_type_void,CMETA_ABI_VOID) \
+    X(I,FR1,cflow_admission_status,task_admit,stateful, \
+      &cflow_type_admission_status,CMETA_ABI_ENUM,CMETA_RESULT_VALUE, \
+      (const cflow_executor_task *,task,CMETA_PARAM_IN | CMETA_PARAM_BORROWED, \
+       &cflow_type_executor_task_ptr,CMETA_ABI_OBJECT_POINTER)) \
+    X(I,FR1,bool,project_control,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
+      (struct cflow_executor_control *,out, \
+       CMETA_PARAM_OUT | CMETA_PARAM_BORROWED, \
+       &cflow_type_executor_control_ptr,CMETA_ABI_OBJECT_POINTER)) \
+    X(I,FR0,bool,is_current,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE)
 CMETA_INTERFACE(cflow_executor, CMETA_EXECUTOR_METHODS);
 
 /**
@@ -166,27 +184,33 @@ CMETA_INTERFACE(cflow_executor, CMETA_EXECUTOR_METHODS);
       &cmeta_type_bool,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE, \
       (cflow_executor_protocol_stats *,out, \
        CMETA_PARAM_OUT | CMETA_PARAM_BORROWED, \
-       &cflow_type_executor_protocol_stats_ptr,CMETA_ABI_OBJECT_POINTER))
+       &cflow_type_executor_protocol_stats_ptr,CMETA_ABI_OBJECT_POINTER)) \
+    X(I,FR1,cflow_executor_post_status,task_post,stateful, \
+      &cflow_type_executor_post_status,CMETA_ABI_ENUM,CMETA_RESULT_VALUE, \
+      (const cflow_executor_task *,task,CMETA_PARAM_IN | CMETA_PARAM_BORROWED, \
+       &cflow_type_executor_task_ptr,CMETA_ABI_OBJECT_POINTER))
 CMETA_INTERFACE(cflow_executor_control, CMETA_EXECUTOR_CONTROL_METHODS);
 
 /**
- * Bind the protocol control plane to a built-in Manual, Serial, or Worker
- * executor. `out` must be zero-initialized. Custom implementations, invalid
- * executors, and a non-empty `out` return false without changing `out`.
+ * Bind the protocol control plane through the executor provider that created
+ * the handle. `out` must be zero-initialized. Providers that do not expose a
+ * control plane, invalid executors, and a non-empty `out` return false without
+ * changing `out`. Provider dispatch remains valid across static-library
+ * EXE/DLL boundaries as long as the creating code module remains loaded.
  */
 bool cflow_executor_as_control(cflow_executor *executor,
                                cflow_executor_control *out);
 
 /**
- * Attempt non-blocking descriptor admission to a built-in Executor.
- * The descriptor is copied on success; foreign backends return
- * CFLOW_ADMISSION_INVALID_ARGUMENT.
+ * Attempt non-blocking descriptor admission through the creating Executor
+ * provider. The descriptor is copied on success. Providers that do not support
+ * descriptor admission return CFLOW_ADMISSION_INVALID_ARGUMENT.
  */
 cflow_admission_status cflow_executor_try_post_task(
     cflow_executor *executor, const cflow_executor_task *task);
 
 /**
- * Submit a descriptor through a built-in control view.
+ * Submit a descriptor through the creating provider's control view.
  * Pool callers may wait for bounded capacity; same-Executor callbacks fail
  * with CFLOW_EXECUTOR_POST_WOULD_BLOCK when waiting would be required.
  */
