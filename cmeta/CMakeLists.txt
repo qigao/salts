@@ -58,6 +58,10 @@ install(
   DESTINATION include
   FILES_MATCHING PATTERN "*.h")
 
+if(CMETA_BUILD_NATIVE_THUNKS)
+  add_subdirectory(native)
+endif()
+
 if(BUILD_TESTS)
   add_subdirectory(tests)
 endif()

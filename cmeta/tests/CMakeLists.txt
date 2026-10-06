@@ -381,6 +381,12 @@ function(cmeta_add_compile_failure_test target_name source expected_diagnostic)
     RUN_SERIAL TRUE)
 endfunction()
 
+if(TARGET Salts::CMetaNative)
+  cmeta_add_compile_failure_test(cmeta_native_static_shape_compile_fail
+    compile_fail/cmeta_native_static_shape.c "CMeta native static call requires exact int")
+  target_link_libraries(cmeta_native_static_shape_compile_fail PRIVATE Salts::CMetaNative Salts::Platform)
+endif()
+
 foreach(language IN ITEMS c cpp)
   foreach(selection_rule IN ITEMS DUPLICATE DESCRIPTOR VOLATILE)
     string(TOLOWER "${selection_rule}" selection_name)

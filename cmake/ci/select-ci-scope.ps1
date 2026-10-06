@@ -148,6 +148,9 @@ foreach ($profile in $profiles) {
   $entry = $profile.Clone()
   $entry.cross = $entry.family -in @('android', 'ios')
   $entry.fastpath = 'OFF'
+  # Core semantic qualification must also pass without the optional #981 backend.
+  # Explicit release packaging still includes the qualified native specialization.
+  $entry.native_thunks = if ($PrepareRelease -and $entry.id -in @('linux-release', 'linux-clang-release', 'linux-asan', 'windows-release')) { 'ON' } else { 'OFF' }
   $entry.native = $false
   $entry.execution = $execution -and -not $entry.cross -and $entry.id -ne 'linux-arm64-release'
   $entry.armheaders = $entry.id -eq 'linux-arm64-release'
@@ -167,6 +170,7 @@ foreach ($profile in $profiles) {
     $entry.id += '-fastpath'
     $entry.cross = $false
     $entry.fastpath = 'ON'
+    $entry.native_thunks = if ($profile.id -in @('linux-release', 'linux-clang-release', 'linux-asan', 'windows-release')) { 'ON' } else { 'OFF' }
     $entry.native = $true
     $entry.execution = $false
     $entry.armheaders = $false

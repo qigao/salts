@@ -1,4 +1,5 @@
 include("${CMAKE_CURRENT_LIST_DIR}/linker_tests.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/native_tests.cmake")
 
 add_library(cmeta_plugin_manifest_fixture_c SHARED
   fixture_plugin_manifest_bridge.c fixture_plugin_manifest_c.c)

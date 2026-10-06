@@ -103,6 +103,12 @@ The pointer is an unevaluated type witness. Both C11 and C++17 select the same
 canonical descriptor, reject unknown/volatile pointer types, and evaluate only
 the selected descriptor expression once. See [typed selection](LANGUAGE_REFERENCE.md#schema-driven-data-selection).
 
+Optional `Salts::CMetaNative` specializes admitted `int(int)` calls and borrowed
+`int(void *, int)` receiver bindings as bounded leaf thunks. Enable
+`CMETA_BUILD_NATIVE_THUNKS` explicitly on x86-64 Windows/Linux; the default is OFF.
+Redirection requires quiescence and never extends provider/Plugin lifetimes.
+See [native ownership, qualification and benchmarks](NATIVE_THUNKS.md).
+
 `<cmeta/bind.h>` generates receiver and ordinary parameter binding with explicit
 scalar snapshots or borrowed pointers, exact native thunks, and canonical
 Function projections. Captures stay within `CMETA_CAPTURE_INLINE`; projected
