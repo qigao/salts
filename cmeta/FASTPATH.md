@@ -1,8 +1,8 @@
-# Static key / static call（#923）
+# Typed static call over Platform fastpath (#923 / #963)
 
 ## 决策与边界
 
-CMeta 提供 C11 原子 bool gate 和精确类型的原子函数指针槽。默认使用
+Salts::Platform 提供 C11 原子 bool gate 和可选 native acquire-load backend；CMeta 只提供精确类型的原子函数指针槽与 Function ABI 校验。默认使用
 acquire load / release store 的可移植实现；没有反射热路径、JIT、可执行内存分配、
 运行时指令修改或词法析构汇编。`FunctionDecl` 同时生成函数指针 typedef，槽复用它，
 不另写签名。已有 descriptor 的布局和相等查询不变。
@@ -50,7 +50,7 @@ sequence）才建立对此前数据的可见性；bool 反复切换不是版本�
 
 ## 公开使用
 
-`<cmeta/fastpath.h>` 和聚合头 `<cmeta/meta.h>` 暴露此能力。C11 的
+`<salts/fastpath.h>` 暴露 Platform-owned static key；`<cmeta/fastpath.h>` 显式暴露 CMeta typed static-call projection。`<cmeta/meta.h>` 不暴露这些 optional runtime/control-plane 能力。C11 的
 `SALTS_FAST_KEY(name, initial)` 定义原子 gate；`salts_fast_branch(&name)`
 读取，`cmeta_static_enable` / `disable` 发布新值，`salts_fast_key_set` 可显式
 指定状态。NULL 更新返回 `CMETA_INVALID_ARGUMENT`；读取要求非 NULL 活对象。
