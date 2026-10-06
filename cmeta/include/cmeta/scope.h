@@ -13,8 +13,10 @@
  * Managed resources stay statically visible to the preprocessor:
  *
  *   cmeta_scope(request, status,
- *       cmeta_auto(Buffer, buffer)
- *       cmeta_auto(Socket, socket),
+ *       cmeta_autos(
+ *           cmeta_auto(Buffer, buffer)
+ *           cmeta_auto(Socket, socket)
+ *       ),
  *       cmeta_body(
  *           ...
  *           if (failed)
@@ -30,6 +32,7 @@
  * Use cmeta_leave for exits that must run the generated cleanup epilogue.
  */
 #define cmeta_auto(type_, name_) , (type_, name_)
+#define cmeta_autos(...) (__VA_ARGS__)
 #define cmeta_body(...) (__VA_ARGS__)
 
 #define CMETA_SCOPE_LABEL_I_(scope_) scope_##__cmeta_cleanup
@@ -71,7 +74,7 @@
  * the field stream into ordinary variadic arguments; this trampoline drops the
  * sentinel and preserves the finite row list for forward/reverse replay. */
 #define CMETA_SCOPE_ROWS_(autos_) \
-    CMETA_SCOPE_ROWS_EXPAND_(cmeta_scope_auto_sentinel autos_)
+    CMETA_SCOPE_ROWS_EXPAND_(cmeta_scope_auto_sentinel CMETA_PP_UNPAREN autos_)
 #define CMETA_SCOPE_ROWS_EXPAND_(...) CMETA_SCOPE_ROWS_DROP_(__VA_ARGS__)
 #define CMETA_SCOPE_ROWS_DROP_(sentinel_, ...) __VA_ARGS__
 
