@@ -140,7 +140,7 @@ suite("CMeta typed trace and deterministic fault points") {
         check_true(cmeta_fault_hit(&alloc_fail));
         check_false(cmeta_fault_hit(&alloc_fail));
         check_equal(cmeta_fault_arm(alloc_fail), CMETA_OK);
-        check_true(cmeta_fault_consume(&alloc_fail));
+        check_true(salts_fast_key_consume(&alloc_fail));
         check_false(cmeta_fault_hit(&alloc_fail));
         check_equal(cmeta_fault_arm(alloc_fail), CMETA_OK);
         check_equal(cmeta_fault_disarm(alloc_fail), CMETA_OK);
