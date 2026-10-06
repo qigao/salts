@@ -143,8 +143,9 @@ signatures, provider admission, ownership, failure cleanup and compatibility.
 The wrapper keeps the tuple list in one preprocessor argument and has no
 runtime representation. `CMETA_PP_UNIQUE` supplies the internal scope identifier;
 the frontend requires `CMETA_HAS_COUNTER`, supported by the qualified GCC, Clang
-and MSVC backends. Each type exposes `Type_cmeta_data()` with
-canonical concrete `construct_ops`. The body is one ISO C expression returning
+and MSVC backends. Each type exposes a native-typed `Type_cmeta_lifecycle`
+accessor to canonical concrete `construct_ops`. CSTL generates it together with
+the type's DataDesc. The body is one ISO C expression returning
 `cmeta_status`, usually a typed function call borrowing the local values:
 
 ```c
@@ -189,15 +190,32 @@ continue with status
 An initialization error restores the failed partial value once, skips the body,
 then cleans earlier initialized resources. A body error follows the same cleanup
 path. The returned body status replaces `status`; cleanup does not overwrite it.
-The same cached canonical ops supply initialization and destruction. The binding
-checks descriptor/ops ABI, callback presence and native size/alignment without
-field-name lookup, recursive Reflection validation or another lifecycle table.
-Descriptors lacking concrete construct ops return `CMETA_TRAIT_MISSING` before
-construction; malformed ABI/callbacks return `CMETA_INVALID_ARGUMENT`, and an
-incompatible native layout returns `CMETA_TYPE_MISMATCH`.
+The same cached canonical ops supply initialization and destruction. Static
+entry checks the accessor's exact native function type at compile time and
+borrows its constant-address ops without runtime descriptor admission.
+
+For hand-written or runtime-selected descriptors, use
+`cmeta_scope_checked(status, autos, body)` with the same tuple/body syntax.
+Each Type must expose `Type_cmeta_data()`; `cmeta_lifecycle_bind()` checks the
+descriptor, ops ABI, callback presence, semantic storage identity and native
+size/alignment before construction. Missing ops return `CMETA_TRAIT_MISSING`,
+malformed ABI/callbacks return `CMETA_INVALID_ARGUMENT`, and incompatible native
+storage returns `CMETA_TYPE_MISMATCH`. Admission failure calls no lifecycle
+callback for that resource. Static and checked entry share cleanup lowering;
+neither silently selects the other.
+
+A local declaration owner may expose its existing canonical ops using
+`CMETA_DEFINE_STATIC_LIFECYCLE(Type, immutable_ops_object)`. The object must have
+static storage duration and be the exact ops referenced by its DataDesc. The
+generated accessor takes `const Type *` as a type witness (NULL is allowed),
+never dereferences or retains it, and returns the borrowed ops pointer. The
+declaration owner remains responsible for callback/metadata semantics; this
+macro must not be used to bypass foreign/Plugin admission. Details and migration
+are in [lifecycle lowering](LIFECYCLE_LOWERING.md).
 
 Scope setup/cleanup is O(N) time and O(N) bounded automatic storage for N resource
-rows, excluding provider-owned payloads. No heap allocation, source lowerer,
+rows, excluding provider-owned payloads and checked descriptor validation.
+No heap allocation, source lowerer,
 cleanup attribute, SEH or assembly backend is required. DataDesc layout and the
 generic checked runtime lifecycle APIs retain their existing contracts.
 
@@ -207,9 +225,10 @@ replace adjacent `cmeta_auto(Type, name)` entries with comma-separated
 are removed. Generated identifiers are unique even for two expansions on the
 same source line. The common PP tuple replay replaces the sentinel/drop layer;
 resource ownership, error status, partial rollback and LIFO cleanup are unchanged.
-This step retains per-resource live state and checked lifecycle binding; static
-lifecycle admission and classification are separate #980 work. No descriptor
-layout or binary ABI changes follow from this source-only scope migration.
+Per-resource live/ops state is retained; lifecycle classification is separate
+#980 work. Types that only expose a DataDesc accessor must explicitly use
+`cmeta_scope_checked` or publish an authoritative static lifecycle declaration.
+No descriptor layout or binary ABI changes follow from this source migration.
 
 **Migration and design decision (#920/#929):** the earlier statement-block
 `cmeta_body(...)` could let native exits bypass cleanup. Pure C macros cannot

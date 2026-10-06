@@ -2,7 +2,7 @@
 
 int main(void) {
     cmeta_status status;
-    cmeta_scope(status, cmeta_autos((ScopeValue, value)),
+    cmeta_scope_checked(status, cmeta_autos((ScopeValue, value)),
         cmeta_body(return CMETA_OK;));
     return status;
 }

@@ -1,6 +1,37 @@
 #ifndef CMETA_LIFECYCLE_H
 #define CMETA_LIFECYCLE_H
 #include <cmeta/data.h>
+#include <cmeta/compiler.h>
+#include <cmeta/pp.h>
+
+/* A static declaration must name constant-address, immutable canonical ops.
+ * The C++ spelling also rejects dynamic initialization of that address. */
+#ifdef __cplusplus
+#define CMETA_LIFECYCLE_STATIC_ADDRESS_ static constexpr
+#else
+#define CMETA_LIFECYCLE_STATIC_ADDRESS_ static
+#endif
+
+/** Publish a native-typed view of locally owned canonical construct ops.
+ * The declaration owner guarantees valid ABI/storage identity/layout and
+ * init/restore contracts; ops must be the same immutable, static-lifetime
+ * object referenced by DataDesc.construct_ops. This is not foreign admission.
+ * The accessor's argument is a type witness only and may be NULL; it is never
+ * dereferenced or retained. No callbacks, validation or allocation occur here.
+ */
+#define CMETA_DEFINE_STATIC_LIFECYCLE(type_, ops_) \
+    CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(&(ops_), \
+        const cmeta_data_construct_ops *), \
+        "CMeta static lifecycle requires immutable canonical construct ops"); \
+    CMETA_LIFECYCLE_STATIC_ADDRESS_ const cmeta_data_construct_ops *const \
+        CMETA_PP_CAT(type_, _cmeta_lifecycle_ops) = &(ops_); \
+    CMETA_INLINE const cmeta_data_construct_ops * \
+    CMETA_PP_CAT(type_, _cmeta_lifecycle)(const type_ *native_type_) { \
+        (void)native_type_; \
+        return CMETA_PP_CAT(type_, _cmeta_lifecycle_ops); \
+    }
+
+#define CMETA_LIFECYCLE_ACCESSOR_(type_) CMETA_PP_CAT(type_, _cmeta_lifecycle)
 
 /** Bind borrowed canonical lifecycle operations to the requested native layout.
  * No allocation or callbacks; move remains an optional capability. Invalid

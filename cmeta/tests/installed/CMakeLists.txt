@@ -20,6 +20,16 @@ cmake_add_test(cmeta_installed_operation_test
 cmake_add_test(cmeta_installed_scope_test
   SOURCES ../cmeta_scope_test.c
   LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests/installed")
+cmake_add_test(cstl_installed_scope_test
+  SOURCES ../../../cstl/tests/cstl_header_typed_test.c
+  LIBS Salts::CSTL Salts::TinyTest FOLDER "cmeta/tests/installed")
+set_target_properties(cstl_installed_scope_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+cmake_add_test(cmeta_installed_lifecycle_cpp_test
+  SOURCES ../cmeta_pool_cpp_test.cpp
+  LIBS Salts::CMeta Salts::Core Salts::TinyTest FOLDER "cmeta/tests/installed")
+set_target_properties(cmeta_installed_lifecycle_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 cmake_add_test(cmeta_installed_function_reflection_test
   SOURCES ../cmeta_function_reflection_test.c
   LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests/installed")

@@ -16,6 +16,7 @@ static size_t scope_restore_count;
 static size_t scope_init_count;
 static size_t scope_fail_init_at;
 static size_t scope_body_count;
+static size_t scope_descriptor_reads;
 
 static void ScopeProbe_restore_zero(void *object) {
     ScopeProbe *value = (ScopeProbe *)object;
@@ -69,6 +70,7 @@ static const cmeta_data_construct_ops ScopeProbe_construct_ops = {
     .restore_zero = ScopeProbe_construct_restore_zero,
     .move = ScopeProbe_move
 };
+CMETA_DEFINE_STATIC_LIFECYCLE(ScopeProbe, ScopeProbe_construct_ops)
 static const unsigned char ScopeProbe_shape = 0u;
 
 static const cmeta_data_desc ScopeProbe_data_desc = {
@@ -83,7 +85,14 @@ static const cmeta_data_desc ScopeProbe_data_desc = {
 };
 
 static const cmeta_data_desc *ScopeProbe_cmeta_data(void) {
+    ++scope_descriptor_reads;
     return &ScopeProbe_data_desc;
+}
+
+typedef ScopeProbe ScopeDynamic;
+static const cmeta_data_desc *scope_dynamic_data;
+static const cmeta_data_desc *ScopeDynamic_cmeta_data(void) {
+    return scope_dynamic_data;
 }
 
 static void scope_reset(size_t fail_init_at) {
@@ -92,6 +101,7 @@ static void scope_reset(size_t fail_init_at) {
     scope_init_count = 0u;
     scope_fail_init_at = fail_init_at;
     scope_body_count = 0u;
+    scope_descriptor_reads = 0u;
 }
 
 static cmeta_status scope_normal_body(ScopeProbe *first, ScopeProbe *second) {
@@ -250,6 +260,69 @@ static cmeta_status scope_max_resources(size_t fail_at) {
 }
 
 spec("CMeta structured scope") {
+    it("borrows the same canonical ops without descriptor admission on static entry") {
+        cmeta_status status;
+        const cmeta_data_construct_ops *checked_ops = NULL;
+        check_equal(cmeta_lifecycle_bind(&ScopeProbe_data_desc,
+            sizeof(ScopeProbe), _Alignof(ScopeProbe), &checked_ops), CMETA_OK);
+        check_true(ScopeProbe_cmeta_lifecycle(NULL) == checked_ops);
+        check_equal(scope_normal(), CMETA_OK);
+        check_equal(scope_descriptor_reads, (size_t)0u);
+        check_equal(scope_destroy_count, (size_t)2u);
+
+        scope_reset(0u);
+        cmeta_scope_checked(status,
+            cmeta_autos((ScopeProbe, first), (ScopeProbe, second)),
+            cmeta_body(scope_normal_body(&first, &second)));
+        check_equal(status, CMETA_OK);
+        check_equal(scope_descriptor_reads, (size_t)2u);
+        check_equal(scope_destroy_count, (size_t)2u);
+        check_equal(scope_destroy_log[0], 2);
+        check_equal(scope_destroy_log[1], 1);
+    }
+
+    it("preserves partial rollback after explicit dynamic admission") {
+        cmeta_status status;
+        scope_reset(2u);
+        cmeta_scope_checked(status,
+            cmeta_autos((ScopeProbe, first), (ScopeProbe, second)),
+            cmeta_body(scope_normal_body(&first, &second)));
+        check_equal(status, CMETA_CALLBACK_ERROR);
+        check_equal(scope_descriptor_reads, (size_t)2u);
+        check_equal(scope_init_count, (size_t)2u);
+        check_equal(scope_restore_count, (size_t)2u);
+        check_equal(scope_body_count, (size_t)0u);
+    }
+
+    it("rejects foreign lifecycle errors before initialization") {
+        cmeta_status status;
+        cmeta_data_desc data = ScopeProbe_data_desc;
+        cmeta_data_construct_ops ops = ScopeProbe_construct_ops;
+        const cmeta_status errors[] = {
+            CMETA_INVALID_ARGUMENT, CMETA_TRAIT_MISSING, CMETA_TYPE_MISMATCH
+        };
+        size_t i;
+        for (i = 0u; i < sizeof(errors) / sizeof(errors[0]); ++i) {
+            data = ScopeProbe_data_desc;
+            ops = ScopeProbe_construct_ops;
+            scope_dynamic_data = &data;
+            if (i == 0u) data.abi_version = CMETA_DATA_DESC_ABI_VERSION + 1u;
+            if (i == 1u) data.construct_ops = NULL;
+            if (i == 2u) {
+                ops.storage_type = &cmeta_type_int;
+                data.construct_ops = &ops;
+            }
+            scope_reset(0u);
+            cmeta_scope_checked(status, cmeta_autos((ScopeDynamic, value)),
+                cmeta_body(scope_inner_body(&value)));
+            check_equal(status, errors[i]);
+            check_equal(scope_init_count, (size_t)0u);
+            check_equal(scope_restore_count, (size_t)0u);
+            check_equal(scope_body_count, (size_t)0u);
+        }
+        scope_dynamic_data = NULL;
+    }
+
     it("generates distinct cleanup labels for scopes on the same source line") {
         cmeta_status first;
         cmeta_status second;

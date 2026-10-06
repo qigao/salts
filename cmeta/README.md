@@ -75,7 +75,10 @@ application field syntax.
 `cmeta_scope` owns an explicit finite resource set and runs a status-returning
 body function. Native early returns from that function still reach generated
 LIFO cleanup. Scope construction and cleanup use the same canonical DataDesc
-construct ops without runtime Reflection queries or a cleanup registry. See
+construct ops through a generated native-typed static lifecycle accessor.
+`cmeta_scope_checked` explicitly admits hand-written/runtime descriptors through
+the existing checked lifecycle binding; it uses the same cleanup lowering.
+There is no automatic fallback or second lifecycle registry. See
 [structured scope and migration](LANGUAGE_REFERENCE.md#structured-scope).
 
 Execution/runtime ownership is explicit. Atomics and RCU are owned by

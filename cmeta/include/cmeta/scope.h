@@ -10,9 +10,10 @@
 /*
  * Portable structured lifetime facade.
  *
- * (Type, name) rows in cmeta_autos are explicit finite resources. Their DataDesc
- * must expose concrete construct_ops. The same ops initialize semantic zero
- * and restore it in reverse declaration order, without Reflection queries.
+ * (Type, name) rows in cmeta_autos are explicit finite resources. cmeta_scope
+ * uses a local static lifecycle declaration; cmeta_scope_checked admits the
+ * type's runtime DataDesc. Both use the same canonical concrete construct ops
+ * to initialize semantic zero and restore it in reverse declaration order.
  *
  * The body is one ISO C expression returning cmeta_status, normally a call
  * to a typed body function borrowing the resources. Native returns stay in
@@ -45,16 +46,26 @@ CMETA_INLINE cmeta_status cmeta_scope_construct_ops(
     bool CMETA_SCOPE_LIVE_(scope_, name_) = false; \
     const cmeta_data_construct_ops *CMETA_SCOPE_OPS_(scope_, name_) = NULL;
 
+#define CMETA_SCOPE_BIND_STATIC_(scope_, status_, type_, name_) \
+    CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES( \
+        &CMETA_LIFECYCLE_ACCESSOR_(type_), \
+        const cmeta_data_construct_ops *(*)(const type_ *)), \
+        "CMeta static lifecycle native type mismatch"); \
+    CMETA_SCOPE_OPS_(scope_, name_) = CMETA_LIFECYCLE_ACCESSOR_(type_)(&(name_));
+
+#define CMETA_SCOPE_BIND_CHECKED_(scope_, status_, type_, name_) \
+    (status_) = cmeta_scope_construct_ops( \
+        CMETA_DATA_ACCESSOR_(type_)(), sizeof(type_), CMETA_ALIGNOF(type_), \
+        &CMETA_SCOPE_OPS_(scope_, name_)); \
+    if ((status_) != CMETA_OK) \
+        goto CMETA_SCOPE_LABEL_(scope_);
+
 #define CMETA_SCOPE_INIT_(row_, ctx_) \
     CMETA_SCOPE_INIT_EXPAND_(CMETA_PP_UNPAREN ctx_, CMETA_PP_UNPAREN row_)
 #define CMETA_SCOPE_INIT_EXPAND_(...) CMETA_SCOPE_INIT_I_(__VA_ARGS__)
-#define CMETA_SCOPE_INIT_I_(scope_, status_, type_, name_)                    \
+#define CMETA_SCOPE_INIT_I_(bind_, scope_, status_, type_, name_)             \
     do {                                                                       \
-        (status_) = cmeta_scope_construct_ops(                                \
-            CMETA_DATA_ACCESSOR_(type_)(), sizeof(type_), CMETA_ALIGNOF(type_), \
-            &CMETA_SCOPE_OPS_(scope_, name_));                                \
-        if ((status_) != CMETA_OK)                                             \
-            goto CMETA_SCOPE_LABEL_(scope_);                                  \
+        bind_(scope_, status_, type_, name_)                                  \
         (status_) = CMETA_SCOPE_OPS_(scope_, name_)->init_zero(&(name_));      \
         if ((status_) != CMETA_OK) {                                          \
             CMETA_SCOPE_OPS_(scope_, name_)->restore_zero(&(name_));          \
@@ -79,10 +90,10 @@ CMETA_INLINE cmeta_status cmeta_scope_construct_ops(
 #define CMETA_SCOPE_DECLARE_ALL_EXPAND_(scope_, ...) \
     CMETA_PP_FOR_EACH(CMETA_SCOPE_DECLARE_, scope_, __VA_ARGS__)
 
-#define CMETA_SCOPE_INIT_ALL_(scope_, status_, autos_) \
-    CMETA_SCOPE_INIT_ALL_EXPAND_(scope_, status_, CMETA_PP_UNPAREN autos_)
-#define CMETA_SCOPE_INIT_ALL_EXPAND_(scope_, status_, ...) \
-    CMETA_PP_FOR_EACH(CMETA_SCOPE_INIT_, (scope_, status_), __VA_ARGS__)
+#define CMETA_SCOPE_INIT_ALL_(bind_, scope_, status_, autos_) \
+    CMETA_SCOPE_INIT_ALL_EXPAND_(bind_, scope_, status_, CMETA_PP_UNPAREN autos_)
+#define CMETA_SCOPE_INIT_ALL_EXPAND_(bind_, scope_, status_, ...) \
+    CMETA_PP_FOR_EACH(CMETA_SCOPE_INIT_, (bind_, scope_, status_), __VA_ARGS__)
 
 #define CMETA_SCOPE_DESTROY_ALL_(scope_, autos_) \
     CMETA_SCOPE_DESTROY_ALL_EXPAND_(scope_, CMETA_PP_UNPAREN autos_)
@@ -99,14 +110,18 @@ CMETA_INLINE cmeta_status cmeta_scope_construct_ops(
  * __LINE__ cannot distinguish adjacent expansions on the same source line. */
 #if CMETA_HAS_COUNTER
 #define cmeta_scope(status_, autos_, body_) \
-    CMETA_SCOPE_WITH_ID_(CMETA_PP_UNIQUE(cmeta_scope_), status_, autos_, body_)
+    CMETA_SCOPE_WITH_ID_(CMETA_SCOPE_BIND_STATIC_, \
+        CMETA_PP_UNIQUE(cmeta_scope_), status_, autos_, body_)
+#define cmeta_scope_checked(status_, autos_, body_) \
+    CMETA_SCOPE_WITH_ID_(CMETA_SCOPE_BIND_CHECKED_, \
+        CMETA_PP_UNIQUE(cmeta_scope_), status_, autos_, body_)
 #endif
 
-#define CMETA_SCOPE_WITH_ID_(scope_, status_, autos_, body_)                  \
+#define CMETA_SCOPE_WITH_ID_(bind_, scope_, status_, autos_, body_)          \
     do {                                                                       \
         (status_) = CMETA_OK;                                                  \
         CMETA_SCOPE_DECLARE_ALL_(scope_, autos_)                              \
-        CMETA_SCOPE_INIT_ALL_(scope_, status_, autos_)                        \
+        CMETA_SCOPE_INIT_ALL_(bind_, scope_, status_, autos_)                 \
         (status_) = (body_);                                                   \
         goto CMETA_SCOPE_LABEL_(scope_);                                      \
         CMETA_SCOPE_LABEL_(scope_):                                            \

@@ -452,6 +452,30 @@ cmeta_add_compile_failure_test(
   compile_fail/cmeta_intrusive_type_mismatch.c
   "CMeta intrusive member type mismatch")
 
+foreach(lifecycle_language IN ITEMS c cpp)
+  if(lifecycle_language STREQUAL "c")
+    set(lifecycle_suffix "")
+  else()
+    set(lifecycle_suffix "_cpp")
+  endif()
+  cmeta_add_compile_failure_test(
+    cmeta_scope_lifecycle_type${lifecycle_suffix}_compile_fail
+    compile_fail/cmeta_scope_lifecycle_type.${lifecycle_language}
+    "CMeta static lifecycle native type mismatch")
+  cmeta_add_compile_failure_test(
+    cmeta_lifecycle_mutable${lifecycle_suffix}_compile_fail
+    compile_fail/cmeta_lifecycle_mutable.${lifecycle_language}
+    "CMeta static lifecycle requires immutable canonical construct ops")
+  cmeta_add_compile_failure_test(
+    cmeta_scope_lifecycle_missing${lifecycle_suffix}_compile_fail
+    compile_fail/cmeta_scope_lifecycle_missing.${lifecycle_language}
+    "ScopeValue_cmeta_lifecycle")
+  cmeta_add_compile_failure_test(
+    cmeta_lifecycle_dynamic_address${lifecycle_suffix}_compile_fail
+    compile_fail/cmeta_lifecycle_dynamic_address.${lifecycle_language}
+    "constant|constexpr")
+endforeach()
+
 cmeta_add_compile_failure_test(
   cmeta_scope_return_compile_fail
   compile_fail/cmeta_scope_return.c
