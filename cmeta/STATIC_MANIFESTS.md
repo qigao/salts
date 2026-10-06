@@ -129,3 +129,5 @@ generated/static manifest representation instead of a reduced-safety fallback.
 - named fault points use the same #923 gate and deterministic test control;
 - qualified ELF/Mach-O/COFF aggregation is an optimization/backend concern, not
   a second public registry model.
+
+Typed tracepoint 和默认关闭的 fault point 使用 #923 的 static key；payload metadata 可直接作为 manifest entry 借用。声明、控制、并发与 provider 生命周期见 [TRACEPOINTS.md](TRACEPOINTS.md)。Plugin/capability manifest 和更完整的 ABI fingerprint 仍由 #926 后续工作完成。

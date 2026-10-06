@@ -7,6 +7,7 @@
 #include <cmeta/entry.h>
 #include <cmeta/function.h>
 #include <cmeta/fastpath.h>
+#include <cmeta/trace.h>
 #include <cmeta/method.h>
 #include <cmeta/object.h>
 #include <cmeta/infer.h>

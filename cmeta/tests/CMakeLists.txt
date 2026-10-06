@@ -1,5 +1,23 @@
 # CMeta public API regression tests.
 
+cmake_add_test(cmeta_trace_test
+  SOURCES cmeta_trace_test.c
+  LIBS Salts::CMeta Salts::TinyTest Salts::Platform
+  FOLDER "cmeta/tests")
+cmake_add_test(cmeta_trace_cpp_test
+  SOURCES cmeta_trace_cpp_test.cpp cmeta_trace_peer.c
+  LIBS Salts::CMeta Salts::TinyTest
+  FOLDER "cmeta/tests")
+set_target_properties(cmeta_trace_test cmeta_trace_cpp_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_target_properties(cmeta_trace_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+set_tests_properties(cmeta_trace_test PROPERTIES TIMEOUT 60)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_trace_cpp_test PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:-Werror=old-style-cast>")
+endif()
+
 cmake_add_test(cmeta_execution_test
   SOURCES cmeta_execution_test.c
   LIBS Salts::CMeta Salts::Core Salts::CSTL Salts::Concurrency Salts::TinyTest
@@ -294,6 +312,11 @@ cmeta_add_compile_failure_test(cmeta_capabilities_duplicate_tag_compile_fail
   compile_fail/cmeta_capabilities_duplicate_tag.c "duplicate case|case value.*already|case.*already")
 cmeta_add_compile_failure_test(cmeta_capabilities_flags_type_compile_fail
   compile_fail/cmeta_capabilities_flags_type.c "OtherFlags|incompatible type for argument 2")
+
+cmeta_add_compile_failure_test(
+  cmeta_trace_wrong_backend_compile_fail
+  compile_fail/cmeta_trace_wrong_backend.c
+  "generic association|compatible type|controlling expression|C11 generic|not compatible with any association")
 
 cmeta_add_compile_failure_test(
   cmeta_fastpath_wrong_target_compile_fail

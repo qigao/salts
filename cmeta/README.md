@@ -440,3 +440,5 @@ Runtime Protocol
 
 Prefer composing existing CMeta mechanisms and ordinary C over adding new
 language vocabulary prematurely.
+
+Typed tracepoint、一次性 fault point 和 disabled fast path 的使用与生命周期见 [TRACEPOINTS.md](TRACEPOINTS.md)。
