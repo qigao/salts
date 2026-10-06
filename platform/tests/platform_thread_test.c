@@ -237,7 +237,7 @@ spec("Platform thread primitives") {
     check_equal(salts_thread_affine_check(&state, &other), SALTS_EINVAL);
     check_equal(salts_thread_affine_set_busy(&state, &owner, true), SALTS_OK);
     check_equal(salts_thread_affine_check(&state, &owner), SALTS_EBUSY);
-    state.busy = false;
+    check_equal(salts_thread_affine_set_busy(&state, &owner, false), SALTS_OK);
     check_equal(salts_thread_affine_reset(&state, &owner), SALTS_OK);
     check_equal(salts_thread_affine_check(&state, &owner), SALTS_EINVAL);
   }
