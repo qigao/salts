@@ -1,6 +1,6 @@
 {
   "name": "salts",
-  "version-semver": "1.8.28",
+  "version-semver": "2.0.0",
   "dependencies": [
     {
       "name": "pkgconf",
