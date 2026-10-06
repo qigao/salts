@@ -15,12 +15,13 @@
             }
         },
         {
-            "name": "Clang",
+            "name": "AppleClang",
             "hidden": true,
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "clang",
                 "CMAKE_CXX_COMPILER": "clang++"
-            }
+            },
+            "description": "Xcode compiler for iOS device and simulator SDKs only"
         },
         {
             "name": "Gcc",
@@ -28,6 +29,15 @@
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "gcc",
                 "CMAKE_CXX_COMPILER": "g++"
+            }
+        },
+        {
+            "name": "GccMac",
+            "hidden": true,
+            "description": "Homebrew GNU GCC 15 for native Intel and Apple Silicon macOS builds",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "gcc-15",
+                "CMAKE_CXX_COMPILER": "g++-15"
             }
         }
     ]

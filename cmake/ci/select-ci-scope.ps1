@@ -127,8 +127,7 @@ $profiles = @(
   @{ id = 'linux-asan'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-dev-ci'; build_dir = 'build/linux-gcc-debug'; sdk = '' },
   @{ id = 'linux-tsan'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-tsan-ci'; build_dir = 'build/linux-gcc-tsan'; sdk = '' },
   @{ id = 'windows-release'; runner = 'windows-2025'; family = 'windows'; preset = 'win-release-ci'; build_dir = 'build/Msvc-Release'; sdk = 'windows-x64' },
-  @{ id = 'windows-clang'; runner = 'windows-2025'; family = 'windows'; preset = 'win-clang-release-ci'; build_dir = 'build/Clang-Release'; sdk = '' },
-  @{ id = 'macos-release'; runner = 'macos-15'; family = 'mac'; preset = 'mac-arm64-release-ci'; build_dir = 'build/mac-arm64-clang-release'; sdk = 'macos-arm64' },
+  @{ id = 'macos-release'; runner = 'macos-15'; family = 'mac'; preset = 'mac-arm64-release-ci'; build_dir = 'build/mac-arm64-gcc-release'; sdk = 'macos-arm64' },
   @{ id = 'android-arm64-v8a-release'; runner = 'ubuntu-24.04'; family = 'android'; preset = 'android-arm64-v8a-release-ci'; build_dir = 'build/android-arm64-v8a-release'; sdk = 'android-arm64-v8a' },
   @{ id = 'ios-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-arm64-release-ci'; build_dir = 'build/ios-arm64'; sdk = 'ios-arm64'; triplet = 'arm64-ios' },
   @{ id = 'ios-simulator-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-simulator-arm64-release-ci'; build_dir = 'build/ios-simulator-arm64'; sdk = 'ios-simulator-arm64'; triplet = 'arm64-ios-simulator' }

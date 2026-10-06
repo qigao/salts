@@ -39,6 +39,13 @@ jobs:
           mode: read
       - name: Prepare build host
         uses: ./.github/actions/setup-build-host
+      - name: Prepare macOS GNU compiler
+        if: matrix.family == 'mac'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install gcc@15
+          echo "$(brew --prefix gcc@15)/bin" >> "$GITHUB_PATH"
       - name: Setup build environment
         if: matrix.family == 'android'
         id: android_env

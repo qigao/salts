@@ -38,7 +38,9 @@ jobs:
         if: matrix.family == 'mac'
         shell: bash
         run: |
-          brew install ninja
+          set -euo pipefail
+          brew install ninja gcc@15
+          echo "$(brew --prefix gcc@15)/bin" >> "$GITHUB_PATH"
       - name: Prepare Windows diagnostic compiler driver
         if: matrix.family == 'windows'
         shell: pwsh

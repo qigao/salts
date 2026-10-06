@@ -143,7 +143,7 @@ use `x64-windows` for a standard local MSVC toolchain.
 
 | Host profile | Host triplet |
 | --- | --- |
-| Windows x64 (MSVC, Clang, Android cross builds) | `x64-windows` |
+| Windows x64 (MSVC, Android cross builds) | `x64-windows` |
 | Linux x64 (GCC, Android cross builds) | `x64-linux` |
 | Linux ARM64 (`linux-arm64-release-user`, native GCC) | `arm64-linux` |
 | macOS Intel (`mac-x64-release-user`) | `x64-osx` |
@@ -155,8 +155,8 @@ The macOS presets are native host profiles: select the one matching your machine
 They replace `mac-release-user`, fix the matching target triplet and
 `CMAKE_OSX_ARCHITECTURES`, and provide configure/build/test plus
 `install-mac-x64-release-user` / `install-mac-arm64-release-user` build presets.
-Their build directories are `build/mac-x64-clang-release` and
-`build/mac-arm64-clang-release`; installation roots are
+Their build directories are `build/mac-x64-gcc-release` and
+`build/mac-arm64-gcc-release`; installation roots are
 `$PKG_ROOT/salts-macos-x64/release` and `$PKG_ROOT/salts-macos-arm64/release`.
 
 Cache configuration belongs to the hidden presets in `CMakeUserPresets.json`.
@@ -164,7 +164,7 @@ Configure, build, test and install presets inherit the matching environment;
 no `.env` loader or shell wrapper is required. Run Windows commands in a
 Visual Studio developer environment.
 
-CI uses the `win-release-ci`, `win-clang-release-ci`, `linux-dev-ci`, `linux-release-ci`,
+CI uses the `win-release-ci`, `linux-dev-ci`, `linux-release-ci`,
 `mac-arm64-release-ci` and `android-arm64-v8a-release-ci` presets. An Intel macOS
 runner uses `mac-x64-release-ci`. These replace `mac-release-ci` and preserve
 the cache action's `VCPKG_CACHE_REPOSITORY_ROOT` and `VCPKG_BINARY_SOURCES`
@@ -176,6 +176,30 @@ metadata consume the upstream outputs directly. The local `setup-build-host`
 action only installs platform build prerequisites and maps the upstream Windows
 target triplet to `VCPKG_WINDOWS_TRIPLET` for Salts presets. Explicit toolchain
 arguments use the upstream `QIGAO_VCPKG_TOOLCHAIN_FILE` environment variable.
+
+The supported project compiler profiles are:
+
+| Target platform | Compiler |
+|---|---|
+| Windows | MSVC |
+| Linux | GCC |
+| macOS Intel / Apple Silicon | Homebrew GCC 15 (`gcc-15` / `g++-15`) |
+| Android | NDK Clang |
+| iOS device / Simulator | Xcode AppleClang |
+
+Android and iOS retain their SDK compilers; there are no standalone Clang
+profiles. On macOS, install [Homebrew `gcc@15`](https://formulae.brew.sh/formula/gcc@15)
+and expose its versioned executables before invoking a native macOS preset:
+
+```sh
+brew install gcc@15
+export PATH="$(brew --prefix gcc@15)/bin:$PATH"
+```
+
+The versioned compiler names avoid macOS's system `gcc` alias for AppleClang.
+CI installs the same GNU compiler/runtime in build and test jobs, and the GNU
+runtime in benchmark jobs. iOS presets explicitly select AppleClang before
+inheriting the shared macOS host/cache configuration.
 
 Native Linux ARM64 uses `linux-arm64-release-user`, with both host and target
 triplets fixed to `arm64-linux`. Its build directory is `build/linux-arm64-release`
@@ -232,11 +256,11 @@ A configuration includes platform, architecture, compiler, build type,
 sanitizer and native-fastpath setting. ASan, TSan and Release cannot share
 binaries. Native-fastpath assembly requires a distinct build from portable
 SDK code and cannot be enabled under TSan. Both TSan suites now consume one
-`linux-tsan-ci` build. With all checks selected, the matrix contains 11 host
-configurations (6 portable/compiler profiles + 5 native-fastpath profiles)
+`linux-tsan-ci` build. With all checks selected, the matrix contains 9 host
+configurations (5 portable/compiler profiles + 4 native-fastpath profiles)
 and 3 mobile configurations (Android ARM64, iOS ARM64 and iOS Simulator ARM64).
-The five fastpath builds retain previous coverage without changing SDK features
-to merge incompatible configurations.
+The four fastpath builds remain separate because their build options differ
+from SDK configurations.
 
 Mobile configurations participate in ordinary PR/push CI when native modules
 or shared build inputs change, and in every manual validation run. Documentation

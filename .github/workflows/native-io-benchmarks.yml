@@ -72,12 +72,12 @@ jobs:
             artifact: windows-iocp
             build_dir: build/Msvc-Release
             build_artifact: windows-release
-          - host: kqueue / macOS 15 AppleClang
+          - host: kqueue / macOS 15 GCC
             runner: macos-15
             family: mac
             backend: kqueue
             artifact: macos-kqueue
-            build_dir: build/mac-arm64-clang-release
+            build_dir: build/mac-arm64-gcc-release
             build_artifact: macos-release
     steps:
       - uses: actions/checkout@v6
@@ -97,6 +97,10 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes strace
+      - name: Prepare macOS GNU runtime
+        if: matrix.family == 'mac'
+        shell: bash
+        run: brew install gcc@15
       - name: Compare PR-base and candidate CNet owner
         if: matrix.family == 'windows' && fromJSON(inputs.scope).cnet_compare == 'true' && github.event_name == 'pull_request'
         shell: pwsh

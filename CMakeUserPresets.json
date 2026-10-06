@@ -198,7 +198,7 @@
         {
             "name": "mac-x64-release-user",
             "inherits": "mac-paths",
-            "binaryDir": "${sourceDir}/build/mac-x64-clang-release",
+            "binaryDir": "${sourceDir}/build/mac-x64-gcc-release",
             "cacheVariables": {
                 "CMAKE_OSX_ARCHITECTURES": "x86_64",
                 "VCPKG_HOST_TRIPLET": "x64-osx",
@@ -211,7 +211,7 @@
         {
             "name": "mac-arm64-release-user",
             "inherits": "mac-paths",
-            "binaryDir": "${sourceDir}/build/mac-arm64-clang-release",
+            "binaryDir": "${sourceDir}/build/mac-arm64-gcc-release",
             "cacheVariables": {
                 "CMAKE_OSX_ARCHITECTURES": "arm64",
                 "VCPKG_HOST_TRIPLET": "arm64-osx",
@@ -361,39 +361,6 @@
             ]
         },
         {
-            "name": "win-clang-user",
-            "cacheVariables": {
-                "ENABLE_SANITIZER_ADDRESS": "OFF",
-                "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
-                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/debug"
-            },
-            "environment": {
-                "SALTS_ROOT": "$env{PKG_ROOT}/salts/debug",
-                "PATH": "${sourceDir}/build/Clang/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
-            },
-            "inherits": [
-                "base-win-dev-clang-user",
-                "win-paths"
-            ]
-        },
-        {
-            "name": "win-clang-release-user",
-            "cacheVariables": {
-                "ENABLE_SANITIZER_ADDRESS": "OFF",
-                "ENABLE_TESTS": "ON",
-                "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
-                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}"
-            },
-            "environment": {
-                "SALTS_ROOT": "$env{PKG_ROOT}/salts/release",
-                "PATH": "${sourceDir}/build/Clang-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
-            },
-            "inherits": [
-                "base-win-release-clang-user",
-                "win-paths"
-            ]
-        },
-        {
             "name": "win-release-ci",
             "inherits": [
                 "vcpkg-cache-ci",
@@ -402,13 +369,6 @@
             "environment": {
                 "SALTS_ROOT": "${sourceDir}/stage/sdk/windows-x64"
             }
-        },
-        {
-            "name": "win-clang-release-ci",
-            "inherits": [
-                "vcpkg-cache-ci",
-                "win-clang-release-user"
-            ]
         },
         {
             "name": "linux-release-ci",
@@ -489,7 +449,10 @@
         },
         {
             "name": "ios-arm64-release-ci",
-            "inherits": "mac-arm64-release-ci",
+            "inherits": [
+                "AppleClang",
+                "mac-arm64-release-ci"
+            ],
             "binaryDir": "${sourceDir}/build/ios-arm64",
             "cacheVariables": {
                 "CMAKE_SYSTEM_NAME": "iOS",
@@ -509,7 +472,10 @@
         },
         {
             "name": "ios-simulator-arm64-release-ci",
-            "inherits": "mac-arm64-release-ci",
+            "inherits": [
+                "AppleClang",
+                "mac-arm64-release-ci"
+            ],
             "binaryDir": "${sourceDir}/build/ios-simulator-arm64",
             "cacheVariables": {
                 "CMAKE_SYSTEM_NAME": "iOS",
@@ -563,19 +529,8 @@
             "configurePreset": "win-release-ci"
         },
         {
-            "name": "win-clang-release-ci",
-            "configurePreset": "win-clang-release-ci"
-        },
-        {
             "name": "install-win-release-ci",
             "configurePreset": "win-release-ci",
-            "targets": [
-                "install"
-            ]
-        },
-        {
-            "name": "install-win-clang-release-ci",
-            "configurePreset": "win-clang-release-ci",
             "targets": [
                 "install"
             ]
@@ -728,28 +683,6 @@
             ]
         },
         {
-            "name": "win-clang-user",
-            "configurePreset": "win-clang-user"
-        },
-        {
-            "name": "win-clang-release-user",
-            "configurePreset": "win-clang-release-user"
-        },
-        {
-            "name": "install-win-clang-user",
-            "configurePreset": "win-clang-user",
-            "targets": [
-                "install"
-            ]
-        },
-        {
-            "name": "install-win-clang-release-user",
-            "configurePreset": "win-clang-release-user",
-            "targets": [
-                "install"
-            ]
-        },
-        {
             "name": "linux-release-ci",
             "configurePreset": "linux-release-ci"
         },
@@ -878,11 +811,6 @@
             "configurePreset": "win-release-ci"
         },
         {
-            "name": "win-clang-release-ci",
-            "inherits": "base-test",
-            "configurePreset": "win-clang-release-ci"
-        },
-        {
             "name": "win-dev-user",
             "inherits": "base-test",
             "configurePreset": "win-dev-user"
@@ -901,16 +829,6 @@
             "name": "linux-release-user",
             "inherits": "base-test",
             "configurePreset": "linux-release-user"
-        },
-        {
-            "name": "win-clang-user",
-            "inherits": "base-test",
-            "configurePreset": "win-clang-user"
-        },
-        {
-            "name": "win-clang-release-user",
-            "inherits": "base-test",
-            "configurePreset": "win-clang-release-user"
         },
         {
             "name": "linux-release-ci",

@@ -72,7 +72,7 @@ C/C++ 编译失败用例、已有 loader/lifecycle 回归，以及 `cmeta/tests/
 内的已安装 SDK 声明测试。
 
 本地复验使用仓库 preset。在 VS x64 开发环境中设置 README 要求的两个 Windows triplet
-环境变量后执行以下命令；将 `win-dev-user` 替换为 `win-clang-user` 可复验 Clang：
+环境变量后执行以下命令，使用 MSVC：
 
 ```powershell
 cmake --preset win-dev-user -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
