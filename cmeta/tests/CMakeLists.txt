@@ -510,3 +510,24 @@ cmeta_add_compile_failure_test(cmeta_manifest_wrong_descriptor_cpp_compile_fail
   compile_fail/cmeta_manifest_wrong_descriptor.cpp "cmeta_type_desc")
 set_target_properties(cmeta_manifest_wrong_descriptor_cpp_compile_fail PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
+cmake_add_test(cmeta_plugin_test SOURCES cmeta_plugin_test.c cmeta_plugin_peer.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+cmake_add_test(cmeta_plugin_cpp_test SOURCES cmeta_plugin_cpp_test.cpp cmeta_plugin_peer.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+set_target_properties(cmeta_plugin_test cmeta_plugin_cpp_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_target_properties(cmeta_plugin_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_plugin_cpp_test PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:-Werror=old-style-cast>")
+endif()
+
+cmeta_add_compile_failure_test(cmeta_plugin_wrong_descriptor_compile_fail
+  compile_fail/cmeta_plugin_wrong_descriptor.c
+  "generic association|compatible type|controlling expression|C11 generic|not compatible with any association")
+cmeta_add_compile_failure_test(cmeta_plugin_wrong_descriptor_cpp_compile_fail
+  compile_fail/cmeta_plugin_wrong_descriptor.cpp "cmeta_interface_desc")
+set_target_properties(cmeta_plugin_wrong_descriptor_cpp_compile_fail PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)

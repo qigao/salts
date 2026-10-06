@@ -11,12 +11,21 @@
 #define CMETA_MANIFEST_U8(value_) static_cast<uint8_t>(value_)
 #define CMETA_MANIFEST_BYTES(value_) reinterpret_cast<const uint8_t *>(value_)
 #define CMETA_MANIFEST_VOID_PTR(value_) static_cast<const void *>(value_)
+extern "C++" {
+template<class T> constexpr const T *cmeta_manifest_checked_pointer(const T *ptr) {
+    return ptr;
+}
+}
+#define CMETA_MANIFEST_TYPED_POINTER_(type_, pointer_) \
+    cmeta_manifest_checked_pointer<type_>(pointer_)
 extern "C" {
 #else
 #define CMETA_MANIFEST_U64(value_) ((uint64_t)(value_))
 #define CMETA_MANIFEST_U8(value_) ((uint8_t)(value_))
 #define CMETA_MANIFEST_BYTES(value_) ((const uint8_t *)(value_))
 #define CMETA_MANIFEST_VOID_PTR(value_) (value_)
+#define CMETA_MANIFEST_TYPED_POINTER_(type_, pointer_) \
+    _Generic((pointer_), type_ *: (pointer_), const type_ *: (pointer_))
 #endif
 
 #define CMETA_MANIFEST_FORMAT_VERSION UINT32_C(1)

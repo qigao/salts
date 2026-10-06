@@ -8,7 +8,7 @@
 
 算法仍为 FNV-1a 64：初值 `14695981039346656037`，逐字节执行 `(hash XOR byte) * 1099511628211 mod 2^64`。所有数值、count、布尔 presence 和 enum tag 都编码为 **8 字节 unsigned little-endian**。字符串是同格式的字节长度，再跟原字节；不含 NUL，不做 locale、Unicode 或大小写归一化。UTF-8 可用于跨工具链的非 ASCII 标识。
 
-顶层先编码字符串 `cmeta.contract`、算法版本 `1`、projection 版本 `1`、domain。domain 固定为 type=1、struct=2、enum=3、function=4、interface=5。然后按下表编码；子 row 不重复顶层 envelope。
+顶层先编码字符串 `cmeta.contract`、算法版本 `1`、projection 版本 `1`、domain。domain 固定为 type=1、struct=2、enum=3、function=4、interface=5、plugin=6。然后按下表编码；子 row 不重复顶层 envelope。
 
 | Row | 顺序 |
 |---|---|
@@ -22,6 +22,7 @@
 | Enum domain | signedness、width bits、kind、declared mask、item count；逐 item 编码 canonical uint64 bits、symbol |
 | FunctionAbi | return carrier、return Type row、effects、properties、result flags、parameter count；逐 parameter 编码 flags、carrier、Type row |
 | Interface | method count；逐 method 编码 name、dispatch arity、flags、FunctionAbi row |
+| Plugin declaration | capability count；逐 capability 编码 role、Interface row |
 
 所有 row 保留 canonical 数组顺序；共享节点按每条引用边重复编码，不 hash 地址或建立节点地址编号。Enum 使用 `cmeta_enum_domain` 的 unsigned bits：signed8 的 -1 编码为 255，unsigned64 最高位不经过 `int64_t`。Aliases 和空 domain 保留 canonical validator 的既有语义。旧 `EnumDesc` 没有 signedness/width，不能猜测为完整 enum ABI。
 
@@ -66,4 +67,4 @@ int main(void) {
 
 这些向量从上述字节语法独立计算，测试不以另一次同函数调用充当期望值。CI 在 GCC、GCC ASan、MSVC、ClangCL、AppleClang 的独立 build 中断言同一向量；C/C++ TU 和链接的 DLL/DSO 具有不同 descriptor 地址。DSO fixture 的加载期覆盖整个测试进程，并在返回 metadata 前协商 Reflection epoch，不声明 unload-race 验证。安装包 C11/C++17 测试实际链接 fingerprint symbol，验证 core 仍独立消费。
 
-Plugin/service declaration 与其 fingerprint 组合仍由 #926 后续推进，所有权继续归 Plugin lease；不新增第二个 schema 或 registry。
+Plugin/service declaration 与 domain 6 指纹组合见 [PLUGIN_MANIFESTS.md](PLUGIN_MANIFESTS.md)。所有权继续归 Plugin lease；不新增第二个 schema 或 registry。

@@ -2,6 +2,7 @@
 #define CMETA_MANIFEST_VIEW_H
 
 #include <cmeta/manifest.h>
+#include <cmeta/plugin.h>
 #include <cmeta/struct.h>
 #include <cmeta/interface.h>
 #include <cmeta/status.h>
@@ -22,15 +23,7 @@ typedef struct cmeta_manifest_limits {
 } cmeta_manifest_limits;
 
 #ifdef __cplusplus
-template<class T> constexpr const T *cmeta_manifest_checked_pointer(const T *ptr) {
-    return ptr;
-}
-#define CMETA_MANIFEST_TYPED_POINTER_(type_, pointer_) \
-    cmeta_manifest_checked_pointer<type_>(pointer_)
 extern "C" {
-#else
-#define CMETA_MANIFEST_TYPED_POINTER_(type_, pointer_) \
-    _Generic((pointer_), type_ *: (pointer_), const type_ *: (pointer_))
 #endif
 
 #define cmeta_manifest_type_entry(name_, descriptor_) \
@@ -54,6 +47,9 @@ extern "C" {
 #define cmeta_manifest_enum_entry(name_, descriptor_) \
     cmeta_manifest_entry(name_, CMETA_MANIFEST_ENUM_DOMAIN, \
         CMETA_MANIFEST_TYPED_POINTER_(cmeta_enum_domain, descriptor_), UINT64_C(0), UINT32_C(0))
+#define cmeta_manifest_plugin_entry(name_, descriptor_) \
+    cmeta_manifest_entry(name_, CMETA_MANIFEST_PLUGIN, \
+        CMETA_MANIFEST_TYPED_POINTER_(cmeta_plugin_desc, descriptor_), UINT64_C(0), UINT32_C(0))
 
 /** Inspect one immutable manifest entry, with no allocation, registration,
  * object callbacks or provider retention. Inputs must be live, ABI-compatible
@@ -82,6 +78,14 @@ cmeta_status cmeta_manifest_get_capability(const cmeta_manifest *manifest, size_
     const cmeta_manifest_limits *limits, const cmeta_interface_desc **out);
 cmeta_status cmeta_manifest_get_enum(const cmeta_manifest *manifest, size_t index,
     const cmeta_manifest_limits *limits, const cmeta_enum_domain **out);
+cmeta_status cmeta_manifest_get_plugin(const cmeta_manifest *manifest, size_t index,
+    const cmeta_manifest_limits *limits, const cmeta_plugin_desc **out);
+/** Validate the declaration and return one exact-role canonical interface.
+ * Same budgets/errors/lifetime as manifest getters; no dependency resolution,
+ * handle acquisition or retention. Failure leaves *out unchanged. */
+cmeta_status cmeta_plugin_get_capability(const cmeta_plugin_desc *desc, size_t index,
+    cmeta_plugin_role role, const cmeta_manifest_limits *limits,
+    const cmeta_interface_desc **out);
 
 #ifdef __cplusplus
 }

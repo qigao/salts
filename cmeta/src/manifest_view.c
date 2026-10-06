@@ -5,12 +5,16 @@ typedef struct manifest_budget {
     size_t nodes;
 } manifest_budget;
 
+static bool limits_valid(const cmeta_manifest_limits *limits) {
+    return limits != NULL && limits->max_items != 0u &&
+        limits->max_identity_nodes != 0u && limits->max_identity_depth != 0u &&
+        limits->max_identity_depth <= CMETA_MANIFEST_DEPTH_LIMIT;
+}
+
 static cmeta_status manifest_entry(const cmeta_manifest *manifest, size_t index,
     const cmeta_manifest_limits *limits, cmeta_manifest_kind kind,
     const cmeta_manifest_entry **out) {
-    if (manifest == NULL || limits == NULL || limits->max_items == 0u ||
-        limits->max_identity_nodes == 0u || limits->max_identity_depth == 0u ||
-        limits->max_identity_depth > CMETA_MANIFEST_DEPTH_LIMIT ||
+    if (manifest == NULL || !limits_valid(limits) ||
         manifest->name == NULL || manifest->name[0] == '\0')
         return CMETA_INVALID_ARGUMENT;
     if (manifest->format_version != CMETA_MANIFEST_FORMAT_VERSION)
@@ -134,6 +138,38 @@ static cmeta_status enum_valid(const cmeta_enum_domain *desc, manifest_budget *b
     return cmeta_enum_domain_valid(desc) ? CMETA_OK : CMETA_INVALID_ARGUMENT;
 }
 
+static cmeta_status plugin_valid(const cmeta_plugin_desc *desc, manifest_budget *budget) {
+    if (desc == NULL || desc->size != sizeof(*desc) || desc->name == NULL ||
+        desc->name[0] == '\0') return CMETA_INVALID_ARGUMENT;
+    if (desc->format_version != CMETA_PLUGIN_DECLARATION_VERSION) return CMETA_TYPE_MISMATCH;
+    if (desc->count > budget->limits->max_items) return CMETA_CAPACITY_EXCEEDED;
+    if ((desc->count != 0u && desc->capabilities == NULL) ||
+        desc->count > SIZE_MAX / sizeof(*desc->capabilities)) return CMETA_INVALID_ARGUMENT;
+    for (size_t i = 0u; i < desc->count; ++i) {
+        const cmeta_plugin_capability *row = &desc->capabilities[i];
+        if ((row->role != CMETA_PLUGIN_PROVIDES && row->role != CMETA_PLUGIN_REQUIRES) ||
+            row->interface_desc == NULL) return CMETA_INVALID_ARGUMENT;
+        cmeta_status status = interface_valid(row->interface_desc, budget);
+        if (status != CMETA_OK) return status;
+    }
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_plugin_get_capability(const cmeta_plugin_desc *desc, size_t index,
+    cmeta_plugin_role role, const cmeta_manifest_limits *limits,
+    const cmeta_interface_desc **out) {
+    if (out == NULL || !limits_valid(limits) ||
+        (role != CMETA_PLUGIN_PROVIDES && role != CMETA_PLUGIN_REQUIRES))
+        return CMETA_INVALID_ARGUMENT;
+    manifest_budget budget = {limits, limits->max_identity_nodes};
+    cmeta_status status = plugin_valid(desc, &budget);
+    if (status != CMETA_OK) return status;
+    if (index >= desc->count) return CMETA_INVALID_ARGUMENT;
+    if (desc->capabilities[index].role != role) return CMETA_TYPE_MISMATCH;
+    *out = desc->capabilities[index].interface_desc;
+    return CMETA_OK;
+}
+
 /* Each getter validates the one canonical descriptor and publishes only on
  * success. No descriptor copies or mutable discovery state are maintained. */
 #define MANIFEST_GETTER(name_, type_, kind_, validate_) \
@@ -158,3 +194,4 @@ MANIFEST_GETTER(interface, cmeta_interface_desc, CMETA_MANIFEST_INTERFACE, inter
 MANIFEST_GETTER(trace, cmeta_struct_desc, CMETA_MANIFEST_TRACEPOINT, struct_valid)
 MANIFEST_GETTER(capability, cmeta_interface_desc, CMETA_MANIFEST_CAPABILITY, interface_valid)
 MANIFEST_GETTER(enum, cmeta_enum_domain, CMETA_MANIFEST_ENUM_DOMAIN, enum_valid)
+MANIFEST_GETTER(plugin, cmeta_plugin_desc, CMETA_MANIFEST_PLUGIN, plugin_valid)

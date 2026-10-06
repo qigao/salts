@@ -19,7 +19,7 @@
 | 层 | Header |
 |---|---|
 | Core：基础类型、身份、构造 kernel | `abi.h`, `cmeta.h`, `types.h`, `type_identity.h`, `type_select.h`, `type_traits.h`, `status.h`, `pp.h`, `signatures.h`, `generated/builtin_signature_manifest.h` |
-| Core：canonical metadata 与生命周期 | `data.h`, `data_select.h`, `declared_type.h`, `enum.h`, `flags.h`, `struct.h`, `variant.h`, `lifecycle.h`, `function.h`, `interface.h`, `method.h`, `object.h`, `object_interface.h`, `manifest.h`, `manifest_view.h`, `fingerprint.h` |
+| Core：canonical metadata 与生命周期 | `data.h`, `data_select.h`, `declared_type.h`, `enum.h`, `flags.h`, `struct.h`, `variant.h`, `lifecycle.h`, `function.h`, `interface.h`, `method.h`, `object.h`, `object_interface.h`, `manifest.h`, `manifest_view.h`, `fingerprint.h`, `plugin.h` |
 | Core：typed carrier、projection 与协议 | `collector.h`, `compute.h`, `container.h`, `contract.h`, `entry.h`, `fixed_array.h`, `generic.h`, `infer.h`, `invokable.h`, `policy.h`, `range.h`, `relations.h`, `value.h`, `vector.h` |
 | Core aggregate | `meta.h` |
 | Structured-C | `scope.h`；`struct.h` 内的 intrusive projection 只增加静态 owner/member/type 检查，不拥有容器运行期 |

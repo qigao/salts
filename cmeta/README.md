@@ -29,6 +29,9 @@ AArch64 assembly backends. Portable atomics remain the default implementation.
 [`FINGERPRINTS.md`](FINGERPRINTS.md) 规定带预算的 canonical contract projection、
 固定字节编码与跨工具链向量；指纹不创建 schema、registry 或 provider ownership。
 
+[`PLUGIN_MANIFESTS.md`](PLUGIN_MANIFESTS.md) 说明静态 provides/requires declaration
+与 Plugin 指纹组合；模块生命周期和租约仍由 `Salts::Plugin` 管理。
+
 ## Public programming model
 
 Application users normally use semantic DSLs:
