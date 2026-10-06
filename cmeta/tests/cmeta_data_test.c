@@ -543,7 +543,7 @@ static void cmeta_data_test_failing_move(void *destination, void *source) {
 static const cmeta_data_construct_ops cmeta_data_test_failing_construct = {
     sizeof(cmeta_data_construct_ops), CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,
     &cmeta_type_int, cmeta_data_test_failing_init,
-    cmeta_data_test_failing_restore, cmeta_data_test_failing_move
+    cmeta_data_test_failing_restore, cmeta_data_test_failing_move, 0
 };
 static const cmeta_data_desc cmeta_data_test_failing_data = {
     .struct_size = sizeof(cmeta_data_desc),

@@ -356,7 +356,7 @@ struct cmeta_data_fixed_ops {
         sizeof(cmeta_data_construct_ops),                                  \
         CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION, &name_##_cmeta_type,          \
         name_##_cmeta_init_zero, name_##_cmeta_restore_zero,                \
-        name_##_cmeta_move};                                                \
+        name_##_cmeta_move, 0};                                             \
     static const cmeta_data_desc name_##_cmeta_data =                        \
         CMETA_DATA_FIXED_DESC_INIT_(name_, stable_id_, display_name_)
 

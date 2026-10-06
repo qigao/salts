@@ -16,7 +16,7 @@ static void pool_int_move(void *destination, void *source) {
 }
 static const cmeta_data_construct_ops pool_int_ops = {
     sizeof(cmeta_data_construct_ops), CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,
-    &cmeta_type_int, pool_int_init, pool_int_restore, pool_int_move
+    &cmeta_type_int, pool_int_init, pool_int_restore, pool_int_move, 0
 };
 CMETA_DEFINE_STATIC_LIFECYCLE(PoolInt, pool_int_ops)
 static_assert(std::is_same_v<decltype(&PoolInt_cmeta_lifecycle),
