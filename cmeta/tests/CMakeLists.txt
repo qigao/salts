@@ -1,5 +1,13 @@
 # CMeta public API regression tests.
 
+cmake_add_test(cmeta_execution_test
+  SOURCES cmeta_execution_test.c
+  LIBS Salts::CMeta Salts::Core Salts::CSTL Salts::Concurrency Salts::TinyTest
+  FOLDER "cmeta/tests")
+set_target_properties(cmeta_execution_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_tests_properties(cmeta_execution_test PROPERTIES TIMEOUT 60)
+
 add_executable(cmeta_function_admission_test cmeta_function_admission_test.c)
 target_link_libraries(cmeta_function_admission_test PRIVATE Salts::CMeta Salts::TinyTest)
 set_target_properties(cmeta_function_admission_test PROPERTIES

@@ -60,6 +60,9 @@ SALTS_PLATFORM_C_API void salts_thread_destroy(salts_thread_t *thread);
 SALTS_PLATFORM_C_API void salts_once(salts_once_t *guard, void (*callback)(void));
 SALTS_PLATFORM_C_API void salts_sleep_ms(uint32_t ms);
 SALTS_PLATFORM_C_API void salts_thread_yield(void);
+/* Identity of the current live OS thread. Compare only while both threads
+ * remain alive; token addresses may be reused after thread exit. */
+SALTS_PLATFORM_C_API const void *salts_thread_current_token(void);
 SALTS_PLATFORM_C_API int salts_cpu_count(void);
 
 #endif /* SALTS_THREAD_PRIMITIVES_H */

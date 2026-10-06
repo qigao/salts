@@ -100,6 +100,49 @@ static void benchmark_randomized(size_t count) {
 }
 
 suite("ObjectPool") {
+    group("Aligned bounded storage") {
+        it("aligns every slot and validates allocated membership before cleanup") {
+            enum { ALIGNED_POOL_CAPACITY = 3 };
+            size_t alignment = object_pool_max_alignment();
+            object_pool_config_t config = {
+                .object_size = alignment + sizeof(void *),
+                .initial_capacity = ALIGNED_POOL_CAPACITY,
+                .max_capacity = ALIGNED_POOL_CAPACITY,
+                .zero_on_alloc = false
+            };
+            void *objects[ALIGNED_POOL_CAPACITY];
+            int foreign = 0;
+            object_pool_t *pool = object_pool_create_aligned(&config, alignment);
+            check_not_null(pool);
+            if (pool == NULL) return;
+            for (size_t i = 0; i < ALIGNED_POOL_CAPACITY; ++i) {
+                objects[i] = object_pool_alloc(pool);
+                check_not_null(objects[i]);
+                check_equal((uintptr_t)objects[i] % alignment, (uintptr_t)0);
+                check_true(object_pool_is_allocated(pool, objects[i]));
+                check_false(object_pool_is_allocated(pool, (char *)objects[i] + 1));
+            }
+            check_false(object_pool_is_allocated(pool, &foreign));
+            check_null(object_pool_alloc(pool));
+            check_equal(object_pool_capacity(pool), (size_t)ALIGNED_POOL_CAPACITY);
+            for (size_t i = 0; i < ALIGNED_POOL_CAPACITY; ++i) {
+                object_pool_free(pool, objects[i]);
+                check_false(object_pool_is_allocated(pool, objects[i]));
+            }
+            check_false(object_pool_is_allocated(NULL, objects[0]));
+            check_false(object_pool_is_allocated(pool, NULL));
+            object_pool_destroy(pool);
+        }
+        it("rejects unsupported alignment and stride overflow") {
+            object_pool_config_t config = {sizeof(void *), 1, 1, false};
+            size_t alignment = object_pool_max_alignment();
+            check_null(object_pool_create_aligned(&config, 0));
+            check_null(object_pool_create_aligned(&config, alignment + 1));
+            check_null(object_pool_create_aligned(&config, alignment * 2));
+            config.object_size = SIZE_MAX;
+            check_null(object_pool_create_aligned(&config, alignment));
+        }
+    }
     group("Basic Operations") {
         it("creates pool with initial capacity") {
             object_pool_config_t config = {

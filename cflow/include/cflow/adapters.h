@@ -94,7 +94,9 @@ bool cflow_eval_stream_limit(const cflow_stream *stream,
  * collector. The collector owns its output transaction; any Subscription or
  * collector failure aborts it. cflow_eval_collect_result() preserves the
  * CFlow outcome and the exact final Collector transaction as separate status
- * domains. out_error receives a borrowed diagnostic when non-NULL and must
+ * domains. Collector CMETA_BUSY maps to CFLOW_STATUS_WOULD_BLOCK and still
+ * aborts the transaction; the synchronous adapter never waits or retries.
+ * out_error receives a borrowed diagnostic when non-NULL and must
  * not be freed or retained beyond the Publisher's documented lifetime.
  * Deterministic Range admission failures terminate the collector before begin
  * without invoking its abort callback.

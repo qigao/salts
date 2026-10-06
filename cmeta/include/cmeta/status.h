@@ -8,7 +8,8 @@ typedef enum cmeta_status {
     CMETA_TRAIT_MISSING,
     CMETA_CAPACITY_EXCEEDED,
     CMETA_OUT_OF_MEMORY,
-    CMETA_CALLBACK_ERROR
+    CMETA_CALLBACK_ERROR,
+    CMETA_BUSY
 } cmeta_status;
 
 #endif

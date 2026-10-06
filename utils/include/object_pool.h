@@ -47,6 +47,19 @@ typedef struct {
  */
 SALTS_C_API object_pool_t *object_pool_create(const object_pool_config_t *config);
 
+/** Create with a slot stride respecting alignment. Alignment must be a power
+ * of two no greater than object_pool_max_alignment(); NULL rejects unsupported
+ * alignment, invalid configuration, overflow or allocation failure.
+ * Existing object_pool_create retains pointer-stride alignment semantics. */
+SALTS_C_API object_pool_t *object_pool_create_aligned(
+    const object_pool_config_t *config, size_t alignment);
+/** Maximum fundamental alignment supported by the native allocator ABI. */
+SALTS_C_API size_t object_pool_max_alignment(void);
+
+/** Single-threaded membership query; true only for a checked-out slot start.
+ * Does not dereference obj. It shares the pool's mutation/lifetime constraints. */
+SALTS_C_API bool object_pool_is_allocated(const object_pool_t *pool, const void *obj);
+
 /**
  * @brief Destroy an object pool
  * @param pool Pool handle

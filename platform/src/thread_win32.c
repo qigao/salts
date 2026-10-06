@@ -5,6 +5,9 @@
 #include <stdlib.h>
 #include <windows.h>
 
+static SALTS_THREAD_LOCAL unsigned char salts_thread_token;
+const void *salts_thread_current_token(void) { return &salts_thread_token; }
+
 struct salts_thread_wrapper_ctx {
   salts_thread_cb entry;
   void *arg;

@@ -51,6 +51,7 @@ static inline bool cmeta_collector_callback_status_valid(cmeta_status status) {
         case CMETA_CAPACITY_EXCEEDED:
         case CMETA_OUT_OF_MEMORY:
         case CMETA_CALLBACK_ERROR:
+        case CMETA_BUSY:
             return true;
         default:
             return false;

@@ -43,8 +43,13 @@ typedef struct cmeta_data_construct_ops {
     size_t struct_size;
     uint32_t abi_version;
     const cmeta_type_desc *storage_type;
+    /** Initializes raw storage without inspecting an earlier value. A failed
+     * initialization must leave storage acceptable to restore_zero. */
     cmeta_data_construct_init_zero_fn init_zero;
+    /** Releases a live/partial value or semantic zero, then restores zero. */
     cmeta_data_construct_restore_zero_fn restore_zero;
+    /** Transfers into a distinct initialized semantic-zero destination;
+     * leaves the source live in semantic zero. Optional capability. */
     cmeta_data_construct_move_fn move;
 } cmeta_data_construct_ops;
 

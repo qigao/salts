@@ -10,6 +10,35 @@ typedef struct terminal_range_owner {
     size_t fail_on_resume;
 } terminal_range_owner;
 
+typedef struct terminal_busy_collector {
+    int output;
+    size_t begins, accepts, finishes, aborts;
+} terminal_busy_collector;
+static cmeta_status terminal_busy_begin(void *context, const cmeta_type_desc *type, size_t limit) {
+    terminal_busy_collector *state = context;
+    ++state->begins;
+    return cmeta_type_equal(type, &cmeta_type_int) && limit != 0 ? CMETA_BUSY : CMETA_INVALID_ARGUMENT;
+}
+static cmeta_status terminal_busy_accept(void *context, const void *value) {
+    terminal_busy_collector *state = context;
+    (void)value;
+    ++state->accepts;
+    return CMETA_CALLBACK_ERROR;
+}
+static cmeta_status terminal_busy_finish(void *context) {
+    terminal_busy_collector *state = context;
+    ++state->finishes;
+    return CMETA_CALLBACK_ERROR;
+}
+static void terminal_busy_abort(void *context) {
+    terminal_busy_collector *state = context;
+    ++state->aborts;
+    state->output = 0;
+}
+static const cmeta_collector_ops terminal_busy_ops = {
+    terminal_busy_begin, terminal_busy_accept, terminal_busy_finish, terminal_busy_abort
+};
+
 static size_t terminal_range_size(const void *object) {
     const terminal_range_owner *owner =
         (const terminal_range_owner *)object;
@@ -294,6 +323,26 @@ spec("CFlow Stream terminals") {
         cflow_stream_destroy(&visitor_stream);
         cflow_stream_destroy(&predicate_stream);
         cflow_stream_destroy(&count_stream);
+    }
+
+    it("reports collector busy without retrying or resuming the source") {
+        const int values[] = {1, 2};
+        terminal_range_owner owner = {values, 2, 0, 0};
+        cflow_stream stream = {0}; terminal_busy_collector state = {0};
+        cmeta_collector collector = {
+            .ops = &terminal_busy_ops, .context = &state, .zero_output = &state.output,
+            .input_type = &cmeta_type_int, .limit = 2
+        };
+        cflow_collect_result result;
+        check_not_null(cflow_stream_from_range(&stream, terminal_range(&owner)));
+        result = cflow_eval_collect_result(&stream, &collector, NULL);
+        check_equal(result.status, CFLOW_STATUS_WOULD_BLOCK);
+        check_equal(result.collector_status, CMETA_BUSY);
+        check_equal(result.collector_state, CMETA_COLLECTOR_ABORTED);
+        check_equal(state.begins, (size_t)1); check_equal(state.aborts, (size_t)1);
+        check_equal(state.accepts, (size_t)0); check_equal(state.finishes, (size_t)0);
+        check_equal(owner.resumes, (size_t)0); check_equal(state.output, 0);
+        cflow_stream_destroy(&stream);
     }
 
     it("returns stable structured status without changing legacy detail") {
