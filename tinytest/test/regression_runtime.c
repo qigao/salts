@@ -1,3 +1,10 @@
+/* The symlink regression needs POSIX declarations before any libc header. */
+#ifndef _WIN32
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+#endif
+
 #include "tinytest.h"
 
 #if defined(columns) || defined(lines) || defined(buttons) || defined(tab)
