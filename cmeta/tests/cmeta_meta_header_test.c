@@ -13,6 +13,14 @@
 #error "cmeta/meta.h must not include cmeta/container.h"
 #endif
 
+#ifdef CMETA_FASTPATH_H
+#error "cmeta/meta.h must not expose optional fastpath runtime"
+#endif
+
+#ifdef CMETA_TRACE_H
+#error "cmeta/meta.h must not expose optional trace runtime"
+#endif
+
 suite("CMeta aggregate public header") {
     it("exposes range metadata without container facade generators") {
         cmeta_range range = {0};
