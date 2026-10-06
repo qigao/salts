@@ -51,6 +51,30 @@ E。fastpath configure 显式打开已支持平台的 native 后端，独立验�
 Clang 的通过都不能替代 macOS Mach-O qualification。远端 Linux 的单项 NativeIO
 失败应单独追踪，不能修改 CMeta 语义 gate 来掩盖。
 
+## 本轮验收证据（#982/#983/#985）
+
+事实：2026-10-07 的实现与测试提交截止 `dec53ce5`，结果如下。最后一个提交仅补充
+普通 mixed scope 异常测试；该测试在 MSVC、GCC 和 Clang 上均重新执行通过。
+
+| 环境与 configure | 实际结果 |
+|---|---|
+| Windows MSVC，native ON | `cmeta-semantic` 188/188；TinyMock 17/17 |
+| `root@eu` GCC 12.2，native/fastpath OFF | 完整 build graph 通过；语义 187 通过、1 跳过；消费者回归 11/11 |
+| `root@eu` Clang 14.0.6，native/fastpath OFF | 完整 build graph 通过；语义 187 通过、1 跳过；installed SDK 48/48 |
+| `root@eu` Clang 14.0.6，native/fastpath ON | 相关测试 219 通过、1 跳过；installed SDK 52/52（包含可选 native 测试） |
+
+Linux 跳过项均为 `cmeta_pp_zero_c23_test`，由实际编译器 C23 能力检测决定。
+远端使用隔离 worktree `/root/dev/salts-clang-976-977`，未改动原脏工作区。
+复验入口为正式 `linux-release-ci` / `linux-clang-release-ci` configure/build preset，
+语义测试使用 `ctest --preset <preset> --no-tests=error --output-on-failure -L '^cmeta-semantic$'`。
+日志保存在该 worktree 的 `build/issue984-{gcc,clang}-semantic.log`、
+`build/issue984-gcc-consumers.log`、`build/issue984-clang-sdk-tests.log`；Windows 日志为
+`build/issue984-semantic-msvc.log`。
+
+MED／事实：以上不是全平台全量通过。macOS GCC/AppleClang 仍待本轮 CI 输出；此前
+Clang 全量 CTest 的 `native_io_uring_batch_test` 有两个内部用例失败，保留在
+`build/remote-clang-tests.log`，未通过改动或缩减 NativeIO 测试来消除失败。
+
 ## 回滚与后续拆分
 
 新修复按以上单元提交。撤销 B、C、D 的破坏性切换时必须连同消费者回滚，不能留下
