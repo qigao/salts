@@ -143,6 +143,30 @@ suite("ObjectPool") {
             check_null(object_pool_create_aligned(&config, alignment));
         }
     }
+    group("Owned bounded facade") {
+        it("owns thread-affine slot leases without CMeta") {
+            object_pool_owner_state pool = {0};
+            object_pool_lease first = {0};
+            object_pool_lease second = {0};
+            object_pool_lease copied;
+            int *value;
+
+            check_equal(object_pool_owner_init(
+                &pool, sizeof(int), _Alignof(int), 1u), SALTS_OK);
+            check_equal(object_pool_owner_acquire(&pool, &first), SALTS_OK);
+            value = (int *)object_pool_lease_get(&pool, &first);
+            check_not_null(value);
+            if (value != NULL)
+                *value = 42;
+            check_equal(object_pool_owner_acquire(&pool, &second), SALTS_ENOBUFS);
+            copied = first;
+            check_equal(object_pool_owner_release(&pool, &copied), SALTS_EINVAL);
+            check_equal(object_pool_owner_destroy(&pool), SALTS_EBUSY);
+            check_equal(object_pool_owner_release(&pool, &first), SALTS_OK);
+            check_equal(object_pool_owner_destroy(&pool), SALTS_OK);
+        }
+    }
+
     group("Basic Operations") {
         it("creates pool with initial capacity") {
             object_pool_config_t config = {
