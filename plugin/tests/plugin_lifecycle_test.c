@@ -231,6 +231,56 @@ describe("lease-owned DSO access") {
 
         destroy_registry(&registry);
     }
+
+    it("leaves the lease unchanged when release fails before a successful retry") {
+        salts_plugin_registry registry = make_registry(1u);
+        salts_plugin_registry wrong_registry = make_registry(1u);
+        salts_plugin_ref ref = {0};
+        salts_plugin_lease lease = {0};
+        salts_plugin_lease saved = {0};
+        const salts_plugin_manifest *manifest = NULL;
+        salts_plugin_lifecycle_info info = {0};
+        bool quiescent = false;
+
+        check_equal(salts_plugin_registry_load(
+                        &registry, PLUGIN_LIFECYCLE_PATH, &ref),
+                    SALTS_PLUGIN_OK);
+        check_equal(salts_plugin_registry_start(&registry, ref),
+                    SALTS_PLUGIN_OK);
+        check_equal(salts_plugin_registry_acquire(
+                        &registry, ref, &lease, &manifest),
+                    SALTS_PLUGIN_OK);
+        check_true(salts_plugin_lease_valid(lease));
+        saved = lease;
+
+        check_equal(salts_plugin_registry_release(
+                        &wrong_registry, &lease),
+                    SALTS_PLUGIN_STALE);
+        check_equal(memcmp(&lease, &saved, sizeof(lease)), 0);
+        check_equal(lifecycle_info(&registry, ref, &info),
+                    SALTS_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)1u);
+
+        check_equal(salts_plugin_registry_release(
+                        &registry, &lease),
+                    SALTS_PLUGIN_OK);
+        check_false(salts_plugin_lease_valid(lease));
+        check_equal(lifecycle_info(&registry, ref, &info),
+                    SALTS_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)0u);
+
+        check_equal(salts_plugin_registry_request_stop(
+                        &registry, ref),
+                    SALTS_PLUGIN_OK);
+        check_equal(salts_plugin_registry_poll_quiescent(
+                        &registry, ref, &quiescent),
+                    SALTS_PLUGIN_OK);
+        check_true(quiescent);
+        check_equal(salts_plugin_registry_unload(&registry, ref),
+                    SALTS_PLUGIN_OK);
+        destroy_registry(&registry);
+        destroy_registry(&wrong_registry);
+    }
 }
 
 describe("lifecycle failures") {
