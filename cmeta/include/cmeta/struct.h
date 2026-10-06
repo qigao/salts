@@ -8,6 +8,19 @@
 #include <stddef.h>
 #include <string.h>
 
+/* Inspect native member type at compile time, including array extent and
+ * qualifiers. No object evaluation or reflection lookup is involved. */
+#ifdef __cplusplus
+#include <type_traits>
+#define cmeta_require_field(owner_, member_, type_) \
+    static_assert(std::is_same<decltype(static_cast<owner_ *>(nullptr)->member_), type_>::value, \
+                  "CMeta required field type mismatch")
+#else
+#define cmeta_require_field(owner_, member_, type_) \
+    _Static_assert(_Generic(&((owner_ *)0)->member_, type_ *: 1, default: 0), \
+                   "CMeta required field type mismatch")
+#endif
+
 typedef struct cmeta_field_desc {
     const char *name;
     const char *type_name;

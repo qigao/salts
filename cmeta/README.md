@@ -48,6 +48,12 @@ Trait rows are the only supported public `cmeta_traits` declaration form. CMeta 
 both capability flags and function slots from those tagged rows. Positional
 `Traits(name, flags, ...)` compatibility has been removed.
 
+Named `cmeta_trait(Capability, callback)` rows, compile-time trait/field
+requirements, generated tagged variants and distinct unsigned64 flags reuse
+this canonical metadata and DataDesc lifecycle. See
+[capabilities, variants and flags](CAPABILITIES.md) for contracts and executable
+C11/C++17 examples.
+
 `cmeta_type(...)` is the finite-generic type declaration entry point. CMeta owns value kinds
 such as `Pair`, `Tuple`, `Option`, and `Result`. Container kinds such as `List`,
 `Vec`, and `HashMap` are provided by `container`, not by the CMeta aggregate

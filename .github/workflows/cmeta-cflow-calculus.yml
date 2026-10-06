@@ -60,7 +60,7 @@ permissions:
 
 jobs:
   coroutine:
-    name: CMeta coroutine contracts / ${{ matrix.name }}
+    name: CMeta coroutine and capability contracts / ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -100,7 +100,7 @@ jobs:
           $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) { throw "Visual Studio with the x64 C++ toolchain was not found" }
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
-      - name: Configure, build and test Unix coroutine contracts
+      - name: Configure, build and test Unix coroutine and capability contracts
         if: matrix.family == 'unix'
         shell: bash
         env:
@@ -110,10 +110,12 @@ jobs:
           cmake --preset "${{ matrix.preset }}" -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
           cmake --build --preset "${{ matrix.preset }}" --parallel 2 --target \
             cmeta_coroutine_facade_test cmeta_coroutine_header_cpp_test \
-            salts_coro_executor_test salts_coro_executor_header_cpp_test
+            salts_coro_executor_test salts_coro_executor_header_cpp_test \
+            cmeta_capabilities_test cmeta_capabilities_header_cpp_test \
+            cmeta_core_test cmeta_data_test cmeta_enum_bits_test cmeta_header_cpp_test
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 \
-            -R '^(cmeta_coroutine|salts_coro_executor)'
-      - name: Configure, build and test Windows coroutine contracts
+            -R '^(cmeta_coroutine|salts_coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$)'
+      - name: Configure, build and test Windows coroutine and capability contracts
         if: matrix.family == 'windows'
         shell: cmd
         env:
@@ -125,9 +127,9 @@ jobs:
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           cmake --preset "${{ matrix.preset }}" -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
           if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.preset }}" --parallel 2 --target cmeta_coroutine_facade_test cmeta_coroutine_header_cpp_test salts_coro_executor_test salts_coro_executor_header_cpp_test
+          cmake --build --preset "${{ matrix.preset }}" --parallel 2 --target cmeta_coroutine_facade_test cmeta_coroutine_header_cpp_test salts_coro_executor_test salts_coro_executor_header_cpp_test cmeta_capabilities_test cmeta_capabilities_header_cpp_test cmeta_core_test cmeta_data_test cmeta_enum_bits_test cmeta_header_cpp_test
           if errorlevel 1 exit /b 1
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -R "^(cmeta_coroutine|salts_coro_executor)"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -R "^(cmeta_coroutine|salts_coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$)"
           if errorlevel 1 exit /b 1
 
 

@@ -7,6 +7,9 @@
 #include <float.h>
 #include <limits.h>
 #include <stdint.h>
+#ifdef __cplusplus
+#include <type_traits>
+#endif
 
 typedef uint32_t cmeta_trait_flags;
 
@@ -82,6 +85,43 @@ extern const cmeta_type_traits cmeta_traits_double;
 #define CMETA_TRAIT_INIT_move(fn)    .move_construct = (fn),
 #define CMETA_TRAIT_INIT_destroy(fn) .destroy = (fn),
 
+typedef bool (*cmeta_trait_equal_fn)(const void *, const void *);
+typedef uint64_t (*cmeta_trait_hash_fn)(const void *);
+typedef int (*cmeta_trait_compare_fn)(const void *, const void *);
+typedef bool (*cmeta_trait_copy_fn)(void *, const void *);
+typedef void (*cmeta_trait_move_fn)(void *, void *);
+typedef void (*cmeta_trait_destroy_fn)(void *);
+
+#define CMETA_TRAIT_MEMBER_equal equal
+#define CMETA_TRAIT_MEMBER_hash hash
+#define CMETA_TRAIT_MEMBER_compare compare
+#define CMETA_TRAIT_MEMBER_copy copy_construct
+#define CMETA_TRAIT_MEMBER_move move_construct
+#define CMETA_TRAIT_MEMBER_destroy destroy
+#ifdef __cplusplus
+#define CMETA_TRAIT_CHECK_ROW(tag, fn) \
+    static_assert(std::is_convertible<decltype(+(fn)), cmeta_trait_##tag##_fn>::value, \
+                  "CMeta trait callback signature mismatch");
+#define CMETA_TRAIT_ASSIGN_ROW(tag, fn) \
+    result_.CMETA_PP_CAT(CMETA_TRAIT_MEMBER_, tag) = (fn);
+#define CMETA_TRAITS_OBJECT_(name, ...) \
+    CMETA_LOCAL constexpr cmeta_type_traits cmeta_traits_##name = [] { \
+        cmeta_type_traits result_{}; \
+        result_.flags = CMETA_PP_CAT(name, __cmeta_traits_flags); \
+        Schema(CMETA_TRAIT_ASSIGN_ROW, __VA_ARGS__) \
+        return result_; \
+    }()
+#else
+#define CMETA_TRAIT_CHECK_ROW(tag, fn) \
+    _Static_assert(_Generic((fn), cmeta_trait_##tag##_fn: 1, default: 0), \
+                   "CMeta trait callback signature mismatch");
+#define CMETA_TRAITS_OBJECT_(name, ...) \
+    CMETA_LOCAL const cmeta_type_traits cmeta_traits_##name = { \
+        .flags = (cmeta_trait_flags)CMETA_PP_CAT(name, __cmeta_traits_flags), \
+        Schema(CMETA_TRAIT_INIT_ROW, __VA_ARGS__) \
+    }
+#endif
+
 #define CMETA_TRAIT_FLAG_ROW(tag, fn) \
     | CMETA_PP_CAT(CMETA_TRAIT_FLAG_, tag)
 #define CMETA_TRAIT_INIT_ROW(tag, fn) \
@@ -105,14 +145,44 @@ extern const cmeta_type_traits cmeta_traits_double;
  * the same tagged rows, so capability presence is declared exactly once.
  * Owner-qualified enum markers make duplicate tags an immediate compile error. */
 #define CMETA_TRAITS(name, ...) \
+    Schema(CMETA_TRAIT_CHECK_ROW, __VA_ARGS__) \
     enum { \
         CMETA_SCHEMA_ROWS(CMETA_TRAIT_SEEN_ROW, name, __VA_ARGS__) \
-        CMETA_PP_CAT(name, __cmeta_traits_end) \
+        CMETA_PP_CAT(name, __cmeta_traits_end), \
+        CMETA_PP_CAT(name, __cmeta_traits_flags) = \
+            0u Schema(CMETA_TRAIT_FLAG_ROW, __VA_ARGS__) \
     }; \
-    CMETA_LOCAL const cmeta_type_traits cmeta_traits_##name = { \
-        .flags = (cmeta_trait_flags)(0u Schema(CMETA_TRAIT_FLAG_ROW, __VA_ARGS__)), \
-        Schema(CMETA_TRAIT_INIT_ROW, __VA_ARGS__) \
-    }
+    CMETA_TRAITS_OBJECT_(name, __VA_ARGS__)
+
+#define CMETA_TRAIT_NAME_Equal equal
+#define CMETA_TRAIT_NAME_Hashable hash
+#define CMETA_TRAIT_NAME_Comparable compare
+#define CMETA_TRAIT_NAME_Copyable copy
+#define CMETA_TRAIT_NAME_Movable move
+#define CMETA_TRAIT_NAME_Destructible destroy
+#define CMETA_TRAIT_NAME_equal equal
+#define CMETA_TRAIT_NAME_hash hash
+#define CMETA_TRAIT_NAME_compare compare
+#define CMETA_TRAIT_NAME_copy copy
+#define CMETA_TRAIT_NAME_move move
+#define CMETA_TRAIT_NAME_destroy destroy
+#define CMETA_TRAIT_NAME_(trait_) CMETA_PP_CAT(CMETA_TRAIT_NAME_, trait_)
+#define CMETA_TRAIT_REQUIRED_FLAG_(trait_) \
+    CMETA_PP_CAT(CMETA_TRAIT_FLAG_, CMETA_TRAIT_NAME_(trait_))
+
+/** A callback-bearing row for the existing cmeta_traits declaration. */
+#define cmeta_trait(trait_, callback_) (CMETA_TRAIT_NAME_(trait_), callback_)
+/** Compile-time declaration query; it performs no runtime dispatch. */
+#define cmeta_has_trait(name_, trait_) \
+    (((0u + CMETA_PP_CAT(name_, __cmeta_traits_flags)) & \
+      (0u + CMETA_TRAIT_REQUIRED_FLAG_(trait_))) != 0u)
+#ifdef __cplusplus
+#define cmeta_require_trait(name_, trait_) \
+    static_assert(cmeta_has_trait(name_, trait_), "CMeta required trait is missing")
+#else
+#define cmeta_require_trait(name_, trait_) \
+    _Static_assert(cmeta_has_trait(name_, trait_), "CMeta required trait is missing")
+#endif
 
 #ifndef cmeta_traits
 #define cmeta_traits(name, ...) CMETA_TRAITS(name, __VA_ARGS__)
