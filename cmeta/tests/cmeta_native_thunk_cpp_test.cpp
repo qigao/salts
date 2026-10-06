@@ -1,4 +1,6 @@
 #include <cmeta/native/thunk.h>
+#include <cmeta/native/object.h>
+#include <cmeta/native/static_call.h>
 #include "tinytest.hpp"
 #include <stdexcept>
 
@@ -12,6 +14,12 @@ int native_cpp_target(int value) {
 suite("Native C ABI headers and C++ unwind") {
     static cmeta_native_thunk thunk = CMETA_NATIVE_THUNK_INIT;
     after_each() { check_equal(cmeta_native_thunk_destroy(&thunk), CMETA_OK); }
+    it("links the ObjectRef adapter through its public C ABI") {
+        cmeta_native_binding binding = CMETA_NATIVE_BINDING_INIT;
+        binding.kind = CMETA_NATIVE_CONTEXT_I32;
+        check_equal(cmeta_native_object_i32_admit(nullptr, nullptr, nullptr, &binding), CMETA_INVALID_ARGUMENT);
+        check_equal(binding.kind, CMETA_NATIVE_INVALID);
+    }
     it("tail-jumps without adding a frame and propagates the target exception") {
         cmeta_native_binding binding = CMETA_NATIVE_BINDING_INIT;
         check_equal(cmeta_native_i32_admit(FunctionAbi(native_cpp_target), native_cpp_target, &binding), CMETA_OK);

@@ -16,8 +16,15 @@ if(TARGET Salts::CMetaNative)
   cmake_add_test(cmeta_installed_native_test SOURCES ../cmeta_native_thunk_test.c ../cmeta_native_targets.c
     LIBS Salts::CMetaNative Salts::TinyTest FOLDER "cmeta/tests/installed")
   cmake_add_test(cmeta_installed_native_cpp_test SOURCES ../cmeta_native_thunk_cpp_test.cpp
+    LIBS Salts::CMetaNative Salts::Platform Salts::TinyTest FOLDER "cmeta/tests/installed")
+  cmake_add_test(cmeta_installed_native_object_test SOURCES ../cmeta_native_object_test.c
+    ../cmeta_native_object_fixture.c
     LIBS Salts::CMetaNative Salts::TinyTest FOLDER "cmeta/tests/installed")
-  set_target_properties(cmeta_installed_native_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  cmake_add_test(cmeta_installed_native_static_call_test SOURCES ../cmeta_native_static_call_test.c
+    ../cmeta_native_targets.c
+    LIBS Salts::CMetaNative Salts::Platform Salts::TinyTest FOLDER "cmeta/tests/installed")
+  set_target_properties(cmeta_installed_native_test cmeta_installed_native_object_test
+    cmeta_installed_native_static_call_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   set_target_properties(cmeta_installed_native_cpp_test PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 endif()
 

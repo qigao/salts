@@ -34,6 +34,32 @@ receiver 绑定为 `int(int)`。FunctionAbi 和 Function-owned receiver projecti
 
 ## 后端与验证
 
+### ObjectRef 与 static-call 消费协议
+
+ObjectRef 特化通过可选 `cmeta_native_object_provider` 关联原 operation provider，
+不扩展 ObjectRef、FunctionDesc 或 provider 的核心 ABI。先复用
+`cmeta_object_operation_invokable_bind` 验证对象、operation 成员资格和引用调用，再请求
+同一 provider 的精确 native 绑定并重新 admission。provider 返回错误或不兼容投影时，
+输出 token 保持空；没有代码分配、retain/release 或自动回退。生成器/provider 负责确保
+两条执行路径具有相同语义，native 层不从 callable capture 或通用 invoke 指针反推 ABI。
+
+`<cmeta/native/object.h>` 随 `Salts::CMetaNative` 提供；
+`<cmeta/native/static_call.h>` 的 C11 前端还要求链接既有 `Salts::Platform`。
+`cmeta_static_thunk_call(name, default_function)` 声明有限 `int(int)` 槽，
+`cmeta_static_thunk_update(name, &thunk)` 只借用 READY 入口；空/未发布句柄返回
+INVALID_ARGUMENT，ABI 不匹配返回 TYPE_MISMATCH。
+
+static-call 特化复用 `cmeta_static_call` 的
+原子槽和 ABI 检查；失败时原目标保持不变。槽中仅借用已发布 thunk 的入口，不拥有
+代码页。撤销时先发布普通目标，阻止新的 thunk 调用，等待旧调用退出，再 destroy；
+在同一地址 rebind 仍要求调用方关闭 admission 并达到 quiescence。原子指针更新不能
+代替这一步。正常调用沿用原 static-call 路径，没有新增 Reflection 查询。
+
+两种 adapter 都只产生借用，额外状态固定有界。描述符/provider、对象、thunk、外层
+Plugin lease 的销毁顺序由调用方明确安排：调用结束 → 撤销槽/借出入口 → destroy thunk
+→ release ObjectRef → release lease。失败不会转移原对象或槽的所有权。移除 opt-in
+adapter 即可恢复原引用调用，核心语义和数据布局无需迁移。
+
 Win64 使用寄存器参数与原调用方的 shadow store；SysV 使用自己的参数寄存器映射。
 两者都只使用 volatile 寄存器并 tail-jump，不调整栈、不嵌套 call，因此没有新增
 栈帧或 non-leaf unwind 元数据。将来扩大形状必须重新评审 ABI/unwind 边界。
@@ -53,6 +79,10 @@ Win64 使用寄存器参数与原调用方的 shadow store；SysV 使用自己�
   同地址重定向和销毁；其 `int(int)` 直接重定向也是静态调用方的显式 opt-in 示例。
 - [`cmeta_native_thunk_cpp_test.cpp`](tests/cmeta_native_thunk_cpp_test.cpp)：跨 leaf thunk
   的异常展开；不引入 non-leaf 路径或 unwind table 所有权。
+- [`cmeta_native_object_test.c`](tests/cmeta_native_object_test.c)：共享/拥有对象、跨 TU
+  provider、能力成员资格、错误传播，以及引用/特化路径的结果和释放计数一致性。
+- [`cmeta_native_static_call_test.c`](tests/cmeta_native_static_call_test.c)：同一原子槽中的
+  native 发布、普通目标恢复、单次求值及 ABI 拒绝；错误形状另由 compile-fail CTest 覆盖。
 - [`plugin_native_test.c`](../plugin/tests/plugin_native_test.c)：显式 lease 下的 DSO
   消费和 benchmark。fixture offer 属于测试协议，不是新增 Plugin 公共 ABI。
 - `cmeta_native_benchmark` 分别测调用、quiescent rebind、create/destroy；
@@ -73,6 +103,12 @@ sample 一百万次。CTest `cmeta_native_benchmark` 测得 generated receiver �
 4670 / 3.970 ≈ 1177 次调用，未计入代码页占用和调用方 quiescence 成本。
 这是单机微基准，不代表真实业务收益；只有重复调用足以摊销控制面和内存成本时才适合
 显式 opt-in。扩大形状或平台仍需分别测量，不能从此结果推断 AArch64 收益。
+
+同日接入消费者后的独立测量（同一配置、sample/操作数）：ObjectRef admitted reference
+为 5.115 ns/op，native 为 2.564 ns/op；普通绑定 native 为 2.582 ns/op，经过既有
+static-call 槽为 2.579 ns/op。后两者差值仅 0.003 ns/op，不据此声称槽带来加速。
+ObjectRef 的两个路径调用同一外部 TU target，计时外断言结果、provider 调用次数与唯一
+显式 retain/release；native 不新增 owner 或 lease。基准入口仍为 `cmeta_native_benchmark`。
 
 依据：[Microsoft x64 ABI](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention)、
 [指令缓存同步](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-flushinstructioncache)、
