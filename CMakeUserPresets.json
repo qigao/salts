@@ -240,7 +240,10 @@
         },
         {
             "name": "linux-arm64-release-user",
-            "inherits": "linux-release-user",
+            "inherits": [
+                "flags-gnu-arm64",
+                "linux-release-user"
+            ],
             "binaryDir": "${sourceDir}/build/linux-arm64-release",
             "cacheVariables": {
                 "VCPKG_HOST_TRIPLET": "arm64-linux",
