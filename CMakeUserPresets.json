@@ -641,6 +641,11 @@
             "name": "linux-dev-ci",
             "inherits": "base-test",
             "configurePreset": "linux-dev-ci"
+        },
+        {
+            "name": "mac-release-ci",
+            "inherits": "base-test",
+            "configurePreset": "mac-release-ci"
         }
     ]
 }
