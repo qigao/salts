@@ -326,7 +326,8 @@ cmeta_interface_desc_has_owning_method(const cmeta_interface_desc *desc) {
     CMETA_IFACE_DECODE(CMETA_IFACE_META,I,K,R,N,__VA_ARGS__)
 
 
-#define CMETA_INTERFACE(I, METHODS) \
+#define CMETA_INTERFACE(I, METHODS) CMETA_INTERFACE_I(I, METHODS)
+#define CMETA_INTERFACE_I(I, METHODS) \
     typedef struct I I; \
     typedef struct I##_vtable I##_vtable; \
     struct I##_vtable { \
@@ -338,7 +339,7 @@ cmeta_interface_desc_has_owning_method(const cmeta_interface_desc *desc) {
     METHODS(CMETA_IFACE_FUNCTION_ROW, I) \
     CMETA_LOCAL const cmeta_interface_method_desc I##_method_meta[] = { METHODS(CMETA_IFACE_META_ROW, I) }; \
     CMETA_LOCAL const cmeta_interface_desc I##_interface_meta = { \
-        sizeof(cmeta_interface_desc), #I, I##_method_meta, \
+        sizeof(cmeta_interface_desc), CMETA_PP_STRINGIFY(I), I##_method_meta, \
         sizeof(I##_method_meta)/sizeof(I##_method_meta[0]) \
     }; \
     METHODS(CMETA_IFACE_IMPL_ROW, I) \

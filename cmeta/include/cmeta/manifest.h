@@ -66,24 +66,27 @@ typedef struct cmeta_manifest {
  * but section syntax is deliberately not part of the public API.
  */
 #ifdef __cplusplus
-#define cmeta_entry(symbol) \
-    { #symbol, CMETA_MANIFEST_GENERIC, static_cast<const void *>(&(symbol)), UINT64_C(0), UINT32_C(0) },
 #define cmeta_manifest_entry(name_, kind_, descriptor_, fingerprint_, flags_) \
     { (name_), (kind_), static_cast<const void *>(descriptor_), (fingerprint_), (flags_) },
 #else
-#define cmeta_entry(symbol) \
-    { #symbol, CMETA_MANIFEST_GENERIC, &(symbol), UINT64_C(0), UINT32_C(0) },
 #define cmeta_manifest_entry(name_, kind_, descriptor_, fingerprint_, flags_) \
     { (name_), (kind_), (descriptor_), (fingerprint_), (flags_) },
 #endif
+#define cmeta_entry(symbol) \
+    cmeta_manifest_entry(CMETA_PP_STRINGIFY(symbol), CMETA_MANIFEST_GENERIC, \
+        &(symbol), UINT64_C(0), UINT32_C(0))
 
-#define cmeta_registry(name, entries_) \
-    static const cmeta_manifest_entry name##_cmeta_entries[] = { entries_ }; \
+#define CMETA_REGISTRY_DESC_(name, entries_, count_) \
     static const cmeta_manifest name = { \
-        #name, name##_cmeta_entries, \
-        sizeof(name##_cmeta_entries) / sizeof(name##_cmeta_entries[0]), \
+        CMETA_PP_STRINGIFY(name), (entries_), (count_), \
         CMETA_MANIFEST_FORMAT_VERSION \
     }
+#define cmeta_registry(name, entries_) \
+    static const cmeta_manifest_entry CMETA_PP_CAT(name,_cmeta_entries)[] = { entries_ }; \
+    CMETA_REGISTRY_DESC_(name, CMETA_PP_CAT(name,_cmeta_entries), \
+        sizeof(CMETA_PP_CAT(name,_cmeta_entries)) / sizeof(CMETA_PP_CAT(name,_cmeta_entries)[0]))
+/* Explicit empty discovery set; no sentinel entry or zero-length array. */
+#define cmeta_registry_empty(name) CMETA_REGISTRY_DESC_(name, NULL, 0u)
 
 typedef struct cmeta_abi_fingerprint_builder {
     uint64_t value;

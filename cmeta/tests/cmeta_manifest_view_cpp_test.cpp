@@ -1,5 +1,6 @@
 #include "cmeta_manifest_view_fixture.h"
 #include "tinytest.hpp"
+#include "cmeta_manifest_declaration_cases.h"
 
 cmeta_registry(cpp_view_manifest, cmeta_manifest_type_entry("int", &cmeta_type_int));
 suite("CMeta C++ validated manifest borrowing") {
