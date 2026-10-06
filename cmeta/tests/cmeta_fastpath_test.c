@@ -105,12 +105,14 @@ suite("CMeta static fastpath") {
         check_equal(cmeta_static_enable(&disabled), CMETA_OK);
         check_true(cmeta_static_branch(&disabled));
 #if CMETA_NATIVE_FASTPATH
+        bool (*volatile indirect)(const cmeta_static_key_state *) = cmeta_static_branch_native;
         check_true(atomic_is_lock_free(&disabled.enabled));
         check_true(atomic_is_lock_free(&fastpath_test_slot.target));
         check_true(atomic_is_lock_free(&fastpath_pair_slot.target));
         check_true(atomic_is_lock_free(&fastpath_callback_slot.target));
         check_true(cmeta_static_branch_native(&disabled));
         check_true(cmeta_static_branch_native(&enabled));
+        check_true(indirect(&enabled));
 #endif
         check_equal(cmeta_static_disable(&disabled), CMETA_OK);
         check_false(cmeta_static_branch(&disabled));

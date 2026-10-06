@@ -6,6 +6,8 @@ CMeta 提供 C11 原子 bool gate 和精确类型的原子函数指针槽。默�
 acquire load / release store 的可移植实现；没有反射热路径、JIT、可执行内存分配、
 运行时指令修改或词法析构汇编。`FunctionDecl` 同时生成函数指针 typedef，槽复用它，
 不另写签名。已有 descriptor 的布局和相等查询不变。
+ELF x86_64 汇编入口保留 ENDBR64 与 IBT/SHSTK property，目标调用仍由 C 编译器
+生成，不绕开现有控制流保护。没有降低项目的编译或链接安全选项。
 
 候选方案包括原子 C、固定汇编 load、运行时 direct-call patch。选择原子 C 作为
 语义基准，固定汇编只作显式选择的后端；patch 会引入 W^X、指令缓存同步、并发代码
@@ -103,4 +105,5 @@ native 增加一次普通外部 C 调用，可能比内联原子更慢。默认�
 
 参考：[Linux static keys](https://cdn.kernel.org/doc/html/latest/staging/static-keys.html)、
 [GCC atomic memory models](https://gcc.gnu.org/onlinedocs/gcc/_005f_005fatomic-Builtins.html)、
+[GNU linker CET properties](https://sourceware.org/binutils/docs/ld/Options.html)、
 [Arm A64 instruction set](https://documentation-service.arm.com/static/6245c734b059dc5ff9a8bdab)。

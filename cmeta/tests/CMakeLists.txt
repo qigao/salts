@@ -293,7 +293,7 @@ cmeta_add_compile_failure_test(cmeta_capabilities_flags_type_compile_fail
 cmeta_add_compile_failure_test(
   cmeta_fastpath_wrong_target_compile_fail
   compile_fail/cmeta_fastpath_wrong_target.c
-  "generic association|compatible type|controlling expression|C11 generic")
+  "generic association|compatible type|controlling expression|C11 generic|not compatible with any association")
 cmeta_add_compile_failure_test(
   cmeta_fastpath_missing_decl_compile_fail
   compile_fail/cmeta_fastpath_missing_decl.c
