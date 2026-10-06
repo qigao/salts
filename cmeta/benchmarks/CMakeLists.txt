@@ -10,7 +10,7 @@ endif()
 
 cmake_add_benchmark(cmeta_trace_benchmark
   SOURCES cmeta_trace_benchmark.c
-  LIBS Salts::CMeta Salts::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest Salts::Platform
   FOLDER "cmeta/benchmarks")
 set_target_properties(cmeta_trace_benchmark PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
