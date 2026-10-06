@@ -1,5 +1,5 @@
 #include <cmeta/manifest.h>
-#include <tinytinytest.h>
+#include "tinytest.h"
 
 static const int json_codec = 1;
 static const int xml_codec = 2;
@@ -9,7 +9,7 @@ cmeta_registry(codec_manifest,
     cmeta_entry(xml_codec)
 );
 
-spec("CMeta static manifest") {
+suite("CMeta static manifest") {
     it("builds immutable ordered registry tables") {
         check_equal(codec_manifest.format_version, CMETA_MANIFEST_FORMAT_VERSION);
         check_equal(codec_manifest.count, (size_t)2u);
