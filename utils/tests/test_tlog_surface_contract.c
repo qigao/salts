@@ -16,7 +16,7 @@ static void copy_view(char *dst, size_t dst_size, vstr value) {
   dst[n] = '\0';
 }
 
-static void surface_capture(const salts_log_entry_t *entry, void *user_data) {
+static void surface_capture(const cmeta_log_entry_t *entry, void *user_data) {
   (void)user_data;
   ++surface_count;
   copy_view(surface_message, sizeof(surface_message), entry->message);
@@ -26,7 +26,7 @@ static void surface_capture(const salts_log_entry_t *entry, void *user_data) {
 spec("TLog surface contract") {
   it("separates raw and formatted explicit-logger calls") {
     tlog_t *logger = tlog_create(NULL);
-    salts_log_sink_t *sink = salts_sink_callback_create(surface_capture, NULL);
+    cmeta_log_sink_t *sink = cmeta_sink_callback_create(surface_capture, NULL);
     check_not_null(logger);
     check_not_null(sink);
     check_equal(tlog_add_sink(logger, sink), 0);
@@ -44,7 +44,7 @@ spec("TLog surface contract") {
 
   it("separates raw and formatted default-logger calls") {
     tlog_t *logger = tlog_create(NULL);
-    salts_log_sink_t *sink = salts_sink_callback_create(surface_capture, NULL);
+    cmeta_log_sink_t *sink = cmeta_sink_callback_create(surface_capture, NULL);
     check_not_null(logger);
     check_not_null(sink);
     check_equal(tlog_add_sink(logger, sink), 0);

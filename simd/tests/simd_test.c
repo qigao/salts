@@ -1,29 +1,29 @@
 #include <salts/simd.h>
 
-#include <assert.h>
+#include <tinytest.h>
 #include <stdint.h>
 #include <string.h>
 
 static void test_descriptors(void) {
     const cmeta_vector_desc *desc;
 
-    assert(sizeof(salts_v128) == 16u);
-    assert(cmeta_builtin_type_find("i32x4") == &cmeta_type_i32x4);
-    assert(cmeta_builtin_type_find("b32x4") == &cmeta_type_b32x4);
+    check(sizeof(cmeta_v128) == 16u);
+    check(cmeta_builtin_type_find("i32x4") == &cmeta_type_i32x4);
+    check(cmeta_builtin_type_find("b32x4") == &cmeta_type_b32x4);
 
     desc = cmeta_vector_desc_for_type(&cmeta_type_i32x4);
-    assert(desc == &cmeta_vector_i32x4);
-    assert(cmeta_vector_desc_valid(desc));
-    assert(desc->lane_bits == 32u);
-    assert(desc->lane_count == 4u);
-    assert(!desc->is_mask);
-    assert(cmeta_type_is_vector(desc->type));
+    check(desc == &cmeta_vector_i32x4);
+    check(cmeta_vector_desc_valid(desc));
+    check(desc->lane_bits == 32u);
+    check(desc->lane_count == 4u);
+    check(!desc->is_mask);
+    check(cmeta_type_is_vector(desc->type));
 
     desc = cmeta_vector_desc_for_type(&cmeta_type_b32x4);
-    assert(desc == &cmeta_vector_b32x4);
-    assert(cmeta_vector_desc_valid(desc));
-    assert(desc->is_mask);
-    assert(cmeta_type_is_mask(desc->type));
+    check(desc == &cmeta_vector_b32x4);
+    check(cmeta_vector_desc_valid(desc));
+    check(desc->is_mask);
+    check(cmeta_type_is_mask(desc->type));
 }
 
 
@@ -44,7 +44,7 @@ static void test_load_extend(void) {
     const uint32_t u32_source[2] = {UINT32_MAX, UINT32_C(0x80000000)};
     const uint64_t u64_expected[2] = {UINT32_MAX, UINT32_C(0x80000000)};
 
-    salts_v128 result = {{0}};
+    cmeta_v128 result = {{0}};
     int16_t i16_actual[8] = {0};
     uint16_t u16_actual[8] = {0};
     int32_t i32_actual[4] = {0};
@@ -52,37 +52,37 @@ static void test_load_extend(void) {
     int64_t i64_actual[2] = {0};
     uint64_t u64_actual[2] = {0};
 
-    assert(salts_simd_load_extend(
+    check(cmeta_simd_load_extend(
         &cmeta_vector_i16x8, &result, i8_source));
-    salts_simd_v128_store(i16_actual, &result);
-    assert(memcmp(i16_actual, i16_expected, sizeof(i16_actual)) == 0);
+    cmeta_simd_v128_store(i16_actual, &result);
+    check(memcmp(i16_actual, i16_expected, sizeof(i16_actual)) == 0);
 
-    assert(salts_simd_load_extend(
+    check(cmeta_simd_load_extend(
         &cmeta_vector_u16x8, &result, u8_source));
-    salts_simd_v128_store(u16_actual, &result);
-    assert(memcmp(u16_actual, u16_expected, sizeof(u16_actual)) == 0);
+    cmeta_simd_v128_store(u16_actual, &result);
+    check(memcmp(u16_actual, u16_expected, sizeof(u16_actual)) == 0);
 
-    assert(salts_simd_load_extend(
+    check(cmeta_simd_load_extend(
         &cmeta_vector_i32x4, &result, i16_source));
-    salts_simd_v128_store(i32_actual, &result);
-    assert(memcmp(i32_actual, i32_expected, sizeof(i32_actual)) == 0);
+    cmeta_simd_v128_store(i32_actual, &result);
+    check(memcmp(i32_actual, i32_expected, sizeof(i32_actual)) == 0);
 
-    assert(salts_simd_load_extend(
+    check(cmeta_simd_load_extend(
         &cmeta_vector_u32x4, &result, u16_source));
-    salts_simd_v128_store(u32_actual, &result);
-    assert(memcmp(u32_actual, u32_expected, sizeof(u32_actual)) == 0);
+    cmeta_simd_v128_store(u32_actual, &result);
+    check(memcmp(u32_actual, u32_expected, sizeof(u32_actual)) == 0);
 
-    assert(salts_simd_load_extend(
+    check(cmeta_simd_load_extend(
         &cmeta_vector_i64x2, &result, i32_source));
-    salts_simd_v128_store(i64_actual, &result);
-    assert(memcmp(i64_actual, i64_expected, sizeof(i64_actual)) == 0);
+    cmeta_simd_v128_store(i64_actual, &result);
+    check(memcmp(i64_actual, i64_expected, sizeof(i64_actual)) == 0);
 
-    assert(salts_simd_load_extend(
+    check(cmeta_simd_load_extend(
         &cmeta_vector_u64x2, &result, u32_source));
-    salts_simd_v128_store(u64_actual, &result);
-    assert(memcmp(u64_actual, u64_expected, sizeof(u64_actual)) == 0);
+    cmeta_simd_v128_store(u64_actual, &result);
+    check(memcmp(u64_actual, u64_expected, sizeof(u64_actual)) == 0);
 
-    assert(!salts_simd_load_extend(
+    check(!cmeta_simd_load_extend(
         &cmeta_vector_i8x16, &result, i8_source));
 }
 
@@ -95,68 +95,68 @@ static void test_load_splat_and_zero(void) {
     uint16_t words[8] = {0};
     uint32_t dwords[4] = {0};
     uint64_t qwords[2] = {0};
-    salts_v128 value = {{0}};
+    cmeta_v128 value = {{0}};
     size_t i;
 
-    assert(salts_simd_load_splat(
+    check(cmeta_simd_load_splat(
         &cmeta_vector_u8x16, &value, &byte));
-    salts_simd_v128_store(bytes, &value);
-    for (i = 0u; i < 16u; ++i) assert(bytes[i] == byte);
+    cmeta_simd_v128_store(bytes, &value);
+    for (i = 0u; i < 16u; ++i) check(bytes[i] == byte);
 
-    assert(salts_simd_load_splat(
+    check(cmeta_simd_load_splat(
         &cmeta_vector_u16x8, &value, &word));
-    salts_simd_v128_store(words, &value);
-    for (i = 0u; i < 8u; ++i) assert(words[i] == word);
+    cmeta_simd_v128_store(words, &value);
+    for (i = 0u; i < 8u; ++i) check(words[i] == word);
 
-    assert(salts_simd_load_splat(
+    check(cmeta_simd_load_splat(
         &cmeta_vector_u32x4, &value, &dword));
-    salts_simd_v128_store(dwords, &value);
-    for (i = 0u; i < 4u; ++i) assert(dwords[i] == dword);
+    cmeta_simd_v128_store(dwords, &value);
+    for (i = 0u; i < 4u; ++i) check(dwords[i] == dword);
 
-    assert(salts_simd_load_splat(
+    check(cmeta_simd_load_splat(
         &cmeta_vector_u64x2, &value, &qword));
-    salts_simd_v128_store(qwords, &value);
-    assert(qwords[0] == qword && qwords[1] == qword);
+    cmeta_simd_v128_store(qwords, &value);
+    check(qwords[0] == qword && qwords[1] == qword);
 
     memset(bytes, 0xff, sizeof(bytes));
-    assert(salts_simd_load_zero(32u, &value, &dword));
-    salts_simd_v128_store(bytes, &value);
-    assert(memcmp(bytes, &dword, sizeof(dword)) == 0);
-    for (i = sizeof(dword); i < sizeof(bytes); ++i) assert(bytes[i] == 0u);
+    check(cmeta_simd_load_zero(32u, &value, &dword));
+    cmeta_simd_v128_store(bytes, &value);
+    check(memcmp(bytes, &dword, sizeof(dword)) == 0);
+    for (i = sizeof(dword); i < sizeof(bytes); ++i) check(bytes[i] == 0u);
 
     memset(bytes, 0xff, sizeof(bytes));
-    assert(salts_simd_load_zero(64u, &value, &qword));
-    salts_simd_v128_store(bytes, &value);
-    assert(memcmp(bytes, &qword, sizeof(qword)) == 0);
-    for (i = sizeof(qword); i < sizeof(bytes); ++i) assert(bytes[i] == 0u);
+    check(cmeta_simd_load_zero(64u, &value, &qword));
+    cmeta_simd_v128_store(bytes, &value);
+    check(memcmp(bytes, &qword, sizeof(qword)) == 0);
+    for (i = sizeof(qword); i < sizeof(bytes); ++i) check(bytes[i] == 0u);
 
-    assert(!salts_simd_load_zero(16u, &value, &word));
+    check(!cmeta_simd_load_zero(16u, &value, &word));
 }
 
 static void test_lane_extract_replace(void) {
     const int16_t original[8] = {10, 20, 30, 40, 50, 60, 70, 80};
     const int16_t expected[8] = {10, 20, 30, -1234, 50, 60, 70, 80};
     int16_t actual[8] = {0};
-    salts_v128 value = {{0}};
-    salts_v128 replaced = {{0}};
-    salts_simd_scalar scalar = {0};
-    salts_simd_scalar extracted = {0};
+    cmeta_v128 value = {{0}};
+    cmeta_v128 replaced = {{0}};
+    cmeta_simd_scalar scalar = {0};
+    cmeta_simd_scalar extracted = {0};
 
-    salts_simd_v128_load(&value, original);
+    cmeta_simd_v128_load(&value, original);
 
     scalar.i16 = -1234;
-    assert(salts_simd_replace_lane(
+    check(cmeta_simd_replace_lane(
         &cmeta_vector_i16x8, &replaced, &value, 3u, scalar));
-    salts_simd_v128_store(actual, &replaced);
-    assert(memcmp(actual, expected, sizeof(actual)) == 0);
+    cmeta_simd_v128_store(actual, &replaced);
+    check(memcmp(actual, expected, sizeof(actual)) == 0);
 
-    assert(salts_simd_extract_lane(
+    check(cmeta_simd_extract_lane(
         &cmeta_vector_i16x8, &replaced, 3u, &extracted));
-    assert(extracted.i16 == -1234);
+    check(extracted.i16 == -1234);
 
-    assert(!salts_simd_replace_lane(
+    check(!cmeta_simd_replace_lane(
         &cmeta_vector_i16x8, &replaced, &value, 8u, scalar));
-    assert(!salts_simd_extract_lane(
+    check(!cmeta_simd_extract_lane(
         &cmeta_vector_i16x8, &value, 8u, &extracted));
 
     {
@@ -164,10 +164,10 @@ static void test_lane_extract_replace(void) {
             0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u,
             8u, 9u, 10u, 11u, 12u, 13u, 14u, 255u
         };
-        salts_simd_v128_load(&value, unsigned_bytes);
-        assert(salts_simd_extract_lane(
+        cmeta_simd_v128_load(&value, unsigned_bytes);
+        check(cmeta_simd_extract_lane(
             &cmeta_vector_u8x16, &value, 15u, &extracted));
-        assert(extracted.u8 == 255u);
+        check(extracted.u8 == 255u);
     }
 }
 
@@ -198,26 +198,26 @@ static void test_shuffle_and_swizzle(void) {
     };
     uint8_t actual[16] = {0};
     uint8_t bad_lanes[16];
-    salts_v128 left = {{0}}, right = {{0}}, indices = {{0}}, result = {{0}};
+    cmeta_v128 left = {{0}}, right = {{0}}, indices = {{0}}, result = {{0}};
 
-    salts_simd_v128_load(&left, left_data);
-    salts_simd_v128_load(&right, right_data);
+    cmeta_simd_v128_load(&left, left_data);
+    cmeta_simd_v128_load(&right, right_data);
 
-    assert(salts_simd_shuffle_bytes(
+    check(cmeta_simd_shuffle_bytes(
         &result, &left, &right, lanes));
-    salts_simd_v128_store(actual, &result);
-    assert(memcmp(actual, expected_shuffle, sizeof(actual)) == 0);
+    cmeta_simd_v128_store(actual, &result);
+    check(memcmp(actual, expected_shuffle, sizeof(actual)) == 0);
 
     memcpy(bad_lanes, lanes, sizeof(bad_lanes));
     bad_lanes[7] = 32u;
-    assert(!salts_simd_shuffle_bytes(
+    check(!cmeta_simd_shuffle_bytes(
         &result, &left, &right, bad_lanes));
 
-    salts_simd_v128_load(&indices, swizzle_index_data);
-    assert(salts_simd_swizzle_bytes(
+    cmeta_simd_v128_load(&indices, swizzle_index_data);
+    check(cmeta_simd_swizzle_bytes(
         &result, &left, &indices));
-    salts_simd_v128_store(actual, &result);
-    assert(memcmp(actual, expected_swizzle, sizeof(actual)) == 0);
+    cmeta_simd_v128_store(actual, &result);
+    check(memcmp(actual, expected_swizzle, sizeof(actual)) == 0);
 }
 
 
@@ -238,34 +238,34 @@ static void test_advanced_unary(void) {
     int32_t int_actual[4] = {0};
     float float_actual[4] = {0};
     uint8_t pop_actual[16] = {0};
-    salts_v128 value = {{0}}, result = {{0}};
+    cmeta_v128 value = {{0}}, result = {{0}};
 
-    salts_simd_v128_load(&value, ints);
-    assert(salts_simd_unary(
+    cmeta_simd_v128_load(&value, ints);
+    check(cmeta_simd_unary(
         &cmeta_vector_i32x4, SALTS_SIMD_UNARY_ABS,
         &result, &value));
-    salts_simd_v128_store(int_actual, &result);
-    assert(memcmp(int_actual, expected_abs, sizeof(int_actual)) == 0);
+    cmeta_simd_v128_store(int_actual, &result);
+    check(memcmp(int_actual, expected_abs, sizeof(int_actual)) == 0);
 
-    assert(salts_simd_unary(
+    check(cmeta_simd_unary(
         &cmeta_vector_i32x4, SALTS_SIMD_UNARY_NEG,
         &result, &value));
-    salts_simd_v128_store(int_actual, &result);
-    assert(memcmp(int_actual, expected_neg, sizeof(int_actual)) == 0);
+    cmeta_simd_v128_store(int_actual, &result);
+    check(memcmp(int_actual, expected_neg, sizeof(int_actual)) == 0);
 
-    salts_simd_v128_load(&value, floats);
-    assert(salts_simd_unary(
+    cmeta_simd_v128_load(&value, floats);
+    check(cmeta_simd_unary(
         &cmeta_vector_f32x4, SALTS_SIMD_UNARY_SQRT,
         &result, &value));
-    salts_simd_v128_store(float_actual, &result);
-    assert(memcmp(float_actual, expected_sqrt, sizeof(float_actual)) == 0);
+    cmeta_simd_v128_store(float_actual, &result);
+    check(memcmp(float_actual, expected_sqrt, sizeof(float_actual)) == 0);
 
-    salts_simd_v128_load(&value, pop_source);
-    assert(salts_simd_unary(
+    cmeta_simd_v128_load(&value, pop_source);
+    check(cmeta_simd_unary(
         &cmeta_vector_u8x16, SALTS_SIMD_UNARY_POPCOUNT,
         &result, &value));
-    salts_simd_v128_store(pop_actual, &result);
-    assert(memcmp(pop_actual, pop_expected, sizeof(pop_actual)) == 0);
+    cmeta_simd_v128_store(pop_actual, &result);
+    check(memcmp(pop_actual, pop_expected, sizeof(pop_actual)) == 0);
 }
 
 static void test_advanced_min_max(void) {
@@ -279,35 +279,35 @@ static void test_advanced_min_max(void) {
     const uint32_t max_u[4] = {UINT32_MAX, 2u, 8u, 9u};
     int32_t actual_s[4] = {0};
     uint32_t actual_u[4] = {0};
-    salts_v128 left = {{0}}, right = {{0}}, result = {{0}};
+    cmeta_v128 left = {{0}}, right = {{0}}, result = {{0}};
 
-    salts_simd_v128_load(&left, left_s);
-    salts_simd_v128_load(&right, right_s);
-    assert(salts_simd_binary(
+    cmeta_simd_v128_load(&left, left_s);
+    cmeta_simd_v128_load(&right, right_s);
+    check(cmeta_simd_binary(
         &cmeta_vector_i32x4, SALTS_SIMD_BINARY_MIN,
         &result, &left, &right));
-    salts_simd_v128_store(actual_s, &result);
-    assert(memcmp(actual_s, min_s, sizeof(actual_s)) == 0);
+    cmeta_simd_v128_store(actual_s, &result);
+    check(memcmp(actual_s, min_s, sizeof(actual_s)) == 0);
 
-    assert(salts_simd_binary(
+    check(cmeta_simd_binary(
         &cmeta_vector_i32x4, SALTS_SIMD_BINARY_MAX,
         &result, &left, &right));
-    salts_simd_v128_store(actual_s, &result);
-    assert(memcmp(actual_s, max_s, sizeof(actual_s)) == 0);
+    cmeta_simd_v128_store(actual_s, &result);
+    check(memcmp(actual_s, max_s, sizeof(actual_s)) == 0);
 
-    salts_simd_v128_load(&left, left_u);
-    salts_simd_v128_load(&right, right_u);
-    assert(salts_simd_binary(
+    cmeta_simd_v128_load(&left, left_u);
+    cmeta_simd_v128_load(&right, right_u);
+    check(cmeta_simd_binary(
         &cmeta_vector_u32x4, SALTS_SIMD_BINARY_MIN,
         &result, &left, &right));
-    salts_simd_v128_store(actual_u, &result);
-    assert(memcmp(actual_u, min_u, sizeof(actual_u)) == 0);
+    cmeta_simd_v128_store(actual_u, &result);
+    check(memcmp(actual_u, min_u, sizeof(actual_u)) == 0);
 
-    assert(salts_simd_binary(
+    check(cmeta_simd_binary(
         &cmeta_vector_u32x4, SALTS_SIMD_BINARY_MAX,
         &result, &left, &right));
-    salts_simd_v128_store(actual_u, &result);
-    assert(memcmp(actual_u, max_u, sizeof(actual_u)) == 0);
+    cmeta_simd_v128_store(actual_u, &result);
+    check(memcmp(actual_u, max_u, sizeof(actual_u)) == 0);
 }
 
 static void test_pseudo_min_max(void) {
@@ -319,27 +319,27 @@ static void test_pseudo_min_max(void) {
     const double expected_pmax_f64[2] = {9.0, -2.0};
     float actual_f32[4] = {0};
     double actual_f64[2] = {0};
-    salts_v128 left = {{0}}, right = {{0}}, result = {{0}};
+    cmeta_v128 left = {{0}}, right = {{0}}, result = {{0}};
 
-    salts_simd_v128_load(&left, left_f32);
-    salts_simd_v128_load(&right, right_f32);
-    assert(salts_simd_binary(
+    cmeta_simd_v128_load(&left, left_f32);
+    cmeta_simd_v128_load(&right, right_f32);
+    check(cmeta_simd_binary(
         &cmeta_vector_f32x4, SALTS_SIMD_BINARY_PSEUDO_MIN,
         &result, &left, &right));
-    salts_simd_v128_store(actual_f32, &result);
-    assert(memcmp(
+    cmeta_simd_v128_store(actual_f32, &result);
+    check(memcmp(
         actual_f32, expected_pmin_f32, sizeof(actual_f32)) == 0);
 
-    salts_simd_v128_load(&left, left_f64);
-    salts_simd_v128_load(&right, right_f64);
-    assert(salts_simd_binary(
+    cmeta_simd_v128_load(&left, left_f64);
+    cmeta_simd_v128_load(&right, right_f64);
+    check(cmeta_simd_binary(
         &cmeta_vector_f64x2, SALTS_SIMD_BINARY_PSEUDO_MAX,
         &result, &left, &right));
-    salts_simd_v128_store(actual_f64, &result);
-    assert(memcmp(
+    cmeta_simd_v128_store(actual_f64, &result);
+    check(memcmp(
         actual_f64, expected_pmax_f64, sizeof(actual_f64)) == 0);
 
-    assert(!salts_simd_binary(
+    check(!cmeta_simd_binary(
         &cmeta_vector_i32x4, SALTS_SIMD_BINARY_PSEUDO_MIN,
         &result, &left, &right));
 }
@@ -371,23 +371,23 @@ static void test_saturating_binary(void) {
     };
     int8_t actual_s[16] = {0};
     uint8_t actual_u[16] = {0};
-    salts_v128 left = {{0}}, right = {{0}}, result = {{0}};
+    cmeta_v128 left = {{0}}, right = {{0}}, result = {{0}};
 
-    salts_simd_v128_load(&left, left_s);
-    salts_simd_v128_load(&right, right_s);
-    assert(salts_simd_saturating_binary(
+    cmeta_simd_v128_load(&left, left_s);
+    cmeta_simd_v128_load(&right, right_s);
+    check(cmeta_simd_saturating_binary(
         &cmeta_vector_i8x16, SALTS_SIMD_SATURATING_ADD,
         &result, &left, &right));
-    salts_simd_v128_store(actual_s, &result);
-    assert(memcmp(actual_s, add_s, sizeof(actual_s)) == 0);
+    cmeta_simd_v128_store(actual_s, &result);
+    check(memcmp(actual_s, add_s, sizeof(actual_s)) == 0);
 
-    salts_simd_v128_load(&left, left_u);
-    salts_simd_v128_load(&right, right_u);
-    assert(salts_simd_saturating_binary(
+    cmeta_simd_v128_load(&left, left_u);
+    cmeta_simd_v128_load(&right, right_u);
+    check(cmeta_simd_saturating_binary(
         &cmeta_vector_u8x16, SALTS_SIMD_SATURATING_SUB,
         &result, &left, &right));
-    salts_simd_v128_store(actual_u, &result);
-    assert(memcmp(actual_u, sub_u, sizeof(actual_u)) == 0);
+    cmeta_simd_v128_store(actual_u, &result);
+    check(memcmp(actual_u, sub_u, sizeof(actual_u)) == 0);
 }
 
 static void test_reductions(void) {
@@ -398,35 +398,35 @@ static void test_reductions(void) {
         -5, 5, -6, 6, -7, 7, -8, 8
     };
     uint32_t reduced = 0u;
-    salts_v128 value = {{0}};
+    cmeta_v128 value = {{0}};
 
-    salts_simd_v128_load(&value, all_nonzero);
-    assert(salts_simd_reduce(
+    cmeta_simd_v128_load(&value, all_nonzero);
+    check(cmeta_simd_reduce(
         &cmeta_vector_i16x8, SALTS_SIMD_REDUCE_ALL_TRUE,
         &value, &reduced));
-    assert(reduced == 1u);
+    check(reduced == 1u);
 
-    salts_simd_v128_load(&value, with_zero);
-    assert(salts_simd_reduce(
+    cmeta_simd_v128_load(&value, with_zero);
+    check(cmeta_simd_reduce(
         &cmeta_vector_i16x8, SALTS_SIMD_REDUCE_ALL_TRUE,
         &value, &reduced));
-    assert(reduced == 0u);
-    assert(salts_simd_reduce(
+    check(reduced == 0u);
+    check(cmeta_simd_reduce(
         &cmeta_vector_i16x8, SALTS_SIMD_REDUCE_ANY_TRUE,
         &value, &reduced));
-    assert(reduced == 1u);
+    check(reduced == 1u);
 
-    salts_simd_v128_load(&value, bitmask_lanes);
-    assert(salts_simd_reduce(
+    cmeta_simd_v128_load(&value, bitmask_lanes);
+    check(cmeta_simd_reduce(
         &cmeta_vector_i8x16, SALTS_SIMD_REDUCE_BITMASK,
         &value, &reduced));
-    assert(reduced == UINT32_C(0x5555));
+    check(reduced == UINT32_C(0x5555));
 
     memset(&value, 0, sizeof(value));
-    assert(salts_simd_reduce(
+    check(cmeta_simd_reduce(
         &cmeta_vector_i8x16, SALTS_SIMD_REDUCE_ANY_TRUE,
         &value, &reduced));
-    assert(reduced == 0u);
+    check(reduced == 0u);
 }
 
 
@@ -469,45 +469,45 @@ static void test_widen_narrow_families(void) {
 
     int8_t narrow_actual[16] = {0};
     int16_t wide_actual[8] = {0};
-    salts_v128 a = {{0}}, b = {{0}}, result = {{0}};
+    cmeta_v128 a = {{0}}, b = {{0}}, result = {{0}};
 
-    salts_simd_v128_load(&a, narrow_low);
-    salts_simd_v128_load(&b, narrow_high);
-    assert(salts_simd_narrow(
+    cmeta_simd_v128_load(&a, narrow_low);
+    cmeta_simd_v128_load(&b, narrow_high);
+    check(cmeta_simd_narrow(
         &cmeta_vector_i8x16, &result, &a, &b));
-    salts_simd_v128_store(narrow_actual, &result);
-    assert(memcmp(
+    cmeta_simd_v128_store(narrow_actual, &result);
+    check(memcmp(
         narrow_actual, narrow_expected, sizeof(narrow_actual)) == 0);
 
-    salts_simd_v128_load(&a, extend_source);
-    assert(salts_simd_extend_half(
+    cmeta_simd_v128_load(&a, extend_source);
+    check(cmeta_simd_extend_half(
         &cmeta_vector_i16x8, SALTS_SIMD_HALF_HIGH,
         &result, &a));
-    salts_simd_v128_store(wide_actual, &result);
-    assert(memcmp(
+    cmeta_simd_v128_store(wide_actual, &result);
+    check(memcmp(
         wide_actual, extend_expected, sizeof(wide_actual)) == 0);
 
-    salts_simd_v128_load(&a, mul_left);
-    salts_simd_v128_load(&b, mul_right);
-    assert(salts_simd_extmul_half(
+    cmeta_simd_v128_load(&a, mul_left);
+    cmeta_simd_v128_load(&b, mul_right);
+    check(cmeta_simd_extmul_half(
         &cmeta_vector_i16x8, SALTS_SIMD_HALF_HIGH,
         &result, &a, &b));
-    salts_simd_v128_store(wide_actual, &result);
-    assert(memcmp(
+    cmeta_simd_v128_store(wide_actual, &result);
+    check(memcmp(
         wide_actual, mul_expected, sizeof(wide_actual)) == 0);
 
-    salts_simd_v128_load(&a, pairwise_source);
-    assert(salts_simd_extadd_pairwise(
+    cmeta_simd_v128_load(&a, pairwise_source);
+    check(cmeta_simd_extadd_pairwise(
         &cmeta_vector_i16x8, &result, &a));
-    salts_simd_v128_store(wide_actual, &result);
-    assert(memcmp(
+    cmeta_simd_v128_store(wide_actual, &result);
+    check(memcmp(
         wide_actual, pairwise_expected, sizeof(wide_actual)) == 0);
 
-    assert(!salts_simd_extend_half(
+    check(!cmeta_simd_extend_half(
         &cmeta_vector_f32x4, SALTS_SIMD_HALF_LOW,
         &result, &a));
-    assert(!salts_simd_extmul_half(
-        &cmeta_vector_i16x8, (salts_simd_half)99,
+    check(!cmeta_simd_extmul_half(
+        &cmeta_vector_i16x8, (cmeta_simd_half)99,
         &result, &a, &b));
 }
 
@@ -544,47 +544,47 @@ static void test_rounding_and_residual_binary(void) {
     float f32_actual[4] = {0};
     uint8_t avg_actual[16] = {0};
     uint32_t andnot_actual[4] = {0};
-    salts_v128 a = {{0}}, b = {{0}}, result = {{0}};
+    cmeta_v128 a = {{0}}, b = {{0}}, result = {{0}};
 
-    salts_simd_v128_load(&a, f32_source);
-    assert(salts_simd_unary(
+    cmeta_simd_v128_load(&a, f32_source);
+    check(cmeta_simd_unary(
         &cmeta_vector_f32x4, SALTS_SIMD_UNARY_CEIL,
         &result, &a));
-    salts_simd_v128_store(f32_actual, &result);
-    assert(memcmp(f32_actual, ceil_expected, sizeof(f32_actual)) == 0);
+    cmeta_simd_v128_store(f32_actual, &result);
+    check(memcmp(f32_actual, ceil_expected, sizeof(f32_actual)) == 0);
 
-    assert(salts_simd_unary(
+    check(cmeta_simd_unary(
         &cmeta_vector_f32x4, SALTS_SIMD_UNARY_FLOOR,
         &result, &a));
-    salts_simd_v128_store(f32_actual, &result);
-    assert(memcmp(f32_actual, floor_expected, sizeof(f32_actual)) == 0);
+    cmeta_simd_v128_store(f32_actual, &result);
+    check(memcmp(f32_actual, floor_expected, sizeof(f32_actual)) == 0);
 
-    assert(salts_simd_unary(
+    check(cmeta_simd_unary(
         &cmeta_vector_f32x4, SALTS_SIMD_UNARY_TRUNC,
         &result, &a));
-    salts_simd_v128_store(f32_actual, &result);
-    assert(memcmp(f32_actual, trunc_expected, sizeof(f32_actual)) == 0);
+    cmeta_simd_v128_store(f32_actual, &result);
+    check(memcmp(f32_actual, trunc_expected, sizeof(f32_actual)) == 0);
 
-    salts_simd_v128_load(&a, avg_left);
-    salts_simd_v128_load(&b, avg_right);
-    assert(salts_simd_binary(
+    cmeta_simd_v128_load(&a, avg_left);
+    cmeta_simd_v128_load(&b, avg_right);
+    check(cmeta_simd_binary(
         &cmeta_vector_u8x16,
         SALTS_SIMD_BINARY_AVERAGE_ROUND_UNSIGNED,
         &result, &a, &b));
-    salts_simd_v128_store(avg_actual, &result);
-    assert(memcmp(avg_actual, avg_expected, sizeof(avg_actual)) == 0);
+    cmeta_simd_v128_store(avg_actual, &result);
+    check(memcmp(avg_actual, avg_expected, sizeof(avg_actual)) == 0);
 
-    salts_simd_v128_load(&a, andnot_left);
-    salts_simd_v128_load(&b, andnot_right);
-    assert(salts_simd_binary(
+    cmeta_simd_v128_load(&a, andnot_left);
+    cmeta_simd_v128_load(&b, andnot_right);
+    check(cmeta_simd_binary(
         &cmeta_vector_u32x4,
         SALTS_SIMD_BINARY_AND_NOT,
         &result, &a, &b));
-    salts_simd_v128_store(andnot_actual, &result);
-    assert(memcmp(
+    cmeta_simd_v128_store(andnot_actual, &result);
+    check(memcmp(
         andnot_actual, andnot_expected, sizeof(andnot_actual)) == 0);
 
-    assert(!salts_simd_binary(
+    check(!cmeta_simd_binary(
         &cmeta_vector_i8x16,
         SALTS_SIMD_BINARY_AVERAGE_ROUND_UNSIGNED,
         &result, &a, &b));
@@ -614,25 +614,25 @@ static void test_q15_and_dot(void) {
     };
     int16_t q15_actual[8] = {0};
     int32_t dot_actual[4] = {0};
-    salts_v128 left = {{0}}, right = {{0}}, result = {{0}};
+    cmeta_v128 left = {{0}}, right = {{0}}, result = {{0}};
 
-    salts_simd_v128_load(&left, q15_left);
-    salts_simd_v128_load(&right, q15_right);
-    assert(salts_simd_q15mulr_sat(
+    cmeta_simd_v128_load(&left, q15_left);
+    cmeta_simd_v128_load(&right, q15_right);
+    check(cmeta_simd_q15mulr_sat(
         &cmeta_vector_i16x8, &result, &left, &right));
-    salts_simd_v128_store(q15_actual, &result);
-    assert(memcmp(q15_actual, q15_expected, sizeof(q15_actual)) == 0);
+    cmeta_simd_v128_store(q15_actual, &result);
+    check(memcmp(q15_actual, q15_expected, sizeof(q15_actual)) == 0);
 
-    salts_simd_v128_load(&left, dot_left);
-    salts_simd_v128_load(&right, dot_right);
-    assert(salts_simd_dot_pairwise(
+    cmeta_simd_v128_load(&left, dot_left);
+    cmeta_simd_v128_load(&right, dot_right);
+    check(cmeta_simd_dot_pairwise(
         &cmeta_vector_i32x4, &result, &left, &right));
-    salts_simd_v128_store(dot_actual, &result);
-    assert(memcmp(dot_actual, dot_expected, sizeof(dot_actual)) == 0);
+    cmeta_simd_v128_store(dot_actual, &result);
+    check(memcmp(dot_actual, dot_expected, sizeof(dot_actual)) == 0);
 
-    assert(!salts_simd_q15mulr_sat(
+    check(!cmeta_simd_q15mulr_sat(
         &cmeta_vector_u16x8, &result, &left, &right));
-    assert(!salts_simd_dot_pairwise(
+    check(!cmeta_simd_dot_pairwise(
         &cmeta_vector_u32x4, &result, &left, &right));
 }
 
@@ -664,89 +664,89 @@ static void test_numeric_conversions(void) {
     uint32_t u32_actual[4] = {0};
     float f32_actual[4] = {0};
     double f64_actual[2] = {0};
-    salts_v128 value = {{0}}, result = {{0}};
+    cmeta_v128 value = {{0}}, result = {{0}};
 
-    salts_simd_v128_load(&value, trunc_f32);
-    assert(salts_simd_convert(
+    cmeta_simd_v128_load(&value, trunc_f32);
+    check(cmeta_simd_convert(
         &cmeta_vector_i32x4, &cmeta_vector_f32x4,
         SALTS_SIMD_CONVERT_TRUNC_SAT, SALTS_SIMD_LANES_FULL,
         &result, &value));
-    salts_simd_v128_store(i32_actual, &result);
-    assert(memcmp(
+    cmeta_simd_v128_store(i32_actual, &result);
+    check(memcmp(
         i32_actual, trunc_i32_expected, sizeof(i32_actual)) == 0);
 
-    salts_simd_v128_load(&value, trunc_u32_source);
-    assert(salts_simd_convert(
+    cmeta_simd_v128_load(&value, trunc_u32_source);
+    check(cmeta_simd_convert(
         &cmeta_vector_u32x4, &cmeta_vector_f32x4,
         SALTS_SIMD_CONVERT_TRUNC_SAT, SALTS_SIMD_LANES_FULL,
         &result, &value));
-    salts_simd_v128_store(u32_actual, &result);
-    assert(memcmp(
+    cmeta_simd_v128_store(u32_actual, &result);
+    check(memcmp(
         u32_actual, trunc_u32_expected, sizeof(u32_actual)) == 0);
 
-    salts_simd_v128_load(&value, trunc_f64);
-    assert(salts_simd_convert(
+    cmeta_simd_v128_load(&value, trunc_f64);
+    check(cmeta_simd_convert(
         &cmeta_vector_i32x4, &cmeta_vector_f64x2,
         SALTS_SIMD_CONVERT_TRUNC_SAT, SALTS_SIMD_LANES_LOW_ZERO,
         &result, &value));
-    salts_simd_v128_store(i32_actual, &result);
-    assert(memcmp(
+    cmeta_simd_v128_store(i32_actual, &result);
+    check(memcmp(
         i32_actual, trunc_f64_expected, sizeof(i32_actual)) == 0);
 
-    salts_simd_v128_load(&value, convert_i32);
-    assert(salts_simd_convert(
+    cmeta_simd_v128_load(&value, convert_i32);
+    check(cmeta_simd_convert(
         &cmeta_vector_f32x4, &cmeta_vector_i32x4,
         SALTS_SIMD_CONVERT_NUMERIC, SALTS_SIMD_LANES_FULL,
         &result, &value));
-    salts_simd_v128_store(f32_actual, &result);
-    assert(memcmp(
+    cmeta_simd_v128_store(f32_actual, &result);
+    check(memcmp(
         f32_actual, convert_f32_expected, sizeof(f32_actual)) == 0);
 
-    salts_simd_v128_load(&value, convert_u32);
-    assert(salts_simd_convert(
+    cmeta_simd_v128_load(&value, convert_u32);
+    check(cmeta_simd_convert(
         &cmeta_vector_f64x2, &cmeta_vector_u32x4,
         SALTS_SIMD_CONVERT_NUMERIC, SALTS_SIMD_LANES_LOW,
         &result, &value));
-    salts_simd_v128_store(f64_actual, &result);
-    assert(memcmp(
+    cmeta_simd_v128_store(f64_actual, &result);
+    check(memcmp(
         f64_actual, convert_f64_expected, sizeof(f64_actual)) == 0);
 
-    salts_simd_v128_load(&value, demote_source);
-    assert(salts_simd_convert(
+    cmeta_simd_v128_load(&value, demote_source);
+    check(cmeta_simd_convert(
         &cmeta_vector_f32x4, &cmeta_vector_f64x2,
         SALTS_SIMD_CONVERT_DEMOTE, SALTS_SIMD_LANES_LOW_ZERO,
         &result, &value));
-    salts_simd_v128_store(f32_actual, &result);
-    assert(memcmp(
+    cmeta_simd_v128_store(f32_actual, &result);
+    check(memcmp(
         f32_actual, demote_expected, sizeof(f32_actual)) == 0);
 
-    salts_simd_v128_load(&value, promote_source);
-    assert(salts_simd_convert(
+    cmeta_simd_v128_load(&value, promote_source);
+    check(cmeta_simd_convert(
         &cmeta_vector_f64x2, &cmeta_vector_f32x4,
         SALTS_SIMD_CONVERT_PROMOTE, SALTS_SIMD_LANES_LOW,
         &result, &value));
-    salts_simd_v128_store(f64_actual, &result);
-    assert(memcmp(
+    cmeta_simd_v128_store(f64_actual, &result);
+    check(memcmp(
         f64_actual, promote_expected, sizeof(f64_actual)) == 0);
 
-    assert(!salts_simd_convert(
+    check(!cmeta_simd_convert(
         &cmeta_vector_i16x8, &cmeta_vector_f32x4,
         SALTS_SIMD_CONVERT_TRUNC_SAT, SALTS_SIMD_LANES_FULL,
         &result, &value));
 }
 
 static void test_generic_splat(void) {
-    salts_simd_scalar scalar = {0};
-    salts_v128 value = {{0}};
+    cmeta_simd_scalar scalar = {0};
+    cmeta_v128 value = {{0}};
     uint16_t lanes[8] = {0};
     size_t index;
 
     scalar.u16 = UINT16_C(0xff80);
-    assert(salts_simd_splat(
+    check(cmeta_simd_splat(
         &cmeta_vector_u16x8, &value, scalar));
-    salts_simd_v128_store(lanes, &value);
+    cmeta_simd_v128_store(lanes, &value);
     for (index = 0u; index < 8u; ++index)
-        assert(lanes[index] == UINT16_C(0xff80));
+        check(lanes[index] == UINT16_C(0xff80));
 }
 
 static void test_generic_integer_binary(void) {
@@ -755,24 +755,24 @@ static void test_generic_integer_binary(void) {
     const int16_t expected_add[8] = {9, 9, 9, 9, 9, 9, 9, 9};
     const int16_t expected_mul[8] = {8, 14, 18, 20, 20, 18, 14, 8};
     int16_t actual[8] = {0};
-    salts_v128 left = {{0}}, right = {{0}}, result = {{0}};
+    cmeta_v128 left = {{0}}, right = {{0}}, result = {{0}};
 
-    salts_simd_v128_load(&left, left_data);
-    salts_simd_v128_load(&right, right_data);
+    cmeta_simd_v128_load(&left, left_data);
+    cmeta_simd_v128_load(&right, right_data);
 
-    assert(salts_simd_binary(
+    check(cmeta_simd_binary(
         &cmeta_vector_i16x8,
         SALTS_SIMD_BINARY_ADD,
         &result, &left, &right));
-    salts_simd_v128_store(actual, &result);
-    assert(memcmp(actual, expected_add, sizeof(actual)) == 0);
+    cmeta_simd_v128_store(actual, &result);
+    check(memcmp(actual, expected_add, sizeof(actual)) == 0);
 
-    assert(salts_simd_binary(
+    check(cmeta_simd_binary(
         &cmeta_vector_i16x8,
         SALTS_SIMD_BINARY_MUL,
         &result, &left, &right));
-    salts_simd_v128_store(actual, &result);
-    assert(memcmp(actual, expected_mul, sizeof(actual)) == 0);
+    cmeta_simd_v128_store(actual, &result);
+    check(memcmp(actual, expected_mul, sizeof(actual)) == 0);
 }
 
 static void test_generic_float_binary(void) {
@@ -780,16 +780,16 @@ static void test_generic_float_binary(void) {
     const double right_data[2] = {3.0, 1.5};
     const double expected[2] = {4.0, 6.0};
     double actual[2] = {0.0, 0.0};
-    salts_v128 left = {{0}}, right = {{0}}, result = {{0}};
+    cmeta_v128 left = {{0}}, right = {{0}}, result = {{0}};
 
-    salts_simd_v128_load(&left, left_data);
-    salts_simd_v128_load(&right, right_data);
-    assert(salts_simd_binary(
+    cmeta_simd_v128_load(&left, left_data);
+    cmeta_simd_v128_load(&right, right_data);
+    check(cmeta_simd_binary(
         &cmeta_vector_f64x2,
         SALTS_SIMD_BINARY_DIV,
         &result, &left, &right));
-    salts_simd_v128_store(actual, &result);
-    assert(memcmp(actual, expected, sizeof(actual)) == 0);
+    cmeta_simd_v128_store(actual, &result);
+    check(memcmp(actual, expected, sizeof(actual)) == 0);
 }
 
 static void test_generic_compare_signedness(void) {
@@ -808,25 +808,25 @@ static void test_generic_compare_signedness(void) {
         UINT32_MAX, UINT32_MAX, 0u, UINT32_MAX
     };
     uint32_t actual[4] = {0};
-    salts_v128 left = {{0}}, right = {{0}}, mask = {{0}};
+    cmeta_v128 left = {{0}}, right = {{0}}, mask = {{0}};
 
-    salts_simd_v128_load(&left, left_u);
-    salts_simd_v128_load(&right, right_u);
-    assert(salts_simd_compare(
+    cmeta_simd_v128_load(&left, left_u);
+    cmeta_simd_v128_load(&right, right_u);
+    check(cmeta_simd_compare(
         &cmeta_vector_u32x4,
         SALTS_SIMD_COMPARE_LT,
         &mask, &left, &right));
-    salts_simd_v128_store(actual, &mask);
-    assert(memcmp(actual, expected_u, sizeof(actual)) == 0);
+    cmeta_simd_v128_store(actual, &mask);
+    check(memcmp(actual, expected_u, sizeof(actual)) == 0);
 
-    salts_simd_v128_load(&left, left_s);
-    salts_simd_v128_load(&right, right_s);
-    assert(salts_simd_compare(
+    cmeta_simd_v128_load(&left, left_s);
+    cmeta_simd_v128_load(&right, right_s);
+    check(cmeta_simd_compare(
         &cmeta_vector_i32x4,
         SALTS_SIMD_COMPARE_LT,
         &mask, &left, &right));
-    salts_simd_v128_store(actual, &mask);
-    assert(memcmp(actual, expected_s, sizeof(actual)) == 0);
+    cmeta_simd_v128_store(actual, &mask);
+    check(memcmp(actual, expected_s, sizeof(actual)) == 0);
 }
 
 static void test_generic_bitwise(void) {
@@ -843,24 +843,24 @@ static void test_generic_bitwise(void) {
         UINT32_C(0xedcb5678), UINT32_C(0xffffffff)
     };
     uint32_t actual[4] = {0};
-    salts_v128 left = {{0}}, right = {{0}}, result = {{0}};
+    cmeta_v128 left = {{0}}, right = {{0}}, result = {{0}};
 
-    salts_simd_v128_load(&left, left_data);
-    salts_simd_v128_load(&right, right_data);
-    assert(salts_simd_binary(
+    cmeta_simd_v128_load(&left, left_data);
+    cmeta_simd_v128_load(&right, right_data);
+    check(cmeta_simd_binary(
         &cmeta_vector_u32x4,
         SALTS_SIMD_BINARY_XOR,
         &result, &left, &right));
-    salts_simd_v128_store(actual, &result);
-    assert(memcmp(actual, expected_xor, sizeof(actual)) == 0);
+    cmeta_simd_v128_store(actual, &result);
+    check(memcmp(actual, expected_xor, sizeof(actual)) == 0);
 
-    assert(salts_simd_unary(
+    check(cmeta_simd_unary(
         &cmeta_vector_u32x4,
         SALTS_SIMD_UNARY_NOT,
         &result, &left));
-    salts_simd_v128_store(actual, &result);
-    assert(actual[0] == UINT32_C(0x00ff00ff));
-    assert(actual[1] == UINT32_C(0x55555555));
+    cmeta_simd_v128_store(actual, &result);
+    check(actual[0] == UINT32_C(0x00ff00ff));
+    check(actual[1] == UINT32_C(0x55555555));
 }
 
 static void test_generic_shift(void) {
@@ -874,24 +874,24 @@ static void test_generic_shift(void) {
     };
     int32_t signed_actual[4] = {0};
     uint32_t unsigned_actual[4] = {0};
-    salts_v128 value = {{0}}, result = {{0}};
+    cmeta_v128 value = {{0}}, result = {{0}};
 
-    salts_simd_v128_load(&value, signed_data);
-    assert(salts_simd_shift(
+    cmeta_simd_v128_load(&value, signed_data);
+    check(cmeta_simd_shift(
         &cmeta_vector_i32x4,
         SALTS_SIMD_SHIFT_RIGHT,
         &result, &value, 1u));
-    salts_simd_v128_store(signed_actual, &result);
-    assert(memcmp(
+    cmeta_simd_v128_store(signed_actual, &result);
+    check(memcmp(
         signed_actual, expected_signed, sizeof(signed_actual)) == 0);
 
-    salts_simd_v128_load(&value, unsigned_data);
-    assert(salts_simd_shift(
+    cmeta_simd_v128_load(&value, unsigned_data);
+    check(cmeta_simd_shift(
         &cmeta_vector_u32x4,
         SALTS_SIMD_SHIFT_RIGHT,
         &result, &value, 1u));
-    salts_simd_v128_store(unsigned_actual, &result);
-    assert(memcmp(
+    cmeta_simd_v128_store(unsigned_actual, &result);
+    check(memcmp(
         unsigned_actual, expected_unsigned, sizeof(unsigned_actual)) == 0);
 }
 
@@ -903,48 +903,48 @@ static void test_generic_select(void) {
     };
     const uint32_t expected[4] = {1u, 20u, 3u, 40u};
     uint32_t actual[4] = {0};
-    salts_v128 when_set = {{0}}, when_unset = {{0}};
-    salts_v128 mask = {{0}}, result = {{0}};
+    cmeta_v128 when_set = {{0}}, when_unset = {{0}};
+    cmeta_v128 mask = {{0}}, result = {{0}};
 
-    salts_simd_v128_load(&when_set, when_set_data);
-    salts_simd_v128_load(&when_unset, when_unset_data);
-    salts_simd_v128_load(&mask, mask_data);
+    cmeta_simd_v128_load(&when_set, when_set_data);
+    cmeta_simd_v128_load(&when_unset, when_unset_data);
+    cmeta_simd_v128_load(&mask, mask_data);
 
-    assert(salts_simd_select(
+    check(cmeta_simd_select(
         &cmeta_vector_u32x4,
         &result, &when_set, &when_unset, &mask));
-    salts_simd_v128_store(actual, &result);
-    assert(memcmp(actual, expected, sizeof(actual)) == 0);
+    cmeta_simd_v128_store(actual, &result);
+    check(memcmp(actual, expected, sizeof(actual)) == 0);
 }
 
 static void test_generic_unsupported_pairs(void) {
-    salts_v128 left = {{0}}, right = {{0}}, result = {{0}};
+    cmeta_v128 left = {{0}}, right = {{0}}, result = {{0}};
 
-    assert(!salts_simd_binary(
+    check(!cmeta_simd_binary(
         &cmeta_vector_i32x4,
         SALTS_SIMD_BINARY_DIV,
         &result, &left, &right));
 
-    assert(!salts_simd_compare(
+    check(!cmeta_simd_compare(
         &cmeta_vector_u64x2,
         SALTS_SIMD_COMPARE_LT,
         &result, &left, &right));
 
-    assert(!salts_simd_unary(
+    check(!cmeta_simd_unary(
         &cmeta_vector_u32x4,
         SALTS_SIMD_UNARY_ABS,
         &result, &left));
-    assert(!salts_simd_unary(
+    check(!cmeta_simd_unary(
         &cmeta_vector_i32x4,
         SALTS_SIMD_UNARY_SQRT,
         &result, &left));
-    assert(!salts_simd_reduce(
+    check(!cmeta_simd_reduce(
         &cmeta_vector_f32x4,
         SALTS_SIMD_REDUCE_ALL_TRUE,
         &left, &(uint32_t){0u}));
-    assert(!salts_simd_saturating_binary(
+    check(!cmeta_simd_saturating_binary(
         &cmeta_vector_i8x16,
-        (salts_simd_saturating_op)99,
+        (cmeta_simd_saturating_op)99,
         &result, &left, &right));
 }
 
@@ -954,18 +954,18 @@ static void test_i32x4(void) {
     const int32_t expected_sum[4] = {5, 5, 5, 5};
     const int32_t expected_product[4] = {4, 6, 6, 4};
     int32_t actual[4] = {0};
-    salts_v128 left = {{0}}, right = {{0}}, result = {{0}};
+    cmeta_v128 left = {{0}}, right = {{0}}, result = {{0}};
 
-    salts_simd_v128_load(&left, left_data);
-    salts_simd_v128_load(&right, right_data);
+    cmeta_simd_v128_load(&left, left_data);
+    cmeta_simd_v128_load(&right, right_data);
 
-    salts_simd_i32x4_add(&result, &left, &right);
-    salts_simd_v128_store(actual, &result);
-    assert(memcmp(actual, expected_sum, sizeof(actual)) == 0);
+    cmeta_simd_i32x4_add(&result, &left, &right);
+    cmeta_simd_v128_store(actual, &result);
+    check(memcmp(actual, expected_sum, sizeof(actual)) == 0);
 
-    salts_simd_i32x4_mul(&result, &left, &right);
-    salts_simd_v128_store(actual, &result);
-    assert(memcmp(actual, expected_product, sizeof(actual)) == 0);
+    cmeta_simd_i32x4_mul(&result, &left, &right);
+    cmeta_simd_v128_store(actual, &result);
+    check(memcmp(actual, expected_product, sizeof(actual)) == 0);
 }
 
 static void test_i32x4_mask(void) {
@@ -973,13 +973,13 @@ static void test_i32x4_mask(void) {
     const int32_t right_data[4] = {1, 0, 3, 9};
     const uint32_t expected[4] = {UINT32_MAX, 0u, UINT32_MAX, 0u};
     uint32_t actual[4] = {0};
-    salts_v128 left = {{0}}, right = {{0}}, mask = {{0}};
+    cmeta_v128 left = {{0}}, right = {{0}}, mask = {{0}};
 
-    salts_simd_v128_load(&left, left_data);
-    salts_simd_v128_load(&right, right_data);
-    salts_simd_i32x4_eq(&mask, &left, &right);
-    salts_simd_v128_store(actual, &mask);
-    assert(memcmp(actual, expected, sizeof(actual)) == 0);
+    cmeta_simd_v128_load(&left, left_data);
+    cmeta_simd_v128_load(&right, right_data);
+    cmeta_simd_i32x4_eq(&mask, &left, &right);
+    cmeta_simd_v128_store(actual, &mask);
+    check(memcmp(actual, expected, sizeof(actual)) == 0);
 }
 
 static void test_f32x4(void) {
@@ -987,40 +987,41 @@ static void test_f32x4(void) {
     const float right_data[4] = {0.5f, 2.0f, 1.5f, 2.0f};
     const float expected[4] = {0.5f, 4.0f, 4.5f, 8.0f};
     float actual[4] = {0};
-    salts_v128 left = {{0}}, right = {{0}}, result = {{0}};
+    cmeta_v128 left = {{0}}, right = {{0}}, result = {{0}};
 
-    salts_simd_v128_load(&left, left_data);
-    salts_simd_v128_load(&right, right_data);
-    salts_simd_f32x4_mul(&result, &left, &right);
-    salts_simd_v128_store(actual, &result);
-    assert(memcmp(actual, expected, sizeof(actual)) == 0);
+    cmeta_simd_v128_load(&left, left_data);
+    cmeta_simd_v128_load(&right, right_data);
+    cmeta_simd_f32x4_mul(&result, &left, &right);
+    cmeta_simd_v128_store(actual, &result);
+    check(memcmp(actual, expected, sizeof(actual)) == 0);
 }
 
-int main(void) {
-    test_descriptors();
-    test_load_extend();
-    test_load_splat_and_zero();
-    test_lane_extract_replace();
-    test_shuffle_and_swizzle();
-    test_advanced_unary();
-    test_advanced_min_max();
-    test_pseudo_min_max();
-    test_saturating_binary();
-    test_reductions();
-    test_rounding_and_residual_binary();
-    test_numeric_conversions();
-    test_widen_narrow_families();
-    test_q15_and_dot();
-    test_generic_splat();
-    test_generic_integer_binary();
-    test_generic_float_binary();
-    test_generic_compare_signedness();
-    test_generic_bitwise();
-    test_generic_shift();
-    test_generic_select();
-    test_generic_unsupported_pairs();
-    test_i32x4();
-    test_i32x4_mask();
-    test_f32x4();
-    return 0;
+suite("SIMD operations") {
+    group("vector semantics") {
+        it("descriptors") { test_descriptors(); }
+        it("load extend") { test_load_extend(); }
+        it("load splat and zero") { test_load_splat_and_zero(); }
+        it("lane extract replace") { test_lane_extract_replace(); }
+        it("shuffle and swizzle") { test_shuffle_and_swizzle(); }
+        it("advanced unary") { test_advanced_unary(); }
+        it("advanced min max") { test_advanced_min_max(); }
+        it("pseudo min max") { test_pseudo_min_max(); }
+        it("saturating binary") { test_saturating_binary(); }
+        it("reductions") { test_reductions(); }
+        it("rounding and residual binary") { test_rounding_and_residual_binary(); }
+        it("numeric conversions") { test_numeric_conversions(); }
+        it("widen narrow families") { test_widen_narrow_families(); }
+        it("q15 and dot") { test_q15_and_dot(); }
+        it("generic splat") { test_generic_splat(); }
+        it("generic integer binary") { test_generic_integer_binary(); }
+        it("generic float binary") { test_generic_float_binary(); }
+        it("generic compare signedness") { test_generic_compare_signedness(); }
+        it("generic bitwise") { test_generic_bitwise(); }
+        it("generic shift") { test_generic_shift(); }
+        it("generic select") { test_generic_select(); }
+        it("generic unsupported pairs") { test_generic_unsupported_pairs(); }
+        it("i32x4") { test_i32x4(); }
+        it("i32x4 mask") { test_i32x4_mask(); }
+        it("f32x4") { test_f32x4(); }
+    }
 }

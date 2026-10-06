@@ -15,7 +15,7 @@
 
 spec("platform C++ export contract") {
   it("exposes C linkage for platform functions") {
-    uint64_t (*clock_fn)(void) = &salts_monotonic_ms;
+    uint64_t (*clock_fn)(void) = &cmeta_monotonic_ms;
     check(clock_fn != nullptr);
   }
 }

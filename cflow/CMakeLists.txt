@@ -1,4 +1,4 @@
-set(TARGET_NAME salts_cflow)
+set(TARGET_NAME cmeta_cflow)
 set(CFLOW_LIBRARY_VERSION 5.0.0)
 set(CFLOW_ABI_VERSION 5)
 
@@ -129,7 +129,7 @@ cmake_config_target(
 
 if(WIN32 AND BUILD_SHARED_LIBS)
   set_target_properties(${TARGET_NAME} PROPERTIES
-    OUTPUT_NAME "salts_cflow-${CFLOW_ABI_VERSION}")
+    OUTPUT_NAME "cmeta_cflow-${CFLOW_ABI_VERSION}")
 endif()
 
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)

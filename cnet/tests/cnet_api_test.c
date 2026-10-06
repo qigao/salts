@@ -149,10 +149,10 @@ static SALTS_THREAD_LOCAL int cnet_api_test_thread_marker;
 
 static void cnet_api_test_blocking_poll(void *user) {
   cnet_api_test_wake_probe *probe = (cnet_api_test_wake_probe *)user;
-  const uint64_t started_ms = salts_monotonic_ms();
+  const uint64_t started_ms = cmeta_monotonic_ms();
   atomic_store_explicit(&probe->started, 1, memory_order_release);
   probe->status = cnet_client_poll(probe->client, 1000u, &probe->events);
-  probe->elapsed_ms = salts_monotonic_ms() - started_ms;
+  probe->elapsed_ms = cmeta_monotonic_ms() - started_ms;
   atomic_store_explicit(&probe->finished, 1, memory_order_release);
 }
 
@@ -162,8 +162,8 @@ static void cnet_api_test_signal_handler(int signal_number) { (void)signal_numbe
 static void cnet_api_test_interrupt_wait(void *user) {
   cnet_api_test_interrupt_probe *probe = (cnet_api_test_interrupt_probe *)user;
   while (atomic_load_explicit(&probe->armed, memory_order_acquire) == 0)
-    salts_thread_yield();
-  salts_sleep_ms(10u);
+    cmeta_thread_yield();
+  cmeta_sleep_ms(10u);
   atomic_store_explicit(&probe->signal_status, pthread_kill(probe->target, SIGUSR1),
                         memory_order_release);
 }
@@ -221,7 +221,7 @@ static int cnet_api_test_listener(cnet_api_test_socket *out_listener, uint16_t *
 static int cnet_api_test_wait_pipe_read(cnet_shared_test_named_pipe *pipe, void *data,
                                         size_t size) {
 #if !defined(_WIN32)
-  const uint64_t deadline = salts_monotonic_ms() + CNET_API_TEST_TIMEOUT_MS;
+  const uint64_t deadline = cmeta_monotonic_ms() + CNET_API_TEST_TIMEOUT_MS;
 #endif
   for (;;) {
     const int status = cnet_shared_test_named_pipe_peer_read(pipe, data, size);
@@ -230,8 +230,8 @@ static int cnet_api_test_wait_pipe_read(cnet_shared_test_named_pipe *pipe, void 
     return status;
 #else
     if (status != -EAGAIN && status != -EWOULDBLOCK && status != -EINTR) return status;
-    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
-    salts_thread_yield();
+    if (cmeta_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+    cmeta_thread_yield();
 #endif
   }
 }
@@ -252,7 +252,7 @@ static void cnet_api_test_state(void *user, cnet_connection connection, cnet_con
     atomic_fetch_add_explicit(&probe->terminal, 1, memory_order_release);
     while (atomic_load_explicit(&probe->block_terminal, memory_order_acquire) != 0 &&
            atomic_load_explicit(&probe->release_terminal, memory_order_acquire) == 0)
-      salts_thread_yield();
+      cmeta_thread_yield();
   }
 }
 
@@ -300,12 +300,12 @@ static void cnet_api_test_poll_state(void *user, cnet_connection connection,
 }
 
 static int cnet_api_test_poll_until(cnet_client *client, atomic_int *value, int expected) {
-  const uint64_t deadline = salts_monotonic_ms() + CNET_API_TEST_TIMEOUT_MS;
+  const uint64_t deadline = cmeta_monotonic_ms() + CNET_API_TEST_TIMEOUT_MS;
   while (atomic_load_explicit(value, memory_order_acquire) < expected) {
     size_t events = 0u;
     const int status = cnet_client_poll(client, 1u, &events);
     if (status != SALTS_OK) return status;
-    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+    if (cmeta_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
   return SALTS_OK;
 }
@@ -741,7 +741,7 @@ spec("CNet public client API") {
     cnet_listener_config config = {
         .backend = client_config.backend, .host = "127.0.0.1", .port = 0u, .backlog = 2u};
     cnet_api_test_interrupt_probe probe;
-    salts_thread_t interrupter = {0};
+    cmeta_thread_t interrupter = {0};
     void (*previous_handler)(int);
     int ready = -1;
 
@@ -751,11 +751,11 @@ spec("CNet public client API") {
     previous_handler = signal(SIGUSR1, cnet_api_test_signal_handler);
     check_true(previous_handler != SIG_ERR);
     check_equal(cnet_listener_init(&listener, &config), SALTS_OK);
-    check_equal(salts_thread_create(&interrupter, cnet_api_test_interrupt_wait, &probe), SALTS_OK);
+    check_equal(cmeta_thread_create(&interrupter, cnet_api_test_interrupt_wait, &probe), SALTS_OK);
     atomic_store_explicit(&probe.armed, 1, memory_order_release);
     check_equal(cnet_listener_wait(&listener, 100u, &ready), SALTS_OK);
     check_equal(ready, 0);
-    check_equal(salts_thread_join(&interrupter), SALTS_OK);
+    check_equal(cmeta_thread_join(&interrupter), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.signal_status, memory_order_acquire), 0);
     check_true(signal(SIGUSR1, previous_handler) != SIG_ERR);
     check_equal(cnet_listener_close(&listener), SALTS_OK);
@@ -1425,18 +1425,18 @@ spec("CNet public client API") {
     cnet_client client = {0};
     cnet_client_config config = cnet_api_test_config();
     cnet_api_test_wake_probe probe = {.client = &client};
-    salts_thread_t poller;
+    cmeta_thread_t poller;
 
     atomic_init(&probe.started, 0);
     atomic_init(&probe.finished, 0);
     check_equal(cnet_client_wake(NULL), SALTS_EINVAL);
     check_equal(cnet_client_init(&client, &config), SALTS_OK);
-    check_equal(salts_thread_create(&poller, cnet_api_test_blocking_poll, &probe), SALTS_OK);
+    check_equal(cmeta_thread_create(&poller, cnet_api_test_blocking_poll, &probe), SALTS_OK);
     while (atomic_load_explicit(&probe.started, memory_order_acquire) == 0)
-      salts_thread_yield();
-    salts_sleep_ms(20u);
+      cmeta_thread_yield();
+    cmeta_sleep_ms(20u);
     check_equal(cnet_client_wake(&client), SALTS_OK);
-    check_equal(salts_thread_join(&poller), SALTS_OK);
+    check_equal(cmeta_thread_join(&poller), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.finished, memory_order_acquire), 1);
     check_equal(probe.status, SALTS_OK);
     check_equal(probe.events, (size_t)0u);
@@ -1455,7 +1455,7 @@ spec("CNet public client API") {
     cnet_api_test_socket accepted = CNET_API_TEST_INVALID_SOCKET;
     cnet_connection connection = {0};
     cnet_connect_options options = {0};
-    salts_thread_t poller;
+    cmeta_thread_t poller;
     char uri[64];
     uint16_t port = 0u;
     size_t events = 0u;
@@ -1474,12 +1474,12 @@ spec("CNet public client API") {
     check_true(accepted != CNET_API_TEST_INVALID_SOCKET);
     check_equal(atomic_load(&state.callback_operation_status), SALTS_OK);
     check_equal(cnet_client_poll(&client, 0u, &events), SALTS_OK);
-    check_equal(salts_thread_create(&poller, cnet_api_test_blocking_poll, &probe), SALTS_OK);
+    check_equal(cmeta_thread_create(&poller, cnet_api_test_blocking_poll, &probe), SALTS_OK);
     while (atomic_load_explicit(&probe.started, memory_order_acquire) == 0)
-      salts_thread_yield();
-    salts_sleep_ms(20u);
+      cmeta_thread_yield();
+    cmeta_sleep_ms(20u);
     check_equal(cnet_client_wake(&client), SALTS_OK);
-    check_equal(salts_thread_join(&poller), SALTS_OK);
+    check_equal(cmeta_thread_join(&poller), SALTS_OK);
     check_equal(probe.status, SALTS_OK);
     check_equal(probe.events, 0u);
     check_less(probe.elapsed_ms, (uint64_t)900u);
@@ -1771,12 +1771,12 @@ spec("CNet public client API") {
     check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
 
-    stale_deadline = salts_monotonic_ms() + CNET_API_TEST_TIMEOUT_MS;
+    stale_deadline = cmeta_monotonic_ms() + CNET_API_TEST_TIMEOUT_MS;
     do {
       stale_status = cnet_api_test_send_bytes(&client, connection, &expected_outbound, sizeof(expected_outbound));
       if (stale_status == SALTS_ENOENT) break;
-      salts_thread_yield();
-    } while (salts_monotonic_ms() < stale_deadline);
+      cmeta_thread_yield();
+    } while (cmeta_monotonic_ms() < stale_deadline);
     check_equal(stale_status, SALTS_ENOENT);
     check_equal(cnet_set_receive_slice_handler(
                     &client, connection, cnet_api_test_owned_receive, NULL),

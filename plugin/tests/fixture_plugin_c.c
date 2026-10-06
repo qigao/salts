@@ -11,5 +11,5 @@ int fixture_plugin_double(int value) {
     X(function, fixture_plugin_double, "test.loader.math.double", \
       "test.loader.math", 1u, 1u)
 
-SALTS_PLUGIN_DECLARE(fixture, "test.loader.c", (1u,0u,0u),
-    FIXTURE_EXPORTS, SALTS_PLUGIN_PASSIVE());
+CMETA_PLUGIN_DECLARE(fixture, "test.loader.c", (1u,0u,0u),
+    FIXTURE_EXPORTS, CMETA_PLUGIN_PASSIVE());

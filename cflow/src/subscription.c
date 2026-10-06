@@ -65,8 +65,8 @@ typedef struct run_impl {
     continuation_frame continuations[CMETA_RUN_MAX_CONTINUATIONS];
     size_t continuation_count;
 
-    salts_mutex_t lock;
-    salts_cond_t task_cv;
+    cmeta_mutex_t lock;
+    cmeta_cond_t task_cv;
     size_t task_refs;
     atomic_size_t demand;
     bool identity_path;
@@ -96,24 +96,24 @@ typedef struct run_impl {
 
 static SALTS_THREAD_LOCAL run_impl *active_pump_run;
 static SALTS_THREAD_LOCAL const cflow_subscription *active_destroy_owner;
-static salts_once_t run_lifecycle_once = SALTS_ONCE_INIT;
-static salts_mutex_t run_lifecycle_lock;
-static salts_cond_t run_lifecycle_cv;
+static cmeta_once_t run_lifecycle_once = SALTS_ONCE_INIT;
+static cmeta_mutex_t run_lifecycle_lock;
+static cmeta_cond_t run_lifecycle_cv;
 static bool run_lifecycle_ready;
 
 static void run_lifecycle_init(void) {
-    salts_mutex_init(&run_lifecycle_lock);
+    cmeta_mutex_init(&run_lifecycle_lock);
     if (!run_lifecycle_lock) return;
-    salts_cond_init(&run_lifecycle_cv);
+    cmeta_cond_init(&run_lifecycle_cv);
     if (!run_lifecycle_cv) {
-        salts_mutex_destroy(&run_lifecycle_lock);
+        cmeta_mutex_destroy(&run_lifecycle_lock);
         return;
     }
     run_lifecycle_ready = true;
 }
 
 static bool run_lifecycle_ensure(void) {
-    salts_once(&run_lifecycle_once, run_lifecycle_init);
+    cmeta_once(&run_lifecycle_once, run_lifecycle_init);
     return run_lifecycle_ready;
 }
 
@@ -267,7 +267,7 @@ static void run_fail_status(run_impl *r,
     if (!r) return;
     const char *msg = message ? message : "runtime error";
     bool notify = false;
-    salts_mutex_lock(&r->lock);
+    cmeta_mutex_lock(&r->lock);
     if (!r->terminated) {
         r->error = msg;
         r->status = status == CFLOW_STATUS_OK
@@ -275,7 +275,7 @@ static void run_fail_status(run_impl *r,
         r->terminated = true;
         notify = true;
     }
-    salts_mutex_unlock(&r->lock);
+    cmeta_mutex_unlock(&r->lock);
     if (notify && cflow_subscriber_valid(&r->sink)) cflow_subscriber_error(&r->sink, msg);
 }
 
@@ -669,16 +669,16 @@ static bool arm_waitable(run_impl *r, cflow_waitable waitable) {
         run_fail(r, "WAIT step has no armable waitable");
         return false;
     }
-    salts_mutex_lock(&r->lock);
+    cmeta_mutex_lock(&r->lock);
     r->waiting = true;
     r->active_wait = waitable;
-    salts_mutex_unlock(&r->lock);
+    cmeta_mutex_unlock(&r->lock);
     cflow_waker w = { wake_cb, r->owner };
     if (!cflow_waitable_arm(&waitable, w)) {
-        salts_mutex_lock(&r->lock);
+        cmeta_mutex_lock(&r->lock);
         r->waiting = false;
         memset(&r->active_wait, 0, sizeof(r->active_wait));
-        salts_mutex_unlock(&r->lock);
+        cmeta_mutex_unlock(&r->lock);
         run_fail(r, "waitable arm failed");
         return false;
     }
@@ -831,9 +831,9 @@ static void finish_if_possible(run_impl *r) {
     if (!r || !r->source_done || r->continuation_count ||
         !terminal_nodes_done(r)) return;
     bool notify = false;
-    salts_mutex_lock(&r->lock);
+    cmeta_mutex_lock(&r->lock);
     if (!r->terminated) { r->terminated = true; notify = true; }
-    salts_mutex_unlock(&r->lock);
+    cmeta_mutex_unlock(&r->lock);
     if (notify && cflow_subscriber_valid(&r->sink)) cflow_subscriber_done(&r->sink);
 }
 
@@ -843,10 +843,10 @@ static void wake_cb(void *user) {
     cflow_subscription *run = (cflow_subscription *)user;
     run_impl *r = impl_of(run);
     if (!r) return;
-    salts_mutex_lock(&r->lock);
+    cmeta_mutex_lock(&r->lock);
     r->waiting = false;
     memset(&r->active_wait, 0, sizeof(r->active_wait));
-    salts_mutex_unlock(&r->lock);
+    cmeta_mutex_unlock(&r->lock);
     (void)schedule_pump(r, true);
 }
 
@@ -924,14 +924,14 @@ static bool poll_source_terminal(run_impl *r) {
 
 static bool take_cancel_request(run_impl *r) {
     bool cancel = false;
-    salts_mutex_lock(&r->lock);
+    cmeta_mutex_lock(&r->lock);
     if (r->cancel_requested && !r->terminated) {
         r->cancel_requested = false;
         r->cancelled = true;
         r->terminated = true;
         cancel = true;
     }
-    salts_mutex_unlock(&r->lock);
+    cmeta_mutex_unlock(&r->lock);
     return cancel;
 }
 
@@ -976,25 +976,25 @@ static void run_destroy_claimed(run_impl *r) {
     sequence_states_clear(r);
     reducers_clear(r);
     cflow_value_slot_destroy(&r->source_slot);
-    salts_mutex_lock(&r->lock);
+    cmeta_mutex_lock(&r->lock);
     r->closed = true;
-    salts_mutex_unlock(&r->lock);
-    salts_cond_destroy(&r->task_cv);
-    salts_mutex_destroy(&r->lock);
+    cmeta_mutex_unlock(&r->lock);
+    cmeta_cond_destroy(&r->task_cv);
+    cmeta_mutex_destroy(&r->lock);
     active_destroy_owner = previous_destroy_owner;
 
-    salts_mutex_lock(&run_lifecycle_lock);
+    cmeta_mutex_lock(&run_lifecycle_lock);
     if (owner && owner->impl == r) owner->impl = NULL;
     free(r);
-    salts_cond_broadcast(&run_lifecycle_cv);
-    salts_mutex_unlock(&run_lifecycle_lock);
+    cmeta_cond_broadcast(&run_lifecycle_cv);
+    cmeta_mutex_unlock(&run_lifecycle_lock);
 }
 
 static bool run_release_task_ref(run_impl *r) {
     bool destroy = false;
     if (!r) return false;
-    salts_mutex_lock(&run_lifecycle_lock);
-    salts_mutex_lock(&r->lock);
+    cmeta_mutex_lock(&run_lifecycle_lock);
+    cmeta_mutex_lock(&r->lock);
     if (r->task_refs != 0u) --r->task_refs;
     if (r->task_refs == 0u) {
         if (r->close_requested && r->owner && r->owner->impl == r &&
@@ -1002,10 +1002,10 @@ static bool run_release_task_ref(run_impl *r) {
             r->destroying = true;
             destroy = true;
         }
-        salts_cond_broadcast(&r->task_cv);
+        cmeta_cond_broadcast(&r->task_cv);
     }
-    salts_mutex_unlock(&r->lock);
-    salts_mutex_unlock(&run_lifecycle_lock);
+    cmeta_mutex_unlock(&r->lock);
+    cmeta_mutex_unlock(&run_lifecycle_lock);
     return destroy;
 }
 
@@ -1023,17 +1023,17 @@ static void pump_task(void *user) {
     if (!r) return;
     previous_active_run = active_pump_run;
     active_pump_run = r;
-    salts_mutex_lock(&r->lock);
+    cmeta_mutex_lock(&r->lock);
     run_clear_scheduled_task_locked(r);
     r->rejection_must_fail = false;
     r->pump_running = true;
-    salts_mutex_unlock(&r->lock);
+    cmeta_mutex_unlock(&r->lock);
 
     for (unsigned i = 0; i < CMETA_RUN_QUANTUM; ++i) {
         bool waiting = false;
-        salts_mutex_lock(&r->lock);
+        cmeta_mutex_lock(&r->lock);
         waiting = r->waiting;
-        salts_mutex_unlock(&r->lock);
+        cmeta_mutex_unlock(&r->lock);
         if (waiting || r->terminated) break;
         if (demand_get(r) == 0 && r->continuation_count &&
             !r->continuations[r->continuation_count - 1].done) break;
@@ -1043,11 +1043,11 @@ static void pump_task(void *user) {
     }
 
     bool terminated = false, waiting = false;
-    salts_mutex_lock(&r->lock);
+    cmeta_mutex_lock(&r->lock);
     r->pump_running = false;
     terminated = r->terminated;
     waiting = r->waiting;
-    salts_mutex_unlock(&r->lock);
+    cmeta_mutex_unlock(&r->lock);
     size_t d = demand_get(r);
     bool continuation_runnable = r->continuation_count &&
                           (r->continuations[r->continuation_count - 1].done || d > 0);
@@ -1072,7 +1072,7 @@ static void pump_task_cancel(void *user) {
     if (!r) return;
     previous_active_run = active_pump_run;
     active_pump_run = r;
-    salts_mutex_lock(&r->lock);
+    cmeta_mutex_lock(&r->lock);
     run_clear_scheduled_task_locked(r);
     r->rejection_must_fail = false;
     if (!r->terminated) {
@@ -1081,7 +1081,7 @@ static void pump_task_cancel(void *user) {
         r->terminated = true;
         cancel_source = true;
     }
-    salts_mutex_unlock(&r->lock);
+    cmeta_mutex_unlock(&r->lock);
 
     if (cancel_source) {
         cflow_publisher_cancel(&r->source);
@@ -1146,25 +1146,25 @@ static cflow_status schedule_pump(run_impl *r, bool fail_on_rejection) {
     const char *error = NULL;
     run_impl *previous_active_run;
     if (!r || !r->scheduler) return CFLOW_STATUS_INVALID_ARGUMENT;
-    salts_mutex_lock(&r->lock);
+    cmeta_mutex_lock(&r->lock);
     if (r->closed || r->terminated) {
         const cflow_status status = terminal_request_status_locked(r);
-        salts_mutex_unlock(&r->lock);
+        cmeta_mutex_unlock(&r->lock);
         return status;
     }
     if (r->pump_running || r->waiting) {
-        salts_mutex_unlock(&r->lock);
+        cmeta_mutex_unlock(&r->lock);
         return CFLOW_STATUS_OK;
     }
     if (r->task_scheduled) {
         r->rejection_must_fail =
             r->rejection_must_fail || fail_on_rejection;
-        salts_mutex_unlock(&r->lock);
+        cmeta_mutex_unlock(&r->lock);
         return CFLOW_STATUS_OK;
     }
     if (r->task_refs > SIZE_MAX - 2u || r->task_posting == SIZE_MAX ||
         r->next_task_generation == UINT64_MAX) {
-        salts_mutex_unlock(&r->lock);
+        cmeta_mutex_unlock(&r->lock);
         return CFLOW_STATUS_EXECUTION_ERROR;
     }
     r->task_scheduled = true;
@@ -1175,7 +1175,7 @@ static cflow_status schedule_pump(run_impl *r, bool fail_on_rejection) {
     r->rejection_must_fail = fail_on_rejection;
     ++r->task_posting;
     r->task_refs += 2u;
-    salts_mutex_unlock(&r->lock);
+    cmeta_mutex_unlock(&r->lock);
     scheduler_settles_cancel =
         cflow_scheduler_try_post_task_after_internal(
             r->scheduler, 0u, &task, &result);
@@ -1183,7 +1183,7 @@ static cflow_status schedule_pump(run_impl *r, bool fail_on_rejection) {
         result = cflow_scheduler_try_post_after(
             r->scheduler, 0u, pump_task, r);
     }
-    salts_mutex_lock(&r->lock);
+    cmeta_mutex_lock(&r->lock);
     --r->task_posting;
     if (result.status == CFLOW_ADMISSION_ACCEPTED && result.task_id != 0u) {
         if (r->task_scheduled &&
@@ -1205,8 +1205,8 @@ static cflow_status schedule_pump(run_impl *r, bool fail_on_rejection) {
             notify = true;
         }
     }
-    salts_cond_broadcast(&r->task_cv);
-    salts_mutex_unlock(&r->lock);
+    cmeta_cond_broadcast(&r->task_cv);
+    cmeta_mutex_unlock(&r->lock);
     if (result.status != CFLOW_ADMISSION_ACCEPTED || result.task_id == 0u) {
         /* The rejected task and posting refs protect r through synchronous
          * Sink delivery; the TLS marker preserves callback-close deferral. */
@@ -1291,14 +1291,14 @@ cflow_status_result cflow_subscribe_subgraph_with_options(
 
     run_impl *r = calloc(1, sizeof(*r));
     if (!r) return (cflow_status_result){CFLOW_STATUS_ALLOCATION_FAILED};
-    salts_mutex_init(&r->lock);
+    cmeta_mutex_init(&r->lock);
     if (!r->lock) {
         free(r);
         return (cflow_status_result){CFLOW_STATUS_ALLOCATION_FAILED};
     }
-    salts_cond_init(&r->task_cv);
+    cmeta_cond_init(&r->task_cv);
     if (!r->task_cv) {
-        salts_mutex_destroy(&r->lock);
+        cmeta_mutex_destroy(&r->lock);
         free(r);
         return (cflow_status_result){CFLOW_STATUS_ALLOCATION_FAILED};
     }
@@ -1317,8 +1317,8 @@ cflow_status_result cflow_subscribe_subgraph_with_options(
     r->identity_path =
         cflow_subgraph_out_degree(subgraph, subgraph->entry) == 0u;
     if (!cflow_value_slot_init(&r->source_slot, source_type)) {
-        salts_cond_destroy(&r->task_cv);
-        salts_mutex_destroy(&r->lock);
+        cmeta_cond_destroy(&r->task_cv);
+        cmeta_mutex_destroy(&r->lock);
         free(r);
         return (cflow_status_result){CFLOW_STATUS_ALLOCATION_FAILED};
     }
@@ -1350,8 +1350,8 @@ cflow_status_result cflow_subscribe_subgraph_with_options(
         cflow_value_slot_destroy(&r->source_slot); reducers_clear(r);
         set_states_clear(r);
         sequence_states_clear(r);
-        salts_cond_destroy(&r->task_cv);
-        salts_mutex_destroy(&r->lock);
+        cmeta_cond_destroy(&r->task_cv);
+        cmeta_mutex_destroy(&r->lock);
         free(r);
         return (cflow_status_result){CFLOW_STATUS_ALLOCATION_FAILED};
     }
@@ -1367,8 +1367,8 @@ cflow_status_result cflow_subscribe_subgraph_with_options(
                 set_states_clear(r);
                 sequence_states_clear(r);
                 reducers_clear(r);
-                salts_cond_destroy(&r->task_cv);
-                salts_mutex_destroy(&r->lock);
+                cmeta_cond_destroy(&r->task_cv);
+                cmeta_mutex_destroy(&r->lock);
                 free(r);
                 return (cflow_status_result){CFLOW_STATUS_ALLOCATION_FAILED};
             }
@@ -1379,8 +1379,8 @@ cflow_status_result cflow_subscribe_subgraph_with_options(
                 set_states_clear(r);
                 sequence_states_clear(r);
                 reducers_clear(r);
-                salts_cond_destroy(&r->task_cv);
-                salts_mutex_destroy(&r->lock);
+                cmeta_cond_destroy(&r->task_cv);
+                cmeta_mutex_destroy(&r->lock);
                 free(r);
                 return (cflow_status_result){CFLOW_STATUS_EXECUTION_ERROR};
             }
@@ -1393,8 +1393,8 @@ cflow_status_result cflow_subscribe_subgraph_with_options(
                 set_states_clear(r);
                 cflow_value_slot_destroy(&r->source_slot);
                 reducers_clear(r);
-                salts_cond_destroy(&r->task_cv);
-                salts_mutex_destroy(&r->lock);
+                cmeta_cond_destroy(&r->task_cv);
+                cmeta_mutex_destroy(&r->lock);
                 free(r);
                 return (cflow_status_result){
                     state_status == CFLOW_STATUS_OK
@@ -1412,8 +1412,8 @@ cflow_status_result cflow_subscribe_subgraph_with_options(
                 set_states_clear(r);
                 cflow_value_slot_destroy(&r->source_slot);
                 reducers_clear(r);
-                salts_cond_destroy(&r->task_cv);
-                salts_mutex_destroy(&r->lock);
+                cmeta_cond_destroy(&r->task_cv);
+                cmeta_mutex_destroy(&r->lock);
                 free(r);
                 return (cflow_status_result){
                     state_status == CFLOW_STATUS_OK
@@ -1481,10 +1481,10 @@ cflow_status_result cflow_subscription_request_result(
     cflow_status status;
     if (!r || n == 0)
         return (cflow_status_result){CFLOW_STATUS_INVALID_ARGUMENT};
-    salts_mutex_lock(&r->lock);
+    cmeta_mutex_lock(&r->lock);
     if (r->closed || r->terminated) {
         status = terminal_request_status_locked(r);
-        salts_mutex_unlock(&r->lock);
+        cmeta_mutex_unlock(&r->lock);
         return (cflow_status_result){status};
     }
     current = atomic_load_explicit(&r->demand, memory_order_relaxed);
@@ -1493,7 +1493,7 @@ cflow_status_result cflow_subscription_request_result(
     } while (!atomic_compare_exchange_weak_explicit(
         &r->demand, &current, next,
         memory_order_release, memory_order_relaxed));
-    salts_mutex_unlock(&r->lock);
+    cmeta_mutex_unlock(&r->lock);
     return (cflow_status_result){schedule_pump(r, false)};
 }
 
@@ -1506,10 +1506,10 @@ void cflow_subscription_cancel(cflow_subscription *run) {
     run_impl *r = impl_of(run);
     if (!r) return;
     cflow_waitable wait = {0};
-    salts_mutex_lock(&r->lock);
+    cmeta_mutex_lock(&r->lock);
     r->cancel_requested = true;
     if (r->waiting) { wait = r->active_wait; r->waiting = false; memset(&r->active_wait, 0, sizeof(r->active_wait)); }
-    salts_mutex_unlock(&r->lock);
+    cmeta_mutex_unlock(&r->lock);
     if (cflow_waitable_valid(&wait)) cflow_waitable_cancel(&wait);
     (void)schedule_pump(r, false);
 }
@@ -1520,11 +1520,11 @@ void cflow_subscription_close(cflow_subscription *run) {
     uint64_t cancel_attempted_generation = 0u;
 
     if (!run || active_destroy_owner == run || !run_lifecycle_ensure()) return;
-    salts_mutex_lock(&run_lifecycle_lock);
+    cmeta_mutex_lock(&run_lifecycle_lock);
     for (;;) {
         r = (run_impl *)run->impl;
         if (!r) {
-            salts_mutex_unlock(&run_lifecycle_lock);
+            cmeta_mutex_unlock(&run_lifecycle_lock);
             return;
         }
         if (active_pump_run == r) break;
@@ -1532,14 +1532,14 @@ void cflow_subscription_close(cflow_subscription *run) {
             r->external_closer = true;
             break;
         }
-        salts_cond_wait(&run_lifecycle_cv, &run_lifecycle_lock);
+        cmeta_cond_wait(&run_lifecycle_cv, &run_lifecycle_lock);
     }
-    salts_mutex_unlock(&run_lifecycle_lock);
+    cmeta_mutex_unlock(&run_lifecycle_lock);
 
-    salts_mutex_lock(&r->lock);
+    cmeta_mutex_lock(&r->lock);
     initiate_close = !r->close_requested;
     r->close_requested = true;
-    salts_mutex_unlock(&r->lock);
+    cmeta_mutex_unlock(&r->lock);
     if (initiate_close) {
         cflow_subscription_cancel(run);
         cflow_publisher_bind_terminal_waker(&r->source, (cflow_waker){0});
@@ -1553,12 +1553,12 @@ void cflow_subscription_close(cflow_subscription *run) {
         cflow_task_id task_id = 0u;
         uint64_t task_generation = 0u;
         bool scheduler_settles_cancel = false;
-        salts_mutex_lock(&r->lock);
+        cmeta_mutex_lock(&r->lock);
         refs = r->task_refs;
-        if (!refs) { salts_mutex_unlock(&r->lock); break; }
+        if (!refs) { cmeta_mutex_unlock(&r->lock); break; }
         if (r->task_posting != 0u) {
-            salts_cond_wait(&r->task_cv, &r->lock);
-            salts_mutex_unlock(&r->lock);
+            cmeta_cond_wait(&r->task_cv, &r->lock);
+            cmeta_mutex_unlock(&r->lock);
             continue;
         }
         if (r->task_scheduled && r->scheduled_task_id != 0u &&
@@ -1568,11 +1568,11 @@ void cflow_subscription_close(cflow_subscription *run) {
             scheduler_settles_cancel = r->scheduler_settles_cancel;
         }
         if (task_id == 0u && (caps & CMETA_SCHED_CAP_CONCURRENT)) {
-            salts_cond_wait(&r->task_cv, &r->lock);
-            salts_mutex_unlock(&r->lock);
+            cmeta_cond_wait(&r->task_cv, &r->lock);
+            cmeta_mutex_unlock(&r->lock);
             continue;
         }
-        salts_mutex_unlock(&r->lock);
+        cmeta_mutex_unlock(&r->lock);
         if (task_id != 0u) {
             cancel_attempted_generation = task_generation;
             /* Built-ins own the descriptor cancel callback. A foreign
@@ -1585,39 +1585,39 @@ void cflow_subscription_close(cflow_subscription *run) {
         (void)cflow_scheduler_run_until_idle(r->scheduler, 0);
     }
 
-    salts_mutex_lock(&run_lifecycle_lock);
+    cmeta_mutex_lock(&run_lifecycle_lock);
     if (run->impl == r && !r->destroying) r->destroying = true;
-    salts_mutex_unlock(&run_lifecycle_lock);
+    cmeta_mutex_unlock(&run_lifecycle_lock);
     run_destroy_claimed(r);
 }
 
 bool cflow_subscription_is_done(const cflow_subscription *run) {
     run_impl *r = impl_of(run); bool v = false;
     if (r) {
-        salts_mutex_lock(&r->lock);
+        cmeta_mutex_lock(&r->lock);
         v = r->terminated && !r->cancelled && !r->error;
-        salts_mutex_unlock(&r->lock);
+        cmeta_mutex_unlock(&r->lock);
     }
     return v;
 }
 bool cflow_subscription_is_cancelled(const cflow_subscription *run) {
     run_impl *r = impl_of(run); bool v = false;
-    if (r) { salts_mutex_lock(&r->lock); v = r->cancelled; salts_mutex_unlock(&r->lock); }
+    if (r) { cmeta_mutex_lock(&r->lock); v = r->cancelled; cmeta_mutex_unlock(&r->lock); }
     return v;
 }
 const char *cflow_subscription_error(const cflow_subscription *run) {
     run_impl *r = impl_of(run); const char *v = "run is null";
-    if (r) { salts_mutex_lock(&r->lock); v = r->error; salts_mutex_unlock(&r->lock); }
+    if (r) { cmeta_mutex_lock(&r->lock); v = r->error; cmeta_mutex_unlock(&r->lock); }
     return v;
 }
 cflow_status cflow_subscription_status(const cflow_subscription *run) {
     run_impl *r = impl_of(run);
     cflow_status status = CFLOW_STATUS_INVALID_ARGUMENT;
     if (r) {
-        salts_mutex_lock(&r->lock);
+        cmeta_mutex_lock(&r->lock);
         status = r->cancelled && r->status == CFLOW_STATUS_OK
             ? CFLOW_STATUS_CANCELLED : r->status;
-        salts_mutex_unlock(&r->lock);
+        cmeta_mutex_unlock(&r->lock);
     }
     return status;
 }

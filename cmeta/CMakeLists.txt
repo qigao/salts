@@ -1,10 +1,10 @@
-set(TARGET_NAME salts_cmeta)
+set(TARGET_NAME cmeta_cmeta)
 
 add_library(${TARGET_NAME}
   src/abi.c
   src/cmeta.c
   src/container_type.c
-  src/data_v2.c
+  src/data.c
   src/declared_type.c
   src/enum.c
   src/fingerprint.c
@@ -22,6 +22,7 @@ add_library(${TARGET_NAME}
 
 cmake_config_target(
   ${TARGET_NAME}
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   ALIAS Salts::CMeta
   FOLDER "cmeta"
   EXPORT_NAME CMeta)
@@ -56,6 +57,11 @@ install(
   DIRECTORY include/cmeta
   DESTINATION include
   FILES_MATCHING PATTERN "*.h")
+
+option(CMETA_BUILD_NATIVE_THUNKS "Build opt-in exact x86-64 native specialization" OFF)
+if(CMETA_BUILD_NATIVE_THUNKS)
+  add_subdirectory(native)
+endif()
 
 if(BUILD_TESTS)
   add_subdirectory(tests)

@@ -72,22 +72,22 @@ static decl_api decl_instance = {&decl_state,&decl_vtable};
     X(function,decl_pointer,"pointer","decl.math",1u,1u) \
     X(function,decl_max,"max","decl.math",1u,1u) \
     X(interface,(decl_api,&decl_instance),"api","decl.api",1u,1u)
-SALTS_PLUGIN_DECLARE(decl,"test.declarations",(1u,2u,3u),DECL_EXPORTS,SALTS_PLUGIN_PASSIVE());
+CMETA_PLUGIN_DECLARE(decl,"test.declarations",(1u,2u,3u),DECL_EXPORTS,CMETA_PLUGIN_PASSIVE());
 
 suite("Plugin declarations") {
     before_each() { calls = 0; }
     it("publishes canonical descriptors and exact ABI query") {
-        const salts_plugin_manifest *manifest = salts_plugin_query(SALTS_PLUGIN_ABI_VERSION);
+        const cmeta_plugin_manifest *manifest = cmeta_plugin_query(CMETA_PLUGIN_ABI_VERSION);
         check_not_null(manifest);
-        check_equal(salts_plugin_manifest_validate(manifest),SALTS_PLUGIN_OK);
+        check_equal(cmeta_plugin_manifest_validate(manifest),CMETA_PLUGIN_OK);
         check_equal(manifest->export_count,6u);
         check_equal(manifest->version.minor,2u);
         check_true(manifest->exports[0].value.function.desc == FunctionMeta(decl_zero));
         check_true(manifest->exports[0].value.function.abi == FunctionAbi(decl_zero));
         check_equal(manifest->exports[1].contract_version,UINT32_MAX);
         check_equal(manifest->exports[1].capabilities,UINT64_MAX);
-        check_null(salts_plugin_query(SALTS_PLUGIN_ABI_VERSION - 1u));
-        check_null(salts_plugin_query(SALTS_PLUGIN_ABI_VERSION + 1u));
+        check_null(cmeta_plugin_query(CMETA_PLUGIN_ABI_VERSION - 1u));
+        check_null(cmeta_plugin_query(CMETA_PLUGIN_ABI_VERSION + 1u));
         check_null(manifest->self);
         check_null(manifest->destroy);
         check_equal(calls,0);
@@ -109,7 +109,7 @@ suite("Plugin declarations") {
     it("rejects bad counts, missing storage and context before native execution") {
         int input = 1, result = 0;
         void *missing[] = {NULL};
-        const salts_plugin_export *entry = &decl__exports[0];
+        const cmeta_plugin_export *entry = &decl__exports[0];
         check_false(entry->value.function.invoke(&input,&result,NULL,0));
         check_false(FunctionInvoke(decl_zero)(NULL,NULL,0));
         check_false(FunctionInvoke(decl_zero)(&result,NULL,1));
@@ -141,7 +141,7 @@ suite("Plugin declarations") {
         check_equal(calls,1);
     }
     it("exports the exact mutable interface carrier") {
-        const salts_plugin_export *entry = &decl__exports[5];
+        const cmeta_plugin_export *entry = &decl__exports[5];
         check_true(entry->value.interface.desc == decl_api_interface());
         check_true(entry->value.interface.value == &decl_instance);
         check_equal(decl_api_value(&decl_instance),DECL_RESULT);

@@ -55,7 +55,7 @@ typedef struct cnet_owner_session {
   bool tls_shutdown_after_flush;
   uint8_t tcp_shutdown_mask;
   uint8_t tcp_shutdown_applied_mask;
-  salts_deadline_id connect_deadline;
+  cmeta_deadline_id connect_deadline;
 } cnet_owner_session;
 
 typedef struct cnet_owner_request {
@@ -73,7 +73,7 @@ typedef struct cnet_owner_request {
   bool active;
   bool close_after_send;
   bool vector_write;
-  salts_deadline_id deadline;
+  cmeta_deadline_id deadline;
 #if defined(CNET_INTERNAL_PROFILING)
   uint64_t profile_submitted_ns;
 #endif
@@ -92,7 +92,7 @@ struct cnet_owner_impl {
   native_io_backend backend;
   bool backend_borrowed;
   cnet_resolver resolver;
-  salts_deadline_queue deadlines;
+  cmeta_deadline_queue deadlines;
   cnet_write_queue writes;
   native_io_backend_kind backend_kind;
   cnet_session_table *sessions;
@@ -136,7 +136,7 @@ struct cnet_owner_impl {
 
 static uint64_t cnet_owner_system_now(void *context) {
   (void)context;
-  return salts_monotonic_ms();
+  return cmeta_monotonic_ms();
 }
 
 static void cnet_owner_discard_backend(cnet_owner_impl *impl) {
@@ -176,11 +176,11 @@ static uint32_t cnet_owner_request_timeout(const cnet_owner_session *session,
   return 0u;
 }
 
-static int cnet_owner_cancel_deadline(cnet_owner_impl *impl, salts_deadline_id *deadline) {
-  salts_deadline_event discarded = {0};
+static int cnet_owner_cancel_deadline(cnet_owner_impl *impl, cmeta_deadline_id *deadline) {
+  cmeta_deadline_event discarded = {0};
   int status;
   if (*deadline == 0u) return SALTS_OK;
-  status = salts_deadline_queue_cancel(&impl->deadlines, *deadline, &discarded);
+  status = cmeta_deadline_queue_cancel(&impl->deadlines, *deadline, &discarded);
   if (status == SALTS_OK) *deadline = 0u;
   return status == SALTS_ENOENT ? SALTS_EPROTO : status;
 }
@@ -194,14 +194,14 @@ static cnet_owner_session *cnet_owner_find_session(cnet_owner_impl *impl,
 
 #if defined(CNET_INTERNAL_PROFILING)
 static uint64_t cnet_owner_profile_start(const cnet_owner_impl *impl) {
-  return impl->profile_active ? salts_hrtime() : 0u;
+  return impl->profile_active ? cmeta_hrtime() : 0u;
 }
 
 static void cnet_owner_profile_finish(cnet_owner_impl *impl, uint64_t started_ns,
                                       uint64_t *elapsed_ns, uint64_t *calls) {
   uint64_t elapsed;
   if (!impl->profile_active) return;
-  elapsed = salts_hrtime() - started_ns;
+  elapsed = cmeta_hrtime() - started_ns;
   *elapsed_ns = elapsed > UINT64_MAX - *elapsed_ns ? UINT64_MAX : *elapsed_ns + elapsed;
   if (*calls != UINT64_MAX) ++*calls;
 }
@@ -244,7 +244,7 @@ static void cnet_owner_profile_trace(cnet_owner_impl *impl,
                                      native_io_endpoint endpoint,
                                      size_t bytes) {
   cnet_owner_profile_trace_at(impl, kind, session, request, endpoint,
-                              bytes, salts_hrtime());
+                              bytes, cmeta_hrtime());
 }
 #endif
 
@@ -980,7 +980,7 @@ static int cnet_owner_submit_request(cnet_owner_impl *impl, cnet_owner_request *
         request->role == CNET_OWNER_REQUEST_TLS_WRITE) {
       request->profile_submitted_ns =
           !impl->profile_active || impl->profile_trace_events != NULL
-              ? salts_hrtime()
+              ? cmeta_hrtime()
               : 0u;
       if (request->profile_submitted_ns != 0u) {
         const cnet_owner_trace_kind kind =
@@ -1055,7 +1055,7 @@ static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *s
   }
   if (timeout_ms != 0u) {
     status =
-        salts_deadline_queue_schedule(&impl->deadlines, cnet_owner_deadline_after(impl, timeout_ms),
+        cmeta_deadline_queue_schedule(&impl->deadlines, cnet_owner_deadline_after(impl, timeout_ms),
                                       index + 1u, &request->deadline);
     if (status != SALTS_OK) {
       cnet_owner_record_failure(session, status, stage);
@@ -1389,7 +1389,7 @@ static int cnet_owner_start_tls(cnet_owner_impl *impl, cnet_owner_session *sessi
   if (status != SALTS_OK) return status;
   session->peer.tls_context = NULL;
   session->session_deadline_stage = CNET_SESSION_STAGE_HANDSHAKE;
-  status = salts_deadline_queue_schedule(
+  status = cmeta_deadline_queue_schedule(
       &impl->deadlines, cnet_owner_deadline_after(impl, session->peer.tls_handshake_timeout_ms),
       CNET_OWNER_SESSION_DEADLINE_TOKEN | (uint64_t)session->handle.slot,
       &session->connect_deadline);
@@ -1585,7 +1585,7 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
     return cnet_owner_fail_accepted_command(impl, session, command, SALTS_ENOMEM,
                                             CNET_SESSION_STAGE_CONNECT);
   if (session->peer.connect_timeout_ms != 0u) {
-    status = salts_deadline_queue_schedule(
+    status = cmeta_deadline_queue_schedule(
         &impl->deadlines, cnet_owner_deadline_after(impl, session->peer.connect_timeout_ms),
         CNET_OWNER_SESSION_DEADLINE_TOKEN | (uint64_t)session->handle.slot,
         &session->connect_deadline);
@@ -2214,15 +2214,15 @@ static int cnet_owner_process_completion_batch(cnet_owner_impl *impl,
 }
 
 static int cnet_owner_process_deadlines(cnet_owner_impl *impl) {
-  salts_deadline_event next = {0};
+  cmeta_deadline_event next = {0};
   uint64_t now_ms;
-  int status = salts_deadline_queue_peek(&impl->deadlines, &next);
+  int status = cmeta_deadline_queue_peek(&impl->deadlines, &next);
   if (status == SALTS_ETIMEDOUT) return SALTS_OK;
   if (status != SALTS_OK) return status;
   now_ms = impl->now_ms(impl->clock_context);
   for (;;) {
-    salts_deadline_event deadline = {0};
-    status = salts_deadline_queue_take_ready(&impl->deadlines, now_ms, &deadline);
+    cmeta_deadline_event deadline = {0};
+    status = cmeta_deadline_queue_take_ready(&impl->deadlines, now_ms, &deadline);
     if (status == SALTS_ETIMEDOUT) return SALTS_OK;
     if (status != SALTS_OK) return status;
     if ((deadline.token & CNET_OWNER_SESSION_DEADLINE_TOKEN) != 0u) {
@@ -2264,12 +2264,12 @@ static int cnet_owner_process_deadlines(cnet_owner_impl *impl) {
 
 static uint32_t cnet_owner_observe_timeout(cnet_owner_impl *impl, uint32_t requested_ms,
                                            bool processed) {
-  salts_deadline_event deadline = {0};
+  cmeta_deadline_event deadline = {0};
   uint64_t now_ms;
   uint64_t remaining;
   uint32_t result = requested_ms;
   if (processed) return 0u;
-  if (salts_deadline_queue_peek(&impl->deadlines, &deadline) == SALTS_OK) {
+  if (cmeta_deadline_queue_peek(&impl->deadlines, &deadline) == SALTS_OK) {
     now_ms = impl->now_ms(impl->clock_context);
     remaining = deadline.deadline_ms > now_ms ? deadline.deadline_ms - now_ms : 0u;
     if (remaining > UINT32_MAX) remaining = UINT32_MAX;
@@ -2376,7 +2376,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
     free(impl);
     return status;
   }
-  status = salts_deadline_queue_init(&impl->deadlines,
+  status = cmeta_deadline_queue_init(&impl->deadlines,
                                      config->connection_capacity + config->request_capacity);
   if (status != SALTS_OK) {
     (void)cnet_resolver_close(&impl->resolver, 0u);
@@ -2398,7 +2398,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
         .max_payload_bytes = config->max_write_bytes};
     status = cnet_write_queue_init(&impl->writes, &write_config);
     if (status != SALTS_OK) {
-      (void)salts_deadline_queue_destroy(&impl->deadlines);
+      (void)cmeta_deadline_queue_destroy(&impl->deadlines);
       (void)cnet_resolver_close(&impl->resolver, 0u);
       (void)cnet_resolver_destroy(&impl->resolver);
       (void)native_io_backend_close(&impl->backend);
@@ -2445,7 +2445,7 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
   bool event_blocked = false;
   int status;
   if (impl == NULL || impl->closed) return SALTS_EINVAL;
-  started_ms = salts_monotonic_ms();
+  started_ms = cmeta_monotonic_ms();
   published_before = impl->published_event_count;
   status = cnet_owner_flush_state_events(impl, &event_blocked);
   if (status != SALTS_OK) return status;
@@ -2515,7 +2515,7 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
   if (impl->backend_borrowed) return SALTS_OK;
 
   for (;;) {
-    const uint64_t elapsed_ms = salts_monotonic_ms() - started_ms;
+    const uint64_t elapsed_ms = cmeta_monotonic_ms() - started_ms;
     const uint32_t remaining_ms = elapsed_ms >= timeout_ms ? 0u : timeout_ms - (uint32_t)elapsed_ms;
     size_t completion_count = 0u;
 
@@ -3345,7 +3345,7 @@ int cnet_owner_close(cnet_owner *owner) {
   if (impl->closed) return SALTS_EALREADY;
   if (impl->occupied_sessions != 0u || impl->active_requests != 0u ||
       impl->session_work_count != 0u || impl->pending_event_count != 0u ||
-      salts_deadline_queue_size(&impl->deadlines) != 0u)
+      cmeta_deadline_queue_size(&impl->deadlines) != 0u)
     return SALTS_EBUSY;
   if (impl->writes.impl != NULL) {
     cnet_write_queue_stats write_stats = {0};
@@ -3382,7 +3382,7 @@ int cnet_owner_destroy(cnet_owner *owner) {
     if (status != SALTS_OK) return status;
   }
   impl->backend.impl = NULL;
-  status = salts_deadline_queue_destroy(&impl->deadlines);
+  status = cmeta_deadline_queue_destroy(&impl->deadlines);
   if (status != SALTS_OK) return status;
   status = cnet_write_queue_destroy(&impl->writes);
   if (status != SALTS_OK) return status;

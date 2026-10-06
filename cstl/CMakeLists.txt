@@ -1,4 +1,4 @@
-set(TARGET_NAME salts_cstl)
+set(TARGET_NAME cmeta_cstl)
 
 add_library(${TARGET_NAME}
   src/associative_meta.c
@@ -22,6 +22,7 @@ add_library(${TARGET_NAME}
 
 cmake_config_target(
   ${TARGET_NAME}
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   ALIAS Salts::CSTL
   FOLDER "cstl"
   EXPORT_NAME CSTL)
@@ -34,17 +35,18 @@ target_include_directories(
     $<INSTALL_INTERFACE:include>)
 target_link_libraries(${TARGET_NAME} PUBLIC Salts::CMeta)
 
-add_library(salts_cstl_stream
+add_library(cmeta_cstl_stream
   src/cflow_backend.c)
 cmake_config_target(
-  salts_cstl_stream
+  cmeta_cstl_stream
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   ALIAS Salts::CSTLStream
   FOLDER "cstl"
   EXPORT_NAME CSTLStream)
 target_link_libraries(
-  salts_cstl_stream
+  cmeta_cstl_stream
   PUBLIC Salts::CSTL Salts::CFlow)
-target_compile_features(salts_cstl_stream PUBLIC c_std_11)
+target_compile_features(cmeta_cstl_stream PUBLIC c_std_11)
 
 install(
   TARGETS ${TARGET_NAME}
@@ -54,7 +56,7 @@ install(
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 install(
-  TARGETS salts_cstl_stream
+  TARGETS cmeta_cstl_stream
   EXPORT SaltsTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}

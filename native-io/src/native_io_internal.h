@@ -8,24 +8,24 @@
 static inline uint32_t native_io_remaining_timeout(uint64_t started_ms, uint32_t timeout_ms) {
   uint64_t elapsed;
   if (timeout_ms == UINT32_MAX) return UINT32_MAX;
-  elapsed = salts_monotonic_ms() - started_ms;
+  elapsed = cmeta_monotonic_ms() - started_ms;
   return elapsed >= timeout_ms ? 0u : timeout_ms - (uint32_t)elapsed;
 }
 
-typedef struct salts_io_impl salts_io_impl;
+typedef struct cmeta_io_impl cmeta_io_impl;
 typedef struct native_io_coroutine_owner native_io_coroutine_owner;
 
-typedef enum salts_io_resource_kind {
+typedef enum cmeta_io_resource_kind {
   SALTS_IO_RESOURCE_STREAM_SOCKET = 1,
   SALTS_IO_RESOURCE_DATAGRAM_SOCKET = 2,
   SALTS_IO_RESOURCE_BYTE_PIPE = 3
-} salts_io_resource_kind;
+} cmeta_io_resource_kind;
 
-static inline bool native_io_resource_kind_is_socket(salts_io_resource_kind kind) {
+static inline bool native_io_resource_kind_is_socket(cmeta_io_resource_kind kind) {
   return kind == SALTS_IO_RESOURCE_STREAM_SOCKET || kind == SALTS_IO_RESOURCE_DATAGRAM_SOCKET;
 }
 
-static inline salts_io_resource_kind
+static inline cmeta_io_resource_kind
 native_io_operation_resource_kind(native_io_operation_kind kind) {
   if (kind == NATIVE_IO_OPERATION_STREAM_RECV || kind == NATIVE_IO_OPERATION_STREAM_SEND ||
       kind == NATIVE_IO_OPERATION_STREAM_CONNECT)
@@ -34,46 +34,46 @@ native_io_operation_resource_kind(native_io_operation_kind kind) {
     return SALTS_IO_RESOURCE_DATAGRAM_SOCKET;
   if (kind == NATIVE_IO_OPERATION_PIPE_READ || kind == NATIVE_IO_OPERATION_PIPE_WRITE)
     return SALTS_IO_RESOURCE_BYTE_PIPE;
-  return (salts_io_resource_kind)0;
+  return (cmeta_io_resource_kind)0;
 }
 
-typedef struct salts_io_impl_ops {
-  int (*attach_socket)(salts_io_impl *impl, uintptr_t native_socket,
+typedef struct cmeta_io_impl_ops {
+  int (*attach_socket)(cmeta_io_impl *impl, uintptr_t native_socket,
                        native_io_endpoint *out_endpoint);
-  int (*release_socket)(salts_io_impl *impl, native_io_endpoint endpoint);
-  int (*submit)(salts_io_impl *impl, const native_io_operation *operation,
+  int (*release_socket)(cmeta_io_impl *impl, native_io_endpoint endpoint);
+  int (*submit)(cmeta_io_impl *impl, const native_io_operation *operation,
                 native_io_request *out_request);
-  int (*cancel)(salts_io_impl *impl, native_io_request request);
-  int (*observe)(salts_io_impl *impl, native_io_completion *events, size_t event_capacity,
+  int (*cancel)(cmeta_io_impl *impl, native_io_request request);
+  int (*observe)(cmeta_io_impl *impl, native_io_completion *events, size_t event_capacity,
                  uint32_t timeout_ms, size_t *out_count);
-  int (*wake)(salts_io_impl *impl);
-  int (*close)(salts_io_impl *impl);
-  int (*destroy)(salts_io_impl *impl);
-  bool (*get_stats)(const salts_io_impl *impl, native_io_backend_stats *out_stats);
-  int (*attach_pipe)(salts_io_impl *impl, uintptr_t native_handle, uint32_t flags,
+  int (*wake)(cmeta_io_impl *impl);
+  int (*close)(cmeta_io_impl *impl);
+  int (*destroy)(cmeta_io_impl *impl);
+  bool (*get_stats)(const cmeta_io_impl *impl, native_io_backend_stats *out_stats);
+  int (*attach_pipe)(cmeta_io_impl *impl, uintptr_t native_handle, uint32_t flags,
                      native_io_endpoint *out_endpoint);
-  int (*release_pipe)(salts_io_impl *impl, native_io_endpoint endpoint);
-  int (*prepare)(salts_io_impl *impl, const native_io_operation *operation,
+  int (*release_pipe)(cmeta_io_impl *impl, native_io_endpoint endpoint);
+  int (*prepare)(cmeta_io_impl *impl, const native_io_operation *operation,
                  native_io_request *out_request);
   /* NULL means this driver starts work immediately and has no staged SQ. */
-  int (*flush)(salts_io_impl *impl);
-  int (*submit_vector)(salts_io_impl *impl, const native_io_vector_operation *operation,
+  int (*flush)(cmeta_io_impl *impl);
+  int (*submit_vector)(cmeta_io_impl *impl, const native_io_vector_operation *operation,
                        native_io_request *out_request);
-  bool (*supports_vector_write)(const salts_io_impl *impl, native_io_endpoint endpoint);
+  bool (*supports_vector_write)(const cmeta_io_impl *impl, native_io_endpoint endpoint);
 
   /*
    * Private listener-accept seam for CNet/shared-progress composition.
    * Existing backends leave these NULL until #698 backend work supplies them.
    * Accepted native transports never enter the public NativeIO ABI.
    */
-  int (*submit_stream_accept)(salts_io_impl *impl, native_io_endpoint listener,
+  int (*submit_stream_accept)(cmeta_io_impl *impl, native_io_endpoint listener,
                               native_io_request *out_request);
-  int (*take_stream_accept)(salts_io_impl *impl, native_io_request request,
+  int (*take_stream_accept)(cmeta_io_impl *impl, native_io_request request,
                             uintptr_t *out_transport);
-} salts_io_impl_ops;
+} cmeta_io_impl_ops;
 
-struct salts_io_impl {
-  const salts_io_impl_ops *ops;
+struct cmeta_io_impl {
+  const cmeta_io_impl_ops *ops;
   native_io_backend_kind kind;
   native_io_coroutine_owner *coroutine_owner;
   size_t coroutine_capacity;

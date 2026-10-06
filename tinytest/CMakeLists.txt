@@ -30,6 +30,7 @@ source_group(TREE "${tinytest_include_dir}" PREFIX "Header Files"
   FILES ${tinytest_public_headers} ${tinytest_detail_headers})
 
 cmake_config_target(tinytest
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   ALIAS Salts::TinyTest
   FOLDER "tinytest"
   EXPORT_NAME TinyTest)

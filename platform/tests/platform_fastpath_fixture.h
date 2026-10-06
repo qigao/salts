@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-extern salts_fast_key_state platform_shared_key;
+extern cmeta_fast_key_state platform_shared_key;
 #ifdef __cplusplus
 }
 #endif

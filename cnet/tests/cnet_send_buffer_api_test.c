@@ -127,12 +127,12 @@ static void cnet_send_buffer_test_sent(void *user, cnet_connection connection, s
 }
 
 static int cnet_send_buffer_test_poll_until(cnet_client *client, atomic_int *value, int expected) {
-  const uint64_t deadline = salts_monotonic_ms() + CNET_SEND_BUFFER_TEST_TIMEOUT_MS;
+  const uint64_t deadline = cmeta_monotonic_ms() + CNET_SEND_BUFFER_TEST_TIMEOUT_MS;
   while (atomic_load_explicit(value, memory_order_acquire) < expected) {
     size_t events = 0u;
     const int status = cnet_client_poll(client, 1u, &events);
     if (status != SALTS_OK) return status;
-    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+    if (cmeta_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
   return SALTS_OK;
 }

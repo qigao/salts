@@ -629,7 +629,7 @@ jobs:
         shell: bash
         env:
           SALTS_BENCH_PROFILE: ${{ fromJSON(inputs.scope).profile }}
-          CORO_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/salts_coro_executor_batch_benchmark
+          CORO_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/coro_executor_batch_benchmark
         run: |
           set -euo pipefail
           result_dir="$GITHUB_WORKSPACE/native-io-results"
@@ -650,7 +650,7 @@ jobs:
             local cpuset="$2"
             [[ -z "$cpuset" || "$cpuset" == "unavailable" ]] && return 0
             local prefix="$result_dir/coro-executor-batch-$label"
-            export SALTS_CORO_EXECUTOR_BATCH_BENCH_OUTPUT="$prefix"
+            export CORO_EXECUTOR_BATCH_BENCH_OUTPUT="$prefix"
             taskset -c "$cpuset" ctest --test-dir "${{ matrix.build_dir }}" --no-tests=error -V -R "^$(basename "$benchmark")$" 2>&1 | tee "$prefix.md"
             pwsh ./coroutine/benchmarks/verify_executor_batch_benchmark.ps1 -Path "$prefix.csv" -Profile "$SALTS_BENCH_PROFILE"
           }
@@ -663,7 +663,7 @@ jobs:
         shell: pwsh
         env:
           SALTS_BENCH_PROFILE: ${{ fromJSON(inputs.scope).profile }}
-          CORO_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/salts_coro_executor_batch_benchmark
+          CORO_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/coro_executor_batch_benchmark
         run: |
           $ErrorActionPreference = "Stop"
           $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
@@ -673,13 +673,13 @@ jobs:
           if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
             throw "Coroutine Executor batch benchmark executable not found: $benchmark"
           }
-          $env:SALTS_CORO_EXECUTOR_BATCH_BENCH_OUTPUT = Join-Path $resultDir "coro-executor-batch-default"
+          $env:CORO_EXECUTOR_BATCH_BENCH_OUTPUT = Join-Path $resultDir "coro-executor-batch-default"
           $output = ctest --test-dir "${{ matrix.build_dir }}" --no-tests=error -V -R "^$([IO.Path]::GetFileNameWithoutExtension($benchmark))$" 2>&1 |
             ForEach-Object { $_ -replace '^[0-9]+: ', '' } |
             Tee-Object -FilePath (Join-Path $resultDir "coro-executor-batch-default.md")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & ./coroutine/benchmarks/verify_executor_batch_benchmark.ps1 `
-            -Path "$env:SALTS_CORO_EXECUTOR_BATCH_BENCH_OUTPUT.csv" `
+            -Path "$env:CORO_EXECUTOR_BATCH_BENCH_OUTPUT.csv" `
             -Profile $env:SALTS_BENCH_PROFILE
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run Coroutine Executor dequeue batch CPU-set sweep
@@ -687,7 +687,7 @@ jobs:
         shell: bash
         env:
           SALTS_BENCH_PROFILE: ${{ fromJSON(inputs.scope).profile }}
-          CORO_DEQUEUE_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/salts_coro_executor_dequeue_batch_benchmark
+          CORO_DEQUEUE_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/coro_executor_dequeue_batch_benchmark
         run: |
           set -euo pipefail
           result_dir="$GITHUB_WORKSPACE/native-io-results"
@@ -708,7 +708,7 @@ jobs:
             local cpuset="$2"
             [[ -z "$cpuset" || "$cpuset" == "unavailable" ]] && return 0
             local prefix="$result_dir/coro-executor-dequeue-batch-$label"
-            export SALTS_CORO_EXECUTOR_DEQUEUE_BATCH_BENCH_OUTPUT="$prefix"
+            export CORO_EXECUTOR_DEQUEUE_BATCH_BENCH_OUTPUT="$prefix"
             taskset -c "$cpuset" ctest --test-dir "${{ matrix.build_dir }}" --no-tests=error -V -R "^$(basename "$benchmark")$" 2>&1 | tee "$prefix.md"
             pwsh ./coroutine/benchmarks/verify_executor_dequeue_batch_benchmark.ps1 -Path "$prefix.csv" -Profile "$SALTS_BENCH_PROFILE"
           }
@@ -721,7 +721,7 @@ jobs:
         shell: pwsh
         env:
           SALTS_BENCH_PROFILE: ${{ fromJSON(inputs.scope).profile }}
-          CORO_DEQUEUE_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/salts_coro_executor_dequeue_batch_benchmark
+          CORO_DEQUEUE_BATCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/coro_executor_dequeue_batch_benchmark
         run: |
           $ErrorActionPreference = "Stop"
           $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
@@ -731,14 +731,14 @@ jobs:
           if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
             throw "Coroutine Executor dequeue batch benchmark executable not found: $benchmark"
           }
-          $env:SALTS_CORO_EXECUTOR_DEQUEUE_BATCH_BENCH_OUTPUT =
+          $env:CORO_EXECUTOR_DEQUEUE_BATCH_BENCH_OUTPUT =
             Join-Path $resultDir "coro-executor-dequeue-batch-default"
           $output = ctest --test-dir "${{ matrix.build_dir }}" --no-tests=error -V -R "^$([IO.Path]::GetFileNameWithoutExtension($benchmark))$" 2>&1 |
             ForEach-Object { $_ -replace '^[0-9]+: ', '' } |
             Tee-Object -FilePath (Join-Path $resultDir "coro-executor-dequeue-batch-default.md")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & ./coroutine/benchmarks/verify_executor_dequeue_batch_benchmark.ps1 `
-            -Path "$env:SALTS_CORO_EXECUTOR_DEQUEUE_BATCH_BENCH_OUTPUT.csv" `
+            -Path "$env:CORO_EXECUTOR_DEQUEUE_BATCH_BENCH_OUTPUT.csv" `
             -Profile $env:SALTS_BENCH_PROFILE
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run NativeIO PIPE execution-style benchmark

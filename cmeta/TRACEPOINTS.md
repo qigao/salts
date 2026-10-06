@@ -45,9 +45,9 @@ int main(void) {
         return 1;
     cmeta_trace_emit(http_request, (uint64_t)EXAMPLE_REQUEST_ID, EXAMPLE_STATUS);
     if (cmeta_trace_disable(http_request) != CMETA_OK ||
-        salts_fast_enable(&alloc_fail) != SALTS_OK)
+        cmeta_fast_enable(&alloc_fail) != SALTS_OK)
         return 1;
-    if (!salts_fast_key_consume(&alloc_fail) || salts_fast_key_consume(&alloc_fail))
+    if (!cmeta_fast_key_consume(&alloc_fail) || cmeta_fast_key_consume(&alloc_fail))
         return 1;
     return last_request == EXAMPLE_REQUEST_ID && telemetry_manifest.count == 1u ? 0 : 1;
 }
@@ -61,8 +61,8 @@ int main(void) {
 - `cmeta_trace_bind(name, callback)` 要求 `void (*)(const name_payload *)`，不兼容签名在编译时拒绝；成功返回 `CMETA_OK`。生成的 `name_bind(NULL)` 返回 `CMETA_INVALID_ARGUMENT`，不改变现有 backend。
 - `cmeta_trace_enable(name)` 成功返回 `CMETA_OK`，未绑定返回 `CMETA_INVALID_ARGUMENT`；`cmeta_trace_disable(name)` 关闭 key 并返回 `CMETA_OK`，保留 backend。
 - `cmeta_trace_emit(name, values...)` 无返回值；关闭时无参数副作用，启用时同步调用 exact typed backend，不查询 Reflection。
-- `SALTS_FAST_KEY(name, false)` 在 C 模块声明默认关闭的 Platform key；`salts_fast_enable(&name)` / `salts_fast_disable(&name)` 返回 `SALTS_OK` 或 `SALTS_EINVAL`。
-- `salts_fast_key_consume(key)` 要求 live、非 NULL key，C/C++ 都返回是否消费一次许可。C++ 借用 C-owned opaque 存储；重复 enable 合并，不累积次数。
+- `SALTS_FAST_KEY(name, false)` 在 C 模块声明默认关闭的 Platform key；`cmeta_fast_enable(&name)` / `cmeta_fast_disable(&name)` 返回 `SALTS_OK` 或 `SALTS_EINVAL`。
+- `cmeta_fast_key_consume(key)` 要求 live、非 NULL key，C/C++ 都返回是否消费一次许可。C++ 借用 C-owned opaque 存储；重复 enable 合并，不累积次数。
 
 ## 兼容性与验证
 

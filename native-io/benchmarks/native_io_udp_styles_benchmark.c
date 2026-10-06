@@ -559,10 +559,10 @@ static int udp_style_measure_backend(native_io_backend_kind kind, udp_style_kind
   out->payload_size = payload_size;
   out->transfers = UDP_STYLE_MEASURED_TRANSFERS;
   for (size_t index = 0u; index < UDP_STYLE_MEASURED_TRANSFERS; ++index) {
-    const uint64_t started = salts_hrtime();
+    const uint64_t started = cmeta_hrtime();
     status = style == UDP_STYLE_DIRECT ? udp_style_direct_transfer(&fixture)
                                         : udp_style_coroutine_transfer(&fixture);
-    latencies[index] = salts_hrtime() - started;
+    latencies[index] = cmeta_hrtime() - started;
     if (status != SALTS_OK) goto cleanup;
     out->wall_ns += latencies[index];
   }
@@ -849,9 +849,9 @@ static void udp_style_same_driver_run(native_io_sharded_context *context, void *
   }
 
   for (size_t index = 0u; index < UDP_STYLE_MEASURED_TRANSFERS; ++index) {
-    const uint64_t started = salts_hrtime();
+    const uint64_t started = cmeta_hrtime();
     driver->status = udp_style_sharded_transfer(fixture, context);
-    driver->latencies[index] = salts_hrtime() - started;
+    driver->latencies[index] = cmeta_hrtime() - started;
     if (driver->status != SALTS_OK) return;
   }
 
@@ -897,9 +897,9 @@ static int udp_style_measure_sharded(native_io_backend_kind kind,
       goto cleanup;
     }
     for (size_t index = 0u; index < UDP_STYLE_MEASURED_TRANSFERS; ++index) {
-      const uint64_t started = salts_hrtime();
+      const uint64_t started = cmeta_hrtime();
       status = udp_style_sharded_transfer(&fixture, NULL);
-      latencies[index] = salts_hrtime() - started;
+      latencies[index] = cmeta_hrtime() - started;
       if (status != SALTS_OK) goto cleanup;
     }
     if (!native_io_sharded_get_stats(fixture.runtime, &after)) {

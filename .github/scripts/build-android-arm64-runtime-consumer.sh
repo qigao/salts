@@ -23,16 +23,16 @@ project(SaltsAndroidRuntimeConsumer C)
 
 find_package(Salts CONFIG REQUIRED)
 
-add_executable(salts_android_runtime_probe
+add_executable(cmeta_android_runtime_probe
   "$GITHUB_WORKSPACE/cflow/tests/android_runtime_probe.c")
 
-target_link_libraries(salts_android_runtime_probe PRIVATE
+target_link_libraries(cmeta_android_runtime_probe PRIVATE
   Salts::Platform
   Salts::Concurrency
   Salts::CMeta
   Salts::CFlow)
 
-set_target_properties(salts_android_runtime_probe PROPERTIES
+set_target_properties(cmeta_android_runtime_probe PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
@@ -48,9 +48,9 @@ cmake -S "$consumer_src" -B "$consumer_build" -G Ninja \
 
 cmake --build "$consumer_build" --parallel 2
 
-probe="$consumer_build/salts_android_runtime_probe"
+probe="$consumer_build/cmeta_android_runtime_probe"
 test -f "$probe"
-cp "$probe" "$bundle/salts_android_runtime_probe"
+cp "$probe" "$bundle/cmeta_android_runtime_probe"
 
 while IFS= read -r library; do
   cp "$library" "$bundle/$(basename "$library")"
@@ -85,7 +85,7 @@ result = {
     "android_platform": "android-24",
     "ndk_revision": os.environ["SALTS_ANDROID_NDK_REVISION"],
     "clang": os.environ["SALTS_ANDROID_CLANG_VERSION"],
-    "probe": "salts_android_runtime_probe",
+    "probe": "cmeta_android_runtime_probe",
     "bundle_files": sorted(p.name for p in bundle.iterdir() if p.is_file()),
 }
 (root / "android-cross-build-results").mkdir(parents=True, exist_ok=True)

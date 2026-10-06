@@ -83,6 +83,18 @@ CSTL 生成器声明 nofail 初始化和 movable，payload 清理由原容器 de
 不生成 ops 指针、live 标志或清理回调。两字段项仍走 managed 路径，可与 trivial 项混用。
 checked scope 的 trivial 项依然 admission，并核对 runtime 分类，不允许静默降级。
 
+`cmeta_scope_nofail(status, cmeta_autos((Type, value), ...), cmeta_body(expr))`
+适用于全部资源具有静态 INIT_NOFAIL 承诺的有限集合。入口检查 canonical lifecycle
+accessor 的精确类型与声明分类，按顺序初始化，body 后逆序调用原 restore authority；
+不保存每项 live 标志或 ops 指针。CSTL 的 semantic-zero 初始化满足此契约，body 中的
+payload 分配仍可能失败，返回的错误不影响清理。mixed/fallible 集合继续使用 `cmeta_scope`。
+
+INIT_NOFAIL 是本地 provider 的行为承诺；init 返回失败或在 C++ 抛出异常说明该承诺
+被破坏，立即终止，不转入另一种 lowering。C++ body 抛异常时先逆序 restore 再传播；
+restore 按既有生命周期契约不得失败或抛异常。body 同样必须使用函数表达式，不能用
+跨作用域跳转或 longjmp 绕过清理。嵌套、body 错误、C++ 异常和已移动资源分别由
+`cmeta_cleanup_test`、`cmeta_cleanup_cpp_test` 与 `cstl_header_typed_test` 验证。
+
 清理记录 `cmeta_cleanup` 仅拥有“一次调用释放 authority 的义务”，不定义新的 Reflection
 destroy trait。其存储由调用方提供，容量是数组长度，单 owner、无分配、无增长。arm 对已
 登记项返回 BUSY；run 在回调前清空记录，保证重入和重复 discharge 不二次释放；transfer

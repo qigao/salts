@@ -32,7 +32,7 @@ extern "C" {
 // Log Levels
 // =============================================================================
 
-Enum(salts_log_level_t,
+Enum(cmeta_log_level_t,
      (SALTS_LOG_LEVEL_DEBUG, 0, "DEBUG"),
      (SALTS_LOG_LEVEL_INFO, 1, "INFO"),
      (SALTS_LOG_LEVEL_WARN, 2, "WARN"),
@@ -49,8 +49,8 @@ Enum(salts_log_level_t,
  * component, file, and message are borrowed for the callback duration. The
  * reflected descriptor does not own or extend the lifetime of these strings.
  */
-CMETA_STRUCT(salts_log_entry_t,
-    (salts_log_level_t, level),
+CMETA_STRUCT(cmeta_log_entry_t,
+    (cmeta_log_level_t, level),
     (uint64_t, timestamp_ms),
     (uint32_t, thread_id),
     (vstr, component),
@@ -63,28 +63,28 @@ CMETA_STRUCT(salts_log_entry_t,
 // Sink Interface (vtable pattern)
 // =============================================================================
 
-typedef struct salts_log_sink_s salts_log_sink_t;
+typedef struct cmeta_log_sink_s cmeta_log_sink_t;
 
 /* Low-level sink vtable callbacks consume borrowed log-entry views.
- * New custom sinks should use salts_sink_custom_create().
+ * New custom sinks should use cmeta_sink_custom_create().
  */
-typedef void (*salts_sink_write_fn)(salts_log_sink_t *sink, const salts_log_entry_t *entry);
-typedef void (*salts_sink_flush_fn)(salts_log_sink_t *sink);
-typedef void (*salts_sink_destroy_fn)(salts_log_sink_t *sink);
-typedef int (*salts_sink_filter_fn)(const salts_log_entry_t *entry, void *user_data);
-typedef void (*salts_sink_custom_write_fn)(const salts_log_entry_t *entry, void *user_data);
-typedef void (*salts_sink_custom_flush_fn)(void *user_data);
-typedef void (*salts_sink_custom_destroy_fn)(void *user_data);
+typedef void (*cmeta_sink_write_fn)(cmeta_log_sink_t *sink, const cmeta_log_entry_t *entry);
+typedef void (*cmeta_sink_flush_fn)(cmeta_log_sink_t *sink);
+typedef void (*cmeta_sink_destroy_fn)(cmeta_log_sink_t *sink);
+typedef int (*cmeta_sink_filter_fn)(const cmeta_log_entry_t *entry, void *user_data);
+typedef void (*cmeta_sink_custom_write_fn)(const cmeta_log_entry_t *entry, void *user_data);
+typedef void (*cmeta_sink_custom_flush_fn)(void *user_data);
+typedef void (*cmeta_sink_custom_destroy_fn)(void *user_data);
 
 typedef enum {
   SALTS_SINK_BORROWED = 0,
   SALTS_SINK_OWNED = 1
-} salts_sink_ownership_t;
+} cmeta_sink_ownership_t;
 
-SALTS_C_API int salts_sink_set_min_level(salts_log_sink_t *sink, salts_log_level_t level);
-SALTS_C_API salts_log_level_t salts_sink_get_min_level(const salts_log_sink_t *sink);
-SALTS_C_API int salts_sink_set_user_data(salts_log_sink_t *sink, void *user_data);
-SALTS_C_API void *salts_sink_get_user_data(const salts_log_sink_t *sink);
+SALTS_C_API int cmeta_sink_set_min_level(cmeta_log_sink_t *sink, cmeta_log_level_t level);
+SALTS_C_API cmeta_log_level_t cmeta_sink_get_min_level(const cmeta_log_sink_t *sink);
+SALTS_C_API int cmeta_sink_set_user_data(cmeta_log_sink_t *sink, void *user_data);
+SALTS_C_API void *cmeta_sink_get_user_data(const cmeta_log_sink_t *sink);
 
 // =============================================================================
 // Built-in Sinks
@@ -136,7 +136,7 @@ typedef struct {
   const char *pattern; // Format pattern (default: SALTS_LOG_DEFAULT_PATTERN)
                        // SALTS_LOG_FULL_PATTERN includes file:line only when
                        // SALTS_LOG_CAPTURE_SOURCE is enabled.
-} salts_console_sink_opts_t;
+} cmeta_console_sink_opts_t;
 
 /**
  * @brief File sink options
@@ -147,41 +147,41 @@ typedef struct {
   int max_files;       // Max rotated files to keep (0 = no rotation)
   int append;          // Append to existing file (default: 1)
   const char *pattern; // Format pattern (default: "[{time}] [{level}] {message}")
-} salts_file_sink_opts_t;
+} cmeta_file_sink_opts_t;
 
 /**
  * @brief Callback sink - custom log handling
  */
-typedef void (*salts_log_callback_fn)(const salts_log_entry_t *entry, void *user_data);
+typedef void (*cmeta_log_callback_fn)(const cmeta_log_entry_t *entry, void *user_data);
 
 typedef struct {
-  salts_sink_custom_write_fn write;
-  salts_sink_custom_flush_fn flush;
-  salts_sink_custom_destroy_fn destroy;
+  cmeta_sink_custom_write_fn write;
+  cmeta_sink_custom_flush_fn flush;
+  cmeta_sink_custom_destroy_fn destroy;
   void *user_data;
-} salts_sink_custom_opts_t;
+} cmeta_sink_custom_opts_t;
 
 /**
  * @brief Create console sink (stdout/stderr with optional colors)
  */
-SALTS_C_API salts_log_sink_t *salts_sink_console_create(const salts_console_sink_opts_t *opts);
+SALTS_C_API cmeta_log_sink_t *cmeta_sink_console_create(const cmeta_console_sink_opts_t *opts);
 
 /**
  * @brief Create file sink with optional rotation
  *
- * Uses salts_fs_pwrite for atomic append operations without mutex locks
+ * Uses cmeta_fs_pwrite for atomic append operations without mutex locks
  * on the POSIX write path. Windows uses serialized positional I/O behind
- * salts_fs_pwrite to preserve the same offset semantics with CRT file handles.
+ * cmeta_fs_pwrite to preserve the same offset semantics with CRT file handles.
  * Rotation is protected by mutex but happens rarely.
  *
  * Best for: All file logging scenarios, especially high-concurrency
  */
-SALTS_C_API salts_log_sink_t *salts_sink_file_create(const salts_file_sink_opts_t *opts);
+SALTS_C_API cmeta_log_sink_t *cmeta_sink_file_create(const cmeta_file_sink_opts_t *opts);
 
 /**
  * @brief Create callback sink for custom handling
  */
-SALTS_C_API salts_log_sink_t *salts_sink_callback_create(salts_log_callback_fn callback,
+SALTS_C_API cmeta_log_sink_t *cmeta_sink_callback_create(cmeta_log_callback_fn callback,
                                                        void *user_data);
 
 /**
@@ -190,15 +190,15 @@ SALTS_C_API salts_log_sink_t *salts_sink_callback_create(salts_log_callback_fn c
  * Ownership of opts->user_data remains with the returned sink only after this
  * function succeeds. On failure, the caller still owns opts->user_data.
  */
-SALTS_C_API salts_log_sink_t *salts_sink_custom_create(const salts_sink_custom_opts_t *opts);
+SALTS_C_API cmeta_log_sink_t *cmeta_sink_custom_create(const cmeta_sink_custom_opts_t *opts);
 
 typedef struct {
-  salts_log_level_t min_level;
-  salts_log_level_t max_level;
+  cmeta_log_level_t min_level;
+  cmeta_log_level_t max_level;
   const char *component;            // Optional exact component match
-  salts_sink_filter_fn predicate;   // Optional extra predicate, non-zero means allow
+  cmeta_sink_filter_fn predicate;   // Optional extra predicate, non-zero means allow
   void *predicate_user_data;
-} salts_sink_filter_opts_t;
+} cmeta_sink_filter_opts_t;
 #define SALTS_SINK_FILTER_OPTS_DEFAULT \
   { SALTS_LOG_LEVEL_DEBUG, SALTS_LOG_LEVEL_FATAL, NULL, NULL, NULL }
 
@@ -209,9 +209,9 @@ typedef struct {
  * SALTS_SINK_FILTER_OPTS_DEFAULT before overriding selected fields.
  * Ownership of inner is transferred only after this function succeeds.
  */
-SALTS_C_API salts_log_sink_t *salts_sink_filter_create(salts_log_sink_t *inner,
-                                                     salts_sink_ownership_t ownership,
-                                                     const salts_sink_filter_opts_t *opts);
+SALTS_C_API cmeta_log_sink_t *cmeta_sink_filter_create(cmeta_log_sink_t *inner,
+                                                     cmeta_sink_ownership_t ownership,
+                                                     const cmeta_sink_filter_opts_t *opts);
 
 /**
  * @brief Create a decorator sink that formats entries before forwarding to inner.
@@ -220,8 +220,8 @@ SALTS_C_API salts_log_sink_t *salts_sink_filter_create(salts_log_sink_t *inner,
  * stack buffer valid only for the duration of the inner write call.
  * Ownership of inner is transferred only after this function succeeds.
  */
-SALTS_C_API salts_log_sink_t *salts_sink_format_create(salts_log_sink_t *inner,
-                                                     salts_sink_ownership_t ownership,
+SALTS_C_API cmeta_log_sink_t *cmeta_sink_format_create(cmeta_log_sink_t *inner,
+                                                     cmeta_sink_ownership_t ownership,
                                                      const char *pattern);
 
 typedef struct {
@@ -229,7 +229,7 @@ typedef struct {
   uint64_t entries_forwarded;
   uint64_t entries_filtered;
   uint64_t bytes_forwarded;
-} salts_sink_metrics_t;
+} cmeta_sink_metrics_t;
 
 /**
  * @brief Create a decorator sink that records metrics and forwards to inner.
@@ -238,19 +238,19 @@ typedef struct {
  * is SALTS_SINK_OWNED, destroying the decorator also destroys inner.
  * Ownership of inner is transferred only after this function succeeds.
  */
-SALTS_C_API salts_log_sink_t *salts_sink_metrics_create(salts_log_sink_t *inner,
-                                                      salts_sink_ownership_t ownership);
+SALTS_C_API cmeta_log_sink_t *cmeta_sink_metrics_create(cmeta_log_sink_t *inner,
+                                                      cmeta_sink_ownership_t ownership);
 
 /**
- * @brief Read metrics from a sink created by salts_sink_metrics_create.
+ * @brief Read metrics from a sink created by cmeta_sink_metrics_create.
  * @return 0 on success, -1 if sink is not a metrics decorator or args are invalid.
  */
-SALTS_C_API int salts_sink_metrics_snapshot(salts_log_sink_t *sink, salts_sink_metrics_t *out);
+SALTS_C_API int cmeta_sink_metrics_snapshot(cmeta_log_sink_t *sink, cmeta_sink_metrics_t *out);
 
 /**
  * @brief Destroy a sink
  */
-SALTS_C_API void salts_sink_destroy(salts_log_sink_t *sink);
+SALTS_C_API void cmeta_sink_destroy(cmeta_log_sink_t *sink);
 
 // =============================================================================
 // Logger
@@ -262,7 +262,7 @@ typedef struct tlog_s tlog_t;
  * @brief Logger configuration
  */
 typedef struct {
-  salts_log_level_t min_level; // Global minimum level
+  cmeta_log_level_t min_level; // Global minimum level
   size_t buffer_size;          // Ring buffer size for async (default: 64KB)
   size_t pool_size;            // Memory pool size (default: 32KB)
 } tlog_config_t;
@@ -284,48 +284,48 @@ SALTS_C_API void tlog_destroy(tlog_t *logger);
  * @return 0 on success, -1 on failure
  * 
  * OWNERSHIP SEMANTICS:
- * - On SUCCESS (returns 0): Logger takes ownership. DO NOT call salts_sink_destroy(sink).
+ * - On SUCCESS (returns 0): Logger takes ownership. DO NOT call cmeta_sink_destroy(sink).
  *                           The sink will be destroyed automatically with the logger.
- * - On FAILURE (returns -1): Caller retains ownership. MUST call salts_sink_destroy(sink)
+ * - On FAILURE (returns -1): Caller retains ownership. MUST call cmeta_sink_destroy(sink)
  *                           to avoid memory leak.
  * 
  * THREAD SAFETY: NOT thread-safe. Do not call concurrently with other tlog_*
  *                functions on the same logger.
  * 
  * CORRECT USAGE:
- *   salts_log_sink_t *sink = salts_sink_console_create(NULL);
+ *   cmeta_log_sink_t *sink = cmeta_sink_console_create(NULL);
  *   if (!sink) return -1;
  *   
  *   if (tlog_add_sink(logger, sink) != 0) {
- *     salts_sink_destroy(sink);  // ← Cleanup on failure
+ *     cmeta_sink_destroy(sink);  // ← Cleanup on failure
  *     return -1;
  *   }
  *   // sink is now owned by logger, will be destroyed with logger
  * 
  * INCORRECT USAGE:
- *   salts_log_sink_t *sink = salts_sink_console_create(NULL);
+ *   cmeta_log_sink_t *sink = cmeta_sink_console_create(NULL);
  *   tlog_add_sink(logger, sink);  // ❌ Ignores error
- *   salts_sink_destroy(sink);     // ❌ Double-free if add succeeded!
+ *   cmeta_sink_destroy(sink);     // ❌ Double-free if add succeeded!
  * 
  * MULTIPLE SINKS:
  *   // Each sink is independently owned after successful add
- *   salts_log_sink_t *console = salts_sink_console_create(NULL);
- *   salts_log_sink_t *file = salts_sink_file_create(&file_opts);
+ *   cmeta_log_sink_t *console = cmeta_sink_console_create(NULL);
+ *   cmeta_log_sink_t *file = cmeta_sink_file_create(&file_opts);
  *   
  *   if (tlog_add_sink(logger, console) != 0) {
- *     salts_sink_destroy(console);
- *     salts_sink_destroy(file);  // ← Still our responsibility
+ *     cmeta_sink_destroy(console);
+ *     cmeta_sink_destroy(file);  // ← Still our responsibility
  *     return -1;
  *   }
  *   
  *   if (tlog_add_sink(logger, file) != 0) {
- *     salts_sink_destroy(file);   // ← Still our responsibility
+ *     cmeta_sink_destroy(file);   // ← Still our responsibility
  *     // console already owned by logger, will be cleaned up
  *     return -1;
  *   }
  *   // Both sinks now owned by logger
  */
-SALTS_C_API int tlog_add_sink(tlog_t *logger, salts_log_sink_t *sink);
+SALTS_C_API int tlog_add_sink(tlog_t *logger, cmeta_log_sink_t *sink);
 
 /**
  * @brief Remove sink from logger without destroying it
@@ -333,7 +333,7 @@ SALTS_C_API int tlog_add_sink(tlog_t *logger, salts_log_sink_t *sink);
  * Call tlog_flush(logger) before removing when logs already published before
  * removal must still be delivered to this sink.
  */
-SALTS_C_API void tlog_remove_sink(tlog_t *logger, salts_log_sink_t *sink);
+SALTS_C_API void tlog_remove_sink(tlog_t *logger, cmeta_log_sink_t *sink);
 
 /**
  * @brief Flush all sinks (blocks until async queue is drained)
@@ -347,13 +347,13 @@ SALTS_C_API void tlog_flush(tlog_t *logger);
 /**
  * @brief Log a pre-formatted string directly
  */
-SALTS_C_API void salts_log_str(tlog_t *logger, salts_log_level_t level, vstr component,
+SALTS_C_API void cmeta_log_str(tlog_t *logger, cmeta_log_level_t level, vstr component,
                              vstr file, int line, vstr message);
 
 /**
  * @brief Log a message using typed arguments (auto-detects types for {})
  */
-SALTS_C_API void salts_log_typed(tlog_t *logger, salts_log_level_t level,
+SALTS_C_API void cmeta_log_typed(tlog_t *logger, cmeta_log_level_t level,
                                vstr component, vstr file, int line, vstr pattern,
                                const fmt_arg_t *args, size_t arg_count);
 
@@ -365,13 +365,13 @@ SALTS_C_API void salts_log_typed(tlog_t *logger, salts_log_level_t level,
  * @brief Set logger minimum level.
  * @return 0 on success, -1 if logger is NULL or level is invalid.
  */
-SALTS_C_API int tlog_set_level_ex(tlog_t *logger, salts_log_level_t level);
+SALTS_C_API int tlog_set_level_ex(tlog_t *logger, cmeta_log_level_t level);
 
 /**
  * @brief Backward-compatible level setter. Invalid inputs are ignored.
  */
-SALTS_C_API void tlog_set_level(tlog_t *logger, salts_log_level_t level);
-SALTS_C_API salts_log_level_t tlog_get_level(const tlog_t *logger);
+SALTS_C_API void tlog_set_level(tlog_t *logger, cmeta_log_level_t level);
+SALTS_C_API cmeta_log_level_t tlog_get_level(const tlog_t *logger);
 
 // =============================================================================
 // Default Logger
@@ -410,8 +410,8 @@ SALTS_C_API int tlog_get_queue_size(const tlog_t *logger);
 // Utility Functions
 // =============================================================================
 
-SALTS_C_API const char *salts_log_level_name(salts_log_level_t level);
-SALTS_C_API salts_log_level_t salts_log_level_from_name(const char *name);
+SALTS_C_API const char *cmeta_log_level_name(cmeta_log_level_t level);
+SALTS_C_API cmeta_log_level_t cmeta_log_level_from_name(const char *name);
 
 #ifdef __cplusplus
 }
@@ -421,9 +421,9 @@ SALTS_C_API salts_log_level_t salts_log_level_from_name(const char *name);
 // Convenience Macros
 // =============================================================================
 //
-// Raw-message forms have fixed arity and route directly to salts_log_str.
+// Raw-message forms have fixed arity and route directly to cmeta_log_str.
 // Formatted forms use the F suffix, require at least one formatting argument,
-// and route to salts_log_typed. This keeps strict-C11 call sites free of
+// and route to cmeta_log_typed. This keeps strict-C11 call sites free of
 // empty-__VA_ARGS__ detection and comma-elision extensions.
 
 #define SALTS_LOG_RAW_IMPL(logger_expr, lvl, comp, message_expr)                                  \
@@ -432,7 +432,7 @@ SALTS_C_API salts_log_level_t salts_log_level_from_name(const char *name);
     if (_tlog_ptr && (lvl) >= tlog_get_level(_tlog_ptr)) {                                        \
       const char *_tlog_component = (comp);                                                        \
       const char *_tlog_message = (message_expr);                                                  \
-      salts_log_str(_tlog_ptr, (lvl), vstr_from_cstr(_tlog_component),                            \
+      cmeta_log_str(_tlog_ptr, (lvl), vstr_from_cstr(_tlog_component),                            \
                     SALTS_LOG_SOURCE_FILE_VIEW, SALTS_LOG_SOURCE_LINE,                             \
                     vstr_from_cstr(_tlog_message));                                                \
     }                                                                                              \
@@ -441,12 +441,12 @@ SALTS_C_API salts_log_level_t salts_log_level_from_name(const char *name);
 #ifdef __cplusplus
 
 template <typename... Args>
-inline void salts_log_cpp_wrapper(tlog_t *logger, salts_log_level_t level,
+inline void cmeta_log_cpp_wrapper(tlog_t *logger, cmeta_log_level_t level,
                                   const char *component, const char *file, int line,
                                   const char *pattern, const Args &...args) {
   static_assert(sizeof...(Args) > 0, "formatted logging requires at least one argument");
   const fmt_arg_t arg_array[] = {FMT_ARG(args)...};
-  salts_log_typed(logger, level, vstr_from_cstr(component), vstr_from_cstr(file), line,
+  cmeta_log_typed(logger, level, vstr_from_cstr(component), vstr_from_cstr(file), line,
                   vstr_from_cstr(pattern), arg_array, sizeof...(Args));
 }
 
@@ -454,7 +454,7 @@ inline void salts_log_cpp_wrapper(tlog_t *logger, salts_log_level_t level,
   do {                                                                                             \
     tlog_t *_tlog_ptr = (logger_expr);                                                             \
     if (_tlog_ptr && (lvl) >= tlog_get_level(_tlog_ptr)) {                                        \
-      salts_log_cpp_wrapper(_tlog_ptr, (lvl), (comp), SALTS_LOG_SOURCE_FILE,                      \
+      cmeta_log_cpp_wrapper(_tlog_ptr, (lvl), (comp), SALTS_LOG_SOURCE_FILE,                      \
                             SALTS_LOG_SOURCE_LINE, (pattern), __VA_ARGS__);                         \
     }                                                                                              \
   } while (0)
@@ -467,7 +467,7 @@ inline void salts_log_cpp_wrapper(tlog_t *logger, salts_log_level_t level,
     if (_tlog_ptr && (lvl) >= tlog_get_level(_tlog_ptr)) {                                        \
       const char *_tlog_component = (comp);                                                        \
       const char *_tlog_pattern = (pattern);                                                       \
-      salts_log_typed(_tlog_ptr, (lvl), vstr_from_cstr(_tlog_component),                          \
+      cmeta_log_typed(_tlog_ptr, (lvl), vstr_from_cstr(_tlog_component),                          \
                       SALTS_LOG_SOURCE_FILE_VIEW, SALTS_LOG_SOURCE_LINE,                           \
                       vstr_from_cstr(_tlog_pattern), FMT_ARGS(__VA_ARGS__),                        \
                       (size_t)FMT_ARG_COUNT(__VA_ARGS__));                                         \

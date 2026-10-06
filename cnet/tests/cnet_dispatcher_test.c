@@ -132,7 +132,7 @@ static void cnet_dispatcher_test_observe(void *context, const cnet_dispatch_view
 
 static int cnet_dispatcher_test_drive_until(cnet_shards *shards, cnet_dispatcher *dispatcher,
                                             atomic_int *value, int expected) {
-  const uint64_t deadline = salts_monotonic_ms() + CNET_DISPATCHER_TEST_TIMEOUT_MS;
+  const uint64_t deadline = cmeta_monotonic_ms() + CNET_DISPATCHER_TEST_TIMEOUT_MS;
   while (atomic_load_explicit(value, memory_order_acquire) < expected) {
     int status = cnet_shards_poll(shards, 1u);
     if (status != SALTS_OK) return status;
@@ -140,14 +140,14 @@ static int cnet_dispatcher_test_drive_until(cnet_shards *shards, cnet_dispatcher
     if (status != SALTS_OK && status != SALTS_ETIMEDOUT && status != SALTS_ENOBUFS &&
         status != SALTS_EBUSY)
       return status;
-    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+    if (cmeta_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
   return SALTS_OK;
 }
 
 static int cnet_dispatcher_test_drive_connected(cnet_shards *shards, cnet_dispatcher *dispatcher,
                                                 cnet_dispatcher_test_probe *probe) {
-  const uint64_t deadline = salts_monotonic_ms() + CNET_DISPATCHER_TEST_TIMEOUT_MS;
+  const uint64_t deadline = cmeta_monotonic_ms() + CNET_DISPATCHER_TEST_TIMEOUT_MS;
   while (atomic_load_explicit(&probe->connected, memory_order_acquire) == 0) {
     int status = cnet_shards_poll(shards, 1u);
     if (status != SALTS_OK) return status;
@@ -159,7 +159,7 @@ static int cnet_dispatcher_test_drive_connected(cnet_shards *shards, cnet_dispat
       status = atomic_load_explicit(&probe->terminal_status, memory_order_acquire);
       return status < SALTS_OK ? status : SALTS_EIO;
     }
-    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+    if (cmeta_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
   return SALTS_OK;
 }

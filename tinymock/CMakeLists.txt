@@ -12,6 +12,7 @@ add_library(tinymock STATIC
   src/tinymock_return.c)
 
 cmake_config_target(tinymock
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   ALIAS Salts::TinyMock
   FOLDER "tinymock"
   EXPORT_NAME TinyMock)

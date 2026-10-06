@@ -722,11 +722,11 @@ static int stream_style_measure_backend(native_io_backend_kind kind, stream_styl
   out->payload_size = payload_size;
   out->transfers = STREAM_STYLE_MEASURED_TRANSFERS;
   for (size_t index = 0u; index < STREAM_STYLE_MEASURED_TRANSFERS; ++index) {
-    const uint64_t started = salts_hrtime();
+    const uint64_t started = cmeta_hrtime();
     status = style == STREAM_STYLE_DIRECT
                  ? stream_style_direct_transfer(&fixture, vector_write)
                  : stream_style_coroutine_transfer(&fixture, vector_write);
-    latencies[index] = salts_hrtime() - started;
+    latencies[index] = cmeta_hrtime() - started;
     if (status != SALTS_OK) goto cleanup;
     out->wall_ns += latencies[index];
   }
@@ -1008,9 +1008,9 @@ static void stream_style_same_driver_run(native_io_sharded_context *context, voi
     stream_style_trace_marker(true, STREAM_STYLE_SHARDED_SAME_OWNER,
                               fixture->payload_size);
   for (size_t index = 0u; index < STREAM_STYLE_MEASURED_TRANSFERS; ++index) {
-    const uint64_t started = salts_hrtime();
+    const uint64_t started = cmeta_hrtime();
     driver->status = stream_style_sharded_transfer(fixture, context);
-    driver->latencies[index] = salts_hrtime() - started;
+    driver->latencies[index] = cmeta_hrtime() - started;
     if (driver->status != SALTS_OK) return;
   }
   if (driver->trace)
@@ -1065,9 +1065,9 @@ static int stream_style_measure_sharded(native_io_backend_kind kind,
       stream_style_trace_marker(true, STREAM_STYLE_SHARDED_CROSS_OWNER,
                                 payload_size);
     for (size_t index = 0u; index < STREAM_STYLE_MEASURED_TRANSFERS; ++index) {
-      const uint64_t started = salts_hrtime();
+      const uint64_t started = cmeta_hrtime();
       status = stream_style_sharded_transfer(&fixture, NULL);
-      latencies[index] = salts_hrtime() - started;
+      latencies[index] = cmeta_hrtime() - started;
       if (status != SALTS_OK) goto cleanup;
     }
     if (trace)

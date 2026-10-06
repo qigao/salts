@@ -7,19 +7,19 @@
 #include <time.h>
 #include <unistd.h>
 
-static SALTS_THREAD_LOCAL unsigned char salts_thread_token;
-const void *salts_thread_current_token(void) { return &salts_thread_token; }
+static SALTS_THREAD_LOCAL unsigned char cmeta_thread_token;
+const void *cmeta_thread_current_token(void) { return &cmeta_thread_token; }
 
-struct salts_thread_wrapper_ctx {
-  salts_thread_cb entry;
+struct cmeta_thread_wrapper_ctx {
+  cmeta_thread_cb entry;
   void *arg;
 };
 
-typedef struct salts_posix_cond_s {
+typedef struct cmeta_posix_cond_s {
   pthread_cond_t native;
-} salts_posix_cond_t;
+} cmeta_posix_cond_t;
 
-void salts_mutex_init(salts_mutex_t *mutex) {
+void cmeta_mutex_init(cmeta_mutex_t *mutex) {
   pthread_mutex_t *native;
   if (mutex == NULL) return;
   *mutex = NULL;
@@ -32,24 +32,24 @@ void salts_mutex_init(salts_mutex_t *mutex) {
   *mutex = native;
 }
 
-void salts_mutex_destroy(salts_mutex_t *mutex) {
+void cmeta_mutex_destroy(cmeta_mutex_t *mutex) {
   if (mutex == NULL || *mutex == NULL) return;
   (void)pthread_mutex_destroy((pthread_mutex_t *)*mutex);
   free(*mutex);
   *mutex = NULL;
 }
 
-void salts_mutex_lock(salts_mutex_t *mutex) {
+void cmeta_mutex_lock(cmeta_mutex_t *mutex) {
   if (mutex == NULL || *mutex == NULL) return;
   (void)pthread_mutex_lock((pthread_mutex_t *)*mutex);
 }
 
-void salts_mutex_unlock(salts_mutex_t *mutex) {
+void cmeta_mutex_unlock(cmeta_mutex_t *mutex) {
   if (mutex == NULL || *mutex == NULL) return;
   (void)pthread_mutex_unlock((pthread_mutex_t *)*mutex);
 }
 
-int salts_rwlock_init(salts_rwlock_t *lock) {
+int cmeta_rwlock_init(cmeta_rwlock_t *lock) {
   pthread_rwlock_t *native;
   int rc;
   if (lock == NULL) return -EINVAL;
@@ -65,40 +65,40 @@ int salts_rwlock_init(salts_rwlock_t *lock) {
   return 0;
 }
 
-void salts_rwlock_destroy(salts_rwlock_t *lock) {
+void cmeta_rwlock_destroy(cmeta_rwlock_t *lock) {
   if (lock == NULL || *lock == NULL) return;
   (void)pthread_rwlock_destroy((pthread_rwlock_t *)*lock);
   free(*lock);
   *lock = NULL;
 }
 
-void salts_rwlock_rdlock(salts_rwlock_t *lock) {
+void cmeta_rwlock_rdlock(cmeta_rwlock_t *lock) {
   if (lock == NULL || *lock == NULL) return;
   (void)pthread_rwlock_rdlock((pthread_rwlock_t *)*lock);
 }
 
-void salts_rwlock_rdunlock(salts_rwlock_t *lock) {
+void cmeta_rwlock_rdunlock(cmeta_rwlock_t *lock) {
   if (lock == NULL || *lock == NULL) return;
   (void)pthread_rwlock_unlock((pthread_rwlock_t *)*lock);
 }
 
-void salts_rwlock_wrlock(salts_rwlock_t *lock) {
+void cmeta_rwlock_wrlock(cmeta_rwlock_t *lock) {
   if (lock == NULL || *lock == NULL) return;
   (void)pthread_rwlock_wrlock((pthread_rwlock_t *)*lock);
 }
 
-void salts_rwlock_wrunlock(salts_rwlock_t *lock) {
+void cmeta_rwlock_wrunlock(cmeta_rwlock_t *lock) {
   if (lock == NULL || *lock == NULL) return;
   (void)pthread_rwlock_unlock((pthread_rwlock_t *)*lock);
 }
 
-void salts_cond_init(salts_cond_t *cond) {
-  salts_posix_cond_t *wrapper;
+void cmeta_cond_init(cmeta_cond_t *cond) {
+  cmeta_posix_cond_t *wrapper;
   int rc;
 
   if (cond == NULL) return;
   *cond = NULL;
-  wrapper = (salts_posix_cond_t *)malloc(sizeof(*wrapper));
+  wrapper = (cmeta_posix_cond_t *)malloc(sizeof(*wrapper));
   if (wrapper == NULL) return;
 
 #if defined(__APPLE__)
@@ -124,38 +124,38 @@ void salts_cond_init(salts_cond_t *cond) {
   *cond = wrapper;
 }
 
-void salts_cond_destroy(salts_cond_t *cond) {
-  salts_posix_cond_t *wrapper;
+void cmeta_cond_destroy(cmeta_cond_t *cond) {
+  cmeta_posix_cond_t *wrapper;
   if (cond == NULL || *cond == NULL) return;
-  wrapper = (salts_posix_cond_t *)*cond;
+  wrapper = (cmeta_posix_cond_t *)*cond;
   (void)pthread_cond_destroy(&wrapper->native);
   free(wrapper);
   *cond = NULL;
 }
 
-void salts_cond_signal(salts_cond_t *cond) {
-  salts_posix_cond_t *wrapper;
+void cmeta_cond_signal(cmeta_cond_t *cond) {
+  cmeta_posix_cond_t *wrapper;
   if (cond == NULL || *cond == NULL) return;
-  wrapper = (salts_posix_cond_t *)*cond;
+  wrapper = (cmeta_posix_cond_t *)*cond;
   (void)pthread_cond_signal(&wrapper->native);
 }
 
-void salts_cond_broadcast(salts_cond_t *cond) {
-  salts_posix_cond_t *wrapper;
+void cmeta_cond_broadcast(cmeta_cond_t *cond) {
+  cmeta_posix_cond_t *wrapper;
   if (cond == NULL || *cond == NULL) return;
-  wrapper = (salts_posix_cond_t *)*cond;
+  wrapper = (cmeta_posix_cond_t *)*cond;
   (void)pthread_cond_broadcast(&wrapper->native);
 }
 
-void salts_cond_wait(salts_cond_t *cond, salts_mutex_t *mutex) {
-  salts_posix_cond_t *wrapper;
+void cmeta_cond_wait(cmeta_cond_t *cond, cmeta_mutex_t *mutex) {
+  cmeta_posix_cond_t *wrapper;
   if (cond == NULL || *cond == NULL || mutex == NULL || *mutex == NULL) return;
-  wrapper = (salts_posix_cond_t *)*cond;
+  wrapper = (cmeta_posix_cond_t *)*cond;
   (void)pthread_cond_wait(&wrapper->native, (pthread_mutex_t *)*mutex);
 }
 
 #if !defined(__APPLE__)
-static void salts_timespec_add_ns(struct timespec *ts, uint64_t timeout_ns) {
+static void cmeta_timespec_add_ns(struct timespec *ts, uint64_t timeout_ns) {
   uint64_t seconds = timeout_ns / 1000000000ULL;
   uint64_t nanos = timeout_ns % 1000000000ULL;
   ts->tv_sec += (time_t)seconds;
@@ -167,15 +167,15 @@ static void salts_timespec_add_ns(struct timespec *ts, uint64_t timeout_ns) {
 }
 #endif
 
-int salts_cond_timedwait(salts_cond_t *cond, salts_mutex_t *mutex,
+int cmeta_cond_timedwait(cmeta_cond_t *cond, cmeta_mutex_t *mutex,
                          uint64_t timeout_ns) {
-  salts_posix_cond_t *wrapper;
+  cmeta_posix_cond_t *wrapper;
   struct timespec deadline;
   int rc;
 
   if (cond == NULL || *cond == NULL || mutex == NULL || *mutex == NULL)
     return -EINVAL;
-  wrapper = (salts_posix_cond_t *)*cond;
+  wrapper = (cmeta_posix_cond_t *)*cond;
 
 #if defined(__APPLE__)
   deadline.tv_sec = (time_t)(timeout_ns / 1000000000ULL);
@@ -185,7 +185,7 @@ int salts_cond_timedwait(salts_cond_t *cond, salts_mutex_t *mutex,
                                           &deadline);
 #else
   if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0) return -errno;
-  salts_timespec_add_ns(&deadline, timeout_ns);
+  cmeta_timespec_add_ns(&deadline, timeout_ns);
   rc = pthread_cond_timedwait(&wrapper->native,
                               (pthread_mutex_t *)*mutex,
                               &deadline);
@@ -195,24 +195,24 @@ int salts_cond_timedwait(salts_cond_t *cond, salts_mutex_t *mutex,
   return rc == ETIMEDOUT ? -ETIMEDOUT : -rc;
 }
 
-static void *salts_thread_entry_wrapper_pthread(void *arg) {
-  struct salts_thread_wrapper_ctx *ctx =
-      (struct salts_thread_wrapper_ctx *)arg;
-  salts_thread_cb entry = ctx->entry;
+static void *cmeta_thread_entry_wrapper_pthread(void *arg) {
+  struct cmeta_thread_wrapper_ctx *ctx =
+      (struct cmeta_thread_wrapper_ctx *)arg;
+  cmeta_thread_cb entry = ctx->entry;
   void *real_arg = ctx->arg;
   free(ctx);
   entry(real_arg);
   return NULL;
 }
 
-int salts_thread_create(salts_thread_t *thread, salts_thread_cb entry, void *arg) {
-  struct salts_thread_wrapper_ctx *ctx;
+int cmeta_thread_create(cmeta_thread_t *thread, cmeta_thread_cb entry, void *arg) {
+  struct cmeta_thread_wrapper_ctx *ctx;
   pthread_t *native;
   int rc;
 
   if (thread == NULL || entry == NULL) return -EINVAL;
   *thread = NULL;
-  ctx = (struct salts_thread_wrapper_ctx *)malloc(sizeof(*ctx));
+  ctx = (struct cmeta_thread_wrapper_ctx *)malloc(sizeof(*ctx));
   if (ctx == NULL) return -ENOMEM;
   native = (pthread_t *)malloc(sizeof(*native));
   if (native == NULL) {
@@ -221,7 +221,7 @@ int salts_thread_create(salts_thread_t *thread, salts_thread_cb entry, void *arg
   }
   ctx->entry = entry;
   ctx->arg = arg;
-  rc = pthread_create(native, NULL, salts_thread_entry_wrapper_pthread, ctx);
+  rc = pthread_create(native, NULL, cmeta_thread_entry_wrapper_pthread, ctx);
   if (rc != 0) {
     free(native);
     free(ctx);
@@ -231,7 +231,7 @@ int salts_thread_create(salts_thread_t *thread, salts_thread_cb entry, void *arg
   return 0;
 }
 
-int salts_thread_join(salts_thread_t *thread) {
+int cmeta_thread_join(cmeta_thread_t *thread) {
   pthread_t *native;
   int rc;
   if (thread == NULL || *thread == NULL) return -EINVAL;
@@ -243,7 +243,7 @@ int salts_thread_join(salts_thread_t *thread) {
   return 0;
 }
 
-void salts_thread_destroy(salts_thread_t *thread) {
+void cmeta_thread_destroy(cmeta_thread_t *thread) {
   pthread_t *native;
   if (thread == NULL || *thread == NULL) return;
   native = (pthread_t *)*thread;
@@ -252,7 +252,7 @@ void salts_thread_destroy(salts_thread_t *thread) {
   *thread = NULL;
 }
 
-void salts_once(salts_once_t *guard, void (*callback)(void)) {
+void cmeta_once(cmeta_once_t *guard, void (*callback)(void)) {
   int expected;
   if (guard == NULL || callback == NULL) return;
   expected = 0;
@@ -266,7 +266,7 @@ void salts_once(salts_once_t *guard, void (*callback)(void)) {
     (void)sched_yield();
 }
 
-void salts_sleep_ms(uint32_t ms) {
+void cmeta_sleep_ms(uint32_t ms) {
   struct timespec request;
   struct timespec remaining;
   request.tv_sec = (time_t)(ms / 1000U);
@@ -275,9 +275,9 @@ void salts_sleep_ms(uint32_t ms) {
     request = remaining;
 }
 
-void salts_thread_yield(void) { (void)sched_yield(); }
+void cmeta_thread_yield(void) { (void)sched_yield(); }
 
-int salts_cpu_count(void) {
+int cmeta_cpu_count(void) {
   long count = sysconf(_SC_NPROCESSORS_ONLN);
   return count > 0 ? (int)count : 4;
 }

@@ -17,14 +17,14 @@
 #include <string.h>
 #include <time.h>
 #include "platform.h"
-#include "salts_thread.h"
+#include "cmeta_thread.h"
 #include "tlog.h"
 #include "fmt.h"
 #include "log_pattern_lexer.h"
-#include "salts_buffer.h"
+#include "cmeta_buffer.h"
 #include <stdatomic.h>
-#include "salts_fs.h"
-#include "salts_mmap.h"
+#include "cmeta_fs.h"
+#include "cmeta_mmap.h"
 #include "disruptor.h"
 
 
@@ -73,7 +73,7 @@ static uint32_t tlog_gettid(void) {
 #endif
 
 typedef struct {
-  salts_log_level_t level;
+  cmeta_log_level_t level;
   uint64_t timestamp_ms;
   uint32_t thread_id;
   int line;
@@ -105,8 +105,8 @@ typedef struct {
 } compiled_pattern_t;
 
 static tlog_t *g_default_logger = NULL;
-static salts_once_t g_default_logger_mutex_once = SALTS_ONCE_INIT;
-static salts_mutex_t g_default_logger_mutex;
+static cmeta_once_t g_default_logger_mutex_once = SALTS_ONCE_INIT;
+static cmeta_mutex_t g_default_logger_mutex;
 static int g_default_logger_mutex_init = 0;
 
 typedef enum {
@@ -119,17 +119,17 @@ typedef enum {
   SINK_KIND_METRICS
 } sink_kind_t;
 
-struct salts_log_sink_s {
-  salts_sink_write_fn write;
-  salts_sink_flush_fn flush;
-  salts_sink_destroy_fn destroy;
+struct cmeta_log_sink_s {
+  cmeta_sink_write_fn write;
+  cmeta_sink_flush_fn flush;
+  cmeta_sink_destroy_fn destroy;
   sink_kind_t kind;
   _Atomic int min_level;
   _Atomic uintptr_t user_data;
 };
 
-static void sink_base_init(salts_log_sink_t *sink, salts_sink_write_fn write,
-                           salts_sink_flush_fn flush, salts_sink_destroy_fn destroy,
+static void sink_base_init(cmeta_log_sink_t *sink, cmeta_sink_write_fn write,
+                           cmeta_sink_flush_fn flush, cmeta_sink_destroy_fn destroy,
                            sink_kind_t kind) {
   sink->write = write;
   sink->flush = flush;
@@ -139,25 +139,25 @@ static void sink_base_init(salts_log_sink_t *sink, salts_sink_write_fn write,
   atomic_init(&sink->user_data, (uintptr_t)NULL);
 }
 
-static int sink_accepts_level(const salts_log_sink_t *sink, salts_log_level_t level) {
-  return level >= (salts_log_level_t)atomic_load_explicit(&sink->min_level, memory_order_relaxed);
+static int sink_accepts_level(const cmeta_log_sink_t *sink, cmeta_log_level_t level) {
+  return level >= (cmeta_log_level_t)atomic_load_explicit(&sink->min_level, memory_order_relaxed);
 }
 
-static int log_level_is_valid(salts_log_level_t level) {
-  return cmeta_enum_item_by_value(salts_log_level_t_meta(), (int64_t)level) != NULL;
+static int log_level_is_valid(cmeta_log_level_t level) {
+  return cmeta_enum_item_by_value(cmeta_log_level_t_meta(), (int64_t)level) != NULL;
 }
 
-static void *sink_user_data(const salts_log_sink_t *sink) {
+static void *sink_user_data(const cmeta_log_sink_t *sink) {
   return (void *)atomic_load_explicit(&sink->user_data, memory_order_relaxed);
 }
 
-static void sink_write_entry(salts_log_sink_t *sink, const salts_log_entry_t *entry) {
+static void sink_write_entry(cmeta_log_sink_t *sink, const cmeta_log_entry_t *entry) {
   if (sink && sink->write) {
     sink->write(sink, entry);
   }
 }
 
-static void sink_flush_inner(salts_log_sink_t *sink) {
+static void sink_flush_inner(cmeta_log_sink_t *sink) {
   if (sink && sink->flush) {
     sink->flush(sink);
   }
@@ -187,7 +187,7 @@ static inline uint32_t get_cached_tid(void) {
 }
 
 static void init_tlog_globals(void) {
-  salts_mutex_init(&g_default_logger_mutex);
+  cmeta_mutex_init(&g_default_logger_mutex);
   g_default_logger_mutex_init = 1;
 }
 
@@ -293,7 +293,7 @@ static uint64_t logger_disruptor_capacity(size_t buffer_size_bytes) {
   return round_up_pow2_u64(entries);
 }
 
-static mem_buffer_t *async_entry_create(mem_pool_t *pool, const salts_log_entry_t *entry) {
+static mem_buffer_t *async_entry_create(mem_pool_t *pool, const cmeta_log_entry_t *entry) {
   size_t comp_len = entry->component.len;
   size_t file_len = entry->file.len;
   size_t msg_len = entry->message.len;
@@ -343,14 +343,14 @@ static mem_buffer_t *async_entry_create(mem_pool_t *pool, const salts_log_entry_
 // =============================================================================
 
 typedef struct {
-  salts_log_sink_t base;
+  cmeta_log_sink_t base;
   FILE *output;
   int use_colors;
   compiled_pattern_t pattern;
-  salts_mutex_t write_mutex; // Thread-safe writes
+  cmeta_mutex_t write_mutex; // Thread-safe writes
 } console_sink_t;
 
-static const char *get_level_color(salts_log_level_t level) {
+static const char *get_level_color(cmeta_log_level_t level) {
   switch (level) {
   case SALTS_LOG_LEVEL_DEBUG: return COLOR_DEBUG;
   case SALTS_LOG_LEVEL_INFO:  return COLOR_INFO;
@@ -366,7 +366,7 @@ static const char *get_level_color(salts_log_level_t level) {
 // =============================================================================
 
 static int format_with_pattern(char *buf, size_t buf_size, const compiled_pattern_t *cp,
-                               const salts_log_entry_t *entry) {
+                               const cmeta_log_entry_t *entry) {
   if (!cp || !buf || buf_size == 0)
     return 0;
 
@@ -392,7 +392,7 @@ static int format_with_pattern(char *buf, size_t buf_size, const compiled_patter
       break;
     }
     case LOG_TOKEN_LEVEL: {
-      vstr name = vstr_from_cstr(salts_log_level_name(entry->level));
+      vstr name = vstr_from_cstr(cmeta_log_level_name(entry->level));
       written = (int)name.len;
       if (written > 0 && dst + written < end) {
         memcpy(dst, name.data, written);
@@ -451,7 +451,7 @@ static int format_with_pattern(char *buf, size_t buf_size, const compiled_patter
   return (int)(dst - buf);
 }
 
-static void console_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *entry) {
+static void console_sink_write(cmeta_log_sink_t *sink, const cmeta_log_entry_t *entry) {
   console_sink_t *cs = (console_sink_t *)sink;
   if (!sink_accepts_level(sink, entry->level))
     return;
@@ -460,7 +460,7 @@ static void console_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *
   int len = format_with_pattern(formatted, sizeof(formatted) - 2, &cs->pattern, entry);
   if (unlikely(len <= 0)) return;
 
-  salts_mutex_lock(&cs->write_mutex);
+  cmeta_mutex_lock(&cs->write_mutex);
   FILE *out = cs->output;
   if (cs->use_colors) {
     const char *color = get_level_color(entry->level);
@@ -471,29 +471,29 @@ static void console_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *
     formatted[len] = '\n';
     fwrite(formatted, 1, len + 1, out);
   }
-  salts_mutex_unlock(&cs->write_mutex);
+  cmeta_mutex_unlock(&cs->write_mutex);
 }
 
-static void console_sink_flush(salts_log_sink_t *sink) {
+static void console_sink_flush(cmeta_log_sink_t *sink) {
   console_sink_t *cs = (console_sink_t *)sink;
-  salts_mutex_lock(&cs->write_mutex);
+  cmeta_mutex_lock(&cs->write_mutex);
   fflush(cs->output);
-  salts_mutex_unlock(&cs->write_mutex);
+  cmeta_mutex_unlock(&cs->write_mutex);
 }
 
-static void console_sink_destroy(salts_log_sink_t *sink) {
+static void console_sink_destroy(cmeta_log_sink_t *sink) {
   console_sink_t *cs = (console_sink_t *)sink;
-  salts_mutex_destroy(&cs->write_mutex);
+  cmeta_mutex_destroy(&cs->write_mutex);
   pattern_free(&cs->pattern);
   free(sink);
 }
 
-salts_log_sink_t *salts_sink_console_create(const salts_console_sink_opts_t *opts) {
+cmeta_log_sink_t *cmeta_sink_console_create(const cmeta_console_sink_opts_t *opts) {
   console_sink_t *sink = calloc(1, sizeof(console_sink_t));
   if (!sink)
     return NULL;
 
-  salts_mutex_init(&sink->write_mutex);
+  cmeta_mutex_init(&sink->write_mutex);
 
   sink_base_init(&sink->base, console_sink_write, console_sink_flush, console_sink_destroy,
                  SINK_KIND_CONSOLE);
@@ -503,7 +503,7 @@ salts_log_sink_t *salts_sink_console_create(const salts_console_sink_opts_t *opt
     sink->use_colors = opts->use_colors;
     if (pattern_compile(opts->pattern ? opts->pattern : SALTS_LOG_DEFAULT_PATTERN,
                         &sink->pattern) != 0) {
-      salts_mutex_destroy(&sink->write_mutex);
+      cmeta_mutex_destroy(&sink->write_mutex);
       free(sink);
       return NULL;
     }
@@ -511,7 +511,7 @@ salts_log_sink_t *salts_sink_console_create(const salts_console_sink_opts_t *opt
     sink->output = stdout;
     sink->use_colors = 1;
     if (pattern_compile(SALTS_LOG_DEFAULT_PATTERN, &sink->pattern) != 0) {
-      salts_mutex_destroy(&sink->write_mutex);
+      cmeta_mutex_destroy(&sink->write_mutex);
       free(sink);
       return NULL;
     }
@@ -527,8 +527,8 @@ salts_log_sink_t *salts_sink_console_create(const salts_console_sink_opts_t *opt
 // =============================================================================
 
 typedef struct {
-  salts_log_sink_t base;
-  salts_file_t fd;
+  cmeta_log_sink_t base;
+  cmeta_file_t fd;
   char *path;
   compiled_pattern_t pattern;
   _Atomic int64_t offset;
@@ -536,15 +536,15 @@ typedef struct {
   atomic_int rotate_flag;     // 1 => rotate before next write
   size_t max_size;
   int max_files;
-  salts_mutex_t rotate_mutex;
+  cmeta_mutex_t rotate_mutex;
 } file_sink_t;
 
 static void file_sink_rotate(file_sink_t *fs) {
-  salts_mutex_lock(&fs->rotate_mutex);
+  cmeta_mutex_lock(&fs->rotate_mutex);
 
   // Close current file
   if (fs->fd != SALTS_INVALID_FILE) {
-    salts_fs_close(fs->fd);
+    cmeta_fs_close(fs->fd);
     fs->fd = SALTS_INVALID_FILE;
   }
 
@@ -562,7 +562,7 @@ static void file_sink_rotate(file_sink_t *fs) {
       }
       new_path = tstr_format("{}.{}", fs->path, i + 1);
       if (old_path && new_path) {
-        salts_fs_rename(old_path, new_path);
+        cmeta_fs_rename(old_path, new_path);
       }
     }
     tstr_free(old_path);
@@ -570,7 +570,7 @@ static void file_sink_rotate(file_sink_t *fs) {
   }
 
   // Open new file (when max_files == 0, just recreate/truncate the current file)
-  fs->fd = salts_fs_open(fs->path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
+  fs->fd = cmeta_fs_open(fs->path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
                          SALTS_FS_DEFAULT_MODE);
   if (fs->fd != SALTS_INVALID_FILE) {
     atomic_store(&fs->offset, 0);
@@ -578,10 +578,10 @@ static void file_sink_rotate(file_sink_t *fs) {
     atomic_store(&fs->rotate_flag, 0);
   }
 
-  salts_mutex_unlock(&fs->rotate_mutex);
+  cmeta_mutex_unlock(&fs->rotate_mutex);
 }
 
-static void file_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *entry) {
+static void file_sink_write(cmeta_log_sink_t *sink, const cmeta_log_entry_t *entry) {
   file_sink_t *fs = (file_sink_t *)sink;
   if (!sink_accepts_level(sink, entry->level))
     return;
@@ -600,7 +600,7 @@ static void file_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *ent
   }
 
   int64_t write_offset = atomic_fetch_add(&fs->offset, len);
-  int written = salts_fs_pwrite(fs->fd, line, (size_t)len, write_offset);
+  int written = cmeta_fs_pwrite(fs->fd, line, (size_t)len, write_offset);
   if (written <= 0) {
     return;
   }
@@ -614,29 +614,29 @@ static void file_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *ent
   }
 }
 
-static void file_sink_flush(salts_log_sink_t *sink) {
+static void file_sink_flush(cmeta_log_sink_t *sink) {
   file_sink_t *fs = (file_sink_t *)sink;
-  salts_mutex_lock(&fs->rotate_mutex);
+  cmeta_mutex_lock(&fs->rotate_mutex);
   if (fs->fd != SALTS_INVALID_FILE) {
-    salts_fs_fsync(fs->fd);
+    cmeta_fs_fsync(fs->fd);
   }
-  salts_mutex_unlock(&fs->rotate_mutex);
+  cmeta_mutex_unlock(&fs->rotate_mutex);
 }
 
-static void file_sink_destroy(salts_log_sink_t *sink) {
+static void file_sink_destroy(cmeta_log_sink_t *sink) {
   file_sink_t *fs = (file_sink_t *)sink;
-  salts_mutex_lock(&fs->rotate_mutex);
+  cmeta_mutex_lock(&fs->rotate_mutex);
   if (fs->fd != SALTS_INVALID_FILE) {
-    salts_fs_close(fs->fd);
+    cmeta_fs_close(fs->fd);
   }
-  salts_mutex_unlock(&fs->rotate_mutex);
-  salts_mutex_destroy(&fs->rotate_mutex);
+  cmeta_mutex_unlock(&fs->rotate_mutex);
+  cmeta_mutex_destroy(&fs->rotate_mutex);
   tstr_free(fs->path);
   pattern_free(&fs->pattern);
   free(fs);
 }
 
-salts_log_sink_t *salts_sink_file_create(const salts_file_sink_opts_t *opts) {
+cmeta_log_sink_t *cmeta_sink_file_create(const cmeta_file_sink_opts_t *opts) {
   if (!opts || !opts->path)
     return NULL;
 
@@ -644,7 +644,7 @@ salts_log_sink_t *salts_sink_file_create(const salts_file_sink_opts_t *opts) {
   if (!sink)
     return NULL;
 
-  salts_mutex_init(&sink->rotate_mutex);
+  cmeta_mutex_init(&sink->rotate_mutex);
 
   sink_base_init(&sink->base, file_sink_write, file_sink_flush, file_sink_destroy, SINK_KIND_FILE);
 
@@ -652,7 +652,7 @@ salts_log_sink_t *salts_sink_file_create(const salts_file_sink_opts_t *opts) {
   if (!sink->path ||
       pattern_compile(opts->pattern ? opts->pattern : SALTS_LOG_DEFAULT_PATTERN,
                       &sink->pattern) != 0) {
-    salts_mutex_destroy(&sink->rotate_mutex);
+    cmeta_mutex_destroy(&sink->rotate_mutex);
     tstr_free(sink->path);
     free(sink);
     return NULL;
@@ -663,9 +663,9 @@ salts_log_sink_t *salts_sink_file_create(const salts_file_sink_opts_t *opts) {
   int flags = SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT;
   flags |= opts->append ? SALTS_FS_O_APPEND : SALTS_FS_O_TRUNC;
 
-  sink->fd = salts_fs_open(opts->path, flags, SALTS_FS_DEFAULT_MODE);
+  sink->fd = cmeta_fs_open(opts->path, flags, SALTS_FS_DEFAULT_MODE);
   if (sink->fd == SALTS_INVALID_FILE) {
-    salts_mutex_destroy(&sink->rotate_mutex);
+    cmeta_mutex_destroy(&sink->rotate_mutex);
     tstr_free(sink->path);
     pattern_free(&sink->pattern);
     free(sink);
@@ -674,7 +674,7 @@ salts_log_sink_t *salts_sink_file_create(const salts_file_sink_opts_t *opts) {
 
   // Initialize counters from current file size if appending
   if (opts->append) {
-    int64_t pos = salts_fs_seek(sink->fd, 0, SEEK_END);
+    int64_t pos = cmeta_fs_seek(sink->fd, 0, SEEK_END);
     int64_t initial = pos > 0 ? pos : 0;
     atomic_store(&sink->offset, initial);
     atomic_store(&sink->bytes_written, initial);
@@ -692,11 +692,11 @@ salts_log_sink_t *salts_sink_file_create(const salts_file_sink_opts_t *opts) {
 // =============================================================================
 
 typedef struct {
-  salts_log_sink_t base;
-  salts_log_callback_fn callback;
+  cmeta_log_sink_t base;
+  cmeta_log_callback_fn callback;
 } callback_sink_t;
 
-static void callback_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *entry) {
+static void callback_sink_write(cmeta_log_sink_t *sink, const cmeta_log_entry_t *entry) {
   callback_sink_t *cs = (callback_sink_t *)sink;
   if (!sink_accepts_level(sink, entry->level))
     return;
@@ -705,10 +705,10 @@ static void callback_sink_write(salts_log_sink_t *sink, const salts_log_entry_t 
   }
 }
 
-static void callback_sink_flush(salts_log_sink_t *sink) { (void)sink; }
-static void callback_sink_destroy(salts_log_sink_t *sink) { free(sink); }
+static void callback_sink_flush(cmeta_log_sink_t *sink) { (void)sink; }
+static void callback_sink_destroy(cmeta_log_sink_t *sink) { free(sink); }
 
-salts_log_sink_t *salts_sink_callback_create(salts_log_callback_fn callback, void *user_data) {
+cmeta_log_sink_t *cmeta_sink_callback_create(cmeta_log_callback_fn callback, void *user_data) {
   if (!callback)
     return NULL;
 
@@ -729,13 +729,13 @@ salts_log_sink_t *salts_sink_callback_create(salts_log_callback_fn callback, voi
 // =============================================================================
 
 typedef struct {
-  salts_log_sink_t base;
-  salts_sink_custom_write_fn write;
-  salts_sink_custom_flush_fn flush;
-  salts_sink_custom_destroy_fn destroy;
+  cmeta_log_sink_t base;
+  cmeta_sink_custom_write_fn write;
+  cmeta_sink_custom_flush_fn flush;
+  cmeta_sink_custom_destroy_fn destroy;
 } custom_sink_t;
 
-static void custom_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *entry) {
+static void custom_sink_write(cmeta_log_sink_t *sink, const cmeta_log_entry_t *entry) {
   custom_sink_t *cs = (custom_sink_t *)sink;
   if (!sink_accepts_level(sink, entry->level)) {
     return;
@@ -743,14 +743,14 @@ static void custom_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *e
   cs->write(entry, sink_user_data(sink));
 }
 
-static void custom_sink_flush(salts_log_sink_t *sink) {
+static void custom_sink_flush(cmeta_log_sink_t *sink) {
   custom_sink_t *cs = (custom_sink_t *)sink;
   if (cs->flush) {
     cs->flush(sink_user_data(sink));
   }
 }
 
-static void custom_sink_destroy(salts_log_sink_t *sink) {
+static void custom_sink_destroy(cmeta_log_sink_t *sink) {
   custom_sink_t *cs = (custom_sink_t *)sink;
   if (cs->destroy) {
     cs->destroy(sink_user_data(sink));
@@ -758,7 +758,7 @@ static void custom_sink_destroy(salts_log_sink_t *sink) {
   free(cs);
 }
 
-salts_log_sink_t *salts_sink_custom_create(const salts_sink_custom_opts_t *opts) {
+cmeta_log_sink_t *cmeta_sink_custom_create(const cmeta_sink_custom_opts_t *opts) {
   if (!opts || !opts->write) {
     return NULL;
   }
@@ -782,7 +782,7 @@ salts_log_sink_t *salts_sink_custom_create(const salts_sink_custom_opts_t *opts)
 // Sink Accessors
 // =============================================================================
 
-int salts_sink_set_min_level(salts_log_sink_t *sink, salts_log_level_t level) {
+int cmeta_sink_set_min_level(cmeta_log_sink_t *sink, cmeta_log_level_t level) {
   if (!sink || !log_level_is_valid(level)) {
     return -1;
   }
@@ -790,12 +790,12 @@ int salts_sink_set_min_level(salts_log_sink_t *sink, salts_log_level_t level) {
   return 0;
 }
 
-salts_log_level_t salts_sink_get_min_level(const salts_log_sink_t *sink) {
-  return sink ? (salts_log_level_t)atomic_load_explicit(&sink->min_level, memory_order_relaxed)
+cmeta_log_level_t cmeta_sink_get_min_level(const cmeta_log_sink_t *sink) {
+  return sink ? (cmeta_log_level_t)atomic_load_explicit(&sink->min_level, memory_order_relaxed)
               : SALTS_LOG_LEVEL_INFO;
 }
 
-int salts_sink_set_user_data(salts_log_sink_t *sink, void *user_data) {
+int cmeta_sink_set_user_data(cmeta_log_sink_t *sink, void *user_data) {
   if (!sink) {
     return -1;
   }
@@ -803,7 +803,7 @@ int salts_sink_set_user_data(salts_log_sink_t *sink, void *user_data) {
   return 0;
 }
 
-void *salts_sink_get_user_data(const salts_log_sink_t *sink) {
+void *cmeta_sink_get_user_data(const cmeta_log_sink_t *sink) {
   return sink ? sink_user_data(sink) : NULL;
 }
 
@@ -812,17 +812,17 @@ void *salts_sink_get_user_data(const salts_log_sink_t *sink) {
 // =============================================================================
 
 typedef struct {
-  salts_log_sink_t base;
-  salts_log_sink_t *inner;
+  cmeta_log_sink_t base;
+  cmeta_log_sink_t *inner;
   int owns_inner;
-  salts_log_level_t min_level;
-  salts_log_level_t max_level;
+  cmeta_log_level_t min_level;
+  cmeta_log_level_t max_level;
   char *component;
-  salts_sink_filter_fn predicate;
+  cmeta_sink_filter_fn predicate;
   void *predicate_user_data;
 } filter_sink_t;
 
-static int filter_sink_allows(filter_sink_t *fs, const salts_log_entry_t *entry) {
+static int filter_sink_allows(filter_sink_t *fs, const cmeta_log_entry_t *entry) {
   if (!sink_accepts_level(&fs->base, entry->level) || entry->level < fs->min_level ||
       entry->level > fs->max_level) {
     return 0;
@@ -840,7 +840,7 @@ static int filter_sink_allows(filter_sink_t *fs, const salts_log_entry_t *entry)
   return 1;
 }
 
-static void filter_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *entry) {
+static void filter_sink_write(cmeta_log_sink_t *sink, const cmeta_log_entry_t *entry) {
   filter_sink_t *fs = (filter_sink_t *)sink;
   if (!filter_sink_allows(fs, entry)) {
     return;
@@ -848,23 +848,23 @@ static void filter_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *e
   sink_write_entry(fs->inner, entry);
 }
 
-static void filter_sink_flush(salts_log_sink_t *sink) {
+static void filter_sink_flush(cmeta_log_sink_t *sink) {
   filter_sink_t *fs = (filter_sink_t *)sink;
   sink_flush_inner(fs->inner);
 }
 
-static void filter_sink_destroy(salts_log_sink_t *sink) {
+static void filter_sink_destroy(cmeta_log_sink_t *sink) {
   filter_sink_t *fs = (filter_sink_t *)sink;
   if (fs->owns_inner && fs->inner) {
-    salts_sink_destroy(fs->inner);
+    cmeta_sink_destroy(fs->inner);
   }
   tstr_free(fs->component);
   free(fs);
 }
 
-salts_log_sink_t *salts_sink_filter_create(salts_log_sink_t *inner,
-                                           salts_sink_ownership_t ownership,
-                                           const salts_sink_filter_opts_t *opts) {
+cmeta_log_sink_t *cmeta_sink_filter_create(cmeta_log_sink_t *inner,
+                                           cmeta_sink_ownership_t ownership,
+                                           const cmeta_sink_filter_opts_t *opts) {
   if (!inner) {
     return NULL;
   }
@@ -906,16 +906,16 @@ salts_log_sink_t *salts_sink_filter_create(salts_log_sink_t *inner,
 // =============================================================================
 
 typedef struct {
-  salts_log_sink_t base;
-  salts_log_sink_t *inner;
+  cmeta_log_sink_t base;
+  cmeta_log_sink_t *inner;
   int owns_inner;
   compiled_pattern_t pattern;
 } format_sink_t;
 
-static void format_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *entry) {
+static void format_sink_write(cmeta_log_sink_t *sink, const cmeta_log_entry_t *entry) {
   format_sink_t *fs = (format_sink_t *)sink;
   char formatted[MAX_MESSAGE_SIZE];
-  salts_log_entry_t formatted_entry;
+  cmeta_log_entry_t formatted_entry;
   int len;
 
   if (!sink_accepts_level(sink, entry->level) || fs->inner == NULL) {
@@ -932,22 +932,22 @@ static void format_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *e
   sink_write_entry(fs->inner, &formatted_entry);
 }
 
-static void format_sink_flush(salts_log_sink_t *sink) {
+static void format_sink_flush(cmeta_log_sink_t *sink) {
   format_sink_t *fs = (format_sink_t *)sink;
   sink_flush_inner(fs->inner);
 }
 
-static void format_sink_destroy(salts_log_sink_t *sink) {
+static void format_sink_destroy(cmeta_log_sink_t *sink) {
   format_sink_t *fs = (format_sink_t *)sink;
   if (fs->owns_inner && fs->inner) {
-    salts_sink_destroy(fs->inner);
+    cmeta_sink_destroy(fs->inner);
   }
   pattern_free(&fs->pattern);
   free(fs);
 }
 
-salts_log_sink_t *salts_sink_format_create(salts_log_sink_t *inner,
-                                           salts_sink_ownership_t ownership,
+cmeta_log_sink_t *cmeta_sink_format_create(cmeta_log_sink_t *inner,
+                                           cmeta_sink_ownership_t ownership,
                                            const char *pattern) {
   if (!inner) {
     return NULL;
@@ -975,8 +975,8 @@ salts_log_sink_t *salts_sink_format_create(salts_log_sink_t *inner,
 // =============================================================================
 
 typedef struct {
-  salts_log_sink_t base;
-  salts_log_sink_t *inner;
+  cmeta_log_sink_t base;
+  cmeta_log_sink_t *inner;
   int owns_inner;
   _Atomic uint64_t entries_seen;
   _Atomic uint64_t entries_forwarded;
@@ -984,7 +984,7 @@ typedef struct {
   _Atomic uint64_t bytes_forwarded;
 } metrics_sink_t;
 
-static void metrics_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *entry) {
+static void metrics_sink_write(cmeta_log_sink_t *sink, const cmeta_log_entry_t *entry) {
   metrics_sink_t *ms = (metrics_sink_t *)sink;
 
   atomic_fetch_add(&ms->entries_seen, 1);
@@ -998,21 +998,21 @@ static void metrics_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *
   sink_write_entry(ms->inner, entry);
 }
 
-static void metrics_sink_flush(salts_log_sink_t *sink) {
+static void metrics_sink_flush(cmeta_log_sink_t *sink) {
   metrics_sink_t *ms = (metrics_sink_t *)sink;
   sink_flush_inner(ms->inner);
 }
 
-static void metrics_sink_destroy(salts_log_sink_t *sink) {
+static void metrics_sink_destroy(cmeta_log_sink_t *sink) {
   metrics_sink_t *ms = (metrics_sink_t *)sink;
   if (ms->owns_inner && ms->inner) {
-    salts_sink_destroy(ms->inner);
+    cmeta_sink_destroy(ms->inner);
   }
   free(ms);
 }
 
-salts_log_sink_t *salts_sink_metrics_create(salts_log_sink_t *inner,
-                                            salts_sink_ownership_t ownership) {
+cmeta_log_sink_t *cmeta_sink_metrics_create(cmeta_log_sink_t *inner,
+                                            cmeta_sink_ownership_t ownership) {
   if (!inner) {
     return NULL;
   }
@@ -1030,7 +1030,7 @@ salts_log_sink_t *salts_sink_metrics_create(salts_log_sink_t *inner,
   return &sink->base;
 }
 
-int salts_sink_metrics_snapshot(salts_log_sink_t *sink, salts_sink_metrics_t *out) {
+int cmeta_sink_metrics_snapshot(cmeta_log_sink_t *sink, cmeta_sink_metrics_t *out) {
   metrics_sink_t *ms;
 
   if (!sink || !out || sink->kind != SINK_KIND_METRICS) {
@@ -1053,7 +1053,7 @@ int salts_sink_metrics_snapshot(salts_log_sink_t *sink, salts_sink_metrics_t *ou
 // Logger Structure
 // =============================================================================
 
-void salts_sink_destroy(salts_log_sink_t *sink) {
+void cmeta_sink_destroy(cmeta_log_sink_t *sink) {
   if (sink && sink->destroy) {
     sink->destroy(sink);
   }
@@ -1068,9 +1068,9 @@ struct tlog_s {
   // Configuration (Read-Only)
   // ---------------------------------------------------------------------------
   _Atomic int min_level;
-  salts_log_sink_t *sinks[MAX_SINKS];
+  cmeta_log_sink_t *sinks[MAX_SINKS];
   int sink_count;
-  salts_mutex_t sink_mutex;
+  cmeta_mutex_t sink_mutex;
 
   // ---------------------------------------------------------------------------
   // Disruptor (Replaces custom ring buffer)
@@ -1079,7 +1079,7 @@ struct tlog_s {
   disruptor_consumer_t consumer;
 
   // ---------------------------------------------------------------------------
-  // Async payload pool (thread-safe via salts_buffer)
+  // Async payload pool (thread-safe via cmeta_buffer)
   // ---------------------------------------------------------------------------
   mem_pool_t async_pool;
 
@@ -1088,9 +1088,9 @@ struct tlog_s {
   // ---------------------------------------------------------------------------
   atomic_int running;
   atomic_int consumer_ready;
-  salts_thread_t thread;
-  salts_mutex_t wake_mutex;
-  salts_cond_t wake_cond;
+  cmeta_thread_t thread;
+  cmeta_mutex_t wake_mutex;
+  cmeta_cond_t wake_cond;
 
   // ---------------------------------------------------------------------------
   // Stats
@@ -1101,7 +1101,7 @@ struct tlog_s {
 };
 
 // Forward declarations
-static void logger_write_to_sinks(tlog_t *logger, const salts_log_entry_t *entry);
+static void logger_write_to_sinks(tlog_t *logger, const cmeta_log_entry_t *entry);
 static int logger_publish_entry(tlog_t *logger, mem_buffer_t *buffer);
 
 // =============================================================================
@@ -1111,7 +1111,7 @@ static int logger_publish_entry(tlog_t *logger, mem_buffer_t *buffer);
 /**
  * @brief Drain log entries from disruptor range [first_seq, last_seq].
  *
- * Converts each async_log_entry_t back to salts_log_entry_t and writes
+ * Converts each async_log_entry_t back to cmeta_log_entry_t and writes
  * to all sinks.  Releases each mem_buffer_t after processing.
  */
 static void logger_drain_entries(tlog_t *logger, uint64_t first_seq, uint64_t last_seq) {
@@ -1125,13 +1125,13 @@ static void logger_drain_entries(tlog_t *logger, uint64_t first_seq, uint64_t la
 
     mem_buffer_t *buffer = atomic_load_explicit(entry_ptr, memory_order_acquire);
     while (buffer == NULL) {
-      salts_thread_yield();
+      cmeta_thread_yield();
       buffer = atomic_load_explicit(entry_ptr, memory_order_acquire);
     }
 
     async_log_entry_t *ae = (async_log_entry_t *)buffer->data;
 
-    salts_log_entry_t entry = {
+    cmeta_log_entry_t entry = {
       .level = ae->level,
       .timestamp_ms = ae->timestamp_ms,
       .thread_id = ae->thread_id,
@@ -1158,9 +1158,9 @@ static void logger_signal_consumer(tlog_t *logger) {
     return;
   }
 
-  salts_mutex_lock(&logger->wake_mutex);
-  salts_cond_signal(&logger->wake_cond);
-  salts_mutex_unlock(&logger->wake_mutex);
+  cmeta_mutex_lock(&logger->wake_mutex);
+  cmeta_cond_signal(&logger->wake_cond);
+  cmeta_mutex_unlock(&logger->wake_mutex);
 }
 
 static void logger_broadcast_consumer(tlog_t *logger) {
@@ -1168,9 +1168,9 @@ static void logger_broadcast_consumer(tlog_t *logger) {
     return;
   }
 
-  salts_mutex_lock(&logger->wake_mutex);
-  salts_cond_broadcast(&logger->wake_cond);
-  salts_mutex_unlock(&logger->wake_mutex);
+  cmeta_mutex_lock(&logger->wake_mutex);
+  cmeta_cond_broadcast(&logger->wake_cond);
+  cmeta_mutex_unlock(&logger->wake_mutex);
 }
 
 static int logger_wait_for_available(tlog_t *logger, uint64_t next_sequence,
@@ -1188,22 +1188,22 @@ static int logger_wait_for_available(tlog_t *logger, uint64_t next_sequence,
     return 0;
   }
 
-  salts_mutex_lock(&logger->wake_mutex);
+  cmeta_mutex_lock(&logger->wake_mutex);
   while (logger_should_run(logger)) {
     cursor->sequence = next_sequence;
     if (disruptor_consumer_wait_for_nonblocking(logger->disruptor, cursor)) {
-      salts_mutex_unlock(&logger->wake_mutex);
+      cmeta_mutex_unlock(&logger->wake_mutex);
       return 1;
     }
-    salts_cond_wait(&logger->wake_cond, &logger->wake_mutex);
+    cmeta_cond_wait(&logger->wake_cond, &logger->wake_mutex);
   }
 
   cursor->sequence = next_sequence;
   if (disruptor_consumer_wait_for_nonblocking(logger->disruptor, cursor)) {
-    salts_mutex_unlock(&logger->wake_mutex);
+    cmeta_mutex_unlock(&logger->wake_mutex);
     return 1;
   }
-  salts_mutex_unlock(&logger->wake_mutex);
+  cmeta_mutex_unlock(&logger->wake_mutex);
   return 0;
 }
 
@@ -1245,12 +1245,12 @@ static int logger_start_async(tlog_t *logger) {
   atomic_store(&logger->running, 1);
   atomic_store(&logger->consumer_ready, 0);
 
-  if (salts_thread_create(&logger->thread, async_logger_thread, logger) != 0) {
+  if (cmeta_thread_create(&logger->thread, async_logger_thread, logger) != 0) {
     return -1;
   }
 
   while (!atomic_load(&logger->consumer_ready)) {
-    salts_thread_yield();
+    cmeta_thread_yield();
   }
 
   return 0;
@@ -1259,7 +1259,7 @@ static int logger_start_async(tlog_t *logger) {
 static void logger_stop_async(tlog_t *logger) {
   atomic_store(&logger->running, 0);
   logger_broadcast_consumer(logger);
-  salts_thread_join(&logger->thread);
+  cmeta_thread_join(&logger->thread);
 }
 
 static int logger_publish_entry(tlog_t *logger, mem_buffer_t *buffer) {
@@ -1296,9 +1296,9 @@ tlog_t *tlog_create(const tlog_config_t *config) {
 
   atomic_init(&logger->min_level, (int)(config ? config->min_level : SALTS_LOG_LEVEL_INFO));
 
-  salts_mutex_init(&logger->sink_mutex);
-  salts_mutex_init(&logger->wake_mutex);
-  salts_cond_init(&logger->wake_cond);
+  cmeta_mutex_init(&logger->sink_mutex);
+  cmeta_mutex_init(&logger->wake_mutex);
+  cmeta_cond_init(&logger->wake_cond);
 
   atomic_store(&logger->logs_written, 0);
   atomic_store(&logger->logs_dropped, 0);
@@ -1315,9 +1315,9 @@ tlog_t *tlog_create(const tlog_config_t *config) {
 
   logger->disruptor = disruptor_create(&disruptor_config);
   if (!logger->disruptor) {
-    salts_cond_destroy(&logger->wake_cond);
-    salts_mutex_destroy(&logger->wake_mutex);
-    salts_mutex_destroy(&logger->sink_mutex);
+    cmeta_cond_destroy(&logger->wake_cond);
+    cmeta_mutex_destroy(&logger->wake_mutex);
+    cmeta_mutex_destroy(&logger->sink_mutex);
     free(logger);
     return NULL;
   }
@@ -1327,9 +1327,9 @@ tlog_t *tlog_create(const tlog_config_t *config) {
       (config && config->pool_size) ? config->pool_size : DEFAULT_POOL_SIZE;
   if (mem_init(&logger->async_pool, async_pool_size) != 0) {
     disruptor_destroy(logger->disruptor);
-    salts_cond_destroy(&logger->wake_cond);
-    salts_mutex_destroy(&logger->wake_mutex);
-    salts_mutex_destroy(&logger->sink_mutex);
+    cmeta_cond_destroy(&logger->wake_cond);
+    cmeta_mutex_destroy(&logger->wake_mutex);
+    cmeta_mutex_destroy(&logger->sink_mutex);
     free(logger);
     return NULL;
   }
@@ -1337,9 +1337,9 @@ tlog_t *tlog_create(const tlog_config_t *config) {
   if (logger_start_async(logger) != 0) {
     mem_destroy(&logger->async_pool);
     disruptor_destroy(logger->disruptor);
-    salts_cond_destroy(&logger->wake_cond);
-    salts_mutex_destroy(&logger->wake_mutex);
-    salts_mutex_destroy(&logger->sink_mutex);
+    cmeta_cond_destroy(&logger->wake_cond);
+    cmeta_mutex_destroy(&logger->wake_mutex);
+    cmeta_mutex_destroy(&logger->sink_mutex);
     free(logger);
     return NULL;
   }
@@ -1360,45 +1360,45 @@ void tlog_destroy(tlog_t *logger) {
   // Flush and destroy sinks
   for (int i = 0; i < logger->sink_count; i++) {
     sink_flush_inner(logger->sinks[i]);
-    salts_sink_destroy(logger->sinks[i]);
+    cmeta_sink_destroy(logger->sinks[i]);
   }
 
-  salts_mutex_destroy(&logger->sink_mutex);
-  salts_cond_destroy(&logger->wake_cond);
-  salts_mutex_destroy(&logger->wake_mutex);
+  cmeta_mutex_destroy(&logger->sink_mutex);
+  cmeta_cond_destroy(&logger->wake_cond);
+  cmeta_mutex_destroy(&logger->wake_mutex);
 
   // Clear default logger reference before freeing memory.
-  salts_once(&g_default_logger_mutex_once, init_tlog_globals);
+  cmeta_once(&g_default_logger_mutex_once, init_tlog_globals);
   if (g_default_logger_mutex_init) {
-    salts_mutex_lock(&g_default_logger_mutex);
+    cmeta_mutex_lock(&g_default_logger_mutex);
     if (g_default_logger == logger) {
       g_default_logger = NULL;
     }
-    salts_mutex_unlock(&g_default_logger_mutex);
+    cmeta_mutex_unlock(&g_default_logger_mutex);
   }
 
   free(logger);
 }
 
-int tlog_add_sink(tlog_t *logger, salts_log_sink_t *sink) {
+int tlog_add_sink(tlog_t *logger, cmeta_log_sink_t *sink) {
   if (!logger || !sink)
     return -1;
 
-  salts_mutex_lock(&logger->sink_mutex);
+  cmeta_mutex_lock(&logger->sink_mutex);
   if (logger->sink_count >= MAX_SINKS) {
-    salts_mutex_unlock(&logger->sink_mutex);
+    cmeta_mutex_unlock(&logger->sink_mutex);
     return -1;
   }
   logger->sinks[logger->sink_count++] = sink;
-  salts_mutex_unlock(&logger->sink_mutex);
+  cmeta_mutex_unlock(&logger->sink_mutex);
   return 0;
 }
 
-void tlog_remove_sink(tlog_t *logger, salts_log_sink_t *sink) {
+void tlog_remove_sink(tlog_t *logger, cmeta_log_sink_t *sink) {
   if (!logger || !sink)
     return;
 
-  salts_mutex_lock(&logger->sink_mutex);
+  cmeta_mutex_lock(&logger->sink_mutex);
   for (int i = 0; i < logger->sink_count; i++) {
     if (logger->sinks[i] == sink) {
       for (int j = i; j < logger->sink_count - 1; j++) {
@@ -1408,7 +1408,7 @@ void tlog_remove_sink(tlog_t *logger, salts_log_sink_t *sink) {
       break;
     }
   }
-  salts_mutex_unlock(&logger->sink_mutex);
+  cmeta_mutex_unlock(&logger->sink_mutex);
 }
 
 void tlog_flush(tlog_t *logger) {
@@ -1422,54 +1422,54 @@ void tlog_flush(tlog_t *logger) {
   // contract and makes callback/file sinks observe partial output.
   int64_t published = atomic_load(&logger->logs_published);
   while (atomic_load(&logger->logs_written) < published) {
-    salts_sleep_ms(1);
+    cmeta_sleep_ms(1);
   }
 
   // Flush all sinks
-  salts_mutex_lock(&logger->sink_mutex);
+  cmeta_mutex_lock(&logger->sink_mutex);
   for (int i = 0; i < logger->sink_count; i++) {
     sink_flush_inner(logger->sinks[i]);
   }
-  salts_mutex_unlock(&logger->sink_mutex);
+  cmeta_mutex_unlock(&logger->sink_mutex);
 }
 
 // =============================================================================
 // Core Logging Functions
 // =============================================================================
 
-static void logger_write_to_sinks(tlog_t *logger, const salts_log_entry_t *entry) {
-  salts_mutex_lock(&logger->sink_mutex);
+static void logger_write_to_sinks(tlog_t *logger, const cmeta_log_entry_t *entry) {
+  cmeta_mutex_lock(&logger->sink_mutex);
   for (int i = 0; i < logger->sink_count; i++) {
     sink_write_entry(logger->sinks[i], entry);
   }
-  salts_mutex_unlock(&logger->sink_mutex);
+  cmeta_mutex_unlock(&logger->sink_mutex);
 }
 
-void salts_log_typed(tlog_t *logger, salts_log_level_t level, vstr component,
+void cmeta_log_typed(tlog_t *logger, cmeta_log_level_t level, vstr component,
                      vstr file, int line, vstr pattern, const fmt_arg_t *args, size_t arg_count) {
   if (!logger || !vstr_is_valid(component) || !vstr_is_valid(file) || !vstr_is_valid(pattern) ||
       (!args && arg_count > 0)) return;
-  if (level < (salts_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed)) return;
+  if (level < (cmeta_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed)) return;
 
   if (arg_count == 0) {
-    salts_log_str(logger, level, component, file, line, pattern);
+    cmeta_log_str(logger, level, component, file, line, pattern);
     return;
   }
 
   int msg_len = fmt_print_v(tls_msg_buf, MAX_MESSAGE_SIZE, pattern, args, arg_count);
   if (msg_len < 0) msg_len = 0;
   if (msg_len >= MAX_MESSAGE_SIZE) msg_len = MAX_MESSAGE_SIZE - 1;
-  salts_log_str(logger, level, component, file, line,
+  cmeta_log_str(logger, level, component, file, line,
                 vstr_from_buf(tls_msg_buf, (size_t)msg_len));
 }
 
-void salts_log_str(tlog_t *logger, salts_log_level_t level, vstr component, vstr file,
+void cmeta_log_str(tlog_t *logger, cmeta_log_level_t level, vstr component, vstr file,
                    int line, vstr message) {
   if (!logger || !vstr_is_valid(component) || !vstr_is_valid(file) || !vstr_is_valid(message)) return;
-  if (level < (salts_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed)) return;
+  if (level < (cmeta_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed)) return;
 
-  salts_log_entry_t entry = {.level = level,
-                             .timestamp_ms = salts_realtime_ms(),
+  cmeta_log_entry_t entry = {.level = level,
+                             .timestamp_ms = cmeta_realtime_ms(),
                              .thread_id = get_cached_tid(),
                              .component = component,
                              .file = file,
@@ -1487,7 +1487,7 @@ void salts_log_str(tlog_t *logger, salts_log_level_t level, vstr component, vstr
 // Level Control
 // =============================================================================
 
-int tlog_set_level_ex(tlog_t *logger, salts_log_level_t level) {
+int tlog_set_level_ex(tlog_t *logger, cmeta_log_level_t level) {
   if (!logger || !log_level_is_valid(level)) {
     return -1;
   }
@@ -1495,12 +1495,12 @@ int tlog_set_level_ex(tlog_t *logger, salts_log_level_t level) {
   return 0;
 }
 
-void tlog_set_level(tlog_t *logger, salts_log_level_t level) {
+void tlog_set_level(tlog_t *logger, cmeta_log_level_t level) {
   (void)tlog_set_level_ex(logger, level);
 }
 
-salts_log_level_t tlog_get_level(const tlog_t *logger) {
-  return logger ? (salts_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed)
+cmeta_log_level_t tlog_get_level(const tlog_t *logger) {
+  return logger ? (cmeta_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed)
                 : SALTS_LOG_LEVEL_INFO;
 }
 
@@ -1548,7 +1548,7 @@ static tlog_t *create_default_logger(void) {
 
   tlog_t *logger = tlog_create(&config);
   if (logger) {
-    salts_log_sink_t *console = salts_sink_console_create(NULL);
+    cmeta_log_sink_t *console = cmeta_sink_console_create(NULL);
     if (console) {
       tlog_add_sink(logger, console);
     }
@@ -1557,11 +1557,11 @@ static tlog_t *create_default_logger(void) {
 }
 
 void tlog_set_default(tlog_t *logger) {
-  salts_once(&g_default_logger_mutex_once, init_tlog_globals);
+  cmeta_once(&g_default_logger_mutex_once, init_tlog_globals);
   if (g_default_logger_mutex_init) {
-    salts_mutex_lock(&g_default_logger_mutex);
+    cmeta_mutex_lock(&g_default_logger_mutex);
     g_default_logger = logger;
-    salts_mutex_unlock(&g_default_logger_mutex);
+    cmeta_mutex_unlock(&g_default_logger_mutex);
   }
 }
 
@@ -1569,14 +1569,14 @@ tlog_t *tlog_get_default(void) {
   tlog_t *logger = NULL;
   tlog_t *created = NULL;
 
-  salts_once(&g_default_logger_mutex_once, init_tlog_globals);
+  cmeta_once(&g_default_logger_mutex_once, init_tlog_globals);
   if (!g_default_logger_mutex_init) {
     return NULL;
   }
 
-  salts_mutex_lock(&g_default_logger_mutex);
+  cmeta_mutex_lock(&g_default_logger_mutex);
   logger = g_default_logger;
-  salts_mutex_unlock(&g_default_logger_mutex);
+  cmeta_mutex_unlock(&g_default_logger_mutex);
   if (logger) {
     return logger;
   }
@@ -1586,7 +1586,7 @@ tlog_t *tlog_get_default(void) {
     return NULL;
   }
 
-  salts_mutex_lock(&g_default_logger_mutex);
+  cmeta_mutex_lock(&g_default_logger_mutex);
   if (g_default_logger == NULL) {
     g_default_logger = created;
     logger = created;
@@ -1594,7 +1594,7 @@ tlog_t *tlog_get_default(void) {
   } else {
     logger = g_default_logger;
   }
-  salts_mutex_unlock(&g_default_logger_mutex);
+  cmeta_mutex_unlock(&g_default_logger_mutex);
 
   if (created) {
     tlog_destroy(created);
@@ -1604,13 +1604,13 @@ tlog_t *tlog_get_default(void) {
 
 tlog_t *tlog_peek_default(void) {
   tlog_t *logger = NULL;
-  salts_once(&g_default_logger_mutex_once, init_tlog_globals);
+  cmeta_once(&g_default_logger_mutex_once, init_tlog_globals);
   if (!g_default_logger_mutex_init) {
     return NULL;
   }
-  salts_mutex_lock(&g_default_logger_mutex);
+  cmeta_mutex_lock(&g_default_logger_mutex);
   logger = g_default_logger;
-  salts_mutex_unlock(&g_default_logger_mutex);
+  cmeta_mutex_unlock(&g_default_logger_mutex);
   return logger;
 }
 
@@ -1618,22 +1618,22 @@ tlog_t *tlog_peek_default(void) {
 // Utility Functions
 // =============================================================================
 
-const char *salts_log_level_name(salts_log_level_t level) {
-  const char *name = salts_log_level_t_to_string(level);
+const char *cmeta_log_level_name(cmeta_log_level_t level) {
+  const char *name = cmeta_log_level_t_to_string(level);
   return name ? name : "UNKNOWN";
 }
 
-salts_log_level_t salts_log_level_from_name(const char *name) {
+cmeta_log_level_t cmeta_log_level_from_name(const char *name) {
   const cmeta_enum_desc *meta;
   size_t i;
   if (!name) {
     return SALTS_LOG_LEVEL_INFO;
   }
 
-  meta = salts_log_level_t_meta();
+  meta = cmeta_log_level_t_meta();
   for (i = 0; i < meta->count; ++i) {
     if (strcmp(name, meta->items[i].text) == 0) {
-      return (salts_log_level_t)meta->items[i].value;
+      return (cmeta_log_level_t)meta->items[i].value;
     }
   }
 

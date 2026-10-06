@@ -140,6 +140,7 @@ foreach ($profile in $profiles) {
   $entry = $profile.Clone()
   $entry.cross = $entry.family -in @('android', 'ios')
   $entry.fastpath = 'OFF'
+  $entry.native_thunks = if ($entry.id -in @('linux-release', 'linux-asan', 'windows-release')) { 'ON' } else { 'OFF' }
   $entry.native = $false
   $entry.execution = $execution -and -not $entry.cross -and $entry.id -ne 'linux-arm64-release'
   $entry.armheaders = $entry.id -eq 'linux-arm64-release'
@@ -158,6 +159,7 @@ foreach ($profile in $profiles) {
     $entry.id += '-fastpath'
     $entry.cross = $false
     $entry.fastpath = 'ON'
+    $entry.native_thunks = if ($profile.id -in @('linux-release', 'linux-asan', 'windows-release')) { 'ON' } else { 'OFF' }
     $entry.native = $true
     $entry.execution = $false
     $entry.armheaders = $false

@@ -83,7 +83,7 @@ int main(void) {
 
   fprintf(stderr, "NATIVE_IO_IDLE_OBSERVE_BEGIN iterations=%zu\n", iterations);
   fflush(stderr);
-  wall_started = salts_hrtime();
+  wall_started = cmeta_hrtime();
   cpu_started = idle_observe_thread_cpu_ns();
 
   for (size_t i = 0u; i < iterations; ++i) {
@@ -99,7 +99,7 @@ int main(void) {
   }
 
   cpu_ns = idle_observe_thread_cpu_ns() - cpu_started;
-  wall_ns = salts_hrtime() - wall_started;
+  wall_ns = cmeta_hrtime() - wall_started;
   fprintf(stderr, "NATIVE_IO_IDLE_OBSERVE_END iterations=%zu\n", iterations);
   fflush(stderr);
 

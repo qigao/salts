@@ -2,6 +2,7 @@
 #include <cmeta/scope.h>
 #ifdef __cplusplus
 #include "tinytest.hpp"
+#include <stdexcept>
 #else
 #include "tinytest.h"
 #endif
@@ -44,10 +45,58 @@ static cmeta_status trivial_body(TrivialInt *value) {
     return CMETA_OK;
 }
 static size_t partial_restores;
+typedef int NofailInt;
+static cmeta_status nofail_init(NofailInt *value) { *value = 0; return CMETA_OK; }
+static void nofail_restore(NofailInt *value) {
+    cleanup_log[cleanup_count++] = *value;
+    *value = 0;
+}
+static void nofail_move(NofailInt *dst, NofailInt *src) { *dst = *src; *src = 0; }
+CMETA_DEFINE_LIFECYCLE(NofailInt, &cmeta_type_int, nofail_init, nofail_restore, nofail_move,
+    CMETA_LIFECYCLE_INIT_NOFAIL | CMETA_LIFECYCLE_MOVABLE)
+static cmeta_status nofail_body(NofailInt *first, NofailInt *second) {
+    cmeta_status nested;
+    *first = 1;
+    *second = 2;
+    cmeta_scope_nofail(nested, cmeta_autos((NofailInt, inner)), cmeta_body(
+        (inner = 3, CMETA_OK)));
+    return nested == CMETA_OK ? CMETA_CALLBACK_ERROR : nested;
+}
+#ifdef __cplusplus
+static cmeta_status nofail_throw(NofailInt *first, NofailInt *second) {
+    *first = 1; *second = 2;
+    throw std::runtime_error("nofail body");
+}
+#endif
 static cmeta_status partial_init(void *value) { *(int *)value = 42; return CMETA_CALLBACK_ERROR; }
 static void partial_restore(void *value) { ++partial_restores; *(int *)value = 0; }
 
 spec("CMeta admitted lifecycle and cleanup obligations") {
+#ifdef __cplusplus
+    it("discharges nofail resources before propagating a C++ body exception") {
+        cleanup_count = 0;
+        auto run = []() {
+            cmeta_status status;
+            cmeta_scope_nofail(status, cmeta_autos((NofailInt, first), (NofailInt, second)),
+                cmeta_body(nofail_throw(&first, &second)));
+            return status;
+        };
+        check_throws_as(run(), std::runtime_error);
+        check_equal(cleanup_count, (size_t)2);
+        check_equal(cleanup_log[0], 2); check_equal(cleanup_log[1], 1);
+    }
+#endif
+    it("lowers nofail providers without per-resource state and preserves nested LIFO on body error") {
+        cmeta_status status;
+        cleanup_count = 0;
+        cmeta_scope_nofail(status, cmeta_autos((NofailInt, first), (NofailInt, second)),
+            cmeta_body(nofail_body(&first, &second)));
+        check_equal(status, CMETA_CALLBACK_ERROR);
+        check_equal(cleanup_count, (size_t)CLEANUP_TEST_COUNT);
+        check_equal(cleanup_log[0], 3);
+        check_equal(cleanup_log[1], 2);
+        check_equal(cleanup_log[2], 1);
+    }
     it("admits canonical layout once and uses explicit lifecycle capability") {
         cmeta_data_desc data = cmeta_data_int;
         cmeta_lifecycle_binding binding = CMETA_LIFECYCLE_BINDING_INIT;

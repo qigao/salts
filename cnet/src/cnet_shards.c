@@ -22,7 +22,7 @@ typedef struct cnet_shard_record {
 
 struct cnet_shards_impl {
   cnet_shard_record *records;
-  salts_mutex_t admission_lock;
+  cmeta_mutex_t admission_lock;
   size_t shard_count;
   size_t connection_capacity_per_shard;
   size_t max_event_payload_bytes;
@@ -165,7 +165,7 @@ static int cnet_shards_init_impl(cnet_shards *shards, const cnet_shards_config *
   impl->admission_open = true;
   atomic_init(&impl->event_sink, NULL);
   atomic_init(&impl->event_sink_context, NULL);
-  salts_mutex_init(&impl->admission_lock);
+  cmeta_mutex_init(&impl->admission_lock);
 
   for (index = 0u; index < impl->shard_count; ++index) {
     cnet_shard_record *record = &impl->records[index];
@@ -210,7 +210,7 @@ static int cnet_shards_init_impl(cnet_shards *shards, const cnet_shards_config *
   }
   if (status != SALTS_OK) {
     cnet_shards_cleanup_records(impl, initialized);
-    salts_mutex_destroy(&impl->admission_lock);
+    cmeta_mutex_destroy(&impl->admission_lock);
     free(impl->records);
     free(impl);
     return status;
@@ -444,14 +444,14 @@ int cnet_shards_bind_event_sink(cnet_shards *shards, cnet_shards_event_sink_fn s
   cnet_shards_impl *impl = cnet_shards_get(shards);
 
   if (impl == NULL || sink == NULL || context == NULL) return SALTS_EINVAL;
-  salts_mutex_lock(&impl->admission_lock);
+  cmeta_mutex_lock(&impl->admission_lock);
   if (atomic_load_explicit(&impl->event_sink, memory_order_relaxed) != NULL) {
-    salts_mutex_unlock(&impl->admission_lock);
+    cmeta_mutex_unlock(&impl->admission_lock);
     return SALTS_EALREADY;
   }
   atomic_store_explicit(&impl->event_sink_context, context, memory_order_relaxed);
   atomic_store_explicit(&impl->event_sink, sink, memory_order_release);
-  salts_mutex_unlock(&impl->admission_lock);
+  cmeta_mutex_unlock(&impl->admission_lock);
   return SALTS_OK;
 }
 
@@ -474,10 +474,10 @@ int cnet_shards_connect(cnet_shards *shards, const cnet_owner_connect_payload *p
   memset(out_connection, 0, sizeof(*out_connection));
   if (impl == NULL || payload == NULL) return SALTS_EINVAL;
 
-  salts_mutex_lock(&impl->admission_lock);
+  cmeta_mutex_lock(&impl->admission_lock);
   status = cnet_shards_first_error(impl);
   if (!impl->admission_open || status != SALTS_OK) {
-    salts_mutex_unlock(&impl->admission_lock);
+    cmeta_mutex_unlock(&impl->admission_lock);
     return status != SALTS_OK ? status : SALTS_ESHUTDOWN;
   }
   status = SALTS_ENOBUFS;
@@ -502,7 +502,7 @@ int cnet_shards_connect(cnet_shards *shards, const cnet_owner_connect_payload *p
       (void)cnet_session_table_release_reservation(&record->sessions, connection.session);
     }
   }
-  salts_mutex_unlock(&impl->admission_lock);
+  cmeta_mutex_unlock(&impl->admission_lock);
   return status;
 }
 
@@ -518,9 +518,9 @@ static int cnet_shards_publish(cnet_shards_impl *impl, cnet_shard_connection con
   record = cnet_shards_get_record(impl, connection.shard);
   if (record == NULL) return SALTS_ENOENT;
 
-  salts_mutex_lock(&impl->admission_lock);
+  cmeta_mutex_lock(&impl->admission_lock);
   if (!impl->admission_open) {
-    salts_mutex_unlock(&impl->admission_lock);
+    cmeta_mutex_unlock(&impl->admission_lock);
     return SALTS_ESHUTDOWN;
   }
   status = cnet_shards_first_error(impl);
@@ -534,7 +534,7 @@ static int cnet_shards_publish(cnet_shards_impl *impl, cnet_shard_connection con
     status = SALTS_EALREADY;
   if (status == SALTS_OK && state == CNET_SESSION_TERMINAL) status = SALTS_EALREADY;
   if (status == SALTS_OK) status = cnet_command_queue_publish(&record->commands, command);
-  salts_mutex_unlock(&impl->admission_lock);
+  cmeta_mutex_unlock(&impl->admission_lock);
   return status;
 }
 static int cnet_shards_direct_write_ready(cnet_shards_impl *impl,
@@ -899,7 +899,7 @@ int cnet_shards_recycle(cnet_shards *shards, cnet_shard_connection connection,
   record = cnet_shards_get_record(impl, connection.shard);
   if (record == NULL) return SALTS_ENOENT;
 
-  salts_mutex_lock(&impl->admission_lock);
+  cmeta_mutex_lock(&impl->admission_lock);
   status = cnet_session_table_take_terminal(&record->sessions, connection.session, out_terminal);
   if (status == SALTS_OK)
     status = cnet_session_table_recycle(&record->sessions, connection.session);
@@ -908,7 +908,7 @@ int cnet_shards_recycle(cnet_shards *shards, cnet_shard_connection connection,
     if (impl->active_connections == 0u) status = SALTS_EPROTO;
     else --impl->active_connections;
   }
-  salts_mutex_unlock(&impl->admission_lock);
+  cmeta_mutex_unlock(&impl->admission_lock);
   return status;
 }
 
@@ -920,27 +920,27 @@ int cnet_shards_stop(cnet_shards *shards, uint32_t timeout_ms) {
 
   (void)timeout_ms;
   if (impl == NULL) return SALTS_EINVAL;
-  salts_mutex_lock(&impl->admission_lock);
+  cmeta_mutex_lock(&impl->admission_lock);
   if (impl->stopped) {
-    salts_mutex_unlock(&impl->admission_lock);
+    cmeta_mutex_unlock(&impl->admission_lock);
     return SALTS_EALREADY;
   }
   if (!impl->stopping) {
     if (impl->active_connections != 0u) {
-      salts_mutex_unlock(&impl->admission_lock);
+      cmeta_mutex_unlock(&impl->admission_lock);
       return SALTS_EBUSY;
     }
     impl->admission_open = false;
     for (index = 0u; index < impl->shard_count; ++index) {
       status = cnet_command_queue_close(&impl->records[index].commands);
       if (status != SALTS_OK) {
-        salts_mutex_unlock(&impl->admission_lock);
+        cmeta_mutex_unlock(&impl->admission_lock);
         return status;
       }
     }
     impl->stopping = true;
   }
-  salts_mutex_unlock(&impl->admission_lock);
+  cmeta_mutex_unlock(&impl->admission_lock);
 
   first_status = cnet_shards_first_error(impl);
   for (index = 0u; index < impl->shard_count; ++index) {
@@ -983,7 +983,7 @@ int cnet_shards_destroy(cnet_shards *shards) {
     status = cnet_session_table_destroy(&record->sessions);
     if (status != SALTS_OK) return status;
   }
-  salts_mutex_destroy(&impl->admission_lock);
+  cmeta_mutex_destroy(&impl->admission_lock);
   free(impl->records);
   free(impl);
   shards->impl = NULL;

@@ -30,10 +30,10 @@
 extern "C" {
 #endif
 
-typedef struct salts_enum_entry_s {
+typedef struct cmeta_enum_entry_s {
   long long value;
   const char *name;
-} salts_enum_entry_t;
+} cmeta_enum_entry_t;
 
 /**
  * @brief Expand an enum item as a lookup table entry.
@@ -49,7 +49,7 @@ typedef struct salts_enum_entry_s {
  */
 #define SALTS_ENUM_DISPATCH_TO_STRING_CASE(enum_type, fn) enum_type: fn
 
-static inline const char *salts_enum_unknown_to_string(void) {
+static inline const char *cmeta_enum_unknown_to_string(void) {
   return "UNKNOWN";
 }
 
@@ -69,10 +69,10 @@ static inline const char *salts_enum_unknown_to_string(void) {
   _Generic((value), enum_type: fn)(value)
 #else
 #define SALTS_ENUM_DISPATCH_TO_STRING(value, case_list) \
-  salts_enum_unknown_to_string()
+  cmeta_enum_unknown_to_string()
 
 #define SALTS_ENUM_DISPATCH_TO_STRING_OF(value, enum_type, fn) \
-  salts_enum_unknown_to_string()
+  cmeta_enum_unknown_to_string()
 #endif
 
 /**
@@ -94,7 +94,7 @@ static inline const char *salts_enum_unknown_to_string(void) {
  */
 #define SALTS_ENUM_DECLARE(enum_type, prefix, item_list, unknown_str) \
   Enum(enum_type, item_list); \
-  static const salts_enum_entry_t prefix##_entries[] = { \
+  static const cmeta_enum_entry_t prefix##_entries[] = { \
       Schema(SALTS_ENUM_TABLE_ITEM, item_list) \
   }; \
   static inline size_t prefix##_count(void) { \

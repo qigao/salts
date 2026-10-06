@@ -1,10 +1,11 @@
-set(TARGET_NAME salts_cflow_cnet)
+set(TARGET_NAME cmeta_cflow_cnet)
 
 add_library(${TARGET_NAME}
   io_cnet_adapter.c)
 
 cmake_config_target(
   ${TARGET_NAME}
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   ALIAS Salts::CFlowCNet
   FOLDER "cflow/cnet-adapter"
   EXPORT_NAME CFlowCNet)

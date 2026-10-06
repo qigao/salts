@@ -13,7 +13,7 @@ suite("CMeta fastpath Release benchmarks") {
             ((uint64_t)FASTPATH_BENCH_OPERATIONS + 1u) / 2u;
         for (int enabled = 0; enabled <= 1; ++enabled) {
             fastpath_plain_enabled = enabled != 0;
-            check_equal(salts_fast_key_set(&fastpath_benchmark_key, enabled != 0), CMETA_OK);
+            check_equal(cmeta_fast_key_set(&fastpath_benchmark_key, enabled != 0), CMETA_OK);
             benchmark_ops(enabled ? "plain branch / enabled" : "plain branch / disabled",
                           FASTPATH_BENCH_SAMPLES, FASTPATH_BENCH_OPERATIONS) {
                 uint64_t sum = 0u;
@@ -26,7 +26,7 @@ suite("CMeta fastpath Release benchmarks") {
                           FASTPATH_BENCH_SAMPLES, FASTPATH_BENCH_OPERATIONS) {
                 uint64_t sum = 0u;
                 for (uint64_t index = 0u; index < FASTPATH_BENCH_OPERATIONS; ++index)
-                    if (salts_fast_branch(&fastpath_benchmark_key))
+                    if (cmeta_fast_branch(&fastpath_benchmark_key))
                         sum += fastpath_benchmark_target(index);
                 fastpath_benchmark_sink = sum;
             }
@@ -36,7 +36,7 @@ suite("CMeta fastpath Release benchmarks") {
                           FASTPATH_BENCH_SAMPLES, FASTPATH_BENCH_OPERATIONS) {
                 uint64_t sum = 0u;
                 for (uint64_t index = 0u; index < FASTPATH_BENCH_OPERATIONS; ++index)
-                    if (salts_fast_key_read_native(&fastpath_benchmark_key))
+                    if (cmeta_fast_key_read_native(&fastpath_benchmark_key))
                         sum += fastpath_benchmark_target(index);
                 fastpath_benchmark_sink = sum;
             }

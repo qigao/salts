@@ -235,10 +235,10 @@
 - ❌ **禁止手写**：字符串拼接 → 用 `tstr`（Salts）或 `sds`（vendor）
 - ❌ **禁止手写**：哈希表/集合 → 包含 `<cstl/typed.h>` 并用 `cmeta_type(HashMap, Name, Key, Value)` 或 `cmeta_type(Set, Name, Type)`
 - ❌ **禁止手写**：双端队列 → 包含 `<cstl/typed.h>` 并用 `cmeta_type(Deque, Name, Type)`
-- ❌ **禁止手写**：文件读写 → 用 `salts_fs`（Salts）
+- ❌ **禁止手写**：文件读写 → 用 `cmeta_fs`（Salts）
 - ❌ **禁止手写**：日志系统 → 使用 Salts `tlog`，API、数量、交付与生产协议参见 `logging-guide`
-- ❌ **禁止手写**：线程池 → 用 `salts_threadpool`（Salts）
-- ❌ **禁止手写**：并发 ring/queue → 按拓扑与消费语义选择 `ring_buffer_spsc`、`disruptor`、`salts_threadpool` 或 bucket priority queue（Salts）
+- ❌ **禁止手写**：线程池 → 用 `cmeta_threadpool`（Salts）
+- ❌ **禁止手写**：并发 ring/queue → 按拓扑与消费语义选择 `ring_buffer_spsc`、`disruptor`、`cmeta_threadpool` 或 bucket priority queue（Salts）
 - ❌ **禁止手写**：arena/slab/object pool → 按生命周期选择 `MemoryPool`、`mem_pool_t`、`mem_buffer_t` / `mem_slice_t` 或 `object_pool_t`（Salts）
 
 ### 依赖管理与接口设计
@@ -381,7 +381,7 @@
 - 内存安全：
   - 避免 use-after-free：明确所有权、文档化生命周期、AddressSanitizer 检测
   - 避免 double-free：每个指针只有一个释放点、NULL 检查后释放、释放后置 NULL
-  - 避免缓冲区溢出：使用 `strncpy`、`snprintf`、边界检查、`salts_buffer` 动态数组
+  - 避免缓冲区溢出：使用 `strncpy`、`snprintf`、边界检查、`cmeta_buffer` 动态数组
   - 避免悬空指针：指针生命周期不超过被指向对象、返回值文档化所有权转移
 - 权限与隔离：
   - 最小权限原则：进程、线程、插件只拥有必要权限

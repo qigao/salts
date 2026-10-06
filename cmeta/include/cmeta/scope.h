@@ -6,6 +6,7 @@
 #include <cmeta/status.h>
 
 #include <stdbool.h>
+#include <stdlib.h>
 
 /*
  * Portable structured lifetime facade.
@@ -155,6 +156,49 @@ CMETA_INLINE cmeta_status cmeta_scope_construct_ops(
         CMETA_SCOPE_LABEL_(scope_):                                            \
         CMETA_SCOPE_DESTROY_ALL_(scope_, autos_)                              \
         ;                                                                      \
+    } while (0)
+
+/* All resources initialize successfully by declared provider contract. No
+ * partial-construction state or cached ops pointers are needed. A provider
+ * that violates INIT_NOFAIL is a broken local invariant, never a fallback to
+ * the fallible lowering. The body has the same expression-only exit contract. */
+#define CMETA_SCOPE_NOFAIL_DECLARE_(row_, ignored_) \
+    CMETA_SCOPE_NOFAIL_DECLARE_I_ row_
+#define CMETA_SCOPE_NOFAIL_DECLARE_I_(type_, name_) \
+    CMETA_STATIC_ASSERT((type_##_cmeta_lifecycle_flags & CMETA_LIFECYCLE_INIT_NOFAIL) != 0, \
+        "CMeta nofail scope requires canonical INIT_NOFAIL"); \
+    CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(&CMETA_LIFECYCLE_ACCESSOR_(type_), \
+        const cmeta_data_construct_ops *(*)(const type_ *)), \
+        "CMeta static lifecycle native type mismatch"); \
+    type_ name_ = {0};
+#define CMETA_SCOPE_NOFAIL_INIT_(row_, ignored_) CMETA_SCOPE_NOFAIL_INIT_I_ row_
+#define CMETA_SCOPE_NOFAIL_INIT_I_(type_, name_) \
+    if (CMETA_LIFECYCLE_ACCESSOR_(type_)(&(name_))->init_zero(&(name_)) != CMETA_OK) abort();
+#define CMETA_SCOPE_NOFAIL_RESTORE_(row_, ignored_) CMETA_SCOPE_NOFAIL_RESTORE_I_ row_
+#define CMETA_SCOPE_NOFAIL_RESTORE_I_(type_, name_) \
+    CMETA_LIFECYCLE_ACCESSOR_(type_)(&(name_))->restore_zero(&(name_));
+#define cmeta_scope_nofail(status_, autos_, body_) \
+    CMETA_SCOPE_NOFAIL_EXPAND_(status_, body_, CMETA_PP_UNPAREN autos_)
+#define CMETA_SCOPE_NOFAIL_EXPAND_(...) CMETA_SCOPE_NOFAIL_I_(__VA_ARGS__)
+#ifdef __cplusplus
+#define CMETA_SCOPE_NOFAIL_INITIALIZE_(...) \
+    try { CMETA_PP_FOR_EACH(CMETA_SCOPE_NOFAIL_INIT_, ~, __VA_ARGS__) } catch (...) { abort(); }
+#define CMETA_SCOPE_NOFAIL_BODY_(status_, body_, ...) \
+    try { (status_) = (body_); } catch (...) { \
+        CMETA_PP_FOR_EACH_REVERSE(CMETA_SCOPE_NOFAIL_RESTORE_, ~, __VA_ARGS__) \
+        throw; \
+    }
+#else
+#define CMETA_SCOPE_NOFAIL_INITIALIZE_(...) CMETA_PP_FOR_EACH(CMETA_SCOPE_NOFAIL_INIT_, ~, __VA_ARGS__)
+#define CMETA_SCOPE_NOFAIL_BODY_(status_, body_, ...) (status_) = (body_);
+#endif
+#define CMETA_SCOPE_NOFAIL_I_(status_, body_, ...) \
+    do { \
+        (status_) = CMETA_OK; \
+        CMETA_PP_FOR_EACH(CMETA_SCOPE_NOFAIL_DECLARE_, ~, __VA_ARGS__) \
+        CMETA_SCOPE_NOFAIL_INITIALIZE_(__VA_ARGS__) \
+        CMETA_SCOPE_NOFAIL_BODY_(status_, body_, __VA_ARGS__) \
+        CMETA_PP_FOR_EACH_REVERSE(CMETA_SCOPE_NOFAIL_RESTORE_, ~, __VA_ARGS__) \
     } while (0)
 
 #endif /* CMETA_SCOPE_H */

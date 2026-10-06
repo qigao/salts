@@ -6,6 +6,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct native_io_sharded native_io_sharded;
 typedef struct native_io_sharded_context native_io_sharded_context;
 
@@ -106,9 +110,9 @@ typedef struct native_io_sharded_completion {
  * Cancellation does not release ownership by itself: the token remains owned
  * by the request until its terminal completion is observed.
  */
-typedef void (*native_io_sharded_terminal_fn)(
-    native_io_sharded_context *context,
-    const native_io_sharded_completion *completion, void *arg);
+typedef void (*native_io_sharded_terminal_fn)(native_io_sharded_context *context,
+                                              const native_io_sharded_completion *completion,
+                                              void *arg);
 
 typedef struct native_io_sharded_ownership {
   native_io_sharded_terminal_fn terminal;
@@ -124,22 +128,18 @@ typedef struct native_io_sharded_ownership {
  * raw NativeIO request was created. This is an admission/control result, not a
  * synthesized I/O terminal completion.
  */
-typedef void (*native_io_sharded_admission_fn)(
-    native_io_sharded_context *context, int status,
-    native_io_sharded_request request, void *arg);
+typedef void (*native_io_sharded_admission_fn)(native_io_sharded_context *context, int status,
+                                               native_io_sharded_request request, void *arg);
 
-SALTS_NATIVE_IO_C_API bool native_io_sharded_endpoint_valid(native_io_sharded_endpoint endpoint);
-SALTS_NATIVE_IO_C_API bool native_io_sharded_request_valid(native_io_sharded_request request);
-SALTS_NATIVE_IO_C_API bool
-native_io_sharded_operation_valid(const native_io_sharded_operation *operation);
+bool native_io_sharded_endpoint_valid(native_io_sharded_endpoint endpoint);
+bool native_io_sharded_request_valid(native_io_sharded_request request);
+bool native_io_sharded_operation_valid(const native_io_sharded_operation *operation);
 
 /** Returns SIZE_MAX for an invalid endpoint wrapper. */
-SALTS_NATIVE_IO_C_API size_t
-native_io_sharded_endpoint_owner_shard(native_io_sharded_endpoint endpoint);
+size_t native_io_sharded_endpoint_owner_shard(native_io_sharded_endpoint endpoint);
 
 /** Returns SIZE_MAX for an invalid request wrapper. */
-SALTS_NATIVE_IO_C_API size_t
-native_io_sharded_request_owner_shard(native_io_sharded_request request);
+size_t native_io_sharded_request_owner_shard(native_io_sharded_request request);
 
 typedef struct native_io_sharded_config {
   /** Fixed number of owner shards. Must be nonzero. */
@@ -169,11 +169,21 @@ typedef struct native_io_sharded_stats {
   bool accepting;
 } native_io_sharded_stats;
 
-#define NATIVE_IO_SHARDED_STATS_V1_INITIALIZER                                                \
-  {                                                                                            \
-    NATIVE_IO_SHARDED_STATS_ABI_V1, sizeof(native_io_sharded_stats), 0u, 0u, 0u, 0u, 0u, 0u, \
-        0u, 0u, 0u, 0u, 0u, false                                                            \
-  }
+#define NATIVE_IO_SHARDED_STATS_V1_INITIALIZER                                                     \
+  {NATIVE_IO_SHARDED_STATS_ABI_V1,                                                                 \
+   sizeof(native_io_sharded_stats),                                                                \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   false}
 
 /**
  * Creates a fixed-shard NativeIO routing runtime.
@@ -191,8 +201,8 @@ typedef struct native_io_sharded_stats {
  * @return SALTS_OK, SALTS_EINVAL, SALTS_ERANGE, SALTS_ENOTSUP, SALTS_ENOMEM,
  *         or the first NativeIO backend initialization error.
  */
-SALTS_NATIVE_IO_C_API int native_io_sharded_create(const native_io_sharded_config *config,
-                                                   native_io_sharded **out_runtime);
+int native_io_sharded_create(const native_io_sharded_config *config,
+                             native_io_sharded **out_runtime);
 
 /**
  * Routes a task to one explicit shard.
@@ -203,8 +213,8 @@ SALTS_NATIVE_IO_C_API int native_io_sharded_create(const native_io_sharded_confi
  * space; a runtime callback receives SALTS_EBUSY rather than blocking on
  * another saturated shard.
  */
-SALTS_NATIVE_IO_C_API int native_io_sharded_submit_to(native_io_sharded *runtime, size_t shard,
-                                                      const native_io_sharded_task *task);
+int native_io_sharded_submit_to(native_io_sharded *runtime, size_t shard,
+                                const native_io_sharded_task *task);
 
 /**
  * Nonblocking explicit-shard routing.
@@ -213,9 +223,8 @@ SALTS_NATIVE_IO_C_API int native_io_sharded_submit_to(native_io_sharded *runtime
  * SALTS_ENOBUFS. Rejection never transfers arg ownership and invokes no task
  * callback.
  */
-SALTS_NATIVE_IO_C_API int native_io_sharded_try_submit_to(native_io_sharded *runtime,
-                                                          size_t shard,
-                                                          const native_io_sharded_task *task);
+int native_io_sharded_try_submit_to(native_io_sharded *runtime, size_t shard,
+                                    const native_io_sharded_task *task);
 
 /**
  * Routes one explicitly owned operation to its endpoint's fixed owner shard.
@@ -231,20 +240,17 @@ SALTS_NATIVE_IO_C_API int native_io_sharded_try_submit_to(native_io_sharded *run
  * The owner shard is taken only from operation->endpoint; there is no explicit
  * alternate-shard parameter, silent forwarding, or live endpoint migration.
  */
-SALTS_NATIVE_IO_C_API int
-native_io_sharded_submit_owned(native_io_sharded *runtime,
-                               const native_io_sharded_operation *operation,
-                               const native_io_sharded_ownership *ownership,
-                               native_io_sharded_admission_fn admission,
-                               void *admission_arg);
-
-/** Nonblocking counterpart of native_io_sharded_submit_owned. */
-SALTS_NATIVE_IO_C_API int
-native_io_sharded_try_submit_owned(native_io_sharded *runtime,
+int native_io_sharded_submit_owned(native_io_sharded *runtime,
                                    const native_io_sharded_operation *operation,
                                    const native_io_sharded_ownership *ownership,
-                                   native_io_sharded_admission_fn admission,
-                                   void *admission_arg);
+                                   native_io_sharded_admission_fn admission, void *admission_arg);
+
+/** Nonblocking counterpart of native_io_sharded_submit_owned. */
+int native_io_sharded_try_submit_owned(native_io_sharded *runtime,
+                                       const native_io_sharded_operation *operation,
+                                       const native_io_sharded_ownership *ownership,
+                                       native_io_sharded_admission_fn admission,
+                                       void *admission_arg);
 
 /**
  * Attempts deterministic owner-local shutdown without stealing caller-managed
@@ -269,7 +275,7 @@ native_io_sharded_try_submit_owned(native_io_sharded *runtime,
  * Repeated calls after committed shutdown are harmless.
  * Calling from a callback owned by this runtime returns SALTS_EBUSY.
  */
-SALTS_NATIVE_IO_C_API int native_io_sharded_shutdown(native_io_sharded *runtime);
+int native_io_sharded_shutdown(native_io_sharded *runtime);
 
 /**
  * Waits for all currently accepted routed/control tasks.
@@ -277,7 +283,7 @@ SALTS_NATIVE_IO_C_API int native_io_sharded_shutdown(native_io_sharded *runtime)
  * Use shutdown first for a stable drain boundary. Calling from this runtime's
  * callback returns SALTS_EBUSY.
  */
-SALTS_NATIVE_IO_C_API int native_io_sharded_wait(native_io_sharded *runtime);
+int native_io_sharded_wait(native_io_sharded *runtime);
 
 /**
  * Shuts down, drains, destroys every owner-local backend on its shard, destroys
@@ -286,30 +292,27 @@ SALTS_NATIVE_IO_C_API int native_io_sharded_wait(native_io_sharded *runtime);
  * Calling from this runtime's callback returns SALTS_EBUSY and preserves
  * ownership.
  */
-SALTS_NATIVE_IO_C_API int native_io_sharded_destroy(native_io_sharded *runtime);
+int native_io_sharded_destroy(native_io_sharded *runtime);
 
 /** Returns the current fixed shard, or SIZE_MAX outside this runtime. */
-SALTS_NATIVE_IO_C_API size_t native_io_sharded_current_shard(const native_io_sharded *runtime);
+size_t native_io_sharded_current_shard(const native_io_sharded *runtime);
 
 /** Returns the shard named by a callback context, or SIZE_MAX for NULL. */
-SALTS_NATIVE_IO_C_API size_t
-native_io_sharded_context_shard(const native_io_sharded_context *context);
+size_t native_io_sharded_context_shard(const native_io_sharded_context *context);
 
 /**
  * Attaches a socket to the callback's owner backend and returns an affinity
  * wrapper. Must run from the live callback context. out_endpoint is cleared on
  * failure.
  */
-SALTS_NATIVE_IO_C_API int
-native_io_sharded_context_attach_socket(native_io_sharded_context *context,
-                                        uintptr_t native_socket,
-                                        native_io_sharded_endpoint *out_endpoint);
+int native_io_sharded_context_attach_socket(native_io_sharded_context *context,
+                                            uintptr_t native_socket,
+                                            native_io_sharded_endpoint *out_endpoint);
 
 /** Owner-local counterpart of native_io_backend_attach_pipe. */
-SALTS_NATIVE_IO_C_API int
-native_io_sharded_context_attach_pipe(native_io_sharded_context *context,
-                                      uintptr_t native_handle, uint32_t flags,
-                                      native_io_sharded_endpoint *out_endpoint);
+int native_io_sharded_context_attach_pipe(native_io_sharded_context *context,
+                                          uintptr_t native_handle, uint32_t flags,
+                                          native_io_sharded_endpoint *out_endpoint);
 
 /**
  * Releases a drained socket endpoint on its fixed owner shard.
@@ -317,14 +320,12 @@ native_io_sharded_context_attach_pipe(native_io_sharded_context *context,
  * Returns SALTS_EPERM when the wrapper belongs to another shard of the same
  * runtime and SALTS_ENOENT when it belongs to another runtime or is stale.
  */
-SALTS_NATIVE_IO_C_API int
-native_io_sharded_context_release_socket(native_io_sharded_context *context,
-                                         native_io_sharded_endpoint endpoint);
+int native_io_sharded_context_release_socket(native_io_sharded_context *context,
+                                             native_io_sharded_endpoint endpoint);
 
 /** Owner-local counterpart of native_io_backend_release_pipe. */
-SALTS_NATIVE_IO_C_API int
-native_io_sharded_context_release_pipe(native_io_sharded_context *context,
-                                       native_io_sharded_endpoint endpoint);
+int native_io_sharded_context_release_pipe(native_io_sharded_context *context,
+                                           native_io_sharded_endpoint endpoint);
 
 /**
  * Starts one owner-local operation using raw NativeIO borrow semantics.
@@ -333,10 +334,9 @@ native_io_sharded_context_release_pipe(native_io_sharded_context *context,
  * keep payload/address storage alive through the routed task/finalizer. This
  * function never silently forwards or migrates a wrong-shard operation.
  */
-SALTS_NATIVE_IO_C_API int
-native_io_sharded_context_submit(native_io_sharded_context *context,
-                                 const native_io_sharded_operation *operation,
-                                 native_io_sharded_request *out_request);
+int native_io_sharded_context_submit(native_io_sharded_context *context,
+                                     const native_io_sharded_operation *operation,
+                                     native_io_sharded_request *out_request);
 
 /**
  * Starts one owner-local operation and transfers one explicit ownership token
@@ -346,17 +346,15 @@ native_io_sharded_context_submit(native_io_sharded_context *context,
  * request slot; any failure transfers nothing and invokes no ownership
  * callback. The token settles only when the terminal completion is observed.
  */
-SALTS_NATIVE_IO_C_API int
-native_io_sharded_context_submit_owned(native_io_sharded_context *context,
-                                       const native_io_sharded_operation *operation,
-                                       const native_io_sharded_ownership *ownership,
-                                       native_io_sharded_request *out_request);
+int native_io_sharded_context_submit_owned(native_io_sharded_context *context,
+                                           const native_io_sharded_operation *operation,
+                                           const native_io_sharded_ownership *ownership,
+                                           native_io_sharded_request *out_request);
 
 /** Owner-local batched admission counterpart of native_io_backend_prepare. */
-SALTS_NATIVE_IO_C_API int
-native_io_sharded_context_prepare(native_io_sharded_context *context,
-                                  const native_io_sharded_operation *operation,
-                                  native_io_sharded_request *out_request);
+int native_io_sharded_context_prepare(native_io_sharded_context *context,
+                                      const native_io_sharded_operation *operation,
+                                      native_io_sharded_request *out_request);
 
 /**
  * Prepared counterpart of native_io_sharded_context_submit_owned.
@@ -364,34 +362,34 @@ native_io_sharded_context_prepare(native_io_sharded_context *context,
  * Successful prepare transfers ownership even before flush because the raw
  * request already owns the borrowed descriptor/payload at that point.
  */
-SALTS_NATIVE_IO_C_API int
-native_io_sharded_context_prepare_owned(native_io_sharded_context *context,
-                                        const native_io_sharded_operation *operation,
-                                        const native_io_sharded_ownership *ownership,
-                                        native_io_sharded_request *out_request);
+int native_io_sharded_context_prepare_owned(native_io_sharded_context *context,
+                                            const native_io_sharded_operation *operation,
+                                            const native_io_sharded_ownership *ownership,
+                                            native_io_sharded_request *out_request);
 
 /** Flushes the callback's owner backend. */
-SALTS_NATIVE_IO_C_API int
-native_io_sharded_context_flush(native_io_sharded_context *context);
+int native_io_sharded_context_flush(native_io_sharded_context *context);
 
 /** Requests cancellation only on the request's fixed owner shard. */
-SALTS_NATIVE_IO_C_API int
-native_io_sharded_context_cancel(native_io_sharded_context *context,
-                                 native_io_sharded_request request);
+int native_io_sharded_context_cancel(native_io_sharded_context *context,
+                                     native_io_sharded_request request);
 
 /**
  * Observes owner-local terminal completions and restores runtime/shard affinity
  * on each returned endpoint/request wrapper. Uses runtime-preallocated scratch
  * storage; no steady-state allocation is introduced.
  */
-SALTS_NATIVE_IO_C_API int
-native_io_sharded_context_observe(native_io_sharded_context *context,
-                                  native_io_sharded_completion *events,
-                                  size_t event_capacity, uint32_t timeout_ms,
-                                  size_t *out_count);
+int native_io_sharded_context_observe(native_io_sharded_context *context,
+                                      native_io_sharded_completion *events, size_t event_capacity,
+                                      uint32_t timeout_ms, size_t *out_count);
 
 /** Copies a versioned concurrent statistics snapshot. */
-SALTS_NATIVE_IO_C_API bool native_io_sharded_get_stats(const native_io_sharded *runtime,
-                                                       native_io_sharded_stats *out_stats);
+bool native_io_sharded_get_stats(const native_io_sharded *runtime,
+                                 native_io_sharded_stats *out_stats);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* SALTS_NATIVE_IO_SHARDED_H */

@@ -29,7 +29,7 @@ extern "C" {
  * - No invalidate index (simplified algorithm)
  * - Cache-line alignment to prevent false sharing
  */
-typedef salts_spsc_ring ring_spsc_t;
+typedef cmeta_spsc_ring ring_spsc_t;
 
 /******************** FUNCTION PROTOTYPES *********************/
 

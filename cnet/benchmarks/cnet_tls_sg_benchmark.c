@@ -395,7 +395,7 @@ static int tls_bench_run(size_t payload_bytes, size_t segment_count,
     uint64_t io_calls = 0u;
     uint64_t record_count = 0u;
     uint64_t cipher_bytes = 0u;
-    const uint64_t started = salts_hrtime();
+    const uint64_t started = cmeta_hrtime();
     for (size_t index = 0u; index < iterations; ++index) {
       status = tls_bench_iteration(&pair, &queue, connection, contiguous,
                                    slices, segment_count, &io_calls,
@@ -403,7 +403,7 @@ static int tls_bench_run(size_t payload_bytes, size_t segment_count,
       if (status != SALTS_OK) goto cleanup;
     }
     {
-      const uint64_t elapsed = salts_hrtime() - started;
+      const uint64_t elapsed = cmeta_hrtime() - started;
       samples[replicate].ns_per_op = (double)elapsed / (double)iterations;
       samples[replicate].bytes_per_second =
           elapsed == 0u ? 0.0 : (double)payload_bytes * (double)iterations * 1.0e9 /

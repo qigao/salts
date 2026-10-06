@@ -1,4 +1,5 @@
 #include <cnet/cnet.h>
+#include <tinytest.h>
 
 #include <salts/error_codes.h>
 
@@ -70,7 +71,7 @@ static int cnet_vsock_test_poll_until(cnet_client *client, const int *condition)
   return *condition ? SALTS_OK : SALTS_ETIMEDOUT;
 }
 
-int main(void) {
+static int test_vsock_roundtrip(void) {
   const cnet_client_config client_config = {.backend = NATIVE_IO_BACKEND_EPOLL,
                                             .connection_capacity = 1u,
                                             .command_capacity = 8u,
@@ -199,4 +200,17 @@ fail:
     (void)cnet_listener_destroy(&listener);
   }
   return 1;
+}
+
+suite("CNet VSOCK integration") {
+  group("local transport") {
+    it("accepts a local peer and transfers bytes in both directions") {
+      const int status = test_vsock_roundtrip();
+      if (status == 77) {
+        puts("VSOCK is unavailable in this environment");
+        exit(77);
+      }
+      check_equal(status, 0);
+    }
+  }
 }

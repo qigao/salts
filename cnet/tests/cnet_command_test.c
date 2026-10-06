@@ -1,7 +1,7 @@
 #include "cnet_command.h"
 #include "tinytest.h"
 
-#include <salts_buffer.h>
+#include <cmeta_buffer.h>
 
 #include <stdint.h>
 #include <string.h>

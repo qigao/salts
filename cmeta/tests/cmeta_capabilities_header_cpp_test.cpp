@@ -1,4 +1,5 @@
 #include "cmeta_capabilities_fixture.h"
+#include <tinytest.hpp>
 #include <type_traits>
 
 static_assert(std::is_standard_layout_v<CapabilityValue>);
@@ -13,15 +14,30 @@ cmeta_traits(CapabilityCpp, cmeta_trait(Equal, cpp_equal));
 cmeta_require_trait(CapabilityCpp, Equal);
 static_assert(cmeta_traits_CapabilityCpp.hash == nullptr);
 
-int main() {
-    const int number = 7;
-    if (!cmeta_traits_CapabilityCpp.equal(&number, &number)) return 1;
-    CapabilityFlags flags{};
-    CapabilityValue value{};
-    if (CapabilityFlags_or(CapabilityFlags_Read, CapabilityFlags_High, &flags) != CMETA_OK) return 1;
-    if (CapabilityValue_copy_Flags(&value, &flags) != CMETA_OK) return 1;
-    const auto *read = CapabilityValue_get_Flags(&value);
-    if (read == nullptr || read->bits != flags.bits) return 1;
-    CapabilityValue_destroy(&value);
-    return value.tag == 0 ? 0 : 1;
+suite("CMeta capabilities C++ header") {
+    group("equality trait") {
+        it("invokes a noexcept C++ callback") {
+            const int number = 7;
+            check_true(cmeta_traits_CapabilityCpp.equal(&number, &number));
+        }
+    }
+
+    group("flags variant") {
+        static CapabilityValue value;
+
+        before_each() { value = CapabilityValue{}; }
+        after_each() { CapabilityValue_destroy(&value); }
+
+        it("copies combined flags and clears the tag on destruction") {
+            CapabilityFlags flags{};
+            check_equal(CapabilityFlags_or(CapabilityFlags_Read, CapabilityFlags_High, &flags),
+                        CMETA_OK);
+            check_equal(CapabilityValue_copy_Flags(&value, &flags), CMETA_OK);
+            const auto *read = CapabilityValue_get_Flags(&value);
+            check_not_null(read);
+            check_equal(read->bits, flags.bits);
+            CapabilityValue_destroy(&value);
+            check_equal(value.tag, 0);
+        }
+    }
 }

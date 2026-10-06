@@ -3,18 +3,18 @@
 
 spec("Platform clock") {
   it("keeps monotonic time nondecreasing") {
-    uint64_t first = salts_hrtime();
-    uint64_t second = salts_hrtime();
+    uint64_t first = cmeta_hrtime();
+    uint64_t second = cmeta_hrtime();
     check(second >= first);
-    check(salts_monotonic_ms() > 0);
+    check(cmeta_monotonic_ms() > 0);
   }
 
   it("keeps conversion helpers deterministic") {
-    check_equal(salts_ns_to_ms(1999999ULL), 1ULL);
-    check_equal(salts_ms_to_ns(7ULL), 7000000ULL);
+    check_equal(cmeta_ns_to_ms(1999999ULL), 1ULL);
+    check_equal(cmeta_ms_to_ns(7ULL), 7000000ULL);
   }
 
   it("keeps realtime separate from monotonic time") {
-    check(salts_realtime_ms() > 0);
+    check(cmeta_realtime_ms() > 0);
   }
 }

@@ -15,8 +15,8 @@
 #include <string.h>
 
 typedef struct android_thread_probe {
-  salts_mutex_t mutex;
-  salts_cond_t changed;
+  cmeta_mutex_t mutex;
+  cmeta_cond_t changed;
   int ready;
 } android_thread_probe;
 
@@ -39,11 +39,11 @@ static int android_fail(const char *stage, int code) {
 
 static void android_signal_thread(void *user) {
   android_thread_probe *probe = (android_thread_probe *)user;
-  salts_sleep_ms(5u);
-  salts_mutex_lock(&probe->mutex);
+  cmeta_sleep_ms(5u);
+  cmeta_mutex_lock(&probe->mutex);
   probe->ready = 1;
-  salts_cond_broadcast(&probe->changed);
-  salts_mutex_unlock(&probe->mutex);
+  cmeta_cond_broadcast(&probe->changed);
+  cmeta_mutex_unlock(&probe->mutex);
 }
 
 static void android_count_executor(void *user) {
@@ -89,14 +89,14 @@ static int android_check_cmeta(void) {
 }
 
 static int android_check_clock(void) {
-  const uint64_t before_ns = salts_hrtime();
-  const uint64_t before_ms = salts_monotonic_ms();
+  const uint64_t before_ns = cmeta_hrtime();
+  const uint64_t before_ms = cmeta_monotonic_ms();
   uint64_t after_ns;
   uint64_t after_ms;
 
-  salts_sleep_ms(5u);
-  after_ns = salts_hrtime();
-  after_ms = salts_monotonic_ms();
+  cmeta_sleep_ms(5u);
+  after_ns = cmeta_hrtime();
+  after_ms = cmeta_monotonic_ms();
   if (after_ns <= before_ns || after_ms < before_ms)
     return SALTS_EPROTO;
   return SALTS_OK;
@@ -104,33 +104,33 @@ static int android_check_clock(void) {
 
 static int android_check_thread_condition(void) {
   android_thread_probe probe = {0};
-  salts_thread_t thread = NULL;
+  cmeta_thread_t thread = NULL;
   int status = SALTS_OK;
   int wait_status = 0;
 
-  salts_mutex_init(&probe.mutex);
-  salts_cond_init(&probe.changed);
+  cmeta_mutex_init(&probe.mutex);
+  cmeta_cond_init(&probe.changed);
   if (probe.mutex == NULL || probe.changed == NULL) {
     status = SALTS_ENOMEM;
     goto cleanup;
   }
 
-  status = salts_thread_create(&thread, android_signal_thread, &probe);
+  status = cmeta_thread_create(&thread, android_signal_thread, &probe);
   if (status != SALTS_OK)
     goto cleanup;
 
-  salts_mutex_lock(&probe.mutex);
+  cmeta_mutex_lock(&probe.mutex);
   while (!probe.ready && wait_status == 0)
-    wait_status = salts_cond_timedwait(
+    wait_status = cmeta_cond_timedwait(
         &probe.changed, &probe.mutex,
         UINT64_C(5000000000));
-  salts_mutex_unlock(&probe.mutex);
+  cmeta_mutex_unlock(&probe.mutex);
   if (!probe.ready || wait_status != 0) {
     status = wait_status != 0 ? wait_status : SALTS_ETIMEDOUT;
     goto cleanup;
   }
 
-  status = salts_thread_join(&thread);
+  status = cmeta_thread_join(&thread);
   if (status != SALTS_OK)
     goto cleanup;
   if (probe.ready != 1)
@@ -138,55 +138,55 @@ static int android_check_thread_condition(void) {
 
 cleanup:
   if (thread != NULL) {
-    salts_thread_destroy(&thread);
+    cmeta_thread_destroy(&thread);
   }
   if (probe.changed != NULL)
-    salts_cond_destroy(&probe.changed);
+    cmeta_cond_destroy(&probe.changed);
   if (probe.mutex != NULL)
-    salts_mutex_destroy(&probe.mutex);
+    cmeta_mutex_destroy(&probe.mutex);
   return status;
 }
 
 static int android_check_deadline_queue(void) {
-  salts_deadline_queue queue = {0};
-  salts_deadline_id first = 0u;
-  salts_deadline_id second = 0u;
-  salts_deadline_id rejected = UINT64_MAX;
-  salts_deadline_event event = {0};
+  cmeta_deadline_queue queue = {0};
+  cmeta_deadline_id first = 0u;
+  cmeta_deadline_id second = 0u;
+  cmeta_deadline_id rejected = UINT64_MAX;
+  cmeta_deadline_event event = {0};
   int status;
 
-  status = salts_deadline_queue_init(&queue, 2u);
+  status = cmeta_deadline_queue_init(&queue, 2u);
   if (status != SALTS_OK) return status;
 
-  status = salts_deadline_queue_schedule(
+  status = cmeta_deadline_queue_schedule(
       &queue, 10u, 101u, &first);
   if (status != SALTS_OK) goto cleanup;
-  status = salts_deadline_queue_schedule(
+  status = cmeta_deadline_queue_schedule(
       &queue, 20u, 202u, &second);
   if (status != SALTS_OK) goto cleanup;
-  status = salts_deadline_queue_schedule(
+  status = cmeta_deadline_queue_schedule(
       &queue, 30u, 303u, &rejected);
   if (status != SALTS_ENOBUFS || rejected != 0u) {
     status = SALTS_EPROTO;
     goto cleanup;
   }
 
-  status = salts_deadline_queue_take_ready(&queue, 9u, &event);
+  status = cmeta_deadline_queue_take_ready(&queue, 9u, &event);
   if (status != SALTS_ETIMEDOUT) {
     status = SALTS_EPROTO;
     goto cleanup;
   }
-  status = salts_deadline_queue_take_ready(&queue, 10u, &event);
+  status = cmeta_deadline_queue_take_ready(&queue, 10u, &event);
   if (status != SALTS_OK || event.id != first ||
       event.deadline_ms != 10u || event.token != 101u) {
     status = SALTS_EPROTO;
     goto cleanup;
   }
 
-  status = salts_deadline_queue_cancel(&queue, second, &event);
+  status = cmeta_deadline_queue_cancel(&queue, second, &event);
   if (status != SALTS_OK || event.id != second ||
       event.deadline_ms != 20u || event.token != 202u ||
-      salts_deadline_queue_size(&queue) != 0u) {
+      cmeta_deadline_queue_size(&queue) != 0u) {
     status = SALTS_EPROTO;
     goto cleanup;
   }
@@ -195,7 +195,7 @@ static int android_check_deadline_queue(void) {
 
 cleanup: {
     const int destroy_status =
-        salts_deadline_queue_destroy(&queue);
+        cmeta_deadline_queue_destroy(&queue);
     if (status == SALTS_OK) status = destroy_status;
   }
   return status;

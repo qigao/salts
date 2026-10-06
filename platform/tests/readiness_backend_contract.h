@@ -9,8 +9,8 @@
 typedef struct readiness_backend_contract_fixture readiness_backend_contract_fixture;
 
 typedef struct readiness_backend_contract_factory {
-  readiness_backend_contract_fixture *(*create)(salts_readiness_config config,
-                                                salts_readiness_reactor *reactor,
+  readiness_backend_contract_fixture *(*create)(cmeta_readiness_config config,
+                                                cmeta_readiness_reactor *reactor,
                                                 int *status);
   void (*destroy)(readiness_backend_contract_fixture *fixture);
   intptr_t (*resource)(readiness_backend_contract_fixture *fixture, size_t index);

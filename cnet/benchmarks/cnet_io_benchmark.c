@@ -7,7 +7,7 @@
 #include <salts/error_codes.h>
 #include <salts/native_io.h>
 #include <salts/thread.h>
-#include <salts_fs.h>
+#include <cmeta_fs.h>
 
 #include "cnet_benchmark_stats.h"
 #include "cnet_client_internal.h"
@@ -132,7 +132,7 @@ typedef struct io_bench_server {
   struct sockaddr_in address;
   size_t payload_size;
   size_t exchange_count;
-  salts_thread_t thread;
+  cmeta_thread_t thread;
   atomic_int status;
   bool thread_started;
   bool socket_closed;
@@ -412,7 +412,7 @@ static int io_bench_server_init(io_bench_server *server, io_bench_protocol proto
 }
 
 static int io_bench_server_start(io_bench_server *server) {
-  const int status = salts_thread_create(&server->thread, io_bench_server_entry, server);
+  const int status = cmeta_thread_create(&server->thread, io_bench_server_entry, server);
   if (status == SALTS_OK) server->thread_started = true;
   return status;
 }
@@ -431,8 +431,8 @@ static void io_bench_server_interrupt(io_bench_server *server) {
 static int io_bench_server_finish(io_bench_server *server) {
   int status = SALTS_OK;
   if (server->thread_started) {
-    status = salts_thread_join(&server->thread);
-    salts_thread_destroy(&server->thread);
+    status = cmeta_thread_join(&server->thread);
+    cmeta_thread_destroy(&server->thread);
     server->thread_started = false;
     if (status == SALTS_OK) status = atomic_load_explicit(&server->status, memory_order_acquire);
   }
@@ -637,14 +637,14 @@ static int io_bench_native_flatten_exchange(io_bench_native *fixture,
 
 static int io_bench_check_profiled(const unsigned char *sent, const unsigned char *received,
                                    size_t length, io_bench_result *result) {
-  const uint64_t started = salts_hrtime();
+  const uint64_t started = cmeta_hrtime();
   const int status = memcmp(sent, received, length) == 0 ? SALTS_OK : SALTS_EIO;
-  result->payload_check_ns += salts_hrtime() - started;
+  result->payload_check_ns += cmeta_hrtime() - started;
   return status;
 }
 
 static void io_bench_record_stage(uint64_t started, uint64_t *total_ns, size_t *calls) {
-  *total_ns += salts_hrtime() - started;
+  *total_ns += cmeta_hrtime() - started;
   ++*calls;
 }
 
@@ -669,7 +669,7 @@ static int io_bench_native_exchange_profiled(io_bench_native *fixture, const uns
                                        .length = length - received_offset,
                                        .user_data = 1u};
       native_io_request request;
-      const uint64_t started = salts_hrtime();
+      const uint64_t started = cmeta_hrtime();
       status = native_io_backend_prepare(&fixture->backend, &operation, &request);
       io_bench_record_stage(started, &result->native_start_ns, &result->native_start_calls);
       if (status != SALTS_OK) return status;
@@ -684,14 +684,14 @@ static int io_bench_native_exchange_profiled(io_bench_native *fixture, const uns
                                        .length = length - sent_offset,
                                        .user_data = 2u};
       native_io_request request;
-      const uint64_t started = salts_hrtime();
+      const uint64_t started = cmeta_hrtime();
       status = native_io_backend_prepare(&fixture->backend, &operation, &request);
       io_bench_record_stage(started, &result->native_start_ns, &result->native_start_calls);
       if (status != SALTS_OK) return status;
       send_pending = true;
     }
     {
-      const uint64_t started = salts_hrtime();
+      const uint64_t started = cmeta_hrtime();
       status = native_io_backend_observe(&fixture->backend, events, IO_BENCH_COMPLETION_CAPACITY,
                                          IO_BENCH_TIMEOUT_MS, &count);
       io_bench_record_stage(started, &result->native_observe_ns, &result->native_observe_calls);
@@ -801,19 +801,19 @@ static int io_bench_native_coroutine_exchange_profiled(io_bench_native *fixture,
   native_io_coroutine_task receive_task = {0};
   native_io_coroutine_task send_task = {0};
   native_io_completion events[IO_BENCH_COMPLETION_CAPACITY];
-  uint64_t started = salts_hrtime();
+  uint64_t started = cmeta_hrtime();
   int status = native_io_backend_spawn_coroutine(
       &fixture->backend, io_bench_native_coroutine_operation_entry, &receive, &receive_task);
   io_bench_record_stage(started, &result->native_start_ns, &result->native_start_calls);
   if (status == SALTS_OK) {
-    started = salts_hrtime();
+    started = cmeta_hrtime();
     status = native_io_backend_spawn_coroutine(
         &fixture->backend, io_bench_native_coroutine_operation_entry, &send, &send_task);
     io_bench_record_stage(started, &result->native_start_ns, &result->native_start_calls);
   }
   while (status == SALTS_OK && (!receive.done || !send.done)) {
     size_t count = 0u;
-    started = salts_hrtime();
+    started = cmeta_hrtime();
     status = native_io_backend_observe(&fixture->backend, events, IO_BENCH_COMPLETION_CAPACITY,
                                        IO_BENCH_TIMEOUT_MS, &count);
     io_bench_record_stage(started, &result->native_observe_ns, &result->native_observe_calls);
@@ -970,7 +970,7 @@ static int io_bench_libuv_exchange(io_bench_libuv *fixture, const unsigned char 
   fixture->status = SALTS_OK;
   fixture->done = false;
   fixture->write_pending = true;
-  started = result != NULL ? salts_hrtime() : 0u;
+  started = result != NULL ? cmeta_hrtime() : 0u;
   if (fixture->protocol == IO_BENCH_TCP) {
     status =
         uv_read_start((uv_stream_t *)&fixture->tcp, io_bench_libuv_alloc, io_bench_libuv_tcp_read);
@@ -979,7 +979,7 @@ static int io_bench_libuv_exchange(io_bench_libuv *fixture, const unsigned char 
     if (status == 0) {
       fixture->read_active = true;
       fixture->tcp_write.data = fixture;
-      started = result != NULL ? salts_hrtime() : 0u;
+      started = result != NULL ? cmeta_hrtime() : 0u;
       status = uv_write(&fixture->tcp_write, (uv_stream_t *)&fixture->tcp, &buffer, 1u,
                         io_bench_libuv_tcp_written);
       if (result != NULL)
@@ -992,7 +992,7 @@ static int io_bench_libuv_exchange(io_bench_libuv *fixture, const unsigned char 
     if (status == 0) {
       fixture->read_active = true;
       fixture->udp_write.data = fixture;
-      started = result != NULL ? salts_hrtime() : 0u;
+      started = result != NULL ? cmeta_hrtime() : 0u;
       status = uv_udp_send(&fixture->udp_write, &fixture->udp, &buffer, 1u, NULL,
                            io_bench_libuv_udp_written);
       if (result != NULL)
@@ -1001,7 +1001,7 @@ static int io_bench_libuv_exchange(io_bench_libuv *fixture, const unsigned char 
   }
   if (status < 0) return status;
   while (!fixture->done) {
-    const uint64_t drive_started = result != NULL ? salts_hrtime() : 0u;
+    const uint64_t drive_started = result != NULL ? cmeta_hrtime() : 0u;
     const int alive = uv_run(&fixture->loop, UV_RUN_ONCE);
     if (result != NULL)
       io_bench_record_stage(drive_started, &result->native_observe_ns, &result->native_observe_calls);
@@ -1036,12 +1036,12 @@ static int io_bench_libuv_destroy(io_bench_libuv *fixture) {
 static int io_bench_wait_cnet(io_bench_cnet *fixture, const int *value, int expected) {
   while (*value != expected) {
     size_t events = 0u;
-    const uint64_t started = fixture->measuring ? salts_hrtime() : 0u;
+    const uint64_t started = fixture->measuring ? cmeta_hrtime() : 0u;
     int status;
     if (fixture->status != SALTS_OK) return fixture->status;
     status = cnet_client_poll(&fixture->client, IO_BENCH_TIMEOUT_MS, &events);
     if (fixture->measuring) {
-      fixture->poll_ns += salts_hrtime() - started;
+      fixture->poll_ns += cmeta_hrtime() - started;
       ++fixture->poll_calls;
     }
     if (status != SALTS_OK) return status;
@@ -1072,7 +1072,7 @@ static void io_bench_cnet_state(void *user, cnet_connection connection, cnet_con
 static void io_bench_cnet_receive(void *user, cnet_connection connection,
                                   const cnet_receive_view *view) {
   io_bench_cnet *fixture = (io_bench_cnet *)user;
-  const uint64_t callback_started = fixture->measuring ? salts_hrtime() : 0u;
+  const uint64_t callback_started = fixture->measuring ? cmeta_hrtime() : 0u;
   const cnet_message_kind expected =
       fixture->protocol == IO_BENCH_TCP ? CNET_MESSAGE_BYTES : CNET_MESSAGE_DATAGRAM;
   if (view->kind != expected || view->size > fixture->payload_size - fixture->received ||
@@ -1085,13 +1085,13 @@ static void io_bench_cnet_receive(void *user, cnet_connection connection,
     fixture->status = SALTS_EIO;
     fixture->done = 1;
     if (fixture->measuring) {
-      fixture->callback_ns += salts_hrtime() - callback_started;
+      fixture->callback_ns += cmeta_hrtime() - callback_started;
       ++fixture->callback_calls;
     }
     return;
   }
   {
-    const uint64_t payload_check_started = fixture->measuring ? salts_hrtime() : 0u;
+    const uint64_t payload_check_started = fixture->measuring ? cmeta_hrtime() : 0u;
     const void *received_data = view->data;
     if (fixture->receive_mode == IO_BENCH_RECEIVE_BORROWED_COPY) {
       if (fixture->receive_copy == NULL) {
@@ -1105,7 +1105,7 @@ static void io_bench_cnet_receive(void *user, cnet_connection connection,
     const int payload_matches =
         memcmp(fixture->expected_data + fixture->received, received_data, view->size) == 0;
     if (fixture->measuring)
-      fixture->benchmark_payload_check_ns += salts_hrtime() - payload_check_started;
+      fixture->benchmark_payload_check_ns += cmeta_hrtime() - payload_check_started;
     if (!payload_matches) {
       const unsigned char *received = (const unsigned char *)received_data;
       size_t mismatch = 0u;
@@ -1123,7 +1123,7 @@ static void io_bench_cnet_receive(void *user, cnet_connection connection,
       fixture->status = SALTS_EIO;
       fixture->done = 1;
       if (fixture->measuring) {
-        fixture->callback_ns += salts_hrtime() - callback_started;
+        fixture->callback_ns += cmeta_hrtime() - callback_started;
         ++fixture->callback_calls;
       }
       return;
@@ -1132,10 +1132,10 @@ static void io_bench_cnet_receive(void *user, cnet_connection connection,
   fixture->received += view->size;
   if (fixture->received == fixture->payload_size) fixture->done = 1;
   else {
-    const uint64_t admission_started = fixture->measuring ? salts_hrtime() : 0u;
+    const uint64_t admission_started = fixture->measuring ? cmeta_hrtime() : 0u;
     const int status = cnet_receive(&fixture->client, connection, 1u);
     if (fixture->measuring) {
-      fixture->receive_admission_ns += salts_hrtime() - admission_started;
+      fixture->receive_admission_ns += cmeta_hrtime() - admission_started;
       ++fixture->receive_admission_calls;
     }
     if (status != SALTS_OK) {
@@ -1144,7 +1144,7 @@ static void io_bench_cnet_receive(void *user, cnet_connection connection,
     }
   }
   if (fixture->measuring) {
-    fixture->callback_ns += salts_hrtime() - callback_started;
+    fixture->callback_ns += cmeta_hrtime() - callback_started;
     ++fixture->callback_calls;
   }
 }
@@ -1152,7 +1152,7 @@ static void io_bench_cnet_receive(void *user, cnet_connection connection,
 static void io_bench_cnet_receive_owned(void *user, cnet_connection connection,
                                         mem_slice_t slice, cnet_message_kind kind) {
   io_bench_cnet *fixture = (io_bench_cnet *)user;
-  const uint64_t callback_started = fixture->measuring ? salts_hrtime() : 0u;
+  const uint64_t callback_started = fixture->measuring ? cmeta_hrtime() : 0u;
   const cnet_message_kind expected =
       fixture->protocol == IO_BENCH_TCP ? CNET_MESSAGE_BYTES : CNET_MESSAGE_DATAGRAM;
 
@@ -1170,23 +1170,23 @@ static void io_bench_cnet_receive_owned(void *user, cnet_connection connection,
     fixture->done = 1;
     mem_slice_release(&slice);
     if (fixture->measuring) {
-      fixture->callback_ns += salts_hrtime() - callback_started;
+      fixture->callback_ns += cmeta_hrtime() - callback_started;
       ++fixture->callback_calls;
     }
     return;
   }
   {
-    const uint64_t payload_check_started = fixture->measuring ? salts_hrtime() : 0u;
+    const uint64_t payload_check_started = fixture->measuring ? cmeta_hrtime() : 0u;
     const int payload_matches =
         memcmp(fixture->expected_data + fixture->received, slice.data, slice.length) == 0;
     if (fixture->measuring)
-      fixture->benchmark_payload_check_ns += salts_hrtime() - payload_check_started;
+      fixture->benchmark_payload_check_ns += cmeta_hrtime() - payload_check_started;
     if (!payload_matches) {
       fixture->status = SALTS_EIO;
       fixture->done = 1;
       mem_slice_release(&slice);
       if (fixture->measuring) {
-        fixture->callback_ns += salts_hrtime() - callback_started;
+        fixture->callback_ns += cmeta_hrtime() - callback_started;
         ++fixture->callback_calls;
       }
       return;
@@ -1197,10 +1197,10 @@ static void io_bench_cnet_receive_owned(void *user, cnet_connection connection,
   fixture->held_receive_slice = slice;
   if (fixture->received == fixture->payload_size) fixture->done = 1;
   else {
-    const uint64_t admission_started = fixture->measuring ? salts_hrtime() : 0u;
+    const uint64_t admission_started = fixture->measuring ? cmeta_hrtime() : 0u;
     const int status = cnet_receive(&fixture->client, connection, 1u);
     if (fixture->measuring) {
-      fixture->receive_admission_ns += salts_hrtime() - admission_started;
+      fixture->receive_admission_ns += cmeta_hrtime() - admission_started;
       ++fixture->receive_admission_calls;
     }
     if (status != SALTS_OK) {
@@ -1209,7 +1209,7 @@ static void io_bench_cnet_receive_owned(void *user, cnet_connection connection,
     }
   }
   if (fixture->measuring) {
-    fixture->callback_ns += salts_hrtime() - callback_started;
+    fixture->callback_ns += cmeta_hrtime() - callback_started;
     ++fixture->callback_calls;
   }
 }
@@ -1318,7 +1318,7 @@ static int io_bench_cnet_exchange(io_bench_cnet *fixture, const unsigned char *s
   fixture->status = SALTS_OK;
   status = SALTS_OK;
   if (status == SALTS_OK) {
-    const uint64_t started = fixture->measuring ? salts_hrtime() : 0u;
+    const uint64_t started = fixture->measuring ? cmeta_hrtime() : 0u;
     if (fixture->send_mode == IO_BENCH_SEND_RETAINED) {
       status = cnet_send_buffer(&fixture->client, fixture->connection, fixture->send_buffer);
     } else if (fixture->send_mode == IO_BENCH_SEND_RETAINED_VECTOR) {
@@ -1330,7 +1330,7 @@ static int io_bench_cnet_exchange(io_bench_cnet *fixture, const unsigned char *s
       status = SALTS_EINVAL;
     }
     if (fixture->measuring) {
-      fixture->send_admission_ns += salts_hrtime() - started;
+      fixture->send_admission_ns += cmeta_hrtime() - started;
       ++fixture->send_admission_calls;
     }
   }
@@ -1597,16 +1597,16 @@ static int io_bench_run_counted(io_bench_protocol protocol, io_bench_driver driv
     goto cleanup;
   }
 #endif
-  wall_started = salts_hrtime();
+  wall_started = cmeta_hrtime();
   for (size_t exchange = 0u; exchange < measure_exchanges; ++exchange) {
     const io_bench_sample before = profile_stages ? io_bench_snapshot(&fixture, result)
                                                    : (io_bench_sample){0};
-    const uint64_t started = salts_hrtime();
+    const uint64_t started = cmeta_hrtime();
     status = profile_stages
                  ? io_bench_exchange_profiled(&fixture, sent, received, payload_size, result)
                  : io_bench_exchange(&fixture, sent, received, payload_size);
     if (status != SALTS_OK) goto cleanup;
-    const uint64_t elapsed = salts_hrtime() - started;
+    const uint64_t elapsed = cmeta_hrtime() - started;
     io_bench_sample *sample = &result->samples[latency_count];
     latencies[latency_count++] = elapsed;
     if (profile_stages) {
@@ -1625,7 +1625,7 @@ static int io_bench_run_counted(io_bench_protocol protocol, io_bench_driver driv
   }
   result->payload_size = payload_size;
   result->round_trips = latency_count;
-  result->wall_ns = salts_hrtime() - wall_started;
+  result->wall_ns = cmeta_hrtime() - wall_started;
 #ifdef _WIN32
   if (!QueryThreadCycleTime(GetCurrentThread(), &cycles_after) || cycles_after < cycles_before) {
     status = SALTS_EIO;
@@ -2012,7 +2012,7 @@ static int io_bench_print_diagnostics(const char *protocol, const io_bench_serie
 
 /* Artifacts are written only AFTER all timed runs. The fixed sample arrays bound
  * memory by payload rows * drivers * passes * repeats * exchanges, never traffic. */
-static int io_bench_csv_line(salts_file_t file, const char *format, ...) {
+static int io_bench_csv_line(cmeta_file_t file, const char *format, ...) {
   char line[IO_BENCH_CSV_LINE_CAPACITY];
   va_list args;
   va_start(args, format);
@@ -2021,7 +2021,7 @@ static int io_bench_csv_line(salts_file_t file, const char *format, ...) {
   if (length < 0 || (size_t)length >= sizeof(line)) return SALTS_ERANGE;
   size_t offset = 0u;
   while (offset < (size_t)length) {
-    const int written = salts_fs_write(file, line + offset, (size_t)length - offset);
+    const int written = cmeta_fs_write(file, line + offset, (size_t)length - offset);
     if (written < 0) return written;
     if (written == 0) return SALTS_EIO;
     offset += (size_t)written;
@@ -2029,7 +2029,7 @@ static int io_bench_csv_line(salts_file_t file, const char *format, ...) {
   return SALTS_OK;
 }
 
-static int io_bench_write_series(salts_file_t runs, salts_file_t samples,
+static int io_bench_write_series(cmeta_file_t runs, cmeta_file_t samples,
                                   const char *backend, const char *protocol,
                                   const char *driver, const io_bench_series *series,
                                   bool include_diagnostic) {
@@ -2102,18 +2102,18 @@ typedef struct io_bench_dataset {
 static int io_bench_write_artifacts(const char *prefix, const char *backend,
                                      const io_bench_dataset *datasets, size_t count) {
   char path[IO_BENCH_CSV_LINE_CAPACITY];
-  salts_file_t runs = SALTS_INVALID_FILE, samples = SALTS_INVALID_FILE;
+  cmeta_file_t runs = SALTS_INVALID_FILE, samples = SALTS_INVALID_FILE;
   int status = SALTS_OK;
   if (prefix == NULL) return SALTS_OK;
   if (*prefix == '\0') return SALTS_EINVAL;
   int length = snprintf(path, sizeof(path), "%s.runs.csv", prefix);
   if (length < 0 || (size_t)length >= sizeof(path)) return SALTS_ERANGE;
-  runs = salts_fs_open(path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
+  runs = cmeta_fs_open(path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
                       SALTS_FS_DEFAULT_MODE);
   if (runs == SALTS_INVALID_FILE) return SALTS_EIO;
   length = snprintf(path, sizeof(path), "%s.samples.csv", prefix);
   if (length < 0 || (size_t)length >= sizeof(path)) { status = SALTS_ERANGE; goto cleanup; }
-  samples = salts_fs_open(path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
+  samples = cmeta_fs_open(path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
                          SALTS_FS_DEFAULT_MODE);
   if (samples == SALTS_INVALID_FILE) { status = SALTS_EIO; goto cleanup; }
   status = io_bench_csv_line(runs, "backend,protocol,payload_bytes,driver,pass,repeat,round_trips,"
@@ -2129,11 +2129,11 @@ static int io_bench_write_artifacts(const char *prefix, const char *backend,
   }
 cleanup:
   if (samples != SALTS_INVALID_FILE) {
-    const int close_status = salts_fs_close(samples);
+    const int close_status = cmeta_fs_close(samples);
     if (status == SALTS_OK) status = close_status;
   }
   {
-    const int close_status = salts_fs_close(runs);
+    const int close_status = cmeta_fs_close(runs);
     if (status == SALTS_OK) status = close_status;
   }
   if (status != SALTS_OK)
@@ -2144,7 +2144,7 @@ cleanup:
 static int io_bench_write_cnet_retained_attribution(
     const char *prefix, const char *backend, const io_bench_series *rows, size_t count) {
   char path[IO_BENCH_CSV_LINE_CAPACITY];
-  salts_file_t file = SALTS_INVALID_FILE;
+  cmeta_file_t file = SALTS_INVALID_FILE;
   int status = SALTS_OK;
   int length;
 
@@ -2152,7 +2152,7 @@ static int io_bench_write_cnet_retained_attribution(
   if (*prefix == '\0' || backend == NULL || rows == NULL) return SALTS_EINVAL;
   length = snprintf(path, sizeof(path), "%s.cnet-retained-attribution.csv", prefix);
   if (length < 0 || (size_t)length >= sizeof(path)) return SALTS_ERANGE;
-  file = salts_fs_open(path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
+  file = cmeta_fs_open(path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
                        SALTS_FS_DEFAULT_MODE);
   if (file == SALTS_INVALID_FILE) return SALTS_EIO;
 
@@ -2217,7 +2217,7 @@ static int io_bench_write_cnet_retained_attribution(
   }
 
   {
-    const int close_status = salts_fs_close(file);
+    const int close_status = cmeta_fs_close(file);
     if (status == SALTS_OK) status = close_status;
   }
   if (status != SALTS_OK)
@@ -2278,14 +2278,14 @@ typedef struct io_bench_sg_summary {
 static int io_bench_sg_write_csv(const char *prefix, const char *backend,
                                  const io_bench_sg_summary *rows, size_t count) {
   char path[IO_BENCH_CSV_LINE_CAPACITY];
-  salts_file_t file;
+  cmeta_file_t file;
   int length;
   int status;
   if (prefix == NULL || rows == NULL) return SALTS_OK;
   if (*prefix == '\0') return SALTS_EINVAL;
   length = snprintf(path, sizeof(path), "%s.sg.csv", prefix);
   if (length < 0 || (size_t)length >= sizeof(path)) return SALTS_ERANGE;
-  file = salts_fs_open(path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
+  file = cmeta_fs_open(path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
                        SALTS_FS_DEFAULT_MODE);
   if (file == SALTS_INVALID_FILE) return SALTS_EIO;
   status = io_bench_csv_line(
@@ -2303,7 +2303,7 @@ static int io_bench_sg_write_csv(const char *prefix, const char *backend,
         row->cpu_cost, row->copied_bytes_per_op, row->payload_buffer_acquires_per_op);
   }
   {
-    const int close_status = salts_fs_close(file);
+    const int close_status = cmeta_fs_close(file);
     if (status == SALTS_OK) status = close_status;
   }
   return status;
@@ -2339,14 +2339,14 @@ static int io_bench_sg_window_write_csv(
     const char *prefix, const char *backend,
     const io_bench_sg_window_summary *rows, size_t count) {
   char path[IO_BENCH_CSV_LINE_CAPACITY];
-  salts_file_t file;
+  cmeta_file_t file;
   int length;
   int status;
   if (prefix == NULL || rows == NULL) return SALTS_OK;
   if (*prefix == '\0') return SALTS_EINVAL;
   length = snprintf(path, sizeof(path), "%s.sg-window.csv", prefix);
   if (length < 0 || (size_t)length >= sizeof(path)) return SALTS_ERANGE;
-  file = salts_fs_open(path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
+  file = cmeta_fs_open(path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
                        SALTS_FS_DEFAULT_MODE);
   if (file == SALTS_INVALID_FILE) return SALTS_EIO;
   status = io_bench_csv_line(
@@ -2379,7 +2379,7 @@ static int io_bench_sg_window_write_csv(
         row->profiled_vector_bytes_per_op, row->terminal_callbacks_per_op);
   }
   {
-    const int close_status = salts_fs_close(file);
+    const int close_status = cmeta_fs_close(file);
     if (status == SALTS_OK) status = close_status;
   }
   return status;

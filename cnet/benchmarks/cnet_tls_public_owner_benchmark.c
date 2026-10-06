@@ -442,10 +442,10 @@ static int tls_public_pair_init(
   if (status != SALTS_OK) return status;
   pair->tls_client_initialized = false;
 
-  deadline = salts_monotonic_ms() + TLS_PUBLIC_TIMEOUT_MS;
+  deadline = cmeta_monotonic_ms() + TLS_PUBLIC_TIMEOUT_MS;
   while ((!pair->client_probe.connected ||
           !pair->server_probe.connected) &&
-         salts_monotonic_ms() < deadline) {
+         cmeta_monotonic_ms() < deadline) {
     status = tls_public_drive(pair, 1u);
     if (status != SALTS_OK) return status;
     if (pair->client_probe.failed)
@@ -488,12 +488,12 @@ static void tls_public_pair_destroy(tls_public_pair *pair) {
         &pair->server, pair->server_probe.connection);
   if (pair->client_initialized && pair->server_initialized) {
     const uint64_t deadline =
-        salts_monotonic_ms() + TLS_PUBLIC_TIMEOUT_MS;
+        cmeta_monotonic_ms() + TLS_PUBLIC_TIMEOUT_MS;
     while ((!pair->client_probe.terminal ||
             !pair->server_probe.terminal) &&
-           salts_monotonic_ms() < deadline) {
+           cmeta_monotonic_ms() < deadline) {
       if (tls_public_drive(pair, 0u) != SALTS_OK) break;
-      salts_thread_yield();
+      cmeta_thread_yield();
     }
   }
 
@@ -560,18 +560,18 @@ static int tls_public_one_way(
       source, source_probe->connection, pair->payload);
   if (status != SALTS_OK) return status;
 
-  deadline = salts_monotonic_ms() + TLS_PUBLIC_TIMEOUT_MS;
+  deadline = cmeta_monotonic_ms() + TLS_PUBLIC_TIMEOUT_MS;
   while ((target_probe->received_size <
               mem_buffer_used(pair->payload) ||
           source_probe->sent_count < sent_before + 1u) &&
-         salts_monotonic_ms() < deadline) {
+         cmeta_monotonic_ms() < deadline) {
     status = tls_public_drive(pair, tls_public_poll_timeout_ms);
     if (status != SALTS_OK) return status;
     if (pair->client_probe.failed)
       return pair->client_probe.failure_status;
     if (pair->server_probe.failed)
       return pair->server_probe.failure_status;
-    if (tls_public_poll_timeout_ms == 0u) salts_thread_yield();
+    if (tls_public_poll_timeout_ms == 0u) cmeta_thread_yield();
   }
 
   if (target_probe->received_size !=
@@ -653,7 +653,7 @@ static void tls_public_worker_run(void *user) {
       &shared->ready, 1u, memory_order_release);
   while (!atomic_load_explicit(
       &shared->start, memory_order_acquire))
-    salts_thread_yield();
+    cmeta_thread_yield();
 
   if (status == SALTS_OK) {
     const uint64_t cpu_started_ns =
@@ -662,7 +662,7 @@ static void tls_public_worker_run(void *user) {
          index < shared->ops_per_owner; ++index) {
       tls_public_pair *pair =
           &worker->pairs[index % worker->pair_count];
-      const uint64_t started_ns = salts_hrtime();
+      const uint64_t started_ns = cmeta_hrtime();
       if (tls_public_trace) worker->trace_started_ns = started_ns;
       status = tls_public_operation(pair, shared->mode);
       if (status != SALTS_OK) {
@@ -670,7 +670,7 @@ static void tls_public_worker_run(void *user) {
         break;
       }
       worker->latencies_ns[index] =
-          salts_hrtime() - started_ns;
+          cmeta_hrtime() - started_ns;
       if (tls_public_trace)
         worker->trace_finished_ns =
             started_ns + worker->latencies_ns[index];
@@ -728,7 +728,7 @@ static void tls_public_worker_run(void *user) {
       &shared->measured_done, 1u, memory_order_release);
   while (!atomic_load_explicit(
       &shared->cleanup, memory_order_acquire))
-    salts_thread_yield();
+    cmeta_thread_yield();
 
   for (index = 0u; index < worker->pair_count; ++index)
     tls_public_pair_destroy(&worker->pairs[index]);
@@ -819,7 +819,7 @@ static void tls_public_print_trace(const tls_public_worker *worker) {
 int main(int argc, char **argv) {
   tls_public_shared shared;
   tls_public_worker workers[TLS_PUBLIC_MAX_OWNERS];
-  salts_thread_t threads[TLS_PUBLIC_MAX_OWNERS] = {0};
+  cmeta_thread_t threads[TLS_PUBLIC_MAX_OWNERS] = {0};
   bool thread_started[TLS_PUBLIC_MAX_OWNERS] = {false};
   unsigned char *payload = NULL;
   uint64_t *latencies = NULL;
@@ -970,7 +970,7 @@ int main(int argc, char **argv) {
           TLS_PUBLIC_PAIRS / owner_count;
       workers[owner].latencies_ns =
           latencies + owner * ops_per_owner;
-      status = salts_thread_create(
+      status = cmeta_thread_create(
           &threads[owner], tls_public_worker_run,
           &workers[owner]);
       if (status != SALTS_OK) {
@@ -987,8 +987,8 @@ int main(int argc, char **argv) {
           &shared.cleanup, true, memory_order_release);
       for (size_t owner = 0u;
            owner < created_count; ++owner) {
-        (void)salts_thread_join(&threads[owner]);
-        salts_thread_destroy(&threads[owner]);
+        (void)cmeta_thread_join(&threads[owner]);
+        cmeta_thread_destroy(&threads[owner]);
       }
       status = status == SALTS_OK ? SALTS_EIO : status;
       goto cleanup;
@@ -998,19 +998,19 @@ int main(int argc, char **argv) {
   while (atomic_load_explicit(
              &shared.ready, memory_order_acquire) <
          owner_count)
-    salts_thread_yield();
+    cmeta_thread_yield();
 
   status = atomic_load_explicit(
       &shared.first_error, memory_order_acquire);
-  started_ns = salts_hrtime();
+  started_ns = cmeta_hrtime();
   atomic_store_explicit(
       &shared.start, true, memory_order_release);
 
   while (atomic_load_explicit(
              &shared.measured_done, memory_order_acquire) <
          owner_count)
-    salts_thread_yield();
-  wall_ns = salts_hrtime() - started_ns;
+    cmeta_thread_yield();
+  wall_ns = cmeta_hrtime() - started_ns;
 
   if (status == SALTS_OK)
     status = atomic_load_explicit(
@@ -1020,10 +1020,10 @@ int main(int argc, char **argv) {
       &shared.cleanup, true, memory_order_release);
   for (size_t owner = 0u; owner < owner_count; ++owner) {
     if (!thread_started[owner]) continue;
-    if (salts_thread_join(&threads[owner]) != SALTS_OK &&
+    if (cmeta_thread_join(&threads[owner]) != SALTS_OK &&
         status == SALTS_OK)
       status = SALTS_EIO;
-    salts_thread_destroy(&threads[owner]);
+    cmeta_thread_destroy(&threads[owner]);
     total_cpu_ns += workers[owner].cpu_ns;
     tls_public_profile_add(&client_profile, &workers[owner].client_profile);
     tls_public_profile_add(&server_profile, &workers[owner].server_profile);

@@ -86,7 +86,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DSALTS_PLATFORM_NATIVE_FASTPATH=${{ matrix.fastpath }} -DCMETA_BUILD_BENCHMARKS=${{ matrix.fastpath }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
+          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DSALTS_PLATFORM_NATIVE_FASTPATH=${{ matrix.fastpath }} -DCMETA_BUILD_BENCHMARKS=${{ matrix.fastpath }} -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
       - name: Configure and build all modules on Windows
         if: matrix.family == 'windows'
@@ -96,7 +96,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DSALTS_PLATFORM_NATIVE_FASTPATH=${{ matrix.fastpath }} -DCMETA_BUILD_BENCHMARKS=${{ matrix.fastpath }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
+          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DSALTS_PLATFORM_NATIVE_FASTPATH=${{ matrix.fastpath }} -DCMETA_BUILD_BENCHMARKS=${{ matrix.fastpath }} -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
           if errorlevel 1 exit /b 1
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
           if errorlevel 1 exit /b 1
@@ -428,11 +428,16 @@ jobs:
           compression-level: 9
       - name: Archive the complete build and source timestamps
         shell: bash
+        env:
+          BUILD_ARTIFACT: native-${{ matrix.id }}
+          BUILD_DIRECTORY: ${{ matrix.build_dir }}
         run: |
           set -euo pipefail
           git rev-parse HEAD > native-build-commit.txt
           pwd -P > native-build-workspace.txt
           printf '%s/%s\n' "$ImageOS" "$ImageVersion" > native-build-image.txt
+          printf '%s/%s/%s\n' "$RUNNER_OS" "$RUNNER_ARCH" "$ImageOS" > native-build-platform.txt
+          printf '%s\n%s\n' "$BUILD_ARTIFACT" "$BUILD_DIRECTORY" > native-build-profile.txt
           git ls-files -z > native-build-sources.txt
           paths=("${{ matrix.build_dir }}" vcpkg_installed)
           if [ -d stage ]; then paths+=(stage); fi
@@ -440,7 +445,8 @@ jobs:
           if [ -d cmeta/tests/installed/build ]; then paths+=(cmeta/tests/installed/build); fi
           if [ -d cmeta/tests/installed/vcpkg_installed ]; then paths+=(cmeta/tests/installed/vcpkg_installed); fi
           tar --format=pax -cf native-build.tar --null -T native-build-sources.txt \
-            native-build-commit.txt native-build-workspace.txt native-build-image.txt "${paths[@]}"
+            native-build-commit.txt native-build-workspace.txt native-build-image.txt \
+            native-build-platform.txt native-build-profile.txt "${paths[@]}"
       - name: Upload compiled inputs for all consumers
         uses: actions/upload-artifact@v4
         with:

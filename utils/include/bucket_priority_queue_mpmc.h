@@ -3,7 +3,7 @@
 
 #include "platform.h"
 #include "disruptor.h"
-#include "salts_thread.h"
+#include "cmeta_thread.h"
 #ifdef __cplusplus
   #include <atomic>
   #define ATOMIC_UINT32_T std::atomic<uint32_t>

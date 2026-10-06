@@ -418,7 +418,7 @@ static void tls_parallel_worker_run(void *user) {
 
   while (!atomic_load_explicit(
       &shared->start, memory_order_acquire))
-    salts_thread_yield();
+    cmeta_thread_yield();
 
   if (status == SALTS_OK) {
     const uint64_t cpu_started_ns =
@@ -427,7 +427,7 @@ static void tls_parallel_worker_run(void *user) {
          index < shared->ops_per_owner; ++index) {
       tls_parallel_pair *pair =
           &worker->pairs[index % worker->pair_count];
-      const uint64_t started_ns = salts_hrtime();
+      const uint64_t started_ns = cmeta_hrtime();
       status = tls_parallel_operation(
           pair, shared->mode, shared->payload,
           shared->payload_size, &worker->tls_records,
@@ -437,7 +437,7 @@ static void tls_parallel_worker_run(void *user) {
         break;
       }
       worker->latencies_ns[index] =
-          salts_hrtime() - started_ns;
+          cmeta_hrtime() - started_ns;
     }
     {
       const uint64_t cpu_finished_ns =
@@ -453,7 +453,7 @@ static void tls_parallel_worker_run(void *user) {
       &shared->measured_done, 1u, memory_order_release);
   while (!atomic_load_explicit(
       &shared->cleanup, memory_order_acquire))
-    salts_thread_yield();
+    cmeta_thread_yield();
 
   for (index = 0u; index < worker->pair_count; ++index)
     tls_parallel_pair_destroy(&worker->pairs[index]);
@@ -466,7 +466,7 @@ static const char *tls_parallel_mode_name(tls_parallel_mode mode) {
 int main(int argc, char **argv) {
   tls_parallel_shared shared;
   tls_parallel_worker workers[TLS_PARALLEL_MAX_OWNERS];
-  salts_thread_t threads[TLS_PARALLEL_MAX_OWNERS] = {0};
+  cmeta_thread_t threads[TLS_PARALLEL_MAX_OWNERS] = {0};
   bool thread_started[TLS_PARALLEL_MAX_OWNERS] = {false};
   unsigned char *payload = NULL;
   uint64_t *latencies = NULL;
@@ -560,7 +560,7 @@ int main(int argc, char **argv) {
           TLS_PARALLEL_PAIRS / owner_count;
       workers[owner].latencies_ns =
           latencies + owner * ops_per_owner;
-      status = salts_thread_create(
+      status = cmeta_thread_create(
           &threads[owner], tls_parallel_worker_run,
           &workers[owner]);
       if (status != SALTS_OK) {
@@ -576,8 +576,8 @@ int main(int argc, char **argv) {
       atomic_store_explicit(
           &shared.cleanup, true, memory_order_release);
       for (size_t owner = 0u; owner < created_count; ++owner) {
-        (void)salts_thread_join(&threads[owner]);
-        salts_thread_destroy(&threads[owner]);
+        (void)cmeta_thread_join(&threads[owner]);
+        cmeta_thread_destroy(&threads[owner]);
       }
       status = status == SALTS_OK ? SALTS_EIO : status;
       goto cleanup;
@@ -587,19 +587,19 @@ int main(int argc, char **argv) {
   while (atomic_load_explicit(
              &shared.ready, memory_order_acquire) <
          owner_count)
-    salts_thread_yield();
+    cmeta_thread_yield();
 
   status = atomic_load_explicit(
       &shared.first_error, memory_order_acquire);
-  started_ns = salts_hrtime();
+  started_ns = cmeta_hrtime();
   atomic_store_explicit(
       &shared.start, true, memory_order_release);
 
   while (atomic_load_explicit(
              &shared.measured_done, memory_order_acquire) <
          owner_count)
-    salts_thread_yield();
-  wall_ns = salts_hrtime() - started_ns;
+    cmeta_thread_yield();
+  wall_ns = cmeta_hrtime() - started_ns;
 
   if (status == SALTS_OK)
     status = atomic_load_explicit(
@@ -609,10 +609,10 @@ int main(int argc, char **argv) {
       &shared.cleanup, true, memory_order_release);
   for (size_t owner = 0u; owner < owner_count; ++owner) {
     if (!thread_started[owner]) continue;
-    if (salts_thread_join(&threads[owner]) != SALTS_OK &&
+    if (cmeta_thread_join(&threads[owner]) != SALTS_OK &&
         status == SALTS_OK)
       status = SALTS_EIO;
-    salts_thread_destroy(&threads[owner]);
+    cmeta_thread_destroy(&threads[owner]);
     for (size_t index = 0u; index < ops_per_owner; ++index)
       if (workers[owner].latencies_ns[index] != 0u)
         ++samples;

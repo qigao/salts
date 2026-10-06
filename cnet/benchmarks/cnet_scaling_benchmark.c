@@ -58,7 +58,7 @@ typedef struct scale_peer {
   size_t payload_size;
   size_t cycles;
   unsigned char *scratch;
-  salts_thread_t thread;
+  cmeta_thread_t thread;
   atomic_int status;
   bool thread_started;
 } scale_peer;
@@ -252,7 +252,7 @@ static int scale_peer_init(scale_peer *peer, size_t connections, size_t payload_
   if (listen(peer->listener, (int)connections) != 0) return scale_socket_error();
 
   atomic_init(&peer->status, SALTS_OK);
-  status = salts_thread_create(&peer->thread, scale_peer_entry, peer);
+  status = cmeta_thread_create(&peer->thread, scale_peer_entry, peer);
   if (status == SALTS_OK) peer->thread_started = true;
   return status;
 }
@@ -268,9 +268,9 @@ static int scale_peer_destroy(scale_peer *peer, bool abort_peer) {
   }
 
   if (peer->thread_started) {
-    const int join_status = salts_thread_join(&peer->thread);
+    const int join_status = cmeta_thread_join(&peer->thread);
     if (join_status != SALTS_OK) status = join_status;
-    salts_thread_destroy(&peer->thread);
+    cmeta_thread_destroy(&peer->thread);
     peer->thread_started = false;
     if (status == SALTS_OK) {
       const int peer_status = atomic_load_explicit(&peer->status, memory_order_acquire);
@@ -348,7 +348,7 @@ static int scale_native_cycle(scale_native *fixture, uint64_t *latencies, size_t
   size_t recv_offsets[SCALE_MAX_CONNECTIONS] = {0};
   native_io_completion completions[SCALE_MAX_CONNECTIONS * 2u];
   const size_t completion_capacity = fixture->connections * 2u;
-  const uint64_t started = salts_hrtime();
+  const uint64_t started = cmeta_hrtime();
   size_t sends_done = 0u;
   size_t recvs_done = 0u;
   native_io_backend_stats stats;
@@ -397,7 +397,7 @@ static int scale_native_cycle(scale_native *fixture, uint64_t *latencies, size_t
           ++sends_done;
         } else {
           ++recvs_done;
-          if (latencies != NULL) latencies[latency_base + index] = salts_hrtime() - started;
+          if (latencies != NULL) latencies[latency_base + index] = cmeta_hrtime() - started;
         }
       } else {
         status = scale_native_prepare(fixture, index, send, *offset, &request);
@@ -517,14 +517,14 @@ static int scale_run_native(size_t connections, size_t payload_size,
 
   fixture.peak_active = 0u;
   fixture.observe_calls = 0u;
-  wall_started = salts_hrtime();
+  wall_started = cmeta_hrtime();
   cpu_started = scale_thread_cpu_ns();
   for (size_t sample = 0u; sample < SCALE_SAMPLES; ++sample) {
     status = scale_native_cycle(&fixture, latencies, sample * connections);
     if (status != SALTS_OK) goto cleanup;
   }
   out->cpu_ns = scale_thread_cpu_ns() - cpu_started;
-  out->wall_ns = salts_hrtime() - wall_started;
+  out->wall_ns = cmeta_hrtime() - wall_started;
   out->peak_active = fixture.peak_active;
   out->progress_calls = fixture.observe_calls;
   scale_result_finish(out, latencies, latency_count);
@@ -559,7 +559,7 @@ static void scale_cnet_receive(void *user, cnet_connection connection,
                                const cnet_receive_view *view) {
   scale_cnet_connection *entry = (scale_cnet_connection *)user;
   scale_cnet *fixture = entry->owner;
-  const uint64_t callback_started = fixture->measuring ? salts_hrtime() : 0u;
+  const uint64_t callback_started = fixture->measuring ? cmeta_hrtime() : 0u;
   (void)connection;
 
   if (view->kind != CNET_MESSAGE_BYTES || view->size == 0u ||
@@ -568,11 +568,11 @@ static void scale_cnet_receive(void *user, cnet_connection connection,
     goto finish;
   }
   {
-    const uint64_t check_started = fixture->measuring ? salts_hrtime() : 0u;
+    const uint64_t check_started = fixture->measuring ? cmeta_hrtime() : 0u;
     const int payload_matches =
         memcmp(fixture->sent + entry->received, view->data, view->size) == 0;
     if (fixture->measuring)
-      fixture->payload_check_ns += salts_hrtime() - check_started;
+      fixture->payload_check_ns += cmeta_hrtime() - check_started;
     if (!payload_matches) {
       fixture->status = SALTS_EIO;
       goto finish;
@@ -580,48 +580,48 @@ static void scale_cnet_receive(void *user, cnet_connection connection,
   }
   entry->received += view->size;
   if (entry->received == fixture->payload_size) {
-    if (entry->latency_out != NULL) *entry->latency_out = salts_hrtime() - entry->started_ns;
+    if (entry->latency_out != NULL) *entry->latency_out = cmeta_hrtime() - entry->started_ns;
     entry->received = 0u;
     ++fixture->cycle_received;
   }
 
 finish:
   if (fixture->measuring)
-    fixture->callback_ns += salts_hrtime() - callback_started;
+    fixture->callback_ns += cmeta_hrtime() - callback_started;
 }
 
 static void scale_cnet_sent(void *user, cnet_connection connection, size_t size) {
   scale_cnet_connection *entry = (scale_cnet_connection *)user;
   scale_cnet *fixture = entry->owner;
-  const uint64_t callback_started = fixture->measuring ? salts_hrtime() : 0u;
+  const uint64_t callback_started = fixture->measuring ? cmeta_hrtime() : 0u;
   (void)connection;
   if (size != fixture->payload_size) fixture->status = SALTS_EIO;
   else ++fixture->cycle_sent;
   if (fixture->measuring)
-    fixture->callback_ns += salts_hrtime() - callback_started;
+    fixture->callback_ns += cmeta_hrtime() - callback_started;
 }
 
 static int scale_cnet_wait_connected(scale_cnet *fixture) {
-  const uint64_t deadline = salts_monotonic_ms() + SCALE_TIMEOUT_MS;
+  const uint64_t deadline = cmeta_monotonic_ms() + SCALE_TIMEOUT_MS;
   while (fixture->connected_count < fixture->connection_count) {
     size_t events = 0u;
     int status;
     if (fixture->status != SALTS_OK) return fixture->status;
     status = cnet_client_poll(&fixture->client, 10u, &events);
     if (status != SALTS_OK) return status;
-    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+    if (cmeta_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
   return SALTS_OK;
 }
 
 static int scale_cnet_cycle(scale_cnet *fixture, uint64_t *latencies, size_t latency_base) {
-  const uint64_t deadline = salts_monotonic_ms() + SCALE_TIMEOUT_MS;
+  const uint64_t deadline = cmeta_monotonic_ms() + SCALE_TIMEOUT_MS;
   fixture->cycle_received = 0u;
   fixture->cycle_sent = 0u;
 
   for (size_t index = 0u; index < fixture->connection_count; ++index) {
     scale_cnet_connection *entry = &fixture->connections[index];
-    entry->started_ns = salts_hrtime();
+    entry->started_ns = cmeta_hrtime();
     entry->latency_out = latencies == NULL ? NULL : &latencies[latency_base + index];
     {
       const int status =
@@ -638,7 +638,7 @@ static int scale_cnet_cycle(scale_cnet *fixture, uint64_t *latencies, size_t lat
     status = cnet_client_poll(&fixture->client, 10u, &events);
     ++fixture->poll_calls;
     if (status != SALTS_OK) return status;
-    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+    if (cmeta_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
   return fixture->status;
 }
@@ -761,14 +761,14 @@ static int scale_run_cnet(size_t connections, size_t payload_size,
   status = cnet_client_profile_begin(&fixture.client);
   if (status != SALTS_OK) goto cleanup;
   fixture.measuring = true;
-  wall_started = salts_hrtime();
+  wall_started = cmeta_hrtime();
   cpu_started = scale_thread_cpu_ns();
   for (size_t sample = 0u; sample < SCALE_SAMPLES; ++sample) {
     status = scale_cnet_cycle(&fixture, latencies, sample * connections);
     if (status != SALTS_OK) break;
   }
   out->cpu_ns = scale_thread_cpu_ns() - cpu_started;
-  out->wall_ns = salts_hrtime() - wall_started;
+  out->wall_ns = cmeta_hrtime() - wall_started;
   fixture.measuring = false;
   if (status != SALTS_OK) goto cleanup;
   status = cnet_client_profile_take(&fixture.client, &profile);

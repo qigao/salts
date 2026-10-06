@@ -125,7 +125,7 @@ static void owner_mailbox_sender_run(native_io_sharded_context *context, void *a
   }
 
   if (atomic_load_explicit(&state->started_ns, memory_order_acquire) == 0u)
-    atomic_store_explicit(&state->started_ns, salts_hrtime(), memory_order_release);
+    atomic_store_explicit(&state->started_ns, cmeta_hrtime(), memory_order_release);
 
   batch = state->total_messages - state->sent_messages;
   if (batch > state->window) batch = state->window;
@@ -157,7 +157,7 @@ static void owner_mailbox_data_run(native_io_sharded_context *context, void *arg
   if (remaining != 1u) return;
 
   if (completed == state->total_messages) {
-    atomic_store_explicit(&state->finished_ns, salts_hrtime(), memory_order_release);
+    atomic_store_explicit(&state->finished_ns, cmeta_hrtime(), memory_order_release);
     return;
   }
   if (completed > state->total_messages) {

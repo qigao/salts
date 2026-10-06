@@ -8,7 +8,7 @@ to depend on NativeIO directly.
 
 The canonical lower-layer contract is [NativeIO execution and endpoint architecture](../native-io/ARCHITECTURE.md). CNet is an optional network/session semantic consumer: raw TCP/UDP/VSOCK/PIPE data paths do not require CNet, and CNet does not own NativeIO execution-style or terminal-completion truth.
 
-CNet is built unconditionally. Its source-tree target is `salts_cnet`; installed
+CNet is built unconditionally. Its source-tree target is `cmeta_cnet`; installed
 consumers link `Salts::CNet` and include `<cnet/cnet.h>`. The independent
 WebSocket session API is declared by `<cnet/websocket.h>`.
 
@@ -189,6 +189,9 @@ exposes OS receive/send buffers, explicit `TCP_NODELAY` via `nodelay`,
 keepalive enable plus idle/interval/probe count, and linger. Generic native
 socket adoption preserves an externally configured live policy; only
 `cnet_accepted_stream` handoff applies the final client's configured policy.
+Direct `cnet_listener_accept*()` calls, including TLS accept, preserve the
+listener's TCP policy without applying the receiving client's future-connection
+policy.
 `cnet_datagram_config.reuse_port` exposes the same listener-port
 sharing decision for UDP and the unified UDP/KCP packet endpoint.
 

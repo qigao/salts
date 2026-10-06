@@ -1,4 +1,5 @@
 #include <cmeta/meta.h>
+#include <tinytest.h>
 
 #ifdef Containers
 #error "Containers(...) is removed; use one cmeta_type(...) declaration per type"
@@ -8,7 +9,6 @@
 #error "positional Traits compatibility is removed; use tagged rows"
 #endif
 
-#define REQUIRE(expr) do { if (!(expr)) return __LINE__; } while (0)
 
 cmeta_struct(SurfacePoint,
     cmeta_field(int, x)
@@ -137,7 +137,7 @@ implements(SurfaceCounter, surface_counter_impl,
     .reset = surface_counter_reset
 );
 
-int main(void) {
+static void test_language_surface(void) {
     SurfacePoint point = { .x = 3, .y = 4 };
     SurfaceOwner owner = { .id = 9, .node = { .marker = 17 } };
     const SurfaceOwner const_owner = { .id = 10, .node = { .marker = 18 } };
@@ -171,70 +171,77 @@ int main(void) {
     };
     size_t i;
 
-    REQUIRE(point.x == 3 && point.y == 4L);
-    REQUIRE(SurfaceOwner_from_node(&owner.node) == &owner);
-    REQUIRE(SurfaceOwner_from_node_const(&const_owner.node) == &const_owner);
-    REQUIRE(SurfaceOwner_from_node(NULL) == NULL);
-    REQUIRE(strcmp(StructMeta(SurfacePoint)->name, "SurfacePoint") == 0);
-    REQUIRE(FieldCount(SurfacePoint) == 2u);
-    REQUIRE(field != NULL);
-    REQUIRE(strcmp(field->name, "y") == 0);
-    REQUIRE(field->offset == offsetof(SurfacePoint, y));
+    check(point.x == 3 && point.y == 4L);
+    check(SurfaceOwner_from_node(&owner.node) == &owner);
+    check(SurfaceOwner_from_node_const(&const_owner.node) == &const_owner);
+    check(SurfaceOwner_from_node(NULL) == NULL);
+    check(strcmp(StructMeta(SurfacePoint)->name, "SurfacePoint") == 0);
+    check(FieldCount(SurfacePoint) == 2u);
+    check(field != NULL);
+    check(strcmp(field->name, "y") == 0);
+    check(field->offset == offsetof(SurfacePoint, y));
 
-    REQUIRE(SURFACE_READY == 0);
-    REQUIRE(SURFACE_DONE == 20);
-    REQUIRE(SURFACE_AFTER == 21);
-    REQUIRE(EnumParse(SurfaceState, "done", &state));
-    REQUIRE(state == SURFACE_DONE);
-    REQUIRE(strcmp(EnumString(SurfaceState, state), "done") == 0);
-    REQUIRE(strcmp(EnumSymbol(SurfaceState, state), "SURFACE_DONE") == 0);
+    check(SURFACE_READY == 0);
+    check(SURFACE_DONE == 20);
+    check(SURFACE_AFTER == 21);
+    check(EnumParse(SurfaceState, "done", &state));
+    check(state == SURFACE_DONE);
+    check(strcmp(EnumString(SurfaceState, state), "done") == 0);
+    check(strcmp(EnumSymbol(SurfaceState, state), "SURFACE_DONE") == 0);
 
-    REQUIRE((cmeta_traits_SurfaceBox.flags & callable_traits) == callable_traits);
-    REQUIRE(cmeta_traits_SurfaceBox.equal(&left, &right));
-    REQUIRE(cmeta_traits_SurfaceBox.hash(&left) == 7u);
-    REQUIRE(cmeta_traits_SurfaceBox.compare(&left, &right) == 0);
-    REQUIRE(cmeta_traits_SurfaceBox.copy_construct(&copied, &left));
-    REQUIRE(copied.value == 7);
+    check((cmeta_traits_SurfaceBox.flags & callable_traits) == callable_traits);
+    check(cmeta_traits_SurfaceBox.equal(&left, &right));
+    check(cmeta_traits_SurfaceBox.hash(&left) == 7u);
+    check(cmeta_traits_SurfaceBox.compare(&left, &right) == 0);
+    check(cmeta_traits_SurfaceBox.copy_construct(&copied, &left));
+    check(copied.value == 7);
     cmeta_traits_SurfaceBox.move_construct(&moved, &copied);
-    REQUIRE(moved.value == 7 && copied.value == 0);
+    check(moved.value == 7 && copied.value == 0);
     cmeta_traits_SurfaceBox.destroy(&moved);
-    REQUIRE(moved.value == 0);
+    check(moved.value == 0);
 
-    REQUIRE(OptionHas(some));
-    REQUIRE(some.value == 9);
-    REQUIRE(!OptionHas(none));
-    REQUIRE(pair.first == 4 && pair.second == 5L);
-    REQUIRE(TupleArity(SurfaceTuple3) == 3u);
-    REQUIRE(tuple.v0 == 1 && tuple.v1 == 2L && tuple.v2 == 3.5);
-    REQUIRE(ResultIsOk(ok) && ok.data.value == 11);
-    REQUIRE(ResultIsErr(err) && err.data.error == 23);
+    check(OptionHas(some));
+    check(some.value == 9);
+    check(!OptionHas(none));
+    check(pair.first == 4 && pair.second == 5L);
+    check(TupleArity(SurfaceTuple3) == 3u);
+    check(tuple.v0 == 1 && tuple.v1 == 2L && tuple.v2 == 3.5);
+    check(ResultIsOk(ok) && ok.data.value == 11);
+    check(ResultIsErr(err) && err.data.error == 23);
 
-    REQUIRE(cmeta_callable_contract_valid(surface_increment));
-    REQUIRE(cmeta_callable_invoke(&surface_increment, &output, args));
-    REQUIRE(output == 7);
-    REQUIRE(surface_increment.meta.effects == CMETA_CONTRACT_EFFECTS(value));
-    REQUIRE(surface_increment.meta.properties == CMETA_CONTRACT_PROPERTIES(value));
+    check(cmeta_callable_contract_valid(surface_increment));
+    check(cmeta_callable_invoke(&surface_increment, &output, args));
+    check(output == 7);
+    check(surface_increment.meta.effects == CMETA_CONTRACT_EFFECTS(value));
+    check(surface_increment.meta.properties == CMETA_CONTRACT_PROPERTIES(value));
 
-    REQUIRE(cmeta_function_desc_valid(function_meta));
-    REQUIRE(strcmp(function_meta->name, "surface_reflected_add") == 0);
-    REQUIRE(function_meta->param_count == 2u);
-    REQUIRE(cmeta_type_equal(function_meta->return_type, &cmeta_type_int));
-    REQUIRE(cmeta_function_find_param(function_meta, "left") != NULL);
-    REQUIRE(surface_reflected_add(3, 4) == 7);
+    check(cmeta_function_desc_valid(function_meta));
+    check(strcmp(function_meta->name, "surface_reflected_add") == 0);
+    check(function_meta->param_count == 2u);
+    check(cmeta_type_equal(function_meta->return_type, &cmeta_type_int));
+    check(cmeta_function_find_param(function_meta, "left") != NULL);
+    check(surface_reflected_add(3, 4) == 7);
 
-    REQUIRE(SurfaceCounter_valid(&counter));
-    REQUIRE(SurfaceCounter_has(&counter, SURFACE_COUNTER_CAN_RESET));
-    REQUIRE(strcmp(SurfaceCounter_implementation(&counter),
+    check(SurfaceCounter_valid(&counter));
+    check(SurfaceCounter_has(&counter, SURFACE_COUNTER_CAN_RESET));
+    check(strcmp(SurfaceCounter_implementation(&counter),
                    "surface_counter_impl") == 0);
-    REQUIRE(SurfaceCounter_add(&counter, 5) == 15);
-    REQUIRE(SurfaceCounter_value(&counter) == 15);
+    check(SurfaceCounter_add(&counter, 5) == 15);
+    check(SurfaceCounter_value(&counter) == 15);
     SurfaceCounter_reset(&counter);
-    REQUIRE(SurfaceCounter_value(&counter) == 0);
-    REQUIRE(interface_meta != NULL);
-    REQUIRE(interface_meta->method_count == 3u);
+    check(SurfaceCounter_value(&counter) == 0);
+    check(interface_meta != NULL);
+    check(interface_meta->method_count == 3u);
 
     for (i = 0u; i < sizeof(contract_names) / sizeof(contract_names[0]); ++i)
-        REQUIRE(cmeta_contract_find(contract_names[i]) != NULL);
+        check(cmeta_contract_find(contract_names[i]) != NULL);
 
-    return 0;
+}
+
+suite("CMeta language surface") {
+    group("public declarations") {
+        it("exposes structures, enums, traits, values, callables and interfaces") {
+            test_language_surface();
+        }
+    }
 }

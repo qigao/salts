@@ -88,6 +88,22 @@ Data, ObjectRef and Plugin adapters share finite lexical cleanup obligations;
 their existing resource authorities remain separate. See
 [lifetime admission and lowering](LIFECYCLE_LOWERING.md).
 
+`cmeta_scope_nofail` omits per-resource live/ops state for statically declared
+INIT_NOFAIL resource sets, including managed CSTL values. Body failures still
+perform LIFO cleanup; C++ body exceptions clean up before propagating.
+
+`<cmeta/data_select.h>` provides `cmeta_data_of(pointer)` for builtin Data
+descriptors and `cmeta_data_of_in(pointer, schema)` for explicit local schemas.
+The pointer is an unevaluated type witness. Both C11 and C++17 select the same
+canonical descriptor, reject unknown/volatile pointer types, and evaluate only
+the selected descriptor expression once. See [typed selection](LANGUAGE_REFERENCE.md#schema-driven-data-selection).
+
+Optional `Salts::CMetaNative` specializes admitted `int(int)` calls and borrowed
+`int(void *, int)` receiver bindings as bounded leaf thunks. Enable
+`CMETA_BUILD_NATIVE_THUNKS` explicitly on x86-64 Windows/Linux; the default is OFF.
+Redirection requires quiescence and never extends provider/Plugin lifetimes.
+See [native ownership, qualification and benchmarks](NATIVE_THUNKS.md).
+
 `<cmeta/bind.h>` generates receiver and ordinary parameter binding with explicit
 scalar snapshots or borrowed pointers, exact native thunks, and canonical
 Function projections. Captures stay within `CMETA_CAPTURE_INLINE`; projected
@@ -177,7 +193,7 @@ pointer or descriptor identity. These additions use optional size-versioned
 collection callbacks; older provider prefixes retain their existing behavior.
 
 Salts Core provides header-local `tstr` and `vstr` adapter metadata in
-`salts_cmeta_data.h`. As with other header-generated CMeta metadata, descriptor
+`cmeta_cmeta_data.h`. As with other header-generated CMeta metadata, descriptor
 addresses may differ across translation units; use semantic type comparison.
 
 ## Unified Schema / Replay kernel

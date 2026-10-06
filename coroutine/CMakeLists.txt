@@ -1,13 +1,14 @@
-set(TARGET_NAME salts_coroutine)
+set(TARGET_NAME cmeta_coroutine)
 
 add_library(
   ${TARGET_NAME} STATIC
-  src/salts_coro.c
-  src/salts_coro_pool.c
-  src/salts_coro_executor.c)
+  src/coro.c
+  src/coro_pool.c
+  src/coro_executor.c)
 
 cmake_config_target(
   ${TARGET_NAME}
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   ALIAS Salts::Coroutine
   FOLDER "coroutine"
   EXPORT_NAME Coroutine)

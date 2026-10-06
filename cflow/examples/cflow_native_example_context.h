@@ -42,7 +42,7 @@ typedef int (*cflow_native_example_forget_fn)(cflow_io_native_backend *backend, 
 static int cflow_native_example_forget_until_quiescent(cflow_native_example_context *context,
                                                        uintptr_t identity,
                                                        cflow_native_example_forget_fn forget) {
-    const uint64_t started = salts_hrtime();
+    const uint64_t started = cmeta_hrtime();
     int status;
 
     if (context == NULL || forget == NULL)
@@ -51,8 +51,8 @@ static int cflow_native_example_forget_until_quiescent(cflow_native_example_cont
         status = forget(&context->backend, identity);
         if (status != SALTS_EBUSY)
             return status;
-        salts_thread_yield();
-    } while (salts_hrtime() - started < CFLOW_NATIVE_EXAMPLE_TIMEOUT_NS);
+        cmeta_thread_yield();
+    } while (cmeta_hrtime() - started < CFLOW_NATIVE_EXAMPLE_TIMEOUT_NS);
     return SALTS_ETIMEDOUT;
 }
 
@@ -190,7 +190,7 @@ static int cflow_native_example_drive_once(cflow_native_example_context *context
 
 static int cflow_native_example_drive_until(cflow_native_example_context *context,
                                             size_t expected_completions) {
-    const uint64_t started = salts_hrtime();
+    const uint64_t started = cmeta_hrtime();
     if (context == NULL || !context->actor_initialized ||
         expected_completions > CFLOW_NATIVE_EXAMPLE_CAPACITY)
         return SALTS_EINVAL;
@@ -200,16 +200,16 @@ static int cflow_native_example_drive_until(cflow_native_example_context *contex
         const int status = cflow_native_example_drive_once(context, &progressed);
         if (status != SALTS_OK)
             return status;
-        if (salts_hrtime() - started >= CFLOW_NATIVE_EXAMPLE_TIMEOUT_NS)
+        if (cmeta_hrtime() - started >= CFLOW_NATIVE_EXAMPLE_TIMEOUT_NS)
             return SALTS_ETIMEDOUT;
         if (progressed == 0u)
-            salts_thread_yield();
+            cmeta_thread_yield();
     }
     return SALTS_OK;
 }
 
 static int cflow_native_example_close_actor(cflow_native_example_context *context) {
-    const uint64_t started = salts_hrtime();
+    const uint64_t started = cmeta_hrtime();
     int first_error = SALTS_OK;
     int status;
 
@@ -223,13 +223,13 @@ static int cflow_native_example_close_actor(cflow_native_example_context *contex
         status = cflow_native_example_drive_once(context, &progressed);
         if (status != SALTS_OK && first_error == SALTS_OK)
             first_error = status;
-        if (status != SALTS_OK || salts_hrtime() - started >= CFLOW_NATIVE_EXAMPLE_TIMEOUT_NS) {
+        if (status != SALTS_OK || cmeta_hrtime() - started >= CFLOW_NATIVE_EXAMPLE_TIMEOUT_NS) {
             if (first_error == SALTS_OK)
                 first_error = SALTS_ETIMEDOUT;
             break;
         }
         if (progressed == 0u)
-            salts_thread_yield();
+            cmeta_thread_yield();
     }
     status = cflow_io_actor_destroy(&context->actor);
     if (status == SALTS_OK)

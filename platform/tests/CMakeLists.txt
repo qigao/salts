@@ -27,7 +27,7 @@ set_target_properties(platform_thread_test PROPERTIES
 
 cmake_add_test(platform_header_cpp_test
   SOURCES platform_header_cpp_test.cpp
-  LIBS Salts::Platform
+  LIBS Salts::TinyTest Salts::Platform
   FOLDER "platform/tests")
 set_target_properties(platform_header_cpp_test PROPERTIES
   CXX_STANDARD 17

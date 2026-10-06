@@ -6,25 +6,25 @@
 #include <stdlib.h>
 #include <string.h>
 
-_Static_assert(sizeof(FARPROC) == sizeof(salts_plugin_query_fn),
+_Static_assert(sizeof(FARPROC) == sizeof(cmeta_plugin_query_fn),
                "GetProcAddress representation must fit plugin query pointer");
 
-salts_plugin_status salts_plugin_platform_close(
-    salts_plugin_library *library) {
+cmeta_plugin_status cmeta_plugin_platform_close(
+    cmeta_plugin_library *library) {
     HMODULE module;
 
     if (library == NULL || library->handle == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     module = (HMODULE)library->handle;
     if (!FreeLibrary(module))
-        return SALTS_PLUGIN_UNLOAD_FAILED;
+        return CMETA_PLUGIN_UNLOAD_FAILED;
 
     library->handle = NULL;
-    return SALTS_PLUGIN_OK;
+    return CMETA_PLUGIN_OK;
 }
 
-static bool salts_plugin_windows_explicit_path(const wchar_t *path) {
+static bool cmeta_plugin_windows_explicit_path(const wchar_t *path) {
     const wchar_t *cursor;
     if (path == NULL)
         return false;
@@ -35,7 +35,7 @@ static bool salts_plugin_windows_explicit_path(const wchar_t *path) {
     return false;
 }
 
-static wchar_t *salts_plugin_windows_absolute_path(const wchar_t *path) {
+static wchar_t *cmeta_plugin_windows_absolute_path(const wchar_t *path) {
     DWORD required;
     DWORD written;
     wchar_t *absolute;
@@ -59,10 +59,10 @@ static wchar_t *salts_plugin_windows_absolute_path(const wchar_t *path) {
     return absolute;
 }
 
-salts_plugin_status salts_plugin_platform_open(
+cmeta_plugin_status cmeta_plugin_platform_open(
     const char *path,
-    salts_plugin_library *out_library,
-    salts_plugin_query_fn *out_query) {
+    cmeta_plugin_library *out_library,
+    cmeta_plugin_query_fn *out_query) {
     int wide_length;
     wchar_t *wide_path;
     wchar_t *absolute_path = NULL;
@@ -70,7 +70,7 @@ salts_plugin_status salts_plugin_platform_open(
     FARPROC symbol;
 
     if (path == NULL || out_library == NULL || out_query == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     out_library->handle = NULL;
     *out_query = NULL;
@@ -78,24 +78,24 @@ salts_plugin_status salts_plugin_platform_open(
     wide_length = MultiByteToWideChar(
         CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, NULL, 0);
     if (wide_length <= 0)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     wide_path = (wchar_t *)malloc((size_t)wide_length * sizeof(*wide_path));
     if (wide_path == NULL)
-        return SALTS_PLUGIN_ALLOCATION_FAILED;
+        return CMETA_PLUGIN_ALLOCATION_FAILED;
 
     if (MultiByteToWideChar(
             CP_UTF8, MB_ERR_INVALID_CHARS, path, -1,
             wide_path, wide_length) != wide_length) {
         free(wide_path);
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
     }
 
-    if (salts_plugin_windows_explicit_path(wide_path)) {
-        absolute_path = salts_plugin_windows_absolute_path(wide_path);
+    if (cmeta_plugin_windows_explicit_path(wide_path)) {
+        absolute_path = cmeta_plugin_windows_absolute_path(wide_path);
         if (absolute_path == NULL) {
             free(wide_path);
-            return SALTS_PLUGIN_LOAD_FAILED;
+            return CMETA_PLUGIN_LOAD_FAILED;
         }
         module = LoadLibraryExW(
             absolute_path, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
@@ -108,19 +108,19 @@ salts_plugin_status salts_plugin_platform_open(
     }
     free(wide_path);
     if (module == NULL)
-        return SALTS_PLUGIN_LOAD_FAILED;
+        return CMETA_PLUGIN_LOAD_FAILED;
 
-    symbol = GetProcAddress(module, SALTS_PLUGIN_QUERY_SYMBOL);
+    symbol = GetProcAddress(module, CMETA_PLUGIN_QUERY_SYMBOL);
     if (symbol == NULL) {
-        salts_plugin_library cleanup = {(void *)module};
-        salts_plugin_status cleanup_status =
-            salts_plugin_platform_close(&cleanup);
-        return cleanup_status == SALTS_PLUGIN_OK
-            ? SALTS_PLUGIN_QUERY_MISSING
+        cmeta_plugin_library cleanup = {(void *)module};
+        cmeta_plugin_status cleanup_status =
+            cmeta_plugin_platform_close(&cleanup);
+        return cleanup_status == CMETA_PLUGIN_OK
+            ? CMETA_PLUGIN_QUERY_MISSING
             : cleanup_status;
     }
 
     memcpy(out_query, &symbol, sizeof(*out_query));
     out_library->handle = (void *)module;
-    return SALTS_PLUGIN_OK;
+    return CMETA_PLUGIN_OK;
 }

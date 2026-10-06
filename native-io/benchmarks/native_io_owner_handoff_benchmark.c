@@ -203,10 +203,10 @@ static int owner_handoff_sample_run(native_io_sharded *runtime, size_t hops, siz
     return SALTS_EIO;
   }
 
-  started = salts_hrtime();
+  started = cmeta_hrtime();
   status = native_io_sharded_submit_to(runtime, 0u, &seed);
   if (status == SALTS_OK) status = native_io_sharded_wait(runtime);
-  out->wall_ns = salts_hrtime() - started;
+  out->wall_ns = cmeta_hrtime() - started;
 
   if (status == SALTS_OK)
     status = atomic_load_explicit(&state.failure_status, memory_order_acquire);

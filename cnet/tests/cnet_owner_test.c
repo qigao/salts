@@ -5,7 +5,7 @@
 #include "tinytest.h"
 #include <salts/clock.h>
 #include <salts/thread.h>
-#include <salts_buffer.h>
+#include <cmeta_buffer.h>
 
 #include <limits.h>
 #include <stdint.h>
@@ -201,7 +201,7 @@ static int cnet_owner_test_udp_peer(cnet_owner_test_socket *out_socket,
 
 static int cnet_owner_test_drive_to_state(cnet_owner *owner, cnet_session_table *sessions,
                                           cnet_session_handle handle, cnet_session_state expected) {
-  const uint64_t deadline = salts_monotonic_ms() + CNET_OWNER_TEST_TIMEOUT_MS;
+  const uint64_t deadline = cmeta_monotonic_ms() + CNET_OWNER_TEST_TIMEOUT_MS;
   for (;;) {
     cnet_session_state state = CNET_SESSION_FREE;
     int status = cnet_session_table_state(sessions, handle, &state);
@@ -210,20 +210,20 @@ static int cnet_owner_test_drive_to_state(cnet_owner *owner, cnet_session_table 
     if (state == CNET_SESSION_TERMINAL) return SALTS_EIO;
     status = cnet_owner_drive(owner, 10u);
     if (status != SALTS_OK) return status;
-    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+    if (cmeta_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
 }
 
 static int cnet_owner_test_drive_to_event(cnet_owner *owner, cnet_event_queue *events,
                                           cnet_event_view *out_event) {
-  const uint64_t deadline = salts_monotonic_ms() + CNET_OWNER_TEST_TIMEOUT_MS;
+  const uint64_t deadline = cmeta_monotonic_ms() + CNET_OWNER_TEST_TIMEOUT_MS;
   for (;;) {
     int status = cnet_event_queue_take(events, out_event);
     if (status == SALTS_OK) return SALTS_OK;
     if (status != SALTS_ETIMEDOUT) return status;
     status = cnet_owner_drive(owner, 10u);
     if (status != SALTS_OK) return status;
-    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+    if (cmeta_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
 }
 
@@ -387,7 +387,7 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
     clock.next_ms = 111u;
   } else {
 #if defined(CNET_INTERNAL_PROFILING)
-    if (profile_suspended_receive) salts_sleep_ms(10u);
+    if (profile_suspended_receive) cmeta_sleep_ms(10u);
 #endif
     check_equal(send(accepted, (const char *)payload, (int)sizeof(payload), 0),
                 (int)sizeof(payload));
@@ -939,7 +939,7 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
   cnet_owner_test_socket peer = CNET_OWNER_TEST_INVALID_SOCKET;
   struct sockaddr_in peer_address;
   cnet_owner_test_udp_echo echo = {0};
-  salts_thread_t echo_thread = {0};
+  cmeta_thread_t echo_thread = {0};
   cnet_session_handle session = {0};
   cnet_owner_connect_payload connect_payload = {0};
   cnet_command command = {0};
@@ -992,7 +992,7 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
 
   echo = (cnet_owner_test_udp_echo){peer,    outbound,        sizeof(outbound),
                                     inbound, sizeof(inbound), SALTS_EIO};
-  echo_start_status = salts_thread_create(&echo_thread, cnet_owner_test_udp_echo_entry, &echo);
+  echo_start_status = cmeta_thread_create(&echo_thread, cnet_owner_test_udp_echo_entry, &echo);
   check_equal(echo_start_status, SALTS_OK);
   if (echo_start_status == SALTS_OK) {
     int send_event_seen = 0;
@@ -1017,8 +1017,8 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
       check_equal(event.argument, sizeof(outbound));
       check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
     }
-    check_equal(salts_thread_join(&echo_thread), SALTS_OK);
-    salts_thread_destroy(&echo_thread);
+    check_equal(cmeta_thread_join(&echo_thread), SALTS_OK);
+    cmeta_thread_destroy(&echo_thread);
     check_equal(echo.status, SALTS_OK);
   }
 

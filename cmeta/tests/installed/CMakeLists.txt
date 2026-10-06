@@ -12,13 +12,22 @@ include("${CMAKE_CURRENT_LIST_DIR}/../../../cmake/CmakeUtils.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/../../../cmake/Sanitizers.cmake")
 enable_testing()
 
-foreach(lowering_case IN ITEMS bind cleanup object)
+if(TARGET Salts::CMetaNative)
+  cmake_add_test(cmeta_installed_native_test SOURCES ../cmeta_native_thunk_test.c ../cmeta_native_targets.c
+    LIBS Salts::CMetaNative Salts::TinyTest FOLDER "cmeta/tests/installed")
+  cmake_add_test(cmeta_installed_native_cpp_test SOURCES ../cmeta_native_thunk_cpp_test.cpp
+    LIBS Salts::CMetaNative Salts::TinyTest FOLDER "cmeta/tests/installed")
+  set_target_properties(cmeta_installed_native_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  set_target_properties(cmeta_installed_native_cpp_test PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+endif()
+
+foreach(lowering_case IN ITEMS bind cleanup object data_select)
   cmake_add_test(cmeta_installed_${lowering_case}_test SOURCES ../cmeta_${lowering_case}_test.c
     LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests/installed")
   set_target_properties(cmeta_installed_${lowering_case}_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 endforeach()
-foreach(lowering_case IN ITEMS bind cleanup object_scope)
+foreach(lowering_case IN ITEMS bind cleanup object_scope data_select)
   cmake_add_test(cmeta_installed_${lowering_case}_cpp_test SOURCES ../cmeta_${lowering_case}_cpp_test.cpp
     LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests/installed")
   set_target_properties(cmeta_installed_${lowering_case}_cpp_test PROPERTIES

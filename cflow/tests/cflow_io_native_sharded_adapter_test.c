@@ -261,7 +261,7 @@ static int sharded_adapter_test_peer_send(
     if (sent == SOCKET_ERROR) {
       const int error = WSAGetLastError();
       if (error == WSAEWOULDBLOCK) {
-        salts_thread_yield();
+        cmeta_thread_yield();
         continue;
       }
       return -error;
@@ -277,7 +277,7 @@ static int sharded_adapter_test_peer_send(
     );
     if (sent < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        salts_thread_yield();
+        cmeta_thread_yield();
         continue;
       }
       return -errno;
@@ -553,7 +553,7 @@ static void sharded_adapter_test_gate_run(
   (void)context;
   atomic_store(&gate->entered, true);
   while (!atomic_load(&gate->release))
-    salts_thread_yield();
+    cmeta_thread_yield();
 }
 
 static void sharded_adapter_test_noop(
@@ -735,7 +735,7 @@ static void sharded_adapter_test_run_full_backend(
       native_io_sharded_try_submit_to(runtime, 1u, &gate_task),
       SALTS_OK);
   while (!atomic_load(&gate.entered))
-    salts_thread_yield();
+    cmeta_thread_yield();
   check_equal(
       native_io_sharded_try_submit_to(runtime, 1u, &queued_task),
       SALTS_OK);

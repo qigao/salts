@@ -16,7 +16,7 @@ adapter 或 scope。Static-call/trace consumer 显式 include 对应 header 并�
 兼容性（HIGH）：#957 要求删除错误归属的 spelling，不保留 forwarding alias。
 Atomic/RCU 使用 `SALTS_ATOMIC_TYPE` / `SALTS_RCU_TYPE`；生命周期 adapter 使用
 `cmeta_pool_type` / `cmeta_local_type`。Fast key 与纯 fault 使用 `SALTS_FAST_KEY`、
-`salts_fast_enable` / `salts_fast_disable` / `salts_fast_key_consume`，机制返回 SALTS 状态；
+`cmeta_fast_enable` / `cmeta_fast_disable` / `cmeta_fast_key_consume`，机制返回 SALTS 状态；
 CMeta typed static-call 与 trace 返回 CMeta 状态。Native 开关是
 `SALTS_PLATFORM_NATIVE_FASTPATH`，默认 OFF。消费者须更新 include、link target、option
 与状态检查；跨模块公开 owner 布局变化要求全量重编译。

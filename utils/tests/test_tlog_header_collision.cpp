@@ -5,7 +5,7 @@
 #define FieldFind(...) 205
 
 #include "tlog.h"
-#include "tinytest.h"
+#include "tinytest.hpp"
 
 #include <cstddef>
 
@@ -23,8 +23,8 @@ static_assert(host_field_count_semantics == 203, "tlog.h replaced the host Field
 static_assert(host_field_meta_semantics == 204, "tlog.h replaced the host FieldMeta macro");
 static_assert(host_field_find_semantics == 205, "tlog.h replaced the host FieldFind macro");
 
-struct salts_log_entry_collision_layout {
-  salts_log_level_t level;
+struct cmeta_log_entry_collision_layout {
+  cmeta_log_level_t level;
   uint64_t timestamp_ms;
   uint32_t thread_id;
   vstr component;
@@ -33,23 +33,23 @@ struct salts_log_entry_collision_layout {
   vstr message;
 };
 
-static_assert(sizeof(salts_log_entry_t) == sizeof(salts_log_entry_collision_layout),
-              "salts_log_entry_t size changed under host macros");
-static_assert(alignof(salts_log_entry_t) == alignof(salts_log_entry_collision_layout),
-              "salts_log_entry_t alignment changed under host macros");
-static_assert(offsetof(salts_log_entry_t, message) ==
-                  offsetof(salts_log_entry_collision_layout, message),
-              "salts_log_entry_t layout changed under host macros");
+static_assert(sizeof(cmeta_log_entry_t) == sizeof(cmeta_log_entry_collision_layout),
+              "cmeta_log_entry_t size changed under host macros");
+static_assert(alignof(cmeta_log_entry_t) == alignof(cmeta_log_entry_collision_layout),
+              "cmeta_log_entry_t alignment changed under host macros");
+static_assert(offsetof(cmeta_log_entry_t, message) ==
+                  offsetof(cmeta_log_entry_collision_layout, message),
+              "cmeta_log_entry_t layout changed under host macros");
 
 spec("TLog C++ public-header collisions") {
   it("preserves host macros and exposes log entry metadata") {
-    const cmeta_struct_desc *meta = salts_log_entry_t_meta();
+    const cmeta_struct_desc *meta = cmeta_log_entry_t_meta();
 
     check_not_null(meta);
     check(meta->name != nullptr);
     check(meta->field_count == static_cast<size_t>(7));
-    check(meta->fields[0].offset == offsetof(salts_log_entry_t, level));
-    check(meta->fields[6].offset == offsetof(salts_log_entry_t, message));
+    check(meta->fields[0].offset == offsetof(cmeta_log_entry_t, level));
+    check(meta->fields[6].offset == offsetof(cmeta_log_entry_t, message));
     check(meta->fields[3].size == sizeof(vstr));
     check(meta->fields[4].size == sizeof(vstr));
     check(meta->fields[6].size == sizeof(vstr));
