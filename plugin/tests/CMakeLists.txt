@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/linker_tests.cmake")
+
 add_library(salts_plugin_manifest_fixture_c SHARED
   fixture_plugin_manifest_bridge.c fixture_plugin_manifest_c.c)
 add_library(salts_plugin_manifest_fixture_cpp SHARED

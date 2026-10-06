@@ -1274,4 +1274,7 @@ Interface 的 R/V/F/FR/FV/D/FD 行先归一化为参数 tuple、arity、结果�
 属性，再由公共生成器输出 vtable、wrapper、验证与 metadata。析构仍先调用再清空 handle。
 验证覆盖 C/C++ 的所有 0–4 参数行、16 项 PP 上界、零项、错误展开和精确 native 调用。
 迁移只需要显式选择新声明；撤回声明层时可恢复手写 thunk，无数据迁移或运行时格式变化。
-Linker 聚合、通用 capture/bind、生命周期和 lease RAII 属于后续阶段。
+Plugin 的可选跨 TU linker 聚合与 C/C++ lease 作用域入口见
+[Plugin 声明与生命周期协议](../plugin/README.md)。共享 section 原语位于 `cmeta/compiler.h`，
+平台聚合和 lease 所有权仍归 Plugin；CMeta descriptor 不持有 lease。
+通用 capture/bind 与通用生命周期 guard 不在这两个 Plugin 入口的范围内。

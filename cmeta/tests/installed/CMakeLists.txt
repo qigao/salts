@@ -12,6 +12,8 @@ include("${CMAKE_CURRENT_LIST_DIR}/../../../cmake/CmakeUtils.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/../../../cmake/Sanitizers.cmake")
 enable_testing()
 
+include("${CMAKE_CURRENT_LIST_DIR}/../../../plugin/tests/linker_tests.cmake")
+
 # Reuse the declaration regressions against imported SDK targets. No source-tree
 # public include directories are added to these consumers.
 cmake_add_test(cmeta_installed_pp_test

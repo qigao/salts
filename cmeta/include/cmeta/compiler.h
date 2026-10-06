@@ -39,6 +39,44 @@
 #define CMETA_INLINE static inline CMETA_UNUSED
 #define CMETA_LOCAL static CMETA_UNUSED
 
+/* Section storage is an opt-in backend, not a promise of discovery semantics.
+ * ELF requires retain, since used alone does not survive linker GC. */
+#define CMETA_SECTION_NONE 0
+#define CMETA_SECTION_COFF 1
+#define CMETA_SECTION_ELF 2
+#define CMETA_SECTION_MACHO 3
+#if defined(_WIN32) && defined(_MSC_VER)
+#define CMETA_SECTION_BACKEND CMETA_SECTION_COFF
+#define CMETA_ATTR_SECTION(name) __pragma(section(name,read,write)) __declspec(allocate(name))
+#define CMETA_ATTR_ALIGNED(size) __declspec(align(size))
+#if defined(_M_IX86)
+#define CMETA_COFF_RETAIN(symbol) __pragma(comment(linker,"/include:_" symbol))
+#else
+#define CMETA_COFF_RETAIN(symbol) __pragma(comment(linker,"/include:" symbol))
+#endif
+#elif defined(__ELF__) && CMETA_HAS_ATTRIBUTE(section) && CMETA_HAS_ATTRIBUTE(retain) && \
+    CMETA_HAS_ATTRIBUTE(used) && CMETA_HAS_ATTRIBUTE(aligned) && CMETA_HAS_ATTRIBUTE(visibility)
+#define CMETA_SECTION_BACKEND CMETA_SECTION_ELF
+#define CMETA_ATTR_SECTION(name) __attribute__((section(name)))
+#define CMETA_ATTR_ALIGNED(size) __attribute__((aligned(size)))
+#elif defined(__APPLE__) && defined(__MACH__) && CMETA_HAS_ATTRIBUTE(section) && \
+    CMETA_HAS_ATTRIBUTE(used) && CMETA_HAS_ATTRIBUTE(aligned) && CMETA_HAS_ATTRIBUTE(visibility)
+#define CMETA_SECTION_BACKEND CMETA_SECTION_MACHO
+#define CMETA_ATTR_SECTION(name) __attribute__((section(name)))
+#define CMETA_ATTR_ALIGNED(size) __attribute__((aligned(size)))
+#else
+#define CMETA_SECTION_BACKEND CMETA_SECTION_NONE
+#endif
+#if CMETA_HAS_ATTRIBUTE(used)
+#define CMETA_ATTR_USED __attribute__((used))
+#endif
+#if CMETA_HAS_ATTRIBUTE(retain)
+#define CMETA_ATTR_RETAIN __attribute__((retain))
+#endif
+#if CMETA_HAS_ATTRIBUTE(visibility)
+#define CMETA_ATTR_HIDDEN __attribute__((visibility("hidden")))
+#endif
+
 #ifdef __cplusplus
 #include <type_traits>
 #define CMETA_ALIGNOF(type) alignof(type)
