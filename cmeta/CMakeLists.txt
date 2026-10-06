@@ -8,7 +8,6 @@ add_library(${TARGET_NAME}
   src/declared_type.c
   src/entry.c
   src/function.c
-  src/trace.c
   src/fixed_array.c
   src/interface.c
   src/method.c
