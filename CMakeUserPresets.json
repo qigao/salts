@@ -391,6 +391,19 @@
                 "vcpkg-cache-ci",
                 "linux-dev-user"
             ]
+        },
+        {
+            "name": "linux-tsan-ci",
+            "inherits": "linux-dev-ci",
+            "binaryDir": "${sourceDir}/build/linux-gcc-tsan",
+            "cacheVariables": {
+                "ENABLE_SANITIZER_ADDRESS": "OFF",
+                "ENABLE_SANITIZER_THREAD": "ON"
+            },
+            "environment": {
+                "SALTS_ROOT": "$env{PKG_ROOT}/salts/debug-tsan",
+                "PATH": "${sourceDir}/build/linux-gcc-tsan/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/debug/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
+            }
         }
     ],
     "buildPresets": [
@@ -589,6 +602,17 @@
             "targets": [
                 "install"
             ]
+        },
+        {
+            "name": "linux-tsan-ci",
+            "configurePreset": "linux-tsan-ci"
+        },
+        {
+            "name": "install-linux-tsan-ci",
+            "configurePreset": "linux-tsan-ci",
+            "targets": [
+                "install"
+            ]
         }
     ],
     "testPresets": [
@@ -641,6 +665,11 @@
             "name": "linux-dev-ci",
             "inherits": "base-test",
             "configurePreset": "linux-dev-ci"
+        },
+        {
+            "name": "linux-tsan-ci",
+            "inherits": "base-test",
+            "configurePreset": "linux-tsan-ci"
         },
         {
             "name": "mac-release-ci",

@@ -539,6 +539,7 @@ static cflow_status stream_status_from_cmeta(cmeta_status status) {
         case CMETA_CAPACITY_EXCEEDED: return CFLOW_STATUS_CAPACITY_EXCEEDED;
         case CMETA_OUT_OF_MEMORY: return CFLOW_STATUS_ALLOCATION_FAILED;
         case CMETA_CALLBACK_ERROR: return CFLOW_STATUS_EXECUTION_ERROR;
+        case CMETA_BUSY: return CFLOW_STATUS_WOULD_BLOCK;
     }
     return CFLOW_STATUS_EXECUTION_ERROR;
 }

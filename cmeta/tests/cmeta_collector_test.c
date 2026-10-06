@@ -288,6 +288,20 @@ spec("CMeta transactional collectors") {
         check_equal(state.abort_count, (size_t)1u);
     }
 
+    it("preserves explicit busy errors and aborts acquired collector state once") {
+        int output = 0, value = 1;
+        fake_collector_state state = {
+            .output = &output, .expected_type = &cmeta_type_int, .accept_status = CMETA_BUSY
+        };
+        cmeta_collector collector = fake_collector(&state, &output, &cmeta_type_int, 1u);
+        check_equal(cmeta_collector_begin(&collector), CMETA_OK);
+        check_equal(cmeta_collector_accept(&collector, &cmeta_type_int, &value), CMETA_BUSY);
+        check_equal(collector.status, CMETA_BUSY);
+        check_equal(state.abort_count, (size_t)1);
+        cmeta_collector_abort(&collector);
+        check_equal(state.abort_count, (size_t)1);
+    }
+
     it("normalizes an unknown begin status and aborts once") {
         int output = 0;
         fake_collector_state state = {

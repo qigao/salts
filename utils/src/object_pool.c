@@ -136,7 +136,21 @@ static void object_pool_slot_set_allocated(object_pool_chunk_t *chunk, size_t sl
   }
 }
 
-object_pool_t *object_pool_create(const object_pool_config_t *config) {
+size_t object_pool_max_alignment(void) {
+#if defined(_MSC_VER)
+  /* MSVC's C headers do not publish max_align_t. Match its fundamental ABI. */
+  typedef union { long double floating; long long integer; void *pointer; } pool_max_align;
+  return _Alignof(pool_max_align);
+#else
+  return _Alignof(max_align_t);
+#endif
+}
+
+object_pool_t *object_pool_create_aligned(const object_pool_config_t *config, size_t alignment) {
+  if (alignment == 0 || (alignment & (alignment - 1)) != 0 ||
+      alignment > object_pool_max_alignment()) {
+    return NULL;
+  }
   if (!config || config->object_size < sizeof(void *)) {
     return NULL;
   }
@@ -147,8 +161,8 @@ object_pool_t *object_pool_create(const object_pool_config_t *config) {
   }
 
   pool->object_size = config->object_size;
-  // Ensure object_size is aligned up to pointer boundaries for memory safety
-  size_t ptr_size = sizeof(void *);
+  // Each recycled slot also holds a native free-list pointer.
+  size_t ptr_size = alignment > sizeof(void *) ? alignment : sizeof(void *);
   if (pool->object_size % ptr_size != 0) {
     if (pool->object_size > SIZE_MAX - (ptr_size - 1)) {
       free(pool);
@@ -169,6 +183,17 @@ object_pool_t *object_pool_create(const object_pool_config_t *config) {
   }
 
   return pool;
+}
+
+object_pool_t *object_pool_create(const object_pool_config_t *config) {
+  return object_pool_create_aligned(config, sizeof(void *));
+}
+
+bool object_pool_is_allocated(const object_pool_t *pool, const void *obj) {
+  object_pool_chunk_t *chunk;
+  size_t slot;
+  return object_pool_locate_object(pool, obj, &chunk, &slot) &&
+         object_pool_slot_is_allocated(chunk, slot);
 }
 
 void object_pool_destroy(object_pool_t *pool) {

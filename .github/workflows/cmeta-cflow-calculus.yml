@@ -6,6 +6,13 @@ on:
       - "cmeta/**"
       - "cstl/**"
       - "coroutine/**"
+      - "concurrency/**"
+      - "platform/include/salts/thread.h"
+      - "platform/src/thread_*.c"
+      - "utils/include/object_pool.h"
+      - "utils/src/object_pool.c"
+      - "utils/tests/test_object_pool.c"
+      - "CMakeUserPresets.json"
       - "formal/cmeta_cflow_calculus/**"
       - "cmeta/include/cmeta/generated/builtin_signature_manifest.h"
       - "cmeta/include/cmeta/types.h"
@@ -16,6 +23,8 @@ on:
       - "cflow/include/cflow/function_projection.h"
       - "cflow/src/function_projection.c"
       - "cflow/tests/cflow_function_projection_test.c"
+      - "cflow/src/adapters.c"
+      - "cflow/tests/cflow_stream_terminal_test.c"
       - ".github/workflows/cmeta-cflow-calculus.yml"
   push:
     branches: [master]
@@ -23,6 +32,13 @@ on:
       - "cmeta/**"
       - "cstl/**"
       - "coroutine/**"
+      - "concurrency/**"
+      - "platform/include/salts/thread.h"
+      - "platform/src/thread_*.c"
+      - "utils/include/object_pool.h"
+      - "utils/src/object_pool.c"
+      - "utils/tests/test_object_pool.c"
+      - "CMakeUserPresets.json"
       - "formal/cmeta_cflow_calculus/**"
       - "cmeta/include/cmeta/generated/builtin_signature_manifest.h"
       - "cmeta/include/cmeta/types.h"
@@ -33,6 +49,8 @@ on:
       - "cflow/include/cflow/function_projection.h"
       - "cflow/src/function_projection.c"
       - "cflow/tests/cflow_function_projection_test.c"
+      - "cflow/src/adapters.c"
+      - "cflow/tests/cflow_stream_terminal_test.c"
       - ".github/workflows/cmeta-cflow-calculus.yml"
   workflow_dispatch:
 
@@ -112,8 +130,9 @@ jobs:
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -R "^(cmeta_coroutine|salts_coro_executor)"
           if errorlevel 1 exit /b 1
 
+
   cmeta:
-    name: CMeta structured scope / ${{ matrix.name }}
+    name: CMeta scope and execution / ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -131,6 +150,18 @@ jobs:
             configure_preset: linux-dev-ci
             build_preset: linux-dev-ci
             build_dir: build/linux-gcc-debug
+          - name: GCC TSan
+            runner: ubuntu-24.04
+            family: linux
+            configure_preset: linux-tsan-ci
+            build_preset: linux-tsan-ci
+            build_dir: build/linux-gcc-tsan
+          - name: AppleClang
+            runner: macos-15
+            family: macos
+            configure_preset: mac-release-ci
+            build_preset: mac-release-ci
+            build_dir: build/mac-clang-release
           - name: MSVC
             runner: windows-2025
             family: windows
@@ -169,18 +200,19 @@ jobs:
           "PROJECT_ROOT=$env:GITHUB_WORKSPACE" >> $env:GITHUB_ENV
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
 
-      - name: Configure and build Linux CMeta contracts
-        if: matrix.family == 'linux'
+      - name: Configure and build POSIX CMeta contracts
+        if: matrix.family != 'windows'
         shell: bash
         run: |
           set -euo pipefail
+          export PROJECT_ROOT="$GITHUB_WORKSPACE"
           cmake --preset "${{ matrix.configure_preset }}" \
             -DENABLE_TESTS=ON \
             -DBUILD_TESTS=ON \
             -DBUILD_BENCHMARKS=OFF \
             -DBUILD_EXAMPLES=OFF \
             '-DVCPKG_INSTALL_OPTIONS=--only-binarycaching'
-          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target cmeta_scope_test cmeta_execution_test cmeta_collector_test concurrency_rcu_test concurrency_header_cpp_test test_object_pool cflow_stream_terminal_test cstl_generic_identity_test cstl_semantic_projection_test cstl_typed_decl_cpp_test
 
       - name: Configure and build Windows CMeta contracts
         if: matrix.family == 'windows'
@@ -192,15 +224,15 @@ jobs:
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           cmake --preset "${{ matrix.configure_preset }}" -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
           if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
+          cmake --build --preset "${{ matrix.build_preset }}" --parallel 2 --target cmeta_scope_test cmeta_execution_test cmeta_collector_test concurrency_rcu_test concurrency_header_cpp_test test_object_pool cflow_stream_terminal_test cstl_generic_identity_test cstl_semantic_projection_test cstl_typed_decl_cpp_test
           if errorlevel 1 exit /b 1
 
-      - name: Run Linux scope and nested CSTL contracts
-        if: matrix.family == 'linux'
+      - name: Run POSIX scope, execution and nested CSTL contracts
+        if: matrix.family != 'windows'
         shell: bash
-        run: ctest --preset "${{ matrix.configure_preset }}" --output-on-failure -R "^(cmeta_scope_|cstl_generic_identity_test$|cstl_semantic_projection_test$|cstl_typed_decl_cpp_test$)"
+        run: ctest --preset "${{ matrix.configure_preset }}" --output-on-failure -R "^(cmeta_scope_|cmeta_execution_test$|cmeta_collector_test$|concurrency_rcu_test$|concurrency_header_cpp_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_semantic_projection_test$|cstl_typed_decl_cpp_test$)"
 
-      - name: Run Windows scope and nested CSTL contracts
+      - name: Run Windows scope, execution and nested CSTL contracts
         if: matrix.family == 'windows'
         shell: cmd
         run: |
@@ -208,7 +240,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.configure_preset }}" --output-on-failure -R "^(cmeta_scope_|cstl_generic_identity_test$|cstl_semantic_projection_test$|cstl_typed_decl_cpp_test$)"
+          ctest --preset "${{ matrix.configure_preset }}" --output-on-failure -R "^(cmeta_scope_|cmeta_execution_test$|cmeta_collector_test$|concurrency_rcu_test$|concurrency_header_cpp_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_semantic_projection_test$|cstl_typed_decl_cpp_test$)"
 
       - name: Source hygiene
         shell: bash
