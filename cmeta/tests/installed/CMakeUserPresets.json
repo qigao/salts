@@ -28,6 +28,16 @@
       }
     },
     {
+      "name": "installed-linux-clang-release",
+      "inherits": ["Clang", "installed-linux-release"],
+      "binaryDir": "${sourceDir}/build/linux-clang-release"
+    },
+    {
+      "name": "installed-macos-clang-release",
+      "inherits": ["AppleClang", "installed-mac-arm64-release"],
+      "binaryDir": "${sourceDir}/build/mac-arm64-clang-release"
+    },
+    {
       "name": "installed-mac-x64-release",
       "inherits": "mac-x64-release-ci",
       "binaryDir": "${sourceDir}/build/mac-x64-release",
@@ -73,6 +83,14 @@
       "configurePreset": "installed-linux-release"
     },
     {
+      "name": "installed-linux-clang-release",
+      "configurePreset": "installed-linux-clang-release"
+    },
+    {
+      "name": "installed-macos-clang-release",
+      "configurePreset": "installed-macos-clang-release"
+    },
+    {
       "name": "installed-mac-x64-release",
       "configurePreset": "installed-mac-x64-release"
     },
@@ -86,6 +104,16 @@
     }
   ],
   "testPresets": [
+    {
+      "name": "installed-linux-clang-release",
+      "inherits": "installed-linux-release",
+      "configurePreset": "installed-linux-clang-release"
+    },
+    {
+      "name": "installed-macos-clang-release",
+      "inherits": "installed-mac-arm64-release",
+      "configurePreset": "installed-macos-clang-release"
+    },
     {
       "name": "installed-win-release",
       "configurePreset": "installed-win-release",

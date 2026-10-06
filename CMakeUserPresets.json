@@ -382,6 +382,29 @@
             }
         },
         {
+            "name": "linux-clang-release-ci",
+            "inherits": [
+                "Clang",
+                "linux-release-ci"
+            ],
+            "binaryDir": "${sourceDir}/build/linux-clang-release",
+            "environment": {
+                "SALTS_ROOT": "${sourceDir}/stage/sdk/linux-clang-release",
+                "PATH": "${sourceDir}/build/linux-clang-release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
+            }
+        },
+        {
+            "name": "mac-arm64-clang-release-ci",
+            "inherits": [
+                "AppleClang",
+                "mac-arm64-release-ci"
+            ],
+            "binaryDir": "${sourceDir}/build/mac-arm64-clang-release",
+            "environment": {
+                "SALTS_ROOT": "${sourceDir}/stage/sdk/macos-clang-release"
+            }
+        },
+        {
             "name": "linux-arm64-release-ci",
             "inherits": [
                 "vcpkg-cache-ci",
@@ -688,6 +711,24 @@
             "configurePreset": "linux-release-ci"
         },
         {
+            "name": "linux-clang-release-ci",
+            "configurePreset": "linux-clang-release-ci"
+        },
+        {
+            "name": "install-linux-clang-release-ci",
+            "configurePreset": "linux-clang-release-ci",
+            "targets": ["install"]
+        },
+        {
+            "name": "mac-arm64-clang-release-ci",
+            "configurePreset": "mac-arm64-clang-release-ci"
+        },
+        {
+            "name": "install-mac-arm64-clang-release-ci",
+            "configurePreset": "mac-arm64-clang-release-ci",
+            "targets": ["install"]
+        },
+        {
             "name": "mac-x64-release-ci",
             "configurePreset": "mac-x64-release-ci"
         },
@@ -835,6 +876,16 @@
             "name": "linux-release-ci",
             "inherits": "base-test",
             "configurePreset": "linux-release-ci"
+        },
+        {
+            "name": "linux-clang-release-ci",
+            "inherits": "base-test",
+            "configurePreset": "linux-clang-release-ci"
+        },
+        {
+            "name": "mac-arm64-clang-release-ci",
+            "inherits": "base-test",
+            "configurePreset": "mac-arm64-clang-release-ci"
         },
         {
             "name": "linux-dev-ci",

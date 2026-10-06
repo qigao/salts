@@ -43,12 +43,18 @@ jobs:
       - name: Prepare build host
         uses: ./.github/actions/setup-build-host
       - name: Prepare macOS GNU compiler
-        if: matrix.family == 'mac'
+        if: matrix.family == 'mac' && !matrix.clang
         shell: bash
         run: |
           set -euo pipefail
           brew install gcc@15
           echo "$(brew --prefix gcc@15)/bin" >> "$GITHUB_PATH"
+      - name: Prepare Linux Clang compiler
+        if: matrix.family == 'linux' && matrix.clang
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install --yes clang
       - name: Setup build environment
         if: matrix.family == 'android'
         id: android_env
@@ -147,11 +153,11 @@ jobs:
           PROJECT_ROOT: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          cmake --build --preset install-linux-release-ci
-          export CMETA_PACKAGE_ROOT="$PROJECT_ROOT/stage/sdk/linux-x64"
+          cmake --build --preset "install-${{ matrix.preset }}"
+          export CMETA_PACKAGE_ROOT="$PROJECT_ROOT/stage/sdk/${{ matrix.sdk || matrix.id }}"
           cd cmeta/tests/installed
-          cmake --preset installed-linux-release -DCMAKE_SUPPRESS_REGENERATION=ON
-          cmake --build --preset installed-linux-release --parallel 2
+          cmake --preset "installed-${{ matrix.id }}" -DCMAKE_SUPPRESS_REGENERATION=ON
+          cmake --build --preset "installed-${{ matrix.id }}" --parallel 2
         if: matrix.projection
       - name: Install SDK
         shell: bash
