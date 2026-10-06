@@ -17,3 +17,11 @@ bool salts_fast_key_consume(salts_fast_key_state *key) {
     return atomic_exchange_explicit(
         &key->enabled, false, memory_order_acq_rel);
 }
+
+int salts_fast_enable(salts_fast_key_state *key) {
+    return salts_fast_key_set(key, true);
+}
+
+int salts_fast_disable(salts_fast_key_state *key) {
+    return salts_fast_key_set(key, false);
+}
