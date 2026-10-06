@@ -34,7 +34,7 @@ int main(void) {
     if (counter_add(&obj, 3) != 5 || counter_value(&obj) != 5) return 3;
     counter_reset(&obj);
     if (counter_value(&obj) != 0) return 4;
-    if (cmeta_type_find("int") != &cmeta_type_int) return 5;
+    if (cmeta_builtin_type_find("int") != &cmeta_type_int) return 5;
     if (FieldCount(point) != 2u || !FieldFind(point, "y")) return 6;
     printf("standalone CMeta: Enum + Struct + interface + type registry PASS\n");
     return 0;

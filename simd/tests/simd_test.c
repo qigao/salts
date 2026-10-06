@@ -8,8 +8,8 @@ static void test_descriptors(void) {
     const cmeta_vector_desc *desc;
 
     assert(sizeof(salts_v128) == 16u);
-    assert(cmeta_type_find("i32x4") == &cmeta_type_i32x4);
-    assert(cmeta_type_find("b32x4") == &cmeta_type_b32x4);
+    assert(cmeta_builtin_type_find("i32x4") == &cmeta_type_i32x4);
+    assert(cmeta_builtin_type_find("b32x4") == &cmeta_type_b32x4);
 
     desc = cmeta_vector_desc_for_type(&cmeta_type_i32x4);
     assert(desc == &cmeta_vector_i32x4);

@@ -563,8 +563,8 @@ suite("CMeta core") {
                     sizeof(cmeta_type_desc *));
     }
 
-    it("exposes builtin type metadata through a bounded registry") {
-        const cmeta_type_desc *int_type = cmeta_type_find("int");
+    it("exposes builtin type metadata through a bounded catalog") {
+        const cmeta_type_desc *int_type = cmeta_builtin_type_find("int");
         cmeta_type_desc equivalent;
 
         check_not_null(int_type);
@@ -575,9 +575,9 @@ suite("CMeta core") {
 
         equivalent = *int_type;
         check_true(cmeta_type_equal(int_type, &equivalent));
-        check_null(cmeta_type_find("not-a-cmeta-type"));
-        check_null(cmeta_type_find(NULL));
-        check_null(cmeta_type_registry_at(cmeta_type_registry_count()));
+        check_null(cmeta_builtin_type_find("not-a-cmeta-type"));
+        check_null(cmeta_builtin_type_find(NULL));
+        check_null(cmeta_builtin_type_at(cmeta_builtin_type_count()));
     }
 
     it("rejects malformed unnamed type descriptors") {
