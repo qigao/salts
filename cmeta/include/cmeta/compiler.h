@@ -1,6 +1,26 @@
 #ifndef CMETA_COMPILER_H
 #define CMETA_COMPILER_H
 
+#include <stddef.h>
+
+/* Preserve the public inline-storage ABI, including MSVC's alignment members. */
+#if defined(_MSC_VER)
+#define CMETA_MAX_ALIGN_MEMBERS \
+    long double _align_long_double; \
+    long long _align_long_long; \
+    void *_align_pointer;
+#else
+#define CMETA_MAX_ALIGN_MEMBERS max_align_t _align;
+#endif
+
+/* MSVC's C atomic lock-free query is not an integer constant expression.
+ * Native slots still require their independent size/alignment layout proof. */
+#if !defined(_MSC_VER) || defined(__clang__)
+#define CMETA_HAS_ATOMIC_POINTER_LOCK_FREE_CONSTANT 1
+#else
+#define CMETA_HAS_ATOMIC_POINTER_LOCK_FREE_CONSTANT 0
+#endif
+
 /* A missing compiler query reports unsupported; it never enables a substitute
  * implementation. Keep vendor probes here rather than in declaration DSLs. */
 #ifdef __has_builtin

@@ -2,6 +2,7 @@
 #define CMETA_H
 
 #include <cmeta/status.h>
+#include <cmeta/compiler.h>
 #include <cmeta/type_identity.h>
 #include <cmeta/type_traits.h>
 
@@ -232,13 +233,7 @@ typedef struct cmeta_fn {
 #define CMETA_CAPTURE_INLINE 32u
 
 typedef union cmeta_capture_storage {
-#if defined(_MSC_VER)
-    long double _align_long_double;
-    long long _align_long_long;
-    void *_align_pointer;
-#else
-    max_align_t _align;
-#endif
+    CMETA_MAX_ALIGN_MEMBERS
     unsigned char bytes[CMETA_CAPTURE_INLINE];
 } cmeta_capture_storage;
 
