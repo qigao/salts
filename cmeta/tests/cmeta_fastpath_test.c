@@ -23,7 +23,7 @@ cmeta_static_call(fastpath_borrow_slot, fastpath_borrow);
 cmeta_static_call(fastpath_publication_slot, fastpath_unpublished);
 
 typedef struct publication_state {
-    cmeta_static_key_state key;
+    salts_fast_key_state key;
     int payload;
     int observed;
     bool native;
@@ -33,11 +33,11 @@ static void publication_reader(void *arg) {
     publication_state *state = (publication_state *)arg;
     for (int round = 0; round < FASTPATH_POLL_ROUNDS; ++round) {
         bool enabled;
-#if CMETA_NATIVE_FASTPATH
-        if (state->native) enabled = cmeta_static_branch_native(&state->key);
+#if SALTS_PLATFORM_NATIVE_FASTPATH
+        if (state->native) enabled = salts_fast_key_read_native(&state->key);
         else
 #endif
-            enabled = cmeta_static_branch(&state->key);
+            enabled = salts_fast_branch(&state->key);
         if (enabled) {
             state->observed = state->payload;
             return;
@@ -50,7 +50,7 @@ static void target_publication_reader(void *arg) {
     publication_state *state = (publication_state *)arg;
     for (int round = 0; round < FASTPATH_POLL_ROUNDS; ++round) {
         fastpath_publication_slot_target_type target;
-#if CMETA_NATIVE_FASTPATH
+#if SALTS_PLATFORM_NATIVE_FASTPATH
         if (state->native) target = fastpath_publication_slot_load_native(&fastpath_publication_slot);
         else
 #endif
@@ -86,7 +86,7 @@ static void replacement_reader(void *arg) {
         int value = cmeta_static_invoke(fastpath_test_slot, FASTPATH_INPUT);
         if (value != FASTPATH_OLD_RESULT && value != FASTPATH_NEW_RESULT)
             atomic_fetch_add(&state->errors, 1);
-#if CMETA_NATIVE_FASTPATH
+#if SALTS_PLATFORM_NATIVE_FASTPATH
         value = cmeta_static_native_invoke(fastpath_test_slot, FASTPATH_INPUT);
         if (value != FASTPATH_OLD_RESULT && value != FASTPATH_NEW_RESULT)
             atomic_fetch_add(&state->errors, 1);
@@ -97,39 +97,39 @@ static void replacement_reader(void *arg) {
 
 suite("CMeta static fastpath") {
     it("publishes bounded keys and rejects NULL control inputs") {
-        cmeta_static_key(disabled, false);
-        cmeta_static_key(enabled, true);
-        check_false(cmeta_static_branch(&disabled));
-        check_true(cmeta_static_key_read(&enabled));
-        check_equal(cmeta_static_enable(&disabled), CMETA_OK);
-        check_equal(cmeta_static_enable(&disabled), CMETA_OK);
-        check_true(cmeta_static_branch(&disabled));
-#if CMETA_NATIVE_FASTPATH
-        bool (*volatile indirect)(const cmeta_static_key_state *) = cmeta_static_branch_native;
+        SALTS_FAST_KEY(disabled, false);
+        SALTS_FAST_KEY(enabled, true);
+        check_false(salts_fast_branch(&disabled));
+        check_true(salts_fast_key_read(&enabled));
+        check_equal(salts_fast_enable(&disabled), CMETA_OK);
+        check_equal(salts_fast_enable(&disabled), CMETA_OK);
+        check_true(salts_fast_branch(&disabled));
+#if SALTS_PLATFORM_NATIVE_FASTPATH
+        bool (*volatile indirect)(const salts_fast_key_state *) = salts_fast_key_read_native;
         check_true(atomic_is_lock_free(&disabled.enabled));
         check_true(atomic_is_lock_free(&fastpath_test_slot.target));
         check_true(atomic_is_lock_free(&fastpath_pair_slot.target));
         check_true(atomic_is_lock_free(&fastpath_callback_slot.target));
-        check_true(cmeta_static_branch_native(&disabled));
-        check_true(cmeta_static_branch_native(&enabled));
+        check_true(salts_fast_key_read_native(&disabled));
+        check_true(salts_fast_key_read_native(&enabled));
         check_true(indirect(&enabled));
 #endif
-        check_equal(cmeta_static_disable(&disabled), CMETA_OK);
-        check_false(cmeta_static_branch(&disabled));
-#if CMETA_NATIVE_FASTPATH
-        check_false(cmeta_static_branch_native(&disabled));
+        check_equal(salts_fast_disable(&disabled), CMETA_OK);
+        check_false(salts_fast_branch(&disabled));
+#if SALTS_PLATFORM_NATIVE_FASTPATH
+        check_false(salts_fast_key_read_native(&disabled));
 #endif
-        check_equal(cmeta_static_key_set(NULL, true), CMETA_INVALID_ARGUMENT);
-        check_equal(cmeta_static_disable(NULL), CMETA_INVALID_ARGUMENT);
+        check_equal(salts_fast_key_set(NULL, true), CMETA_INVALID_ARGUMENT);
+        check_equal(salts_fast_disable(NULL), CMETA_INVALID_ARGUMENT);
     }
 
     it("acquire readers observe data published before enabling") {
-        for (int backend = 0; backend <= CMETA_NATIVE_FASTPATH; ++backend) {
+        for (int backend = 0; backend <= SALTS_PLATFORM_NATIVE_FASTPATH; ++backend) {
             publication_state state = { {false}, 0, 0, backend != 0 };
             salts_thread_t thread = NULL;
             check_equal(salts_thread_create(&thread, publication_reader, &state), 0);
             state.payload = FASTPATH_PUBLISHED;
-            check_equal(cmeta_static_enable(&state.key), CMETA_OK);
+            check_equal(salts_fast_enable(&state.key), CMETA_OK);
             check_equal(salts_thread_join(&thread), 0);
             salts_thread_destroy(&thread);
             check_equal(state.observed, FASTPATH_PUBLISHED);
@@ -146,13 +146,13 @@ suite("CMeta static fastpath") {
         check_equal(cmeta_static_invoke(fastpath_test_slot, FASTPATH_INPUT), FASTPATH_OLD_RESULT);
         check_equal(fastpath_test_slot_set(&fastpath_test_slot, fastpath_other, replacement), CMETA_OK);
         check_equal(cmeta_static_invoke(fastpath_test_slot, FASTPATH_INPUT), FASTPATH_NEW_RESULT);
-#if CMETA_NATIVE_FASTPATH
+#if SALTS_PLATFORM_NATIVE_FASTPATH
         check_equal(cmeta_static_native_invoke(fastpath_test_slot, FASTPATH_INPUT), FASTPATH_NEW_RESULT);
 #endif
     }
 
     it("target acquire loads observe data published before replacement") {
-        for (int backend = 0; backend <= CMETA_NATIVE_FASTPATH; ++backend) {
+        for (int backend = 0; backend <= SALTS_PLATFORM_NATIVE_FASTPATH; ++backend) {
             publication_state state = {{false}, 0, 0, backend != 0};
             salts_thread_t thread = NULL;
             check_equal(cmeta_static_update(fastpath_publication_slot, fastpath_unpublished), CMETA_OK);
@@ -254,7 +254,7 @@ suite("CMeta static fastpath") {
         cmeta_static_invoke0(fastpath_void_zero_slot);
         check_equal(fastpath_void_sink, FASTPATH_PUBLISHED);
         check_equal(cmeta_static_invoke0(fastpath_zero_slot), FASTPATH_PUBLISHED);
-#if CMETA_NATIVE_FASTPATH
+#if SALTS_PLATFORM_NATIVE_FASTPATH
         check_true(cmeta_static_native_invoke(fastpath_borrow_slot, borrowed) == borrowed);
         output = cmeta_static_native_invoke(fastpath_pair_slot, input, 2.5);
         check_equal(output.value, 4.0);
