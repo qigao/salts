@@ -75,6 +75,7 @@ function Get-PairedRatioSummary(
 
 $policy = Get-Content -LiteralPath $PolicyPath -Raw | ConvertFrom-Json
 $rows = [System.Collections.Generic.List[object]]::new()
+$metrics = [System.Collections.Generic.List[object]]::new()
 $suppressedContracts = 0
 
 foreach ($family in @($policy.families)) {
@@ -108,6 +109,17 @@ foreach ($family in @($policy.families)) {
       $result = "PASS"
     }
     $observed = ("backend={0}; rate={1:+0.00;-0.00;0.00}% MAD={2:0.00}pp; p50={3:+0.00;-0.00;0.00}% MAD={4:0.00}pp; p95={5:+0.00;-0.00;0.00}% MAD={6:0.00}pp" -f $r.backend,$rate,$rateMad,$p50,$p50Mad,$p95,$p95Mad)
+    foreach ($metric in @(
+      @{ name = "throughput"; value = $rate; mad = $rateMad },
+      @{ name = "p50 latency"; value = $p50; mad = $p50Mad },
+      @{ name = "p95 latency"; value = $p95; mad = $p95Mad }
+    )) {
+      $metrics.Add([pscustomobject]@{
+        backend = $Backend; family = $family.id; metric = $metric.name
+        payload_bytes = 65536; value = $metric.value; mad = $metric.mad
+        unit = "percent"; result = $result
+      })
+    }
   } elseif ($family.pr_mode -eq "anchor-candidate" -and
             $family.id -in @("cnet_owner_parallel","cnet_shards_parallel","cnet_external_owner_parallel")) {
     $ownerPath = Join-Path $EvidenceDir "cnet-owner-parallel-two_cpu_distinct_core.csv"
@@ -145,6 +157,12 @@ foreach ($family in @($policy.families)) {
         if ($summary.RelativeMadPercent -gt $limit) { $unstable = $true }
         $payloadLabel = if ($payload -eq 1024) { "1KiB" } elseif ($payload -eq 65536) { "64KiB" } else { "$payload B" }
         $parts += ("{0} {1}={2:N3}x relMAD={3:N2}% n={4}" -f $payloadLabel,$ratioLabel,$summary.Median,$summary.RelativeMadPercent,$summary.Repeats)
+        $metrics.Add([pscustomobject]@{
+          backend = $Backend; family = $family.id; metric = $ratioLabel
+          payload_bytes = $payload; value = $summary.Median; mad = $summary.Mad
+          repeats = $summary.Repeats; unit = "ratio"
+          result = $(if ($summary.RelativeMadPercent -gt $limit) { "UNSTABLE" } else { "DIAGNOSTIC" })
+        })
       }
       $result = if ($unstable) { "UNSTABLE" } else { "DIAGNOSTIC" }
       $noiseState = if ($unstable) { "unstable" } else { "stable-candidate" }
@@ -180,6 +198,11 @@ foreach ($family in @($policy.families)) {
 $outputDir = Split-Path -Parent $OutputPath
 if (-not [string]::IsNullOrWhiteSpace($outputDir)) { New-Item -ItemType Directory -Force -Path $outputDir | Out-Null }
 $rows | Export-Csv -LiteralPath $OutputPath -NoTypeInformation
+# Charts consume the same calculated values as verdicts, never parse display text.
+ConvertTo-Json -Depth 5 -InputObject @{
+  schema_version = 1; backend = $Backend; job_status = $JobStatus
+  metrics = @($metrics.ToArray())
+} | Set-Content -LiteralPath (Join-Path $(if ($outputDir) { $outputDir } else { "." }) "benchmark-metrics.json")
 Write-Host ("Benchmark verdict rows: {0}; backend={1}; job_status={2}; suppressed_contract_rows={3}" -f $rows.Count,$Backend,$JobStatus,$suppressedContracts)
 
 if ($WriteSummary) {

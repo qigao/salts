@@ -18,7 +18,7 @@ jobs:
       - name: Validate benchmark decision policy
         shell: pwsh
         run: |
-          ./cmake/ci/verify-benchmark-policy.ps1 -ProjectRoot . -WriteSummary
+          ./cmake/ci/verify-benchmark-policy.ps1 -ProjectRoot .
       - name: Validate PR artifact pruning contract
         shell: pwsh
         run: |
@@ -132,10 +132,6 @@ jobs:
             "baseline_dso=$env:CNET_COMPARE_BASELINE_DSO"
             "candidate_dso=$env:CNET_COMPARE_CANDIDATE_DSO"
           ) | Set-Content -LiteralPath (Join-Path $resultDir "cnet-owner-compare-metadata.txt")
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CNet owner PR-base versus candidate: IOCP"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Get-Content -LiteralPath $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Run NativeIO Sharded same-owner versus cross-owner routing benchmark
         if: fromJSON(inputs.scope).native_owner == 'true'
         shell: pwsh
@@ -160,10 +156,6 @@ jobs:
             -Path "$env:NATIVE_IO_SHARDED_BENCH_OUTPUT.csv" `
             -Backend $env:NATIVE_IO_SHARDED_BENCH_BACKEND
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO Sharded routing: $env:NATIVE_IO_SHARDED_BENCH_BACKEND"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Prepare Linux benchmark CPU topology
         if: matrix.family == 'linux' && (fromJSON(inputs.scope).native_owner == 'true' || fromJSON(inputs.scope).cnet_owner == 'true' || fromJSON(inputs.scope).coroutine == 'true')
         shell: bash
@@ -257,26 +249,18 @@ jobs:
               -Backend "$NATIVE_IO_OWNER_HANDOFF_BACKEND" \
               -CpuSet "$label" \
               -Profile "$SALTS_BENCH_PROFILE"
-            {
-              echo ""
-              echo "## NativeIO owner-to-owner handoff: $NATIVE_IO_OWNER_HANDOFF_BACKEND / $label ($cpuset)"
-              echo ""
-              cat "$prefix.md"
-            } >> "$GITHUB_STEP_SUMMARY"
           }
 
           run_case one_cpu "$one_cpu_set"
           if [[ "$two_cpu_same_core_set" != "unavailable" ]]; then
             run_case two_cpu_same_core "$two_cpu_same_core_set"
           else
-            echo "No second logical CPU on the first physical core; SMT-pair case skipped." |
-              tee -a "$GITHUB_STEP_SUMMARY"
+            echo "No second logical CPU on the first physical core; SMT-pair case skipped."
           fi
           if [[ "$two_cpu_distinct_core_set" != "unavailable" ]]; then
             run_case two_cpu_distinct_core "$two_cpu_distinct_core_set"
           else
-            echo "No CPU on a distinct physical core; distinct-core case skipped." |
-              tee -a "$GITHUB_STEP_SUMMARY"
+            echo "No CPU on a distinct physical core; distinct-core case skipped."
           fi
       - name: Run NativeIO owner one-way mailbox CPU-set sweep
         if: matrix.family == 'linux' && fromJSON(inputs.scope).native_owner == 'true'
@@ -313,12 +297,6 @@ jobs:
               -Backend "$NATIVE_IO_OWNER_MAILBOX_BACKEND" \
               -CpuSet "$label" \
               -Profile "$SALTS_BENCH_PROFILE"
-            {
-              echo ""
-              echo "## NativeIO owner one-way mailbox: $NATIVE_IO_OWNER_MAILBOX_BACKEND / $label ($cpuset)"
-              echo ""
-              cat "$prefix.md"
-            } >> "$GITHUB_STEP_SUMMARY"
           }
 
           run_case one_cpu "$one_cpu_set"
@@ -352,10 +330,6 @@ jobs:
             -CpuSet default `
             -Profile $env:SALTS_BENCH_PROFILE
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO owner one-way mailbox: $env:NATIVE_IO_OWNER_MAILBOX_BACKEND / default"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Run NativeIO owner-local parallel CPU-set sweep
         if: matrix.family == 'linux' && fromJSON(inputs.scope).native_owner == 'true'
         shell: bash
@@ -389,12 +363,6 @@ jobs:
               -Path "$prefix.csv" \
               -Backend "$NATIVE_IO_OWNER_LOCAL_PARALLEL_BACKEND" \
               -CpuSet "$label"
-            {
-              echo ""
-              echo "## NativeIO owner-local parallel throughput: $NATIVE_IO_OWNER_LOCAL_PARALLEL_BACKEND / $label ($cpuset)"
-              echo ""
-              cat "$prefix.md"
-            } >> "$GITHUB_STEP_SUMMARY"
           }
 
           run_case one_cpu "$one_cpu_set"
@@ -444,12 +412,6 @@ jobs:
               -CpuA "$cpu_a" \
               -CpuB "$cpu_b"
 
-            {
-              echo ""
-              echo "## CNet independent-owner scaling: $CNET_IO_BENCHMARK_BACKEND / $label (owners $cpu_a,$cpu_b)"
-              echo ""
-              cat "$prefix.md"
-            } >> "$GITHUB_STEP_SUMMARY"
           }
 
           run_case one_cpu "$one_cpu_set"
@@ -507,12 +469,6 @@ jobs:
               -CpuA "$cpu_a" \
               -CpuB "$cpu_b"
 
-            {
-              echo ""
-              echo "## CNet shared-engine vs independent owners: $CNET_IO_BENCHMARK_BACKEND / $label (owners $cpu_a,$cpu_b)"
-              echo ""
-              cat "$prefix.md"
-            } >> "$GITHUB_STEP_SUMMARY"
           }
 
           run_case one_cpu "$one_cpu_set"
@@ -579,12 +535,6 @@ jobs:
               -CpuA "$cpu_a" \
               -CpuB "$cpu_b"
 
-            {
-              echo ""
-              echo "## CNet external-progress owner-affine: $CNET_IO_BENCHMARK_BACKEND / $label (owners $cpu_a,$cpu_b)"
-              echo ""
-              cat "$prefix.md"
-            } >> "$GITHUB_STEP_SUMMARY"
           }
 
           run_case one_cpu "$one_cpu_set"
@@ -642,12 +592,6 @@ jobs:
               -CpuA "$cpu_a" \
               -CpuB "$cpu_b"
 
-            {
-              echo ""
-              echo "## CNet central-callback vs owner-affine: $CNET_IO_BENCHMARK_BACKEND / $label (owners $cpu_a,$cpu_b; central shares $cpu_a)"
-              echo ""
-              cat "$prefix.md"
-            } >> "$GITHUB_STEP_SUMMARY"
           }
 
           run_case one_cpu "$one_cpu_set"
@@ -680,10 +624,6 @@ jobs:
             -Backend $env:NATIVE_IO_OWNER_LOCAL_PARALLEL_BACKEND `
             -CpuSet default
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO owner-local parallel throughput: $env:NATIVE_IO_OWNER_LOCAL_PARALLEL_BACKEND / default"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Run Coroutine Executor batch admission CPU-set sweep
         if: matrix.family == 'linux' && fromJSON(inputs.scope).coroutine == 'true'
         shell: bash
@@ -713,12 +653,6 @@ jobs:
             export SALTS_CORO_EXECUTOR_BATCH_BENCH_OUTPUT="$prefix"
             taskset -c "$cpuset" ctest --test-dir "${{ matrix.build_dir }}" --no-tests=error -V -R "^$(basename "$benchmark")$" 2>&1 | tee "$prefix.md"
             pwsh ./coroutine/benchmarks/verify_executor_batch_benchmark.ps1 -Path "$prefix.csv" -Profile "$SALTS_BENCH_PROFILE"
-            {
-              echo ""
-              echo "## Coroutine Executor producer batch admission / $label ($cpuset)"
-              echo ""
-              cat "$prefix.md"
-            } >> "$GITHUB_STEP_SUMMARY"
           }
 
           run_case one_cpu "$one_cpu_set"
@@ -748,10 +682,6 @@ jobs:
             -Path "$env:SALTS_CORO_EXECUTOR_BATCH_BENCH_OUTPUT.csv" `
             -Profile $env:SALTS_BENCH_PROFILE
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## Coroutine Executor producer batch admission / default"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Run Coroutine Executor dequeue batch CPU-set sweep
         if: matrix.family == 'linux' && fromJSON(inputs.scope).coroutine == 'true'
         shell: bash
@@ -781,12 +711,6 @@ jobs:
             export SALTS_CORO_EXECUTOR_DEQUEUE_BATCH_BENCH_OUTPUT="$prefix"
             taskset -c "$cpuset" ctest --test-dir "${{ matrix.build_dir }}" --no-tests=error -V -R "^$(basename "$benchmark")$" 2>&1 | tee "$prefix.md"
             pwsh ./coroutine/benchmarks/verify_executor_dequeue_batch_benchmark.ps1 -Path "$prefix.csv" -Profile "$SALTS_BENCH_PROFILE"
-            {
-              echo ""
-              echo "## Coroutine Executor consumer dequeue batching / $label ($cpuset)"
-              echo ""
-              cat "$prefix.md"
-            } >> "$GITHUB_STEP_SUMMARY"
           }
 
           run_case one_cpu "$one_cpu_set"
@@ -817,10 +741,6 @@ jobs:
             -Path "$env:SALTS_CORO_EXECUTOR_DEQUEUE_BATCH_BENCH_OUTPUT.csv" `
             -Profile $env:SALTS_BENCH_PROFILE
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## Coroutine Executor consumer dequeue batching / default"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Run NativeIO PIPE execution-style benchmark
         if: fromJSON(inputs.scope).native_style == 'true'
         shell: pwsh
@@ -845,10 +765,6 @@ jobs:
             -Path "$env:NATIVE_IO_PIPE_STYLE_OUTPUT.csv" `
             -Backend $env:NATIVE_IO_PIPE_STYLE_BACKEND
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO PIPE execution styles: $env:NATIVE_IO_PIPE_STYLE_BACKEND"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Run NativeIO TCP STREAM execution-style benchmark
         if: fromJSON(inputs.scope).native_style == 'true'
         shell: pwsh
@@ -873,10 +789,6 @@ jobs:
             -Path "$env:NATIVE_IO_STREAM_STYLE_OUTPUT.csv" `
             -Backend $env:NATIVE_IO_STREAM_STYLE_BACKEND
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO TCP STREAM execution styles: $env:NATIVE_IO_STREAM_STYLE_BACKEND"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Run NativeIO Direct/Coroutine bounded vector-write benchmark
         if: fromJSON(inputs.scope).native_style == 'true'
         shell: pwsh
@@ -897,10 +809,6 @@ jobs:
             ForEach-Object { $_ -replace '^[0-9]+: ', '' } |
             Tee-Object -FilePath (Join-Path $resultDir "native-io-vector-writes.md")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO Direct/Coroutine vector writes: $env:NATIVE_IO_STREAM_STYLE_BACKEND"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Trace NativeIO STREAM execution-style mechanisms
         if: matrix.family == 'linux' && fromJSON(inputs.scope).forensic == 'true'
         shell: bash
@@ -934,8 +842,7 @@ jobs:
             -Directory $traceDir `
             -Backend $env:NATIVE_IO_STREAM_STYLE_BACKEND
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $summary | Tee-Object -FilePath (Join-Path $traceDir "summary.md") |
-            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          $summary | Tee-Object -FilePath (Join-Path $traceDir "summary.md")
           & ./native-io/benchmarks/verify_stream_mechanism_evidence.ps1 `
             -StyleCsv $styleCsv `
             -TraceCsv (Join-Path $traceDir "summary.csv") `
@@ -965,10 +872,6 @@ jobs:
             -Path "$env:NATIVE_IO_UDP_STYLE_OUTPUT.csv" `
             -Backend $env:NATIVE_IO_UDP_STYLE_BACKEND
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO UDP DATAGRAM execution styles: $env:NATIVE_IO_UDP_STYLE_BACKEND"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Run NativeIO AF_VSOCK execution-style benchmark
         if: matrix.family == 'linux' && fromJSON(inputs.scope).native_style == 'true'
         shell: pwsh
@@ -991,20 +894,12 @@ jobs:
           if ($benchmarkExit -ne 0) { exit $benchmarkExit }
           [xml]$result = Get-Content -LiteralPath (Join-Path $resultDir "vsock-ctest.xml") -Raw
           if ($result.SelectNodes("//testcase/skipped").Count -gt 0) {
-            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO AF_VSOCK execution styles: $env:NATIVE_IO_VSOCK_STYLE_BACKEND"
-            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-            $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
             Write-Host "AF_VSOCK unavailable on this runtime; no TCP fallback was attempted."
           } else {
             & ./native-io/benchmarks/verify_vsock_styles_benchmark.ps1 `
               -Path "$env:NATIVE_IO_VSOCK_STYLE_OUTPUT.csv" `
               -Backend $env:NATIVE_IO_VSOCK_STYLE_BACKEND
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO AF_VSOCK execution styles: $env:NATIVE_IO_VSOCK_STYLE_BACKEND"
-            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-            $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
           }
       - name: Run retained TLS contiguous versus slicev benchmark
         if: fromJSON(inputs.scope).cnet_sg == 'true'
@@ -1030,10 +925,6 @@ jobs:
             -Path "$env:CNET_TLS_SG_BENCH_OUTPUT.csv" `
             -Backend $env:CNET_TLS_SG_BENCH_BACKEND
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CNet retained TLS contiguous versus slicev: $env:CNET_TLS_SG_BENCH_BACKEND"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Run TLS provider parallel attribution
         if: matrix.family == 'linux' && matrix.backend == 'epoll' && fromJSON(inputs.scope).cnet_sg == 'true'
         shell: bash
@@ -1065,12 +956,6 @@ jobs:
 
           python3 ./cnet/benchmarks/verify_tls_provider_parallel_benchmark.py "$jsonl" \
             | tee "$result_dir/cnet-tls-provider-parallel.md"
-          {
-            echo
-            echo "## CNet TLS provider parallel attribution"
-            echo
-            cat "$result_dir/cnet-tls-provider-parallel.md"
-          } >> "$GITHUB_STEP_SUMMARY"
       - name: Run public CNet TLS owner attribution
         if: matrix.family == 'linux' && matrix.backend == 'epoll' && fromJSON(inputs.scope).cnet_sg == 'true'
         shell: bash
@@ -1141,20 +1026,6 @@ jobs:
             done
           done
 
-          {
-            echo
-            echo "## CNet public TLS owner attribution"
-            echo
-            cat "$result_dir/cnet-tls-public-owner.md"
-            echo
-            echo "## CNet TLS receive-demand A/B"
-            echo
-            cat "$demand_jsonl"
-            echo
-            echo "## CNet TLS concurrency-shape A/B"
-            echo
-            cat "$concurrency_jsonl"
-          } >> "$GITHUB_STEP_SUMMARY"
       - name: Run borrowed-copy versus owned receive benchmark
         if: fromJSON(inputs.scope).cnet_io == 'true'
         shell: pwsh
@@ -1184,10 +1055,6 @@ jobs:
               throw "Missing receive ownership evidence for payload=$payload"
             }
           }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CNet borrowed-copy versus owned receive: $env:CNET_IO_BENCHMARK_BACKEND"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Run flatten versus NativeIO SG merge-gate comparison
         if: fromJSON(inputs.scope).cnet_sg == 'true'
         shell: pwsh
@@ -1253,10 +1120,6 @@ jobs:
           $evidence | ForEach-Object { Write-Host $_ }
           Write-Host "SG cross-window evidence: $env:CNET_IO_BENCHMARK_BACKEND"
           $windowEvidence | ForEach-Object { Write-Host $_ }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## Flatten versus retained SG + cross-window qualification: $env:CNET_IO_BENCHMARK_BACKEND"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Run libuv versus NativeIO direct/coroutine versus CNet retained benchmark
         if: fromJSON(inputs.scope).cnet_io == 'true'
         shell: pwsh
@@ -1289,10 +1152,6 @@ jobs:
             "image_os=$env:ImageOS"
             "image_version=$env:ImageVersion"
           ) | Set-Content -LiteralPath (Join-Path $resultDir "metadata.txt")
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## libuv versus NativeIO direct/coroutine versus CNet retained: $env:BENCHMARK_HOST"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Run NativeIO direct versus CNet retained scaling benchmark
         if: matrix.family == 'linux' && fromJSON(inputs.scope).cnet_io == 'true'
         shell: pwsh
@@ -1312,10 +1171,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & ./cnet/benchmarks/verify_scaling_benchmark.ps1 -Path "$env:CNET_SCALING_BENCHMARK_OUTPUT.csv"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO direct versus CNet retained scaling: $env:CNET_IO_BENCHMARK_BACKEND"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Run NativeIO io_uring idle observe benchmark
         if: matrix.family == 'linux' && matrix.backend == 'io_uring' && fromJSON(inputs.scope).native_uring == 'true'
         shell: pwsh
@@ -1334,10 +1189,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & ./native-io/benchmarks/verify_idle_observe_benchmark.ps1 -Path "$env:NATIVE_IO_IDLE_OBSERVE_OUTPUT.csv"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO io_uring idle observe(0)"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Run NativeIO io_uring queue-depth benchmark
         if: matrix.family == 'linux' && matrix.backend == 'io_uring' && fromJSON(inputs.scope).native_uring == 'true'
         shell: pwsh
@@ -1356,10 +1207,6 @@ jobs:
           $output = ctest --test-dir "${{ matrix.build_dir }}" --no-tests=error -V -R "^$([IO.Path]::GetFileNameWithoutExtension($benchmark))$" 2>&1 | ForEach-Object { $_ -replace '^[0-9]+: ', '' } | Tee-Object -FilePath (Join-Path $resultDir "native-io-queue-depth.md")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & ./native-io/benchmarks/verify_queue_depth_benchmark.ps1 -Path "$env:NATIVE_IO_QD_BENCHMARK_OUTPUT.csv" -Profile $env:SALTS_BENCH_PROFILE
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO io_uring queue-depth benchmark"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Trace NativeIO io_uring queue-depth control path
         if: matrix.family == 'linux' && matrix.backend == 'io_uring' && fromJSON(inputs.scope).forensic == 'true'
         shell: bash
@@ -1384,8 +1231,7 @@ jobs:
         shell: pwsh
         run: |
           ./native-io/benchmarks/summarize_queue_depth_trace.ps1 -Directory native-io-results/queue-depth-syscalls |
-            Tee-Object -FilePath native-io-results/queue-depth-syscalls/summary.txt |
-            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+            Tee-Object -FilePath native-io-results/queue-depth-syscalls/summary.txt
       - name: Collect isolated Linux syscall evidence
         if: matrix.family == 'linux' && fromJSON(inputs.scope).forensic == 'true'
         shell: bash
@@ -1421,8 +1267,7 @@ jobs:
         shell: pwsh
         run: |
           ./cnet/benchmarks/summarize_io_trace.ps1 -Directory native-io-results/syscalls |
-            Tee-Object -FilePath native-io-results/syscalls/summary.txt |
-            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+            Tee-Object -FilePath native-io-results/syscalls/summary.txt
       - name: Prune successful PR forensic artifacts
         if: success() && github.event_name == 'pull_request' && fromJSON(inputs.scope).forensic != 'true'
         shell: pwsh
@@ -1438,8 +1283,7 @@ jobs:
             -PolicyPath cmake/ci/benchmark-policy.json `
             -EvidenceDir native-io-results `
             -Backend "${{ matrix.backend }}" `
-            -JobStatus "$env:BENCHMARK_JOB_STATUS" `
-            -WriteSummary
+            -JobStatus "$env:BENCHMARK_JOB_STATUS"
       - name: Upload I/O benchmark evidence
         if: always() && fromJSON(inputs.scope).evidence == 'true'
         uses: actions/upload-artifact@v6
