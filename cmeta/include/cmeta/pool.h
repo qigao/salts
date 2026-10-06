@@ -45,14 +45,16 @@ CMETA_INLINE cmeta_status cmeta_pool_init(
     if (pool == NULL || pool->owner.self != NULL || pool->owner.storage != NULL)
         return CMETA_INVALID_ARGUMENT;
 
-    status = cmeta_lifecycle_bind(data, size, align, &ops);
-    if (status != CMETA_OK)
-        return status;
-
     owner_status = object_pool_owner_init(
         &pool->owner, size, align, capacity);
     if (owner_status != SALTS_OK)
         return cmeta_pool_owner_status(owner_status);
+
+    status = cmeta_lifecycle_bind(data, size, align, &ops);
+    if (status != CMETA_OK) {
+        (void)object_pool_owner_destroy(&pool->owner);
+        return status;
+    }
 
     pool->ops = ops;
     return CMETA_OK;
