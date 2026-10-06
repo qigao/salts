@@ -181,11 +181,14 @@ IPC endpoint rather than a network authority, so its bounded name after
 ## Socket tuning
 
 `cnet_stream_socket_options` is the public, versioned TCP policy shared by
-outgoing TCP/TLS connections and adopted listener sockets. Set it on a stopped
-`cnet_client` with `cnet_client_set_stream_socket_options()`; listener owners use
+outgoing TCP/TLS connections and detached listener sockets consumed by that
+final client owner. Set it on a stopped `cnet_client` with
+`cnet_client_set_stream_socket_options()`; listener owners use
 `cnet_listener_init_ex()` with versioned `cnet_listener_options`. The policy
 exposes OS receive/send buffers, explicit `TCP_NODELAY` via `nodelay`,
-keepalive enable plus idle/interval/probe count, and linger.
+keepalive enable plus idle/interval/probe count, and linger. Generic native
+socket adoption preserves an externally configured live policy; only
+`cnet_accepted_stream` handoff applies the final client's configured policy.
 `cnet_datagram_config.reuse_port` exposes the same listener-port
 sharing decision for UDP and the unified UDP/KCP packet endpoint.
 

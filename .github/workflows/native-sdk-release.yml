@@ -130,9 +130,9 @@ jobs:
           restore-keys: |
             vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
       - name: Configure minimal Release SDK
-        run: cmake --preset linux-release-user -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+        run: cmake --preset linux-release-ci -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build
-        run: cmake --build --preset linux-release-user --parallel 2
+        run: cmake --build --preset linux-release-ci --parallel 2
       - name: Install SDK
         shell: bash
         run: |
@@ -200,7 +200,7 @@ jobs:
         run: |
           set -euo pipefail
           cmake -S . -B build/linux-arm64-release -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN_FILE" \
             -DVCPKG_TARGET_TRIPLET=arm64-linux -DVCPKG_MANIFEST_MODE=OFF \
             -DVCPKG_INSTALLED_DIR="$GITHUB_WORKSPACE/vcpkg_installed" \
             -DSALTS_ENABLE_EPOLL_READINESS=ON -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF \
@@ -213,7 +213,7 @@ jobs:
         run: |
           set -euo pipefail
           cmake -S . -B build/linux-arm64-smoke -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN_FILE" \
             -DVCPKG_TARGET_TRIPLET=arm64-linux -DVCPKG_MANIFEST_MODE=OFF \
             -DVCPKG_INSTALLED_DIR="$GITHUB_WORKSPACE/vcpkg_installed" \
             -DSALTS_ENABLE_EPOLL_READINESS=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON \
@@ -289,9 +289,9 @@ jobs:
           restore-keys: |
             vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
       - name: Configure minimal Release SDK
-        run: cmake --preset mac-release-user -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+        run: cmake --preset mac-release-ci -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build
-        run: cmake --build --preset mac-release-user --parallel 2
+        run: cmake --build --preset mac-release-ci --parallel 2
       - name: Install SDK
         shell: bash
         run: |
@@ -376,17 +376,19 @@ jobs:
       - name: Configure minimal Release SDK
         shell: cmd
         run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset win-release-user -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          cmake --preset win-release-ci -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build
         shell: cmd
         run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --build --preset win-release-user --parallel 2
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          cmake --build --preset win-release-ci --parallel 2
       - name: Install SDK
         shell: pwsh
         run: |
@@ -490,9 +492,9 @@ jobs:
           restore-keys: |
             vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
       - name: Configure minimal Android Release SDK
-        run: cmake --preset android-arm64-v8a-release-user -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+        run: cmake --preset android-arm64-v8a-release-ci -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build
-        run: cmake --build --preset android-arm64-v8a-release-user --parallel 2
+        run: cmake --build --preset android-arm64-v8a-release-ci --parallel 2
       - name: Install SDK
         shell: bash
         run: |
@@ -579,7 +581,7 @@ jobs:
           prefix="$GITHUB_WORKSPACE/stage/sdk/${{ matrix.rid }}"
           cmake -S . -B "$build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN_FILE" \
             -DCMAKE_SYSTEM_NAME=iOS \
             -DCMAKE_OSX_SYSROOT="${{ matrix.sysroot }}" \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \

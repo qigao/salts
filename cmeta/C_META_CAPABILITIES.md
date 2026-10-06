@@ -7,7 +7,7 @@ schema-driven, and intentionally compositional rather than a universal language.
 
 - strict-C11 preprocessor kernel: finite `FOR_EACH`, indexed replay, repeat;
 - unified tuple schema kernel through `Schema(...)` / `Replay(...)`;
-- `cmeta_struct(...)` single-declaration struct + field metadata;
+- `cmeta_struct(...)` / `cmeta_field(...)` single-declaration struct + field metadata;
 - `cmeta_enum(...)` single-declaration enum + immutable metadata;
 - tagged-row `cmeta_traits(...)` with duplicate/unknown tag rejection;
 - finite generic type routing through `cmeta_type(kind, ...)`;
@@ -27,6 +27,12 @@ schema-driven, and intentionally compositional rather than a universal language.
 - transactional bounded `cmeta_collector` runtime protocol;
 - type/signature registry, callable substrate, effect/property metadata, and
   inline captures.
+
+The structured scope facade owns a finite explicit resource set, invokes a
+status-returning typed body function, and generates LIFO cleanup through
+canonical concrete DataDesc construct ops. Native returns remain inside the
+body function, and statement-block body/escaping exit syntax is rejected.
+See [scope contracts and migration](LANGUAGE_REFERENCE.md#structured-scope).
 
 ## Application DSL
 

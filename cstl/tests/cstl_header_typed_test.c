@@ -17,6 +17,26 @@ cmeta_type(Vec, HeaderGenericVec, int);
 cmeta_type(List, HeaderGenericList, int);
 cmeta_type(Map, HeaderGenericMap, int, long);
 
+static cmeta_status scoped_list_body(HeaderGenericList *values) {
+    if (HeaderGenericList_init(values, 2u) != STL_OK)
+        return CMETA_CALLBACK_ERROR;
+    if (HeaderGenericList_add(values, 11) != STL_OK)
+        return CMETA_CALLBACK_ERROR;
+    return CMETA_OK;
+}
+
+static cmeta_status scoped_move_body(
+    HeaderGenericList *source, HeaderGenericList *destination) {
+    cmeta_status status = scoped_list_body(source);
+    if (status != CMETA_OK) return status;
+    status = cmeta_move(HeaderGenericList, destination, source);
+    if (status != CMETA_OK) return status;
+    if (HeaderGenericList_size(destination) != 1u ||
+        HeaderGenericList_size(source) != 0u)
+        return CMETA_CALLBACK_ERROR;
+    return CMETA_OK;
+}
+
 #ifndef VecOf
 #error "typed.h must retain PR #53 unary expression initializers"
 #endif
@@ -25,6 +45,14 @@ cmeta_type(Map, HeaderGenericMap, int, long);
 #endif
 
 suite("CSTL typed public header") {
+    it("cleans allocated and moved-from lists through canonical scope ops") {
+        cmeta_status status;
+        cmeta_scope(lists, status,
+            cmeta_autos(cmeta_auto(HeaderGenericList, source) cmeta_auto(HeaderGenericList, destination)),
+            cmeta_body(scoped_move_body(&source, &destination)));
+        check_equal(status, CMETA_OK);
+    }
+
     it("uses cmeta_type and cmeta_move from ordinary C") {
         HeaderGenericList source = {0};
         HeaderGenericList destination = {0};

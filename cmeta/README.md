@@ -24,17 +24,17 @@ canonical semantic queries, without a second meta object model or runtime RTTI.
 Application users normally use semantic DSLs:
 
 ```c
-Struct(User,
-    (int, id),
-    (double, score)
+cmeta_struct(User,
+    cmeta_field(int, id)
+    cmeta_field(double, score)
 );
 
-Enum(State,
+cmeta_enum(State,
     (READY, "ready"),
     (DONE,  "done")
 );
 
-Traits(User,
+cmeta_traits(User,
     (equal, user_equal),
     (hash, user_hash),
     (copy, user_copy)
@@ -44,7 +44,7 @@ cmeta_type(Option, MaybeUser, User);
 cmeta_type(Pair, UserScore, User, double);
 ```
 
-Trait rows are the only supported public Traits declaration form. CMeta derives
+Trait rows are the only supported public `cmeta_traits` declaration form. CMeta derives
 both capability flags and function slots from those tagged rows. Positional
 `Traits(name, flags, ...)` compatibility has been removed.
 
@@ -52,6 +52,16 @@ both capability flags and function slots from those tagged rows. Positional
 such as `Pair`, `Tuple`, `Option`, and `Result`. Container kinds such as `List`,
 `Vec`, and `HashMap` are provided by `container`, not by the CMeta aggregate
 header.
+
+`cmeta_struct` and `cmeta_field` generate layout and Reflection metadata from
+one declaration. Tuple rows remain framework machinery, not the canonical
+application field syntax.
+
+`cmeta_scope` owns an explicit finite resource set and runs a status-returning
+body function. Native early returns from that function still reach generated
+LIFO cleanup. Scope construction and cleanup use the same canonical DataDesc
+construct ops without runtime Reflection queries or a cleanup registry. See
+[structured scope and migration](LANGUAGE_REFERENCE.md#structured-scope).
 
 ## Semantic string and byte storage adapters
 

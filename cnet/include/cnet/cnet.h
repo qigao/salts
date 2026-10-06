@@ -446,7 +446,8 @@ typedef enum cnet_tcp_socket_option {
   CNET_TCP_SOCKET_KEEPALIVE_COUNT,
   CNET_TCP_SOCKET_HOP_LIMIT,
   CNET_TCP_SOCKET_RECEIVE_BUFFER_BYTES,
-  CNET_TCP_SOCKET_SEND_BUFFER_BYTES
+  CNET_TCP_SOCKET_SEND_BUFFER_BYTES,
+  CNET_TCP_SOCKET_NODELAY
 } cnet_tcp_socket_option;
 
 /** Optional listener policy consumed synchronously by `cnet_listener_init_ex()`. */
@@ -714,8 +715,11 @@ int cnet_client_init_external(cnet_client *client,
 int cnet_stream_socket_options_validate(const cnet_stream_socket_options *options);
 
 /**
- * Copies policy for future TCP/TLS connections. No active connection may
- * exist while replacing this client-global policy.
+ * Copies policy for future TCP/TLS connections. Detached TCP streams produced
+ * by a CNet listener receive this final-owner policy when consumed through
+ * cnet_client_adopt_accepted() or cnet_client_adopt_accepted_tls(). Generic
+ * native-socket adoption preserves the socket's existing live policy.
+ * No active connection may exist while replacing this client-global policy.
  */
 int cnet_client_set_stream_socket_options(cnet_client *client,
                                           const cnet_stream_socket_options *options);
@@ -1388,8 +1392,10 @@ int cnet_listener_accept_detached(cnet_listener *listener,
 
 /**
  * Consumes one detached accepted stream into this client's owner-local TCP
- * state. The descriptor becomes empty on every consuming attempt, including
- * bounded admission failure; ownership is never returned to the caller.
+ * state. The client's configured stream socket policy is applied to the child
+ * before owner admission. The descriptor becomes empty on every consuming
+ * attempt, including bounded admission failure; ownership is never returned to
+ * the caller.
  */
 int cnet_client_adopt_accepted(cnet_client *client,
                                cnet_accepted_stream *accepted,
