@@ -1339,3 +1339,43 @@ Plugin 的可选跨 TU linker 聚合与 C/C++ lease 作用域入口见
 [Plugin 声明与生命周期协议](../plugin/README.md)。共享 section 原语位于 `cmeta/compiler.h`，
 平台聚合和 lease 所有权仍归 Plugin；CMeta descriptor 不持有 lease。
 通用 capture/bind 与通用生命周期 guard 不在这两个 Plugin 入口的范围内。
+
+### Explicit lifetime and parameter binding
+
+`<cmeta/lifecycle.h>` 提供 `cmeta_lifecycle_binding`：先用 `cmeta_lifecycle_admit` 验证
+canonical DataDesc，再重复 init/move/restore。`<cmeta/cleanup.h>` 把 Data、ObjectRef、
+Plugin 各自的释放 authority 适配为有限 lexical obligation；`<cmeta/object_scope.h>` 提供
+ObjectRef C adapter 和不可复制的 C++ `cmeta::object_scope`。初始化失败回滚、逆序清理、
+provider 寿命及参数/返回错误约定见 [生命周期协议](LIFECYCLE_LOWERING.md)。
+
+`<cmeta/bind.h>` 从显式行生成捕获和精确 thunk，例如：
+
+```c
+#include <cmeta/bind.h>
+
+FunctionDeclAsAbiResult(value, int, &cmeta_type_int, CMETA_ABI_SCALAR, CMETA_RESULT_VALUE,
+    add, (int, a, CMETA_PARAM_IN, &cmeta_type_int, CMETA_ABI_SCALAR),
+         (int, b, CMETA_PARAM_IN, &cmeta_type_int, CMETA_ABI_SCALAR));
+int add(int a, int b) { return a + b; }
+
+FunctionBindDeclAsAbiResult(value, int, &cmeta_type_int, CMETA_ABI_SCALAR, CMETA_RESULT_VALUE,
+    plus10, add, CMETA_SIG_U_I_I,
+    (value, (int, a, CMETA_PARAM_IN, &cmeta_type_int, CMETA_ABI_SCALAR)),
+    (arg, (int, b, CMETA_PARAM_IN, &cmeta_type_int, CMETA_ABI_SCALAR)));
+
+int main(void) {
+    plus10_capture capture = {10};
+    cmeta_invokable call = CMETA_INVOKABLE_INIT;
+    int input = 5, output = 0;
+    const void *args[] = {&input};
+    if (plus10_bind(&capture, &call) != CMETA_OK) return 1;
+    if (cmeta_invokable_invoke_admitted(&call, &output, args) != CMETA_OK) return 1;
+    return output == 15 ? 0 : 1;
+}
+```
+
+`value` 是已注册平凡标量的 snapshot，`borrow` 是显式借用的 object pointer，`arg` 保留
+调用参数。receiver 使用含 `CMETA_PARAM_RECEIVER | CMETA_PARAM_BORROWED` 的 borrow 行。
+capture 总量在编译期限制为 `CMETA_CAPTURE_INLINE`，不得捕获 managed ownership；
+剩余参数须匹配现有注册的一元/二元 signature。返回 flags 和全部未绑定参数契约保持不变。
+更多边界和迁移说明见 [receiver 与参数投影](RECEIVER_OPERATIONS.md)。

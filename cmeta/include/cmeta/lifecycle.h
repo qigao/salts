@@ -8,8 +8,10 @@
  * The C++ spelling also rejects dynamic initialization of that address. */
 #ifdef __cplusplus
 #define CMETA_LIFECYCLE_STATIC_ADDRESS_ static constexpr
+#define CMETA_LIFECYCLE_STORAGE_(type,value) static_cast<type *>(value)
 #else
 #define CMETA_LIFECYCLE_STATIC_ADDRESS_ static
+#define CMETA_LIFECYCLE_STORAGE_(type,value) ((type *)(value))
 #endif
 
 /** Publish a native-typed view of locally owned canonical construct ops.
@@ -50,13 +52,15 @@ CMETA_INLINE cmeta_status cmeta_lifecycle_bind(
         return CMETA_INVALID_ARGUMENT;
     ops = data->construct_ops;
     if (ops == NULL) return CMETA_TRAIT_MISSING;
-    if (ops->struct_size < sizeof(*ops) ||
+    if (ops->struct_size < offsetof(cmeta_data_construct_ops, move) + sizeof(ops->move) ||
         ops->abi_version != CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION ||
         ops->init_zero == NULL || ops->restore_zero == NULL ||
         data->storage_type == NULL || !cmeta_type_desc_valid(ops->storage_type) ||
         ops->storage_type->size == 0u ||
         (ops->storage_type->align & (ops->storage_type->align - 1u)) != 0u ||
         ops->storage_type->size % ops->storage_type->align != 0u)
+        return CMETA_INVALID_ARGUMENT;
+    if (!cmeta_lifecycle_flags_valid(ops))
         return CMETA_INVALID_ARGUMENT;
     /* Native layout alone cannot authorize another type's lifecycle callbacks. */
     if (!cmeta_type_equal(data->storage_type, ops->storage_type) ||
@@ -65,6 +69,98 @@ CMETA_INLINE cmeta_status cmeta_lifecycle_bind(
         ops->storage_type->size != size || ops->storage_type->align != align)
         return CMETA_TYPE_MISMATCH;
     *out = ops;
+    return CMETA_OK;
+}
+
+/** Local generator: typed callbacks, canonical ops and lowering facts originate
+ * in one declaration. Callback contracts (including nofail) remain the native
+ * owner's responsibility. Descriptor identity/layout is checked on admission. */
+#define CMETA_DEFINE_LIFECYCLE(type,descriptor,init,restore,move_fn,facts) \
+    CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(&init,cmeta_status (*)(type *)) && \
+        CMETA_TYPE_MATCHES(&restore,void (*)(type *)) && \
+        CMETA_TYPE_MATCHES(&move_fn,void (*)(type *,type *)), \
+        "CMeta lifecycle native callback mismatch"); \
+    CMETA_STATIC_ASSERT(((facts) & ~CMETA_LIFECYCLE_FLAG_MASK) == 0, \
+        "CMeta lifecycle unknown classification"); \
+    CMETA_STATIC_ASSERT(((facts) & CMETA_LIFECYCLE_TRIVIAL_ZERO) == 0 || \
+        ((facts) & CMETA_LIFECYCLE_INIT_NOFAIL) != 0, "CMeta trivial zero requires nofail initialization"); \
+    enum { type##_cmeta_lifecycle_flags = (facts) }; \
+    CMETA_INLINE cmeta_status type##__init_erased(void *value) { return init(CMETA_LIFECYCLE_STORAGE_(type,value)); } \
+    CMETA_INLINE void type##__restore_erased(void *value) { restore(CMETA_LIFECYCLE_STORAGE_(type,value)); } \
+    CMETA_INLINE void type##__move_erased(void *dst,void *src) { \
+        move_fn(CMETA_LIFECYCLE_STORAGE_(type,dst),CMETA_LIFECYCLE_STORAGE_(type,src)); } \
+    CMETA_LOCAL const cmeta_data_construct_ops type##_construct_ops = { \
+        sizeof(cmeta_data_construct_ops),CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,descriptor, \
+        type##__init_erased,type##__restore_erased,type##__move_erased,facts }; \
+    CMETA_DEFINE_STATIC_LIFECYCLE(type,type##_construct_ops)
+
+#ifdef __cplusplus
+#define CMETA_LIFECYCLE_TRIVIAL_PROOF_(type) \
+    static_assert(std::is_trivial<type>::value, "CMeta trivial lifecycle requires trivial native storage");
+#else
+#define CMETA_LIFECYCLE_TRIVIAL_PROOF_(type)
+#endif
+#define CMETA_DEFINE_TRIVIAL_LIFECYCLE(type,descriptor) \
+    CMETA_LIFECYCLE_TRIVIAL_PROOF_(type) \
+    CMETA_INLINE cmeta_status type##__trivial_init(type *value) { \
+        type zero = {0}; *value = zero; return CMETA_OK; } \
+    CMETA_INLINE void type##__trivial_restore(type *value) { type zero = {0}; *value = zero; } \
+    CMETA_INLINE void type##__trivial_move(type *dst,type *src) { \
+        *dst = *src; type##__trivial_restore(src); } \
+    CMETA_DEFINE_LIFECYCLE(type,descriptor,type##__trivial_init,type##__trivial_restore, \
+        type##__trivial_move,CMETA_LIFECYCLE_INIT_NOFAIL | CMETA_LIFECYCLE_TRIVIAL_ZERO | \
+            CMETA_LIFECYCLE_TRIVIAL_CLEANUP | CMETA_LIFECYCLE_MOVABLE)
+
+/** Admitted, borrowed capability. Initialize with admit; never forge or mutate
+ * a live binding. The immutable descriptor/provider must outlive all uses,
+ * including cleanup. No allocation, retention, or value ownership is implied. */
+typedef struct cmeta_lifecycle_binding {
+    const cmeta_data_desc *data;
+    const cmeta_data_construct_ops *ops;
+} cmeta_lifecycle_binding;
+
+#define CMETA_LIFECYCLE_BINDING_INIT { NULL, NULL }
+
+CMETA_INLINE cmeta_status cmeta_lifecycle_admit(
+    const cmeta_data_desc *data, size_t size, size_t align,
+    cmeta_lifecycle_binding *out) {
+    const cmeta_data_construct_ops *ops = NULL;
+    cmeta_status status;
+    if (out == NULL) return CMETA_INVALID_ARGUMENT;
+    out->data = NULL;
+    out->ops = NULL;
+    status = cmeta_lifecycle_bind(data, size, align, &ops);
+    if (status != CMETA_OK) return status;
+    out->data = data;
+    out->ops = ops;
+    return CMETA_OK;
+}
+
+/* All storage must have the admitted native layout. init rolls back a partial
+ * failure exactly once. move requires a distinct semantic-zero destination;
+ * its source remains semantic zero, valid for cleanup/reinitialization. */
+CMETA_INLINE cmeta_status cmeta_lifecycle_init(
+    const cmeta_lifecycle_binding *binding, void *storage) {
+    cmeta_status status;
+    if (binding == NULL || binding->ops == NULL || storage == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    status = binding->ops->init_zero(storage);
+    if (status != CMETA_OK) binding->ops->restore_zero(storage);
+    return status;
+}
+CMETA_INLINE cmeta_status cmeta_lifecycle_restore(
+    const cmeta_lifecycle_binding *binding, void *storage) {
+    if (binding == NULL || binding->ops == NULL || storage == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    binding->ops->restore_zero(storage);
+    return CMETA_OK;
+}
+CMETA_INLINE cmeta_status cmeta_lifecycle_move(
+    const cmeta_lifecycle_binding *binding, void *destination, void *source) {
+    if (binding == NULL || binding->ops == NULL || destination == NULL ||
+        source == NULL || destination == source) return CMETA_INVALID_ARGUMENT;
+    if (binding->ops->move == NULL) return CMETA_TRAIT_MISSING;
+    binding->ops->move(destination, source);
     return CMETA_OK;
 }
 #endif

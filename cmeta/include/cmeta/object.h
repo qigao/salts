@@ -245,6 +245,28 @@ cmeta_status cmeta_object_field_assign(
     cmeta_object_ref *ref, const char *name,
     const cmeta_data_desc *value_data, const void *value);
 
+/** Borrowed field capability admitted once from an ObjectRef. No object or
+ * provider is retained. The native object, immutable field/provider metadata
+ * and outer lease must outlive use; do not forge or mutate a bound record. */
+typedef struct cmeta_object_field_binding {
+    void *object;
+    const cmeta_data_field_desc *field;
+    const cmeta_object_field_provider *provider;
+    const void *fixed_value;
+} cmeta_object_field_binding;
+#define CMETA_OBJECT_FIELD_BINDING_INIT { NULL, NULL, NULL, NULL }
+
+cmeta_status cmeta_object_field_bind(const cmeta_object_ref *ref,
+    const char *name, cmeta_object_field_binding *out);
+/** Repeated reads call the provider each time (no cached dynamic view).
+ * Output storage is borrowed until the provider/object invalidates it. */
+cmeta_status cmeta_object_field_read_admitted(
+    const cmeta_object_field_binding *binding, const void **out_value);
+/** Exact native value storage must match binding->field->value. Uses only the
+ * original provider's explicit assignment authority; no implicit memcpy. */
+cmeta_status cmeta_object_field_assign_admitted(
+    const cmeta_object_field_binding *binding, const void *value);
+
 /**
  * Resolve one receiver operation in the context of this exact native object type.
  *

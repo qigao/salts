@@ -190,13 +190,20 @@ bool cmeta_invokable_valid(const cmeta_invokable *invokable) {
 cmeta_status cmeta_invokable_invoke(
     const cmeta_invokable *invokable, void *out,
     const void *const *args) {
+    if (!cmeta_invokable_valid(invokable)) return CMETA_INVALID_ARGUMENT;
+    return cmeta_invokable_invoke_admitted(invokable, out, args);
+}
+
+cmeta_status cmeta_invokable_invoke_admitted(
+    const cmeta_invokable *invokable, void *out, const void *const *args) {
     const cmeta_type_desc *return_type;
     size_t i;
 
-    if (!cmeta_invokable_valid(invokable))
+    if (invokable == NULL || invokable->function == NULL ||
+        invokable->callable.invoke == NULL)
         return CMETA_INVALID_ARGUMENT;
     return_type = invokable->function->return_type;
-    if (!cmeta_type_equal(return_type, &cmeta_type_void) && out == NULL)
+    if (return_type->kind != CMETA_T_VOID && out == NULL)
         return CMETA_INVALID_ARGUMENT;
     if (invokable->function->param_count != 0u && args == NULL)
         return CMETA_INVALID_ARGUMENT;

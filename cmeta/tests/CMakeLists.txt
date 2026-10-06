@@ -33,6 +33,21 @@ endif()
 
 # CMeta public API regression tests.
 
+foreach(lowering_case IN ITEMS bind cleanup)
+  cmake_add_test(cmeta_${lowering_case}_test
+    SOURCES cmeta_${lowering_case}_test.c
+    LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+  set_target_properties(cmeta_${lowering_case}_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+endforeach()
+foreach(lowering_case IN ITEMS bind cleanup object_scope)
+  cmake_add_test(cmeta_${lowering_case}_cpp_test
+    SOURCES cmeta_${lowering_case}_cpp_test.cpp
+    LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
+  set_target_properties(cmeta_${lowering_case}_cpp_test PROPERTIES
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+endforeach()
+
 cmake_add_test(cmeta_interface_arity_test
   SOURCES cmeta_interface_arity_test.c
   LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
@@ -361,6 +376,30 @@ function(cmeta_add_compile_failure_test target_name source expected_diagnostic)
     PASS_REGULAR_EXPRESSION "${expected_diagnostic}"
     RUN_SERIAL TRUE)
 endfunction()
+
+foreach(lowering_rule IN ITEMS
+    "callback|CMeta lifecycle native callback mismatch"
+    "trivial|CMeta trivial scope requires canonical trivial lifecycle facts"
+    "packed|CMeta Struct field layout mismatch"
+    "result_flags|CMeta Function result flags invalid"
+    "interface_result|CMeta Interface native result carrier mismatch"
+    "native_result|CMeta Function native result carrier mismatch"
+    "capacity|CMeta bind capture exceeds inline capacity"
+    "capture_value|CMeta value capture requires a registered trivial scalar"
+    "capture_borrow|CMeta borrow capture requires an explicit borrowed object pointer"
+    "native_signature|CMeta bind source native signature mismatch")
+  string(REPLACE "|" ";" lowering_parts "${lowering_rule}")
+  list(GET lowering_parts 0 lowering_case)
+  list(GET lowering_parts 1 lowering_diagnostic)
+  foreach(lowering_language IN ITEMS c cpp)
+    set(lowering_target "cmeta_lowering_${lowering_case}_${lowering_language}_compile_fail")
+    cmeta_add_compile_failure_test(${lowering_target}
+      compile_fail/cmeta_lowering.${lowering_language} "${lowering_diagnostic}")
+    target_compile_definitions(${lowering_target} PRIVATE "CMETA_TEST_${lowering_case}=1")
+    set_target_properties(${lowering_target} PROPERTIES
+      CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+  endforeach()
+endforeach()
 
 cmeta_add_compile_failure_test(cmeta_pp_pair_count_compile_fail
   compile_fail/cmeta_pp_pair_count.c "CMETA_PP_PAIRS_2")

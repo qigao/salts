@@ -73,9 +73,11 @@ cmeta_struct_find_field(const cmeta_struct_desc *desc, const char *name) {
 #ifdef __cplusplus
 #define CMETA_STRUCT_FIELD_SIZE(owner, name) \
     sizeof(static_cast<owner *>(nullptr)->name)
+#define CMETA_STRUCT_FIELD_ADDRESS(owner,name) (&static_cast<owner *>(nullptr)->name)
 #define CMETA_STRUCT_TYPE_NULL nullptr
 #else
 #define CMETA_STRUCT_FIELD_SIZE(owner, name) sizeof(((owner *)0)->name)
+#define CMETA_STRUCT_FIELD_ADDRESS(owner,name) (&((owner *)0)->name)
 #define CMETA_STRUCT_TYPE_NULL ((const cmeta_type_desc *)0)
 #endif
 
@@ -134,6 +136,18 @@ cmeta_struct_find_field(const cmeta_struct_desc *desc, const char *name) {
       CMETA_TYPE_SPEC_STORAGE_DESC(spec), \
       &CMETA_STRUCT_FIELD_DECLARED_NAME(owner, name) },
 
+#define CMETA_STRUCT_FIELD_PROOF(field,owner) \
+    CMETA_STRUCT_FIELD_PROOF_E(owner,CMETA_PP_UNPAREN field)
+#define CMETA_STRUCT_FIELD_PROOF_E(...) CMETA_STRUCT_FIELD_PROOF_I(__VA_ARGS__)
+#define CMETA_STRUCT_FIELD_PROOF_I(owner,type,name) \
+    CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(CMETA_STRUCT_FIELD_ADDRESS(owner,name), \
+        CMETA_STRUCT_STORAGE(type) *), "CMeta Struct native field type mismatch"); \
+    CMETA_STATIC_ASSERT(offsetof(owner,name) <= sizeof(owner) && \
+        CMETA_STRUCT_FIELD_SIZE(owner,name) <= sizeof(owner) - offsetof(owner,name) && \
+        offsetof(owner,name) % CMETA_ALIGNOF(CMETA_STRUCT_STORAGE(type)) == 0 && \
+        CMETA_ALIGNOF(owner) >= CMETA_ALIGNOF(CMETA_STRUCT_STORAGE(type)), \
+        "CMeta Struct field layout mismatch");
+
 /* Single-declaration reflected struct.
  *
  * The low-level CMETA_STRUCT replay kernel consumes comma-separated
@@ -161,6 +175,7 @@ cmeta_struct_find_field(const cmeta_struct_desc *desc, const char *name) {
     typedef struct type { \
         Schema(CMETA_STRUCT_FIELD_DECL, __VA_ARGS__) \
     } type; \
+    CMETA_SCHEMA_ROWS(CMETA_STRUCT_FIELD_PROOF, type, __VA_ARGS__) \
     CMETA_SCHEMA_ROWS(CMETA_STRUCT_FIELD_DECLARED, type, __VA_ARGS__) \
     CMETA_LOCAL const cmeta_field_desc type##__struct_fields[] = { \
         CMETA_SCHEMA_ROWS(CMETA_STRUCT_FIELD_DESC, type, __VA_ARGS__) \

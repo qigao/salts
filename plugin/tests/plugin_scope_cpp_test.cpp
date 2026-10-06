@@ -46,6 +46,28 @@ suite("Plugin C++ lease ownership") {
         check_equal(owner.close(),SALTS_PLUGIN_OK);
         check_equal(owner.acquire(registry,ref),SALTS_PLUGIN_OK);
     }
+    it("orders dependent obligations before its authoritative lease release") {
+        salts_plugin_lease lease = {};
+        const salts_plugin_manifest *manifest = nullptr;
+        check_equal(salts_plugin_registry_acquire(&registry,ref,&lease,&manifest),SALTS_PLUGIN_OK);
+        salts_plugin_cleanup_lease owner{&registry,&lease};
+        cmeta_cleanup obligations[2] = {CMETA_CLEANUP_INIT,CMETA_CLEANUP_INIT};
+        struct dependent {
+            salts_plugin_registry *registry;
+            salts_plugin_ref ref;
+            bool observed;
+        } view{&registry,ref,false};
+        check_equal(salts_plugin_cleanup_arm(&obligations[0],&owner),CMETA_OK);
+        check_equal(cmeta_cleanup_arm(&obligations[1],[](void *,void *resource) {
+            auto *value = static_cast<dependent *>(resource);
+            salts_plugin_lifecycle_info info = {};
+            value->observed = salts_plugin_registry_get_lifecycle(value->registry,value->ref,&info) ==
+                SALTS_PLUGIN_OK && info.active_leases == 1u;
+        },nullptr,&view),CMETA_OK);
+        cmeta_cleanup_reverse(obligations,2);
+        cmeta_cleanup_reverse(obligations,2);
+        check_true(view.observed);
+    }
     it("moves exactly one lease and keeps unload blocked until scope exit") {
         salts::plugin_lease_scope first;
         check_equal(first.acquire(registry,ref),SALTS_PLUGIN_OK);

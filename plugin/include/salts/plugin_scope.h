@@ -2,6 +2,28 @@
 #define SALTS_PLUGIN_SCOPE_H
 
 #include <salts/plugin.h>
+#include <cmeta/cleanup.h>
+#include <stdlib.h>
+
+/* Caller-owned adapter borrows the registry and its one authoritative lease.
+ * Keep both addresses stable through discharge; dependent obligations follow
+ * this obligation in a lexical array so reverse cleanup releases them first. */
+typedef struct salts_plugin_cleanup_lease {
+    salts_plugin_registry *registry;
+    salts_plugin_lease *lease;
+} salts_plugin_cleanup_lease;
+static inline void salts_plugin_cleanup_release_(void *authority, void *resource) {
+    salts_plugin_cleanup_lease *owner = (salts_plugin_cleanup_lease *)resource;
+    (void)authority;
+    if (salts_plugin_registry_release(owner->registry, owner->lease) != SALTS_PLUGIN_OK)
+        abort();
+}
+static inline cmeta_status salts_plugin_cleanup_arm(
+    cmeta_cleanup *obligation, salts_plugin_cleanup_lease *owner) {
+    if (owner == NULL || owner->registry == NULL || owner->lease == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    return cmeta_cleanup_arm(obligation, salts_plugin_cleanup_release_, NULL, owner);
+}
 
 #ifdef __cplusplus
 #include <exception>

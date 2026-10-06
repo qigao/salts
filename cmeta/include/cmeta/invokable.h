@@ -33,8 +33,11 @@ typedef struct cmeta_invokable {
     cmeta_callable callable;
 } cmeta_invokable;
 
-#define CMETA_INVOKABLE_INIT \
-    { sizeof(cmeta_invokable), NULL, NULL, {0} }
+#ifdef __cplusplus
+#define CMETA_INVOKABLE_INIT { sizeof(cmeta_invokable), nullptr, nullptr, {} }
+#else
+#define CMETA_INVOKABLE_INIT { sizeof(cmeta_invokable), NULL, NULL, {0} }
+#endif
 
 /**
  * Bind canonical function semantics to an executable CMeta callable.
@@ -98,6 +101,13 @@ bool cmeta_invokable_valid(const cmeta_invokable *invokable);
 cmeta_status cmeta_invokable_invoke(
     const cmeta_invokable *invokable, void *out,
     const void *const *args);
+
+/** Admitted fast path for an unmodified successful bind result. Metadata,
+ * callable, capture dependencies and provider/module leases remain immutable
+ * and live. Checks call storage, without traversing descriptor graphs again.
+ * Foreign/manually assembled values must use bind or the checked invoke above. */
+cmeta_status cmeta_invokable_invoke_admitted(
+    const cmeta_invokable *invokable, void *out, const void *const *args);
 
 #ifdef __cplusplus
 }

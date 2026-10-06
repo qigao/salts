@@ -39,6 +39,15 @@ typedef cmeta_status (*cmeta_data_construct_init_zero_fn)(void *object);
 typedef void (*cmeta_data_construct_restore_zero_fn)(void *object);
 typedef void (*cmeta_data_construct_move_fn)(void *destination, void *source);
 
+typedef uint32_t cmeta_lifecycle_flags;
+enum {
+    CMETA_LIFECYCLE_INIT_NOFAIL = 1u << 0,
+    CMETA_LIFECYCLE_TRIVIAL_ZERO = 1u << 1,
+    CMETA_LIFECYCLE_TRIVIAL_CLEANUP = 1u << 2,
+    CMETA_LIFECYCLE_MOVABLE = 1u << 3,
+    CMETA_LIFECYCLE_FLAG_MASK = (1u << 4) - 1u
+};
+
 typedef struct cmeta_data_construct_ops {
     size_t struct_size;
     uint32_t abi_version;
@@ -51,7 +60,24 @@ typedef struct cmeta_data_construct_ops {
     /** Transfers into a distinct initialized semantic-zero destination;
      * leaves the source live in semantic zero. Optional capability. */
     cmeta_data_construct_move_fn move;
+    /** Optional size-versioned facts; zero means unspecified, never inferred
+     * from callback identity. TRIVIAL_ZERO means native {0} is semantic zero;
+     * TRIVIAL_CLEANUP means no release obligation (restore may reset storage). */
+    cmeta_lifecycle_flags flags;
 } cmeta_data_construct_ops;
+
+static inline cmeta_lifecycle_flags cmeta_lifecycle_flags_of(
+    const cmeta_data_construct_ops *ops) {
+    return ops != NULL && ops->struct_size >=
+        offsetof(cmeta_data_construct_ops, flags) + sizeof(ops->flags) ? ops->flags : 0u;
+}
+static inline bool cmeta_lifecycle_flags_valid(const cmeta_data_construct_ops *ops) {
+    const cmeta_lifecycle_flags flags = cmeta_lifecycle_flags_of(ops);
+    return (flags & ~CMETA_LIFECYCLE_FLAG_MASK) == 0u &&
+        ((flags & CMETA_LIFECYCLE_MOVABLE) == 0u || ops->move != NULL) &&
+        ((flags & CMETA_LIFECYCLE_TRIVIAL_ZERO) == 0u ||
+            (flags & CMETA_LIFECYCLE_INIT_NOFAIL) != 0u);
+}
 
 typedef struct cmeta_data_buffer_ops cmeta_data_buffer_ops;
 typedef struct cmeta_data_enum_ops cmeta_data_enum_ops;

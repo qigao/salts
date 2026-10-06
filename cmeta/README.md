@@ -81,6 +81,19 @@ the existing checked lifecycle binding; it uses the same cleanup lowering.
 There is no automatic fallback or second lifecycle registry. See
 [structured scope and migration](LANGUAGE_REFERENCE.md#structured-scope).
 
+Explicit lifecycle facts let `(Type, value, trivial)` scope rows omit callback,
+ops-pointer and live-state machinery. Admitted lifecycle/invokable/field bindings
+support repeated use without validating immutable metadata graphs again.
+Data, ObjectRef and Plugin adapters share finite lexical cleanup obligations;
+their existing resource authorities remain separate. See
+[lifetime admission and lowering](LIFECYCLE_LOWERING.md).
+
+`<cmeta/bind.h>` generates receiver and ordinary parameter binding with explicit
+scalar snapshots or borrowed pointers, exact native thunks, and canonical
+Function projections. Captures stay within `CMETA_CAPTURE_INLINE`; projected
+signatures use the existing unary/binary registry. See
+[parameter binding](RECEIVER_OPERATIONS.md#生成-receivercapturebind976-2729).
+
 Execution/runtime ownership is explicit. Atomics and RCU are owned by
 Salts::Concurrency. Pool storage/lease policy is owned by Salts::Core and
 thread-affinity/TLS policy by Salts::Platform. CMeta retains only explicit

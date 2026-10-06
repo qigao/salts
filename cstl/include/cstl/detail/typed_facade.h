@@ -143,14 +143,16 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_status name##_construct_init_zero(void *object){name *self=(name*)object;if(self==NULL)return CMETA_INVALID_ARGUMENT;*self=(name){.cmeta={&name##_cmeta_container_desc},.raw=init_expr};return CMETA_OK;} \
  CMETA_INLINE void name##_construct_restore_zero(void *object){name *self=(name*)object;if(self==NULL)return;destroy_expr;*self=(name){.cmeta={&name##_cmeta_container_desc},.raw=init_expr};} \
  CMETA_INLINE void name##_construct_move(void *destination,void *source){name *dst=(name*)destination;name *src=(name*)source;if(dst==NULL||src==NULL||dst==src)return;{name *self=dst;destroy_expr;}*dst=*src;*src=(name){.cmeta={&name##_cmeta_container_desc},.raw=init_expr};} \
- CMETA_LOCAL const cmeta_data_construct_ops name##_construct_ops={sizeof(cmeta_data_construct_ops),CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),name##_construct_init_zero,name##_construct_restore_zero,name##_construct_move}; \
+ enum { name##_cmeta_lifecycle_flags = CMETA_LIFECYCLE_INIT_NOFAIL | CMETA_LIFECYCLE_MOVABLE }; \
+ CMETA_LOCAL const cmeta_data_construct_ops name##_construct_ops={sizeof(cmeta_data_construct_ops),CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),name##_construct_init_zero,name##_construct_restore_zero,name##_construct_move,name##_cmeta_lifecycle_flags}; \
  CMETA_DEFINE_STATIC_LIFECYCLE(name, name##_construct_ops)
 
 #define SALTS_META_C2_CONSTRUCT(name,init_expr,destroy_expr) \
  CMETA_INLINE cmeta_status name##_construct_init_zero(void *object){name *self=(name*)object;if(self==NULL)return CMETA_INVALID_ARGUMENT;*self=(name){.cmeta={&name##_cmeta_container_desc},.raw=init_expr};return CMETA_OK;} \
  CMETA_INLINE void name##_construct_restore_zero(void *object){name *self=(name*)object;if(self==NULL)return;destroy_expr;*self=(name){.cmeta={&name##_cmeta_container_desc},.raw=init_expr};} \
  CMETA_INLINE void name##_construct_move(void *destination,void *source){name *dst=(name*)destination;name *src=(name*)source;if(dst==NULL||src==NULL||dst==src)return;{name *self=dst;destroy_expr;}*dst=*src;*src=(name){.cmeta={&name##_cmeta_container_desc},.raw=init_expr};} \
- CMETA_LOCAL const cmeta_data_construct_ops name##_construct_ops={sizeof(cmeta_data_construct_ops),CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),name##_construct_init_zero,name##_construct_restore_zero,name##_construct_move}; \
+ enum { name##_cmeta_lifecycle_flags = CMETA_LIFECYCLE_INIT_NOFAIL | CMETA_LIFECYCLE_MOVABLE }; \
+ CMETA_LOCAL const cmeta_data_construct_ops name##_construct_ops={sizeof(cmeta_data_construct_ops),CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,CMETA_TYPEOF_OR(name,&name##_cmeta_type),name##_construct_init_zero,name##_construct_restore_zero,name##_construct_move,name##_cmeta_lifecycle_flags}; \
  CMETA_DEFINE_STATIC_LIFECYCLE(name, name##_construct_ops)
 
 

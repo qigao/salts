@@ -268,6 +268,21 @@ cmeta_interface_desc_has_owning_method(const cmeta_interface_desc *desc) {
 #define CMETA_IFACE_VT_ROW(I,K,R,N,...) \
     CMETA_IFACE_DECODE(CMETA_IFACE_VT,I,K,R,N,__VA_ARGS__)
 
+#ifdef __cplusplus
+#define CMETA_IFACE_MEMBER_ADDRESS_(I,N) (&static_cast<I##_vtable *>(nullptr)->N)
+#else
+#define CMETA_IFACE_MEMBER_ADDRESS_(I,N) (&((I##_vtable *)0)->N)
+#endif
+#define CMETA_IFACE_PROOF(I,R,N,A,K,F,C,RD,RA,RF,...) \
+    CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(CMETA_IFACE_MEMBER_ADDRESS_(I,N), \
+        R (**)(void * CMETA_PP_MAP_PREFIX_COMMA_N(A,CMETA_IFACE_DECL_ROW,~,__VA_ARGS__))), \
+        "CMeta Interface native vtable member mismatch"); \
+    CMETA_STATIC_ASSERT(!(F) || (RA) == CMETA_ABI_UNSPECIFIED || \
+        CMETA_TYPE_IS_VOID(R) == ((RA) == CMETA_ABI_VOID), \
+        "CMeta Interface native result carrier mismatch");
+#define CMETA_IFACE_PROOF_ROW(I,K,R,N,...) \
+    CMETA_IFACE_DECODE(CMETA_IFACE_PROOF,I,K,R,N,__VA_ARGS__)
+
 /* D remains a separate semantic operation: dispatch first, then invalidate. */
 #define CMETA_IFACE_BEFORE_result(N)
 #define CMETA_IFACE_BEFORE_discard(N)
@@ -336,6 +351,7 @@ cmeta_interface_desc_has_owning_method(const cmeta_interface_desc *desc) {
         METHODS(CMETA_IFACE_VT_ROW, I) \
     }; \
     struct I { void *self; const I##_vtable *vtable; }; \
+    METHODS(CMETA_IFACE_PROOF_ROW, I) \
     METHODS(CMETA_IFACE_FUNCTION_ROW, I) \
     CMETA_LOCAL const cmeta_interface_method_desc I##_method_meta[] = { METHODS(CMETA_IFACE_META_ROW, I) }; \
     CMETA_LOCAL const cmeta_interface_desc I##_interface_meta = { \

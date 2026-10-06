@@ -367,3 +367,52 @@ cmeta_receiver_resolve_status cmeta_object_operation_resolve(
         ref->operations, ref->data->storage_type, owner, operation_name,
         argument_types, argument_count, out);
 }
+
+cmeta_status cmeta_object_field_bind(const cmeta_object_ref *ref,
+    const char *name, cmeta_object_field_binding *out) {
+    const cmeta_data_field_desc *field = NULL;
+    const void *fixed = NULL;
+    cmeta_status status;
+    if (out == NULL) return CMETA_INVALID_ARGUMENT;
+    *out = (cmeta_object_field_binding)CMETA_OBJECT_FIELD_BINDING_INIT;
+    status = cmeta_object_field_resolve(ref,name,&field);
+    if (status != CMETA_OK) return status;
+    if (!cmeta_object_field_provider_has_read(ref->field_provider)) {
+        status = cmeta_object_field_fixed_read(ref,field,&fixed);
+        if (status != CMETA_OK) return status;
+    }
+    out->object = ref->object;
+    out->field = field;
+    out->provider = ref->field_provider;
+    out->fixed_value = fixed;
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_object_field_read_admitted(
+    const cmeta_object_field_binding *binding, const void **out_value) {
+    cmeta_status status;
+    const void *value = NULL;
+    if (out_value == NULL) return CMETA_INVALID_ARGUMENT;
+    *out_value = NULL;
+    if (binding == NULL || binding->object == NULL || binding->field == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (binding->fixed_value != NULL) value = binding->fixed_value;
+    else {
+        status = binding->provider->read(binding->provider->context,
+            binding->object,binding->field,&value);
+        if (status != CMETA_OK) return status;
+        if (value == NULL) return CMETA_CALLBACK_ERROR;
+    }
+    *out_value = value;
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_object_field_assign_admitted(
+    const cmeta_object_field_binding *binding, const void *value) {
+    if (binding == NULL || binding->object == NULL || binding->field == NULL || value == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (binding->provider == NULL || binding->provider->assign == NULL)
+        return CMETA_TRAIT_MISSING;
+    return binding->provider->assign(binding->provider->context,
+        binding->object,binding->field,value);
+}

@@ -64,3 +64,36 @@ Function/operation 负例覆盖缺失 receiver、错误返回 ownership、effect
 重复别名、receiver/generic owner 不匹配。既有 ObjectRef 与 Invokable 回归保持 provider 精确绑定。
 CSTL List/Map/Vec/Set 测试覆盖原操作语义和跨 TU 元数据；C++ 头文件保持 standard-layout。
 Plugin 的旧 epoch 拒绝及跨 DSO 生命周期测试验证 admission 边界，installed SDK 测试验证发布入口。
+
+## 生成 receiver/capture/bind（#976: 27–29）
+
+`<cmeta/bind.h>` 的 `FunctionBindDeclAsAbiResult` 把原 Function 参数行标记为 `arg`、
+`value` 或 `borrow`。原顺序生成精确函数调用；过滤捕获行后生成普通 FunctionDesc/Abi。
+该入口复用现有 `cmeta_callable` 的 inline capture 和 invokable admission，不解析字符串
+方法名，不解释原函数 ABI，也不转换 receiver/native 函数指针。
+
+选择单个参数投影模型覆盖 receiver 和普通 bind，避免单独的 method closure 类型。
+receiver 使用含 RECEIVER|BORROWED 的 borrow 行；value 仅接受已注册算术标量的 snapshot；
+borrow 要求显式 BORROWED object pointer，不允许 consuming capture。所有捕获合计必须
+不超过 CMETA_CAPTURE_INLINE，编译期超额失败；没有隐式堆分配、retain/release 或 SBO 降级。
+本阶段投影为现有 callable registry 支持的一元/二元签名；零元、多元、未注册签名不受支持。
+
+生成产物为 `name_capture`、`FunctionMeta(name)`、`FunctionAbi(name)` 和
+`name_bind(const name_capture *, cmeta_invokable *)`。bind 先检查源 FunctionAbi 与行声明
+语义一致，再通过 Function 所有的 `cmeta_function_projection_valid` 验证剩余参数，最终
+进入普通 `cmeta_invokable_bind`。类型/flags/名字/ABI carrier、结果 ownership/nullability、
+effects/properties 必须原样保留。错误 input 清空输出，metadata mismatch 返回 TYPE_MISMATCH。
+源函数必须有 FunctionDecl；native signature 不符、非平凡 value、非 borrowed 指针、过大
+capture 在编译期拒绝。显式 sig 与投影不匹配在 admission 拒绝。
+
+捕获 struct 只复制 value 字节或借用指针。borrow 的 object、provider/module 及外层 Plugin
+lease 必须活到所有 callable 副本丢弃以后；复制 callable 不延长任何传递资源的寿命。
+字段名字是用户原 Function 参数名，thunk 局部参数使用生成的索引名，避免与 out/args 等
+框架变量碰撞。调用没有元数据图遍历，使用 admitted 入口时仅检查调用 storage。
+投影 admission 线性比较 N 个参数，完整 descriptor 校验包含 O(N²) 重名检查，N ≤ 16。
+
+此入口增量提供，不更改 callable 表示或既有 operation/Interface 语义。编译器若已经有
+FunctionData，可用生成的 callable 和 projected metadata 继续走既有 bind_data/provider
+桥接。撤回生成声明时恢复手写 exact thunk 即可；没有运行时状态或持久化数据迁移。
+完整 C11/C++17 示例及正负例见 [binding 回归](tests/cmeta_bind_test.c) 和
+[compile-fail 声明](tests/compile_fail/cmeta_lowering.c)。

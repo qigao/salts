@@ -41,7 +41,8 @@ Canonical mapping:
 cmeta_type(...)            -> finite ordinary-C type/metadata generation
 cmeta_move(Type,&dst,&src) -> canonical DataDesc move
 successful move            -> source semantic-zero
-cmeta_auto/cmeta_guard     -> lexical resource helper when backend is available
+cmeta_scope               -> finite lexical Data cleanup
+cmeta_cleanup             -> private lexical obligation record
 ```
 
 Memory/lifecycle correctness comes from canonical DataDesc contracts. A moved
@@ -53,6 +54,19 @@ compilation and lifecycle safety do not depend on an analyzer.
 
 Full branch/loop ownership proofs remain appropriate in real compilers such as
 TurboScript and in structured generators that already own AST/IR/CFG state.
+
+The ordinary-C result adapter `cmeta_cleanup_object_result` consumes canonical
+Function result flags: OWNED arms one ObjectRef destroy obligation; SHARED arms
+one release obligation; BORROWED arms none. It rejects a mismatched ObjectRef
+lifetime without changing ownership. VALUE uses the independent admitted Data
+storage lifecycle. `cmeta_cleanup_transfer` moves a lexical obligation into an
+empty destination; `cmeta_cleanup_disarm` ends it after a successful consume.
+These records remain private to the lexical owner, never part of Reflection.
+
+Generated `FunctionBindDeclAsAbiResult` captures are scalar value snapshots or
+explicit borrowed object pointers. They never consume managed ownership and
+never retain a transitive owner. The caller/compiler must keep borrowed owners
+and any Plugin lease live until every callable copy is discarded.
 
 ## SaltsUtils generated Service compiler
 

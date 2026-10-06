@@ -124,6 +124,12 @@ bool cmeta_function_receiver_projection_valid(
     const cmeta_function_desc *function,
     const cmeta_function_desc *projected);
 
+/** Validate an order-preserving parameter projection. bound[i] removes source
+ * parameter i; remaining parameter names/types/flags and the complete result
+ * contract must match. Arrays are borrowed and count must equal source arity. */
+bool cmeta_function_projection_valid(const cmeta_function_abi_desc *source,
+    const cmeta_function_abi_desc *projected, const bool *bound, size_t count);
+
 #ifdef __cplusplus
 }
 #endif
@@ -179,6 +185,16 @@ bool cmeta_function_receiver_projection_valid(
 #define CMETA_FUNCTION_PARAM_ABI_ROW(row, ignored) \
     CMETA_FUNCTION_PARAM_ABI_APPLY(row),
 
+#define CMETA_FUNCTION_PARAM_PROOF(index,row,ignored) \
+    CMETA_STATIC_ASSERT(((CMETA_FUNCTION_PARAM_FLAGS(row)) & ~CMETA_PARAM_FLAG_MASK) == 0 && \
+        ((CMETA_FUNCTION_PARAM_FLAGS(row)) & CMETA_PARAM_OWNERSHIP_MASK) != CMETA_PARAM_OWNERSHIP_MASK && \
+        (index == 0 || ((CMETA_FUNCTION_PARAM_FLAGS(row)) & CMETA_PARAM_RECEIVER) == 0), \
+        "CMeta Function parameter flags or receiver position invalid");
+#define CMETA_FUNCTION_RESULT_PROOF(flags) \
+    CMETA_STATIC_ASSERT(((flags) & ~CMETA_RESULT_FLAG_MASK) == 0 && \
+        (((flags) & CMETA_RESULT_CLASS_MASK) & (((flags) & CMETA_RESULT_CLASS_MASK) - 1u)) == 0, \
+        "CMeta Function result flags invalid");
+
 /*
  * Canonical metadata emitters reused by FunctionDecl and interface-method
  * reflection. 'symbol' is the C identifier used for TU-local storage while
@@ -187,6 +203,8 @@ bool cmeta_function_receiver_projection_valid(
 #define CMETA_FUNCTION_METADATA_AS_ABI_RESULT( \
     symbol, display_name, contract, return_desc, return_abi_carrier, \
     result_flags, ...) \
+    CMETA_FUNCTION_RESULT_PROOF(result_flags) \
+    CMETA_PP_FOR_EACH_I(CMETA_FUNCTION_PARAM_PROOF,~,__VA_ARGS__) \
     CMETA_LOCAL const cmeta_param_desc symbol##__function_params[] = { \
         CMETA_PP_FOR_EACH_A(CMETA_FUNCTION_PARAM_META, ~, __VA_ARGS__) \
     }; \
@@ -214,6 +232,7 @@ bool cmeta_function_receiver_projection_valid(
 #define CMETA_FUNCTION0_METADATA_AS_ABI_RESULT( \
     symbol, display_name, contract, return_desc, return_abi_carrier, \
     result_flags) \
+    CMETA_FUNCTION_RESULT_PROOF(result_flags) \
     CMETA_LOCAL const cmeta_function_desc symbol##__function_meta = { \
         sizeof(cmeta_function_desc), (display_name), (return_desc), NULL, 0u, \
         CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract), \
@@ -321,6 +340,9 @@ bool cmeta_function_receiver_projection_valid(
 #define CMETA_FUNCTION_DECL_AS_ABI_RESULT( \
     contract, return_type, return_desc, return_abi_carrier, result_flags, \
     name, ...) \
+    CMETA_STATIC_ASSERT((return_abi_carrier) == CMETA_ABI_UNSPECIFIED || \
+        CMETA_TYPE_IS_VOID(return_type) == ((return_abi_carrier) == CMETA_ABI_VOID), \
+        "CMeta Function native result carrier mismatch"); \
     CMETA_PP_FOR_EACH_A(CMETA_FUNCTION_PARAM_ADMIT, ~, __VA_ARGS__) \
     return_type name( \
         CMETA_PP_FOR_EACH_I(CMETA_FUNCTION_PARAM_DECL, ~, __VA_ARGS__)); \

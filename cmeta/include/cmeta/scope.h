@@ -40,8 +40,16 @@ CMETA_INLINE cmeta_status cmeta_scope_construct_ops(
 
 #define CMETA_SCOPE_DECLARE_(row_, scope_) \
     CMETA_SCOPE_DECLARE_EXPAND_(scope_, CMETA_PP_UNPAREN row_)
-#define CMETA_SCOPE_DECLARE_EXPAND_(...) CMETA_SCOPE_DECLARE_I_(__VA_ARGS__)
-#define CMETA_SCOPE_DECLARE_I_(scope_, type_, name_) \
+#define CMETA_SCOPE_DECLARE_EXPAND_(...) CMETA_PP_OVERLOAD(CMETA_SCOPE_DECLARE_,__VA_ARGS__)(__VA_ARGS__)
+#define CMETA_SCOPE_DECLARE_3(scope_,type_,name_) CMETA_SCOPE_DECLARE_managed(scope_,type_,name_)
+#define CMETA_SCOPE_DECLARE_4(scope_,type_,name_,kind_) CMETA_PP_CAT(CMETA_SCOPE_DECLARE_,kind_)(scope_,type_,name_)
+#define CMETA_SCOPE_DECLARE_trivial(scope_,type_,name_) \
+    CMETA_STATIC_ASSERT((type_##_cmeta_lifecycle_flags & \
+        (CMETA_LIFECYCLE_TRIVIAL_ZERO | CMETA_LIFECYCLE_TRIVIAL_CLEANUP)) == \
+        (CMETA_LIFECYCLE_TRIVIAL_ZERO | CMETA_LIFECYCLE_TRIVIAL_CLEANUP), \
+        "CMeta trivial scope requires canonical trivial lifecycle facts"); \
+    type_ name_ = {0};
+#define CMETA_SCOPE_DECLARE_managed(scope_, type_, name_) \
     type_ name_ = {0}; \
     bool CMETA_SCOPE_LIVE_(scope_, name_) = false; \
     const cmeta_data_construct_ops *CMETA_SCOPE_OPS_(scope_, name_) = NULL;
@@ -62,8 +70,25 @@ CMETA_INLINE cmeta_status cmeta_scope_construct_ops(
 
 #define CMETA_SCOPE_INIT_(row_, ctx_) \
     CMETA_SCOPE_INIT_EXPAND_(CMETA_PP_UNPAREN ctx_, CMETA_PP_UNPAREN row_)
-#define CMETA_SCOPE_INIT_EXPAND_(...) CMETA_SCOPE_INIT_I_(__VA_ARGS__)
-#define CMETA_SCOPE_INIT_I_(bind_, scope_, status_, type_, name_)             \
+#define CMETA_SCOPE_INIT_EXPAND_(...) CMETA_PP_OVERLOAD(CMETA_SCOPE_INIT_,__VA_ARGS__)(__VA_ARGS__)
+#define CMETA_SCOPE_INIT_5(bind_,scope_,status_,type_,name_) CMETA_SCOPE_INIT_managed(bind_,scope_,status_,type_,name_)
+#define CMETA_SCOPE_INIT_6(bind_,scope_,status_,type_,name_,kind_) CMETA_PP_CAT(CMETA_SCOPE_INIT_,kind_)(bind_,scope_,status_,type_,name_)
+#define CMETA_SCOPE_INIT_trivial(bind_,scope_,status_,type_,name_) \
+    CMETA_PP_CAT(CMETA_SCOPE_TRIVIAL_,bind_)(scope_,status_,type_,name_)
+#define CMETA_SCOPE_TRIVIAL_CMETA_SCOPE_BIND_STATIC_(scope_,status_,type_,name_)
+#define CMETA_SCOPE_TRIVIAL_CMETA_SCOPE_BIND_CHECKED_(scope_,status_,type_,name_) \
+    do { \
+        const cmeta_data_construct_ops *ops = NULL; \
+        (status_) = cmeta_lifecycle_bind(CMETA_DATA_ACCESSOR_(type_)(),sizeof(type_), \
+            CMETA_ALIGNOF(type_),&ops); \
+        if ((status_) != CMETA_OK) goto CMETA_SCOPE_LABEL_(scope_); \
+        if ((cmeta_lifecycle_flags_of(ops) & \
+            (CMETA_LIFECYCLE_TRIVIAL_ZERO | CMETA_LIFECYCLE_TRIVIAL_CLEANUP)) != \
+            (CMETA_LIFECYCLE_TRIVIAL_ZERO | CMETA_LIFECYCLE_TRIVIAL_CLEANUP)) { \
+            (status_) = CMETA_TYPE_MISMATCH; goto CMETA_SCOPE_LABEL_(scope_); \
+        } \
+    } while (0);
+#define CMETA_SCOPE_INIT_managed(bind_, scope_, status_, type_, name_)             \
     do {                                                                       \
         bind_(scope_, status_, type_, name_)                                  \
         (status_) = CMETA_SCOPE_OPS_(scope_, name_)->init_zero(&(name_));      \
@@ -76,8 +101,11 @@ CMETA_INLINE cmeta_status cmeta_scope_construct_ops(
 
 #define CMETA_SCOPE_DESTROY_(row_, scope_) \
     CMETA_SCOPE_DESTROY_EXPAND_(scope_, CMETA_PP_UNPAREN row_)
-#define CMETA_SCOPE_DESTROY_EXPAND_(...) CMETA_SCOPE_DESTROY_I_(__VA_ARGS__)
-#define CMETA_SCOPE_DESTROY_I_(scope_, type_, name_)                          \
+#define CMETA_SCOPE_DESTROY_EXPAND_(...) CMETA_PP_OVERLOAD(CMETA_SCOPE_DESTROY_,__VA_ARGS__)(__VA_ARGS__)
+#define CMETA_SCOPE_DESTROY_3(scope_,type_,name_) CMETA_SCOPE_DESTROY_managed(scope_,type_,name_)
+#define CMETA_SCOPE_DESTROY_4(scope_,type_,name_,kind_) CMETA_PP_CAT(CMETA_SCOPE_DESTROY_,kind_)(scope_,type_,name_)
+#define CMETA_SCOPE_DESTROY_trivial(scope_,type_,name_)
+#define CMETA_SCOPE_DESTROY_managed(scope_, type_, name_)                          \
     do {                                                                       \
         if (CMETA_SCOPE_LIVE_(scope_, name_)) {                               \
             CMETA_SCOPE_OPS_(scope_, name_)->restore_zero(&(name_));          \

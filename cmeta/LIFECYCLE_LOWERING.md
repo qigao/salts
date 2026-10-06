@@ -25,8 +25,8 @@ checked 入口，共享初始化、回滚、清理展开。
 成员值正确。手写声明的所有者必须保证 ops 的 ABI、storage identity/layout、init/restore
 契约。外来、Plugin 或运行时选择的描述符不得通过该宏冒充静态声明；使用 checked admission。
 
-当前不为缺少 concrete construct ops 的 Struct 等类型推导生命周期，也不按 C 类型拼写
-推断 trivial/no-fail。生命周期分类和进一步移除每项 live/ops 状态由 #980 后续完成。
+不为缺少 concrete construct ops 的 Struct 等类型猜测生命周期，也不按 C 类型拼写
+推断 trivial/no-fail。分类由声明所有者显式提供，具体边界见下文。
 
 ## 所有权、状态与错误
 
@@ -45,10 +45,73 @@ checked 入口，共享初始化、回滚、清理展开。
 
 MED：手写类型只提供 `Type_cmeta_data()` 时，原 scope 调用须迁移到 `cmeta_scope_checked`；
 本地声明所有者也可在保证上述契约后发布静态 accessor。CSTL 调用语法不变。
-不改变 DataDesc/construct ops 的布局、ABI 版本、回调或 native 容器算法。
+DataDesc、既有 construct ops 前缀、回调和 native 容器算法保持不变。
+construct ops 末尾追加 size-versioned flags；旧前缀仍可 admission，分类为未知。
 回滚只需一起恢复 scope 入口和消费者，持久化数据无迁移。
 
-静态 setup/cleanup 为 O(N) 次回调、O(N) 有界自动状态；checked 路径另加原描述符校验。
+## Admitted capability、分类与清理义务（#976: 18、20–25）
+
+`cmeta_lifecycle_admit(data, sizeof(Type), alignof(Type), &binding)` 完整验证
+storage identity、布局、ABI 和回调；失败清空 binding。成功后的 `cmeta_lifecycle_init`、
+`cmeta_lifecycle_move`、`cmeta_lifecycle_restore` 只做参数检查，不重新遍历描述符图。
+init 失败自动 restore 部分对象一次，调用方不能再按成功对象登记清理；move 要求不同地址
+且目标为已初始化 semantic zero，源在成功后保持可清理的 semantic zero。
+binding 不拥有值、元数据或 provider，不可伪造、修改或超过外层 Plugin lease 的寿命。
+
+`cmeta_invokable_invoke_admitted()` 同样只接受成功 bind 后未修改的 capability。
+它仍检查输出/参数 storage，保留 CALLBACK_ERROR；原 `cmeta_invokable_invoke()` 继续
+完整检查手工组装/外来对象。原始 CFlow、Plugin、ObjectRef admission 没有因新增快入口而
+被省略；它们仍是各自子系统的信任边界。
+
+ObjectRef 的 `cmeta_object_field_bind(ref, name, &binding)` 验证对象/provider、字段及固定
+布局后发布借用 capability；`read_admitted` 每次调用动态 read provider，不缓存会失效的
+动态字段指针；`assign_admitted` 只接受与 `binding.field->value` 相同的 native storage，
+只调用已有 assignment authority，缺失时返回 TRAIT_MISSING。固定布局地址由 admission
+计算。binding 不能超过 object/provider/module 生命周期，旧按名字读写入口仍完整验证。
+
+`CMETA_DEFINE_LIFECYCLE(Type, descriptor, init, restore, move, flags)` 从同一声明生成
+精确 native callback 适配、canonical ops 和 `Type_cmeta_lifecycle_flags` 常量。
+四个正向事实为 INIT_NOFAIL、TRIVIAL_ZERO、TRIVIAL_CLEANUP、MOVABLE；零表示未声明。
+TRIVIAL_ZERO 表示 native `{0}` 即 semantic zero，必须同时声明 INIT_NOFAIL。
+TRIVIAL_CLEANUP 表示不需要资源释放，不能由 restore 回调地址推断。回调行为承诺仍由
+声明所有者负责；手工 descriptor 的 identity/布局继续在 admission 验证。
+CSTL 生成器声明 nofail 初始化和 movable，payload 清理由原容器 destroy 负责。
+
+`CMETA_DEFINE_TRIVIAL_LIFECYCLE(Type, descriptor)` 生成 native zero/reset/move 及上述
+四个事实；只能用于不持有资源的平凡 native 值，C++ 还要求 `std::is_trivial`。
+`cmeta_autos((Type, value, trivial))` 静态检查该分类，只生成 native 自动变量，
+不生成 ops 指针、live 标志或清理回调。两字段项仍走 managed 路径，可与 trivial 项混用。
+checked scope 的 trivial 项依然 admission，并核对 runtime 分类，不允许静默降级。
+
+清理记录 `cmeta_cleanup` 仅拥有“一次调用释放 authority 的义务”，不定义新的 Reflection
+destroy trait。其存储由调用方提供，容量是数组长度，单 owner、无分配、无增长。arm 对已
+登记项返回 BUSY；run 在回调前清空记录，保证重入和重复 discharge 不二次释放；transfer
+只能转移到空记录。资源/authority/记录地址在释放完成前保持稳定，不得复制 armed 记录。
+`cmeta_with_cleanups(records, count, body, context)` 保留 body 状态并逆序 discharge；
+C++ `cmeta::cleanup_scope` 在异常展开时执行同一义务。耗时 O(count)，额外空间 O(1)。
+
+- Data adapter 使用 admitted binding 的 restore_zero，binding 和存储必须活到清理结束。
+- ObjectRef adapter 调用 `cmeta_object_release()`；BORROWED 清空视图，SHARED release，
+  OWNED destroy。`cmeta::object_scope` 的 take/move 不 retain，拒绝 busy 目标且保持双方
+  原状；close 幂等，detach 显式转出释放义务。metadata/provider/module 仍由外层 owner 保活。
+- Plugin adapter 位于 `salts/plugin_scope.h`，调用原 registry release。把 lease 放在依赖
+  记录之前，逆序清理时先结束借用；释放失败代表既有 lease 契约被破坏，按原 RAII 规则终止。
+
+`cmeta_result_cleanup_classify` 使用 Function result flags 区分 VALUE、BORROW、RELEASE、
+DESTROY，UNKNOWN 返回 TRAIT_MISSING，冲突 flags 返回 INVALID_ARGUMENT。
+`cmeta_cleanup_object_result` 只有在 canonical flags 与 ObjectRef lifetime 一致时登记
+OWNED/SHARED 义务；BORROWED 不登记。VALUE 的 native 存储生命周期由 Data adapter 负责。
+consume/move 成功后由生成器 transfer/disarm 源义务；失败不得提前移除源义务。
+这对应 [ownership calculus mapping](../formal/cmeta_cflow_calculus/OWNERSHIP_COMPILER_MAPPING.md)，
+不增加 descriptor 内的 LIVE/MOVED/CFG 状态，也不声称提供普通 C 的跨分支 borrow checker。
+
+MED：新声明会在编译期拒绝不匹配的 callback、packed Struct 布局、Function/Interface
+返回 carrier 和冲突 ownership flags；手写外来描述符继续返回 runtime 错误。迁移需修正
+声明事实，不能绕过诊断。回滚时一并恢复生成器、头文件和调用方，无持久化格式变化。
+验证覆盖 C11/C++17、部分初始化回滚、move、旧 ABI 前缀、逆序/重入/异常清理、Plugin
+依赖顺序，以及每类声明错误的 compile-fail CTest；SDK 消费者复用同一批行为测试。
+
+managed setup/cleanup 为 O(N) 次回调、O(N) 有界自动状态；checked 路径另加原描述符校验。
 本阶段验证移除重复 admission，不声明未经测量的吞吐或延迟收益。
 正式测试覆盖静态/checked 同一 ops 身份及行为、失败回滚、拒绝错误 accessor、动态坏元数据、
 CSTL 资源释放、C++ 头文件和 installed SDK。

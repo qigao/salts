@@ -425,10 +425,12 @@ static const cmeta_data_desc dynamic_object_data = {
     .construct_ops = NULL
 };
 
+static size_t dynamic_read_count;
 static cmeta_status dynamic_object_field_read(
     void *context, const void *object, const cmeta_data_field_desc *field,
     const void **out_value) {
     const dynamic_object_box *box = (const dynamic_object_box *)object;
+    ++dynamic_read_count;
 
     (void)context;
     if (box == NULL || field == NULL || out_value == NULL)
@@ -577,6 +579,46 @@ spec("CMeta ObjectRef Interface projection") {
 }
 
 spec("CMeta canonical borrowed object") {
+    it("admits a fixed field once without inventing assignment authority") {
+        object_box box = {7};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        cmeta_object_field_binding binding = CMETA_OBJECT_FIELD_BINDING_INIT;
+        const void *value = NULL;
+        int next = 9;
+        check_equal(cmeta_object_borrow(&object,&box,&object_box_data,NULL),CMETA_OK);
+        check_equal(cmeta_object_field_bind(&object,"value",&binding),CMETA_OK);
+        check_true(binding.field->value == &cmeta_data_int);
+        check_equal(cmeta_object_field_read_admitted(&binding,&value),CMETA_OK);
+        check_true(value == &box.value);
+        box.value = 8;
+        check_equal(cmeta_object_field_read_admitted(&binding,&value),CMETA_OK);
+        check_equal(*(const int *)value,8);
+        check_equal(cmeta_object_field_assign_admitted(&binding,&next),CMETA_TRAIT_MISSING);
+        check_equal(cmeta_object_field_bind(&object,"missing",&binding),CMETA_INVALID_ARGUMENT);
+        check_null(binding.field);
+        check_equal(cmeta_object_field_read_admitted(&binding,&value),CMETA_INVALID_ARGUMENT);
+        check_null(value);
+        cmeta_object_release(&object);
+    }
+    it("uses the same admitted provider for each dynamic read and explicit write") {
+        dynamic_object_box box = {3,{5,9}};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        cmeta_object_field_binding binding = CMETA_OBJECT_FIELD_BINDING_INIT;
+        const void *value = NULL;
+        int next = 17;
+        dynamic_read_count = 0;
+        check_equal(cmeta_object_borrow_with_providers(&object,&box,&dynamic_object_data,
+            &dynamic_object_field_provider,NULL),CMETA_OK);
+        check_equal(cmeta_object_field_bind(&object,"value",&binding),CMETA_OK);
+        check_equal(dynamic_read_count,(size_t)0);
+        check_equal(cmeta_object_field_read_admitted(&binding,&value),CMETA_OK);
+        check_equal(*(const int *)value,9);
+        check_equal(cmeta_object_field_assign_admitted(&binding,&next),CMETA_OK);
+        check_equal(cmeta_object_field_read_admitted(&binding,&value),CMETA_OK);
+        check_equal(*(const int *)value,17);
+        check_equal(dynamic_read_count,(size_t)2);
+        cmeta_object_release(&object);
+    }
     it("preserves one native identity without taking ownership") {
         object_box box = {7};
         cmeta_object_ref object = CMETA_OBJECT_REF_INIT;

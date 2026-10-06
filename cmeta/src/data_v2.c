@@ -808,7 +808,8 @@ static cmeta_status cmeta_data_construct_ops_status(
     if (ops->struct_size < CMETA_CONSTRUCT_OPS_SIZE ||
         ops->abi_version != CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION ||
         ops->storage_type == NULL || !cmeta_type_desc_valid(ops->storage_type) ||
-        ops->init_zero == NULL || ops->restore_zero == NULL || ops->move == NULL)
+        ops->init_zero == NULL || ops->restore_zero == NULL || ops->move == NULL ||
+        !cmeta_lifecycle_flags_valid(ops))
         return CMETA_INVALID_ARGUMENT;
     if (desc->storage_type == NULL ||
         !cmeta_type_equal(desc->storage_type, ops->storage_type) ||
