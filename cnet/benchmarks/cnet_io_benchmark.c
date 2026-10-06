@@ -1242,7 +1242,8 @@ static void io_bench_cnet_sent(void *user, cnet_connection connection, size_t si
 
 static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol,
                               const struct sockaddr_in *address,
-                              native_io_backend_kind backend_kind, io_bench_send_mode send_mode,
+                              native_io_backend_kind backend_kind, size_t payload_size,
+                              io_bench_send_mode send_mode,
                               size_t segment_count, bool enable_nodelay,
                               io_bench_receive_mode receive_mode) {
   const cnet_client_config config = {.backend = backend_kind,
@@ -1252,7 +1253,7 @@ static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol
                                      .completion_batch_capacity = 4u,
                                      .event_capacity = 8u,
                                      .max_send_bytes = IO_BENCH_MAX_PAYLOAD,
-                                     .receive_buffer_bytes = IO_BENCH_MAX_PAYLOAD,
+                                     .receive_buffer_bytes = payload_size,
                                      .connect_timeout_ms = IO_BENCH_TIMEOUT_MS,
                                      .read_timeout_ms = 0u,
                                      .write_timeout_ms = 0u};
@@ -1383,7 +1384,8 @@ static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol pr
           io_bench_native_init(&fixture->native, protocol, &fixture->server.address, backend_kind);
     else
       status = io_bench_cnet_init(&fixture->cnet, protocol, &fixture->server.address, backend_kind,
-                                  send_mode, segment_count, cnet_enable_nodelay, receive_mode);
+                                  payload_size, send_mode, segment_count, cnet_enable_nodelay,
+                                  receive_mode);
   }
   if (status == SALTS_OK && driver == IO_BENCH_CNET)
     status = io_bench_cnet_ready(&fixture->cnet, payload_size, exchange_count);
@@ -1705,7 +1707,7 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver,
   return io_bench_run_counted(protocol, driver, payload_size, profile_stages,
                               backend_kind, send_mode, segment_count,
                               IO_BENCH_WARMUP_EXCHANGES,
-                              IO_BENCH_EXCHANGES_PER_REPLICATE, false,
+                              IO_BENCH_EXCHANGES_PER_REPLICATE, protocol == IO_BENCH_TCP,
                               IO_BENCH_RECEIVE_BORROWED_DIRECT, result);
 }
 
@@ -2869,6 +2871,7 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
            "quartets; A/B time order alternates. A/A is collected on every platform and driver.\n");
     printf("CNet uses one bounded receive demand and borrowed callback views. Deadlines are "
            "disabled; timeout behavior belongs to contract tests.\n");
+    printf("CNet receive capacity matches the run payload; all TCP clients use TCP_NODELAY.\n");
     printf("NativeIO direct/coroutine and CNet opt into prepare/observe batching; "
            "io_uring flushes eligible lane heads together, readiness/IOCP start immediately.\n");
     printf("Workload: %d repeats; %d warmups and %d sequential persistent round trips per run. "
