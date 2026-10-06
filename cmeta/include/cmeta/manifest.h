@@ -51,11 +51,17 @@ typedef struct cmeta_manifest {
  * Platform linker sections may aggregate these tables behind this contract,
  * but section syntax is deliberately not part of the public API.
  */
+#ifdef __cplusplus
 #define cmeta_entry(symbol) \
-    { #symbol, CMETA_MANIFEST_GENERIC, CMETA_MANIFEST_VOID_PTR(&(symbol)), UINT64_C(0), UINT32_C(0) },
-
+    { #symbol, CMETA_MANIFEST_GENERIC, static_cast<const void *>(&(symbol)), UINT64_C(0), UINT32_C(0) },
 #define cmeta_manifest_entry(name_, kind_, descriptor_, fingerprint_, flags_) \
-    { (name_), (kind_), CMETA_MANIFEST_VOID_PTR(descriptor_), (fingerprint_), (flags_) },
+    { (name_), (kind_), static_cast<const void *>(descriptor_), (fingerprint_), (flags_) },
+#else
+#define cmeta_entry(symbol) \
+    { #symbol, CMETA_MANIFEST_GENERIC, &(symbol), UINT64_C(0), UINT32_C(0) },
+#define cmeta_manifest_entry(name_, kind_, descriptor_, fingerprint_, flags_) \
+    { (name_), (kind_), (descriptor_), (fingerprint_), (flags_) },
+#endif
 
 #define cmeta_registry(name, entries_) \
     static const cmeta_manifest_entry name##_cmeta_entries[] = { entries_ }; \
