@@ -51,10 +51,10 @@ if(BUILD_TESTS)
   if(SALTS_POWERSHELL_EXECUTABLE)
     add_test(
       NAME benchmark_policy_test
-      COMMAND ${SALTS_POWERSHELL_EXECUTABLE}
-              -NoProfile
-              -File ${PROJECT_SOURCE_DIR}/cmake/ci/verify-benchmark-policy.ps1
-              -ProjectRoot ${PROJECT_SOURCE_DIR})
+      COMMAND
+        ${SALTS_POWERSHELL_EXECUTABLE} -NoProfile -File
+        ${PROJECT_SOURCE_DIR}/cmake/ci/verify-benchmark-policy.ps1 -ProjectRoot
+        ${PROJECT_SOURCE_DIR})
   endif()
 endif()
 
@@ -81,14 +81,18 @@ add_subdirectory(cflow/cnet-adapter)
 add_subdirectory(cserde)
 add_subdirectory(utils)
 
+if(WIN32)
+  enable_language(RC)
+  include(SaltsVersion)
+endif()
+
 # Package Configuration
 include(CMakePackageConfigHelpers)
 
 # Generate the config file
 configure_package_config_file(
   "${CMAKE_SOURCE_DIR}/cmake/SaltsConfig.cmake.in"
-  "${CMAKE_BINARY_DIR}/SaltsConfig.cmake"
-  INSTALL_DESTINATION "lib/cmake/Salts")
+  "${CMAKE_BINARY_DIR}/SaltsConfig.cmake" INSTALL_DESTINATION "lib/cmake/Salts")
 
 # Generate the version file
 write_basic_package_version_file(

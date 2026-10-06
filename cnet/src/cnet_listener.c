@@ -1167,6 +1167,7 @@ int cnet_listener_accept_peer(cnet_listener *listener, cnet_client *client,
                               cnet_connection *out_connection,
                               cnet_stream_peer *out_peer) {
   cnet_accepted_stream accepted = CNET_ACCEPTED_STREAM_INIT;
+  uintptr_t native_socket;
   int status;
   if (out_connection == NULL) return SALTS_EINVAL;
   *out_connection = (cnet_connection){0};
@@ -1178,8 +1179,11 @@ int cnet_listener_accept_peer(cnet_listener *listener, cnet_client *client,
   status = cnet_listener_accept_detached(listener, &accepted);
   if (status != SALTS_OK) return status;
   *out_peer = accepted.peer;
-  status = cnet_client_adopt_accepted(client, &accepted, observer,
-                                      out_connection);
+  native_socket = accepted.internal_socket;
+  accepted.internal_socket = 0u;
+  accepted.internal_active = 0u;
+  /* Direct accept preserves listener policy; detached handoff applies client policy. */
+  status = cnet_client_adopt_tcp(client, native_socket, observer, out_connection);
   if (status != SALTS_OK) *out_peer = (cnet_stream_peer){0};
   return status;
 }
@@ -1252,6 +1256,7 @@ int cnet_listener_accept_tls_peer(cnet_listener *listener, cnet_client *client,
                                   cnet_connection *out_connection,
                                   cnet_stream_peer *out_peer) {
   cnet_accepted_stream accepted = CNET_ACCEPTED_STREAM_INIT;
+  uintptr_t native_socket;
   int status;
   if (out_connection == NULL) return SALTS_EINVAL;
   *out_connection = (cnet_connection){0};
@@ -1264,8 +1269,12 @@ int cnet_listener_accept_tls_peer(cnet_listener *listener, cnet_client *client,
   status = cnet_listener_accept_detached(listener, &accepted);
   if (status != SALTS_OK) return status;
   *out_peer = accepted.peer;
-  status = cnet_client_adopt_accepted_tls(client, &accepted, server, observer,
-                                          out_connection);
+  native_socket = accepted.internal_socket;
+  accepted.internal_socket = 0u;
+  accepted.internal_active = 0u;
+  status = cnet_client_adopt_tls_server(client, native_socket,
+                                       cnet_tls_server_context(server), observer,
+                                       out_connection);
   if (status != SALTS_OK) *out_peer = (cnet_stream_peer){0};
   return status;
 }

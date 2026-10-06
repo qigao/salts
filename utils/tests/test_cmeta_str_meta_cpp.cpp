@@ -1,6 +1,6 @@
 #include "tstr.h"
 #include "vstr.h"
-#include "tinytest.h"
+#include "tinytest.hpp"
 
 #include <cstddef>
 

@@ -142,7 +142,7 @@ spec("CMeta coroutine facade") {
   static int submitted;
 
   before_each() {
-    coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
     state = (facade_state){0};
     submitted = 0;
     config.worker_count = FACADE_TEST_WORKERS;
@@ -267,7 +267,7 @@ spec("CMeta coroutine facade") {
   }
 
   it("rejects completion through another executor without consuming the wait") {
-    coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
     coro_executor_task_t task = {facade_task, NULL, facade_finalize, &state};
     config.worker_count = 1u;
     config.coroutine_pool.max_capacity = 1u;

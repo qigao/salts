@@ -3,7 +3,7 @@ add_library(cmeta_reed STATIC gf256.c gf256.h)
 target_include_directories(
   cmeta_reed PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 
-find_path(SIMDE_INCLUDE_DIRS "simde/simde-common.h" REQUIRED)
+find_path(SIMDE_INCLUDE_DIRS "simde/arm/neon.h")
 target_include_directories(cmeta_reed PRIVATE ${SIMDE_INCLUDE_DIRS})
 
 set_target_properties(

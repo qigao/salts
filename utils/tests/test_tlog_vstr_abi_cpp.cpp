@@ -1,5 +1,5 @@
 #include "tlog.h"
-#include "tinytest.h"
+#include "tinytest.hpp"
 #include <cstddef>
 
 spec("TLog vstr ABI C++ contract") {

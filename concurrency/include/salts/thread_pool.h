@@ -1,10 +1,13 @@
 #ifndef SALTS_THREAD_POOL_H
 #define SALTS_THREAD_POOL_H
 
-#include <salts/concurrency.h>
 #include <salts/error_codes.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct cmeta_threadpool_s cmeta_threadpool_t;
 typedef void (*cmeta_task_fn)(void *arg);
@@ -53,10 +56,9 @@ typedef struct {
   int64_t peak_pending_tasks;
 } cmeta_threadpool_stats_t;
 
-SALTS_CONCURRENCY_C_API cmeta_threadpool_t *cmeta_threadpool_create(int num_threads);
-SALTS_CONCURRENCY_C_API cmeta_threadpool_t *
-cmeta_threadpool_create_with_config(const cmeta_threadpool_config_t *config);
-SALTS_CONCURRENCY_C_API void cmeta_threadpool_destroy(cmeta_threadpool_t *pool);
+cmeta_threadpool_t *cmeta_threadpool_create(int num_threads);
+cmeta_threadpool_t *cmeta_threadpool_create_with_config(const cmeta_threadpool_config_t *config);
+void cmeta_threadpool_destroy(cmeta_threadpool_t *pool);
 /**
  * Submit a copied descriptor, waiting for bounded queue space if necessary.
  *
@@ -64,8 +66,7 @@ SALTS_CONCURRENCY_C_API void cmeta_threadpool_destroy(cmeta_threadpool_t *pool);
  * SALTS_ESHUTDOWN when admission is closed, or SALTS_EBUSY when a callback on
  * this pool would have to wait for the same saturated pool to make progress.
  */
-SALTS_CONCURRENCY_C_API int cmeta_threadpool_submit_task(
-    cmeta_threadpool_t *pool, const cmeta_threadpool_task_t *task);
+int cmeta_threadpool_submit_task(cmeta_threadpool_t *pool, const cmeta_threadpool_task_t *task);
 /**
  * Attempt to submit a copied descriptor without waiting for queue space.
  *
@@ -73,8 +74,7 @@ SALTS_CONCURRENCY_C_API int cmeta_threadpool_submit_task(
  * SALTS_ENOBUFS when the queue is full, or SALTS_ESHUTDOWN when admission is
  * closed.
  */
-SALTS_CONCURRENCY_C_API int cmeta_threadpool_try_submit_task(
-    cmeta_threadpool_t *pool, const cmeta_threadpool_task_t *task);
+int cmeta_threadpool_try_submit_task(cmeta_threadpool_t *pool, const cmeta_threadpool_task_t *task);
 /**
  * Submit a task, waiting for bounded queue space when necessary.
  *
@@ -82,36 +82,34 @@ SALTS_CONCURRENCY_C_API int cmeta_threadpool_try_submit_task(
  * the pool no longer accepts work, or SALTS_EBUSY when a callback on this pool
  * would have to wait for the same saturated pool to make progress.
  */
-SALTS_CONCURRENCY_C_API int cmeta_threadpool_submit(cmeta_threadpool_t *pool,
-                                                    cmeta_task_fn task,
-                                                    void *arg);
+int cmeta_threadpool_submit(cmeta_threadpool_t *pool, cmeta_task_fn task, void *arg);
 /**
  * Attempt to submit a task without waiting for bounded queue space.
  *
  * @return SALTS_OK, SALTS_EINVAL for invalid arguments, SALTS_ENOBUFS when
  * the queue is full, or SALTS_ESHUTDOWN when the pool no longer accepts work.
  */
-SALTS_CONCURRENCY_C_API int cmeta_threadpool_try_submit(cmeta_threadpool_t *pool,
-                                                        cmeta_task_fn task,
-                                                        void *arg);
+int cmeta_threadpool_try_submit(cmeta_threadpool_t *pool, cmeta_task_fn task, void *arg);
 /** Wait for accepted work to settle, rejecting a wait from this pool's callback. */
-SALTS_CONCURRENCY_C_API int
-cmeta_threadpool_wait_status(cmeta_threadpool_t *pool);
-SALTS_CONCURRENCY_C_API void cmeta_threadpool_wait(cmeta_threadpool_t *pool);
+int cmeta_threadpool_wait_status(cmeta_threadpool_t *pool);
+void cmeta_threadpool_wait(cmeta_threadpool_t *pool);
 /**
  * End admission and either drain queued callbacks or settle them as cancelled.
  * Repeating the selected policy is idempotent; changing it returns SALTS_EBUSY.
  */
-SALTS_CONCURRENCY_C_API int cmeta_threadpool_shutdown_with_policy(
-    cmeta_threadpool_t *pool, cmeta_threadpool_shutdown_policy_t policy);
-SALTS_CONCURRENCY_C_API void cmeta_threadpool_shutdown(cmeta_threadpool_t *pool);
-SALTS_CONCURRENCY_C_API int cmeta_threadpool_pending(cmeta_threadpool_t *pool);
-SALTS_CONCURRENCY_C_API int64_t
-cmeta_threadpool_cancelled(cmeta_threadpool_t *pool);
-SALTS_CONCURRENCY_C_API int cmeta_threadpool_size(cmeta_threadpool_t *pool);
-SALTS_CONCURRENCY_C_API size_t cmeta_threadpool_capacity(cmeta_threadpool_t *pool);
-SALTS_CONCURRENCY_C_API int cmeta_threadpool_is_accepting(cmeta_threadpool_t *pool);
-SALTS_CONCURRENCY_C_API void cmeta_threadpool_get_stats(cmeta_threadpool_t *pool,
-                                                        cmeta_threadpool_stats_t *stats);
+int cmeta_threadpool_shutdown_with_policy(cmeta_threadpool_t *pool,
+                                          cmeta_threadpool_shutdown_policy_t policy);
+void cmeta_threadpool_shutdown(cmeta_threadpool_t *pool);
+int cmeta_threadpool_pending(cmeta_threadpool_t *pool);
+int64_t cmeta_threadpool_cancelled(cmeta_threadpool_t *pool);
+int cmeta_threadpool_size(cmeta_threadpool_t *pool);
+size_t cmeta_threadpool_capacity(cmeta_threadpool_t *pool);
+int cmeta_threadpool_is_accepting(cmeta_threadpool_t *pool);
+void cmeta_threadpool_get_stats(cmeta_threadpool_t *pool, cmeta_threadpool_stats_t *stats);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* SALTS_THREAD_POOL_H */

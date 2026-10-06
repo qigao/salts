@@ -468,13 +468,13 @@ static void coro_executor_worker(void *arg) {
       } else {
         while (coro_pool_active_count(shard->pool) < executor->pool_config.max_capacity) {
           coro_executor_task_t
-              tasks[SALTS_CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH];
+              tasks[CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH];
           const size_t active = coro_pool_active_count(shard->pool);
           size_t room = executor->pool_config.max_capacity - active;
           size_t count;
 
-          if (room > SALTS_CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH)
-            room = SALTS_CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH;
+          if (room > CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH)
+            room = CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH;
           count = coro_executor_take_task_batch(shard, tasks, room);
           if (count == 0u) break;
           for (size_t index = 0u; index < count; ++index)
@@ -571,7 +571,7 @@ static void coro_executor_destroy_storage(coro_executor_t *executor) {
 }
 
 coro_executor_t *coro_executor_create(const coro_executor_config_t *config) {
-  coro_executor_config_t defaults = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+  coro_executor_config_t defaults = CORO_EXECUTOR_CONFIG_DEFAULT;
   coro_executor_t *executor;
   cmeta_threadpool_config_t worker_config;
   size_t worker_count;
@@ -789,7 +789,7 @@ int coro_executor_set_dequeue_batch_limit_internal(
   coro_executor_shard_t *shard;
 
   if (executor == NULL || shard_index >= executor->worker_count || limit == 0u ||
-      limit > SALTS_CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH)
+      limit > CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH)
     return SALTS_EINVAL;
 
   shard = &executor->shards[shard_index];

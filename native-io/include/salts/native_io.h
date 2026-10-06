@@ -2,13 +2,16 @@
 #define SALTS_NATIVE_IO_H
 
 #include <salts/error_codes.h>
-#include <salts/native_io_module.h>
 
 #ifndef __cplusplus
   #include <stdbool.h>
 #endif
 #include <stddef.h>
 #include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct native_io_backend {
   void *impl;
@@ -178,24 +181,23 @@ typedef struct native_io_coroutine_stats {
   size_t retained_frames;
 } native_io_coroutine_stats;
 
-#define NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER                                              \
+#define NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER                                                   \
   {NATIVE_IO_COROUTINE_STATS_ABI_V1, sizeof(native_io_coroutine_stats), 0u, 0u, 0u}
 
 /** Returns the communication model represented by kind, or NONE if invalid. */
-SALTS_NATIVE_IO_C_API native_io_model native_io_backend_kind_model(native_io_backend_kind kind);
+native_io_model native_io_backend_kind_model(native_io_backend_kind kind);
 
 /** Returns compile-time availability; no fallback backend is selected. */
-SALTS_NATIVE_IO_C_API bool native_io_backend_kind_supported(native_io_backend_kind kind);
+bool native_io_backend_kind_supported(native_io_backend_kind kind);
 
 /** Returns whether kind supports async-capable connected byte pipes. */
-SALTS_NATIVE_IO_C_API bool native_io_backend_kind_supports_pipe(native_io_backend_kind kind);
+bool native_io_backend_kind_supports_pipe(native_io_backend_kind kind);
 
-SALTS_NATIVE_IO_C_API bool native_io_endpoint_valid(native_io_endpoint endpoint);
-SALTS_NATIVE_IO_C_API bool native_io_request_valid(native_io_request request);
-SALTS_NATIVE_IO_C_API bool native_io_coroutine_task_valid(native_io_coroutine_task task);
-SALTS_NATIVE_IO_C_API bool native_io_operation_valid(const native_io_operation *operation);
-SALTS_NATIVE_IO_C_API bool
-native_io_vector_operation_valid(const native_io_vector_operation *operation);
+bool native_io_endpoint_valid(native_io_endpoint endpoint);
+bool native_io_request_valid(native_io_request request);
+bool native_io_coroutine_task_valid(native_io_coroutine_task task);
+bool native_io_operation_valid(const native_io_operation *operation);
+bool native_io_vector_operation_valid(const native_io_vector_operation *operation);
 
 /**
  * Initializes a fixed-capacity backend selected by config.kind.
@@ -209,8 +211,7 @@ native_io_vector_operation_valid(const native_io_vector_operation *operation);
  *         SALTS_ERANGE for allocation overflow; SALTS_ENOMEM; SALTS_ENOTSUP
  *         when kind is unavailable; otherwise a negative native error code.
  */
-SALTS_NATIVE_IO_C_API int native_io_backend_init(native_io_backend *backend,
-                                                 const native_io_backend_config *config);
+int native_io_backend_init(native_io_backend *backend, const native_io_backend_config *config);
 
 /**
  * Associates one native socket with the backend and returns a generation
@@ -231,16 +232,14 @@ SALTS_NATIVE_IO_C_API int native_io_backend_init(native_io_backend *backend,
  *         SALTS_ENOTSUP for another socket type; or a negative native query or
  *         association error.
  */
-SALTS_NATIVE_IO_C_API int native_io_backend_attach_socket(native_io_backend *backend,
-                                                          uintptr_t native_socket,
-                                                          native_io_endpoint *out_endpoint);
+int native_io_backend_attach_socket(native_io_backend *backend, uintptr_t native_socket,
+                                    native_io_endpoint *out_endpoint);
 
 /**
  * Releases backend metadata after the caller closed the native socket.
  * SALTS_EBUSY preserves the endpoint while any request remains unobserved.
  */
-SALTS_NATIVE_IO_C_API int native_io_backend_release_socket(native_io_backend *backend,
-                                                           native_io_endpoint endpoint);
+int native_io_backend_release_socket(native_io_backend *backend, native_io_endpoint endpoint);
 
 /**
  * Associates one connected byte-pipe handle with the backend. The backend
@@ -252,18 +251,15 @@ SALTS_NATIVE_IO_C_API int native_io_backend_release_socket(native_io_backend *ba
  * descriptors. The selected backend remains the only progress owner.
  * out_endpoint is cleared on failure.
  */
-SALTS_NATIVE_IO_C_API int native_io_backend_attach_pipe(native_io_backend *backend,
-                                                        uintptr_t native_handle, uint32_t flags,
-                                                        native_io_endpoint *out_endpoint);
+int native_io_backend_attach_pipe(native_io_backend *backend, uintptr_t native_handle,
+                                  uint32_t flags, native_io_endpoint *out_endpoint);
 
 /** Releases metadata for a drained pipe endpoint without closing its handle. */
-SALTS_NATIVE_IO_C_API int native_io_backend_release_pipe(native_io_backend *backend,
-                                                         native_io_endpoint endpoint);
+int native_io_backend_release_pipe(native_io_backend *backend, native_io_endpoint endpoint);
 
 /** Returns whether this live endpoint can preserve a bounded vector write without copying. */
-SALTS_NATIVE_IO_C_API bool
-native_io_backend_endpoint_supports_vector_write(const native_io_backend *backend,
-                                                 native_io_endpoint endpoint);
+bool native_io_backend_endpoint_supports_vector_write(const native_io_backend *backend,
+                                                      native_io_endpoint endpoint);
 
 /**
  * Starts one operation without allocating or copying payload messages. For one
@@ -280,9 +276,8 @@ native_io_backend_endpoint_supports_vector_write(const native_io_backend *backen
  *         after close; SALTS_ENOBUFS when all request slots are retained; or a
  *         negative native submission error.
  */
-SALTS_NATIVE_IO_C_API int native_io_backend_submit(native_io_backend *backend,
-                                                   const native_io_operation *operation,
-                                                   native_io_request *out_request);
+int native_io_backend_submit(native_io_backend *backend, const native_io_operation *operation,
+                             native_io_request *out_request);
 
 /**
  * Starts one bounded vectored write without flattening payload bytes.
@@ -290,10 +285,9 @@ SALTS_NATIVE_IO_C_API int native_io_backend_submit(native_io_backend *backend,
  * ranges remain borrowed until the matching terminal completion is observed.
  * Unsupported endpoint/backend combinations return SALTS_ENOTSUP.
  */
-SALTS_NATIVE_IO_C_API int
-native_io_backend_submit_vector(native_io_backend *backend,
-                                const native_io_vector_operation *operation,
-                                native_io_request *out_request);
+int native_io_backend_submit_vector(native_io_backend *backend,
+                                    const native_io_vector_operation *operation,
+                                    native_io_request *out_request);
 
 /**
  * Admits one operation for backend-native batching. Validation, capacity, FIFO,
@@ -304,9 +298,8 @@ native_io_backend_submit_vector(native_io_backend *backend,
  * admission are terminal completions, including a later native submission error.
  * Failure clears out_request and retains no borrow. Owner thread only.
  */
-SALTS_NATIVE_IO_C_API int native_io_backend_prepare(native_io_backend *backend,
-                                                    const native_io_operation *operation,
-                                                    native_io_request *out_request);
+int native_io_backend_prepare(native_io_backend *backend, const native_io_operation *operation,
+                              native_io_request *out_request);
 
 /**
  * Starts eligible prepared operations without waiting for their completion.
@@ -316,7 +309,7 @@ SALTS_NATIVE_IO_C_API int native_io_backend_prepare(native_io_backend *backend,
  * Submitted requests are never rolled back. All admitted handles/payloads remain
  * retained until their terminal completions are observed, including on failure.
  */
-SALTS_NATIVE_IO_C_API int native_io_backend_flush(native_io_backend *backend);
+int native_io_backend_flush(native_io_backend *backend);
 
 /**
  * Starts one bounded coroutine on the backend owner thread.
@@ -327,10 +320,9 @@ SALTS_NATIVE_IO_C_API int native_io_backend_flush(native_io_backend *backend);
  * reuses the coroutine frame; entry must not retain coroutine after returning.
  * The task handle becomes stale when entry returns.
  */
-SALTS_NATIVE_IO_C_API int native_io_backend_spawn_coroutine(native_io_backend *backend,
-                                                            native_io_coroutine_entry_fn entry,
-                                                            void *user_data,
-                                                            native_io_coroutine_task *out_task);
+int native_io_backend_spawn_coroutine(native_io_backend *backend,
+                                      native_io_coroutine_entry_fn entry, void *user_data,
+                                      native_io_coroutine_task *out_task);
 
 /**
  * Submits one operation and suspends the currently running NativeIO coroutine.
@@ -341,25 +333,22 @@ SALTS_NATIVE_IO_C_API int native_io_backend_spawn_coroutine(native_io_backend *b
  * I/O failure remains encoded in completion.kind/status. Submission failures
  * are returned before suspension and leave out_completion cleared.
  */
-SALTS_NATIVE_IO_C_API int native_io_coroutine_await(native_io_coroutine *coroutine,
-                                                    const native_io_operation *operation,
-                                                    native_io_completion *out_completion);
+int native_io_coroutine_await(native_io_coroutine *coroutine, const native_io_operation *operation,
+                              native_io_completion *out_completion);
 
 /** Like await, but submits one bounded vectored write through the same request/completion owner. */
-SALTS_NATIVE_IO_C_API int
-native_io_coroutine_await_vector(native_io_coroutine *coroutine,
-                                 const native_io_vector_operation *operation,
-                                 native_io_completion *out_completion);
+int native_io_coroutine_await_vector(native_io_coroutine *coroutine,
+                                     const native_io_vector_operation *operation,
+                                     native_io_completion *out_completion);
 
 /** Like await, but admits through prepare so separate coroutine entries can
  * share a backend submission batch. Owner observe flushes before waiting. */
-SALTS_NATIVE_IO_C_API int native_io_coroutine_await_prepared(native_io_coroutine *coroutine,
-                                                            const native_io_operation *operation,
-                                                            native_io_completion *out_completion);
+int native_io_coroutine_await_prepared(native_io_coroutine *coroutine,
+                                       const native_io_operation *operation,
+                                       native_io_completion *out_completion);
 
 /** Requests cancellation of the operation currently awaited by task. */
-SALTS_NATIVE_IO_C_API int native_io_backend_cancel_coroutine(native_io_backend *backend,
-                                                             native_io_coroutine_task task);
+int native_io_backend_cancel_coroutine(native_io_backend *backend, native_io_coroutine_task task);
 
 /**
  * Requests cancellation of an active operation. SALTS_OK means cancellation
@@ -367,8 +356,7 @@ SALTS_NATIVE_IO_C_API int native_io_backend_cancel_coroutine(native_io_backend *
  * completion proves cancellation. SALTS_EALREADY means the native operation
  * was already completing; its terminal completion must still be observed.
  */
-SALTS_NATIVE_IO_C_API int native_io_backend_cancel(native_io_backend *backend,
-                                                   native_io_request request);
+int native_io_backend_cancel(native_io_backend *backend, native_io_request request);
 
 /**
  * Flushes eligible prepared operations, then directly dequeues up to
@@ -384,10 +372,8 @@ SALTS_NATIVE_IO_C_API int native_io_backend_cancel(native_io_backend *backend,
  * event whose kind/status carry the terminal error. A returned event ends the
  * payload borrow and invalidates that request handle.
  */
-SALTS_NATIVE_IO_C_API int native_io_backend_observe(native_io_backend *backend,
-                                                    native_io_completion *events,
-                                                    size_t event_capacity, uint32_t timeout_ms,
-                                                    size_t *out_count);
+int native_io_backend_observe(native_io_backend *backend, native_io_completion *events,
+                              size_t event_capacity, uint32_t timeout_ms, size_t *out_count);
 
 /**
  * Wakes an owner blocked in observe without publishing a completion.
@@ -398,35 +384,38 @@ SALTS_NATIVE_IO_C_API int native_io_backend_observe(native_io_backend *backend,
  * caller must publish its command before wake and must stop all wake callers
  * before close/destroy; wake after close returns SALTS_ESHUTDOWN.
  */
-SALTS_NATIVE_IO_C_API int native_io_backend_wake(native_io_backend *backend);
+int native_io_backend_wake(native_io_backend *backend);
 
 /**
  * Closes admission. Accepted direct and coroutine requests must still be
  * cancelled or drained.
  */
-SALTS_NATIVE_IO_C_API int native_io_backend_close(native_io_backend *backend);
+int native_io_backend_close(native_io_backend *backend);
 
 /**
  * Destroys a closed, fully drained backend with no retained endpoints or
  * active coroutine entries. Retained inactive coroutine frames are released.
  * SALTS_EBUSY preserves ownership when those preconditions are not satisfied.
  */
-SALTS_NATIVE_IO_C_API int native_io_backend_destroy(native_io_backend *backend);
+int native_io_backend_destroy(native_io_backend *backend);
 
-SALTS_NATIVE_IO_C_API bool native_io_backend_get_stats(const native_io_backend *backend,
-                                                       native_io_backend_stats *out_stats);
+bool native_io_backend_get_stats(const native_io_backend *backend,
+                                 native_io_backend_stats *out_stats);
 
 /**
  * Queries the immutable backend kind/capacity contract selected at init.
  * The returned structure contains no native handle or mutable runtime state.
  */
-SALTS_NATIVE_IO_C_API bool native_io_backend_get_config(
-    const native_io_backend *backend,
-    native_io_backend_config *out_config);
+bool native_io_backend_get_config(const native_io_backend *backend,
+                                  native_io_backend_config *out_config);
 
 /** Queries versioned coroutine-owner capacity and retention statistics. */
-SALTS_NATIVE_IO_C_API bool
-native_io_backend_get_coroutine_stats(const native_io_backend *backend,
-                                      native_io_coroutine_stats *out_stats);
+bool native_io_backend_get_coroutine_stats(const native_io_backend *backend,
+                                           native_io_coroutine_stats *out_stats);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* SALTS_NATIVE_IO_H */

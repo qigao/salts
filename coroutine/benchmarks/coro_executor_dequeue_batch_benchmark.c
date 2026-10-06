@@ -82,7 +82,7 @@ static int dequeue_bench_wait_started(dequeue_bench_gate *gate) {
 }
 
 static coro_executor_t *dequeue_bench_create_executor(size_t batch_size) {
-  coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+  coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
   coro_executor_t *executor;
 
   config.worker_count = 1u;
@@ -133,7 +133,7 @@ static int dequeue_bench_run_case(const char *style, const char *occupancy,
   int status = SALTS_OK;
 
   if (out == NULL || batch_size == 0u ||
-      batch_size > SALTS_CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH)
+      batch_size > CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH)
     return SALTS_EINVAL;
 
   executor = dequeue_bench_create_executor(use_batch ? batch_size : 1u);
@@ -263,7 +263,7 @@ static int dequeue_bench_run_case(const char *style, const char *occupancy,
 
 static FILE *dequeue_bench_open_csv(void) {
   const char *prefix =
-      getenv("SALTS_CORO_EXECUTOR_DEQUEUE_BATCH_BENCH_OUTPUT");
+      getenv("CORO_EXECUTOR_DEQUEUE_BATCH_BENCH_OUTPUT");
   char path[1024];
   if (prefix == NULL || *prefix == '\0') return NULL;
   if (snprintf(path, sizeof(path), "%s.csv", prefix) < 0) return NULL;

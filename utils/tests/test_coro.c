@@ -285,7 +285,7 @@ spec("Salts Coro Pool") {
     }
 
     it("creates and destroys a generic coroutine pool") {
-        coro_pool_config_t config = SALTS_CORO_POOL_CONFIG_DEFAULT;
+        coro_pool_config_t config = CORO_POOL_CONFIG_DEFAULT;
         coro_pool_t *pool = coro_pool_create(&config);
 
         check_not_null(pool);

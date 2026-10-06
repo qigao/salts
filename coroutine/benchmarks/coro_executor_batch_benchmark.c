@@ -65,7 +65,7 @@ static int batch_bench_wait_started(batch_bench_gate *gate) {
 }
 
 static coro_executor_t *batch_bench_create_executor(void) {
-  coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+  coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
   config.worker_count = 1u;
   config.queue_capacity_per_worker = BATCH_BENCH_QUEUE_CAPACITY;
   config.coroutine_pool.initial_capacity = 0u;
@@ -212,7 +212,7 @@ static int batch_bench_run_case(const char *style, const char *occupancy,
 }
 
 static FILE *batch_bench_open_csv(void) {
-  const char *prefix = getenv("SALTS_CORO_EXECUTOR_BATCH_BENCH_OUTPUT");
+  const char *prefix = getenv("CORO_EXECUTOR_BATCH_BENCH_OUTPUT");
   char path[1024];
   if (prefix == NULL || *prefix == '\0') return NULL;
   if (snprintf(path, sizeof(path), "%s.csv", prefix) < 0) return NULL;

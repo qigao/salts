@@ -1,5 +1,11 @@
 # Coroutine
 
+底层协程、复用池和执行器分别使用 `<coro.h>`、`<coro_pool.h>` 和
+`<coro_executor.h>`，类型及函数统一使用 `coro_` 前缀，池和执行器宏使用
+`CORO_` 前缀。此次重命名会改变头文件路径与 C 链接符号；下游须更新引用并
+重新编译。结构布局、所有权、错误码与执行协议保持原有约定，CMake 链接入口仍为
+`Salts::Coroutine`。
+
 ## CMeta facade
 
 应用协程包含 `<cmeta/coroutine.h>` 并链接 `Salts::Coroutine`。该模块安装 facade
@@ -33,14 +39,15 @@ abort 收尾。已 admission 的操作，其 payload 与资源仍归外部 owner
 完整、可编译的使用示例直接见正式测试
 [cmeta_coroutine_facade_test.c](tests/cmeta_coroutine_facade_test.c)：外部线程投递、
 确定性的提前完成、非零 owner shard 挂起恢复、timeout、abort 与单 slot generation
-复用。[C++ 头文件测试](tests/cmeta_coroutine_header_cpp_test.cpp) 调用全部 facade
-入口；两个应用测试均不包含 minicoro 或 executor 私有头文件。
+复用。[C++ 头文件测试](tests/coro_executor_header_cpp_test.cpp) 合并 executor
+默认配置、值初始化与全部 facade 入口检查；两个应用测试均不包含 minicoro 或
+executor 私有头文件。
 
 本地验证沿用 user presets，例如 Windows 的 `VsDevCmd.bat` 环境下：
 
 ```powershell
 cmake --preset win-dev-user
-cmake --build --preset win-dev-user --target cmeta_coroutine_facade_test cmeta_coroutine_header_cpp_test coro_executor_test coro_executor_header_cpp_test
+cmake --build --preset win-dev-user --target cmeta_coroutine_facade_test coro_executor_test coro_executor_header_cpp_test
 ctest --preset win-dev-user --output-on-failure -R '^(cmeta_coroutine|coro_executor)'
 ```
 

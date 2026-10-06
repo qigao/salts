@@ -34,7 +34,7 @@ static void cpu_yield_task(coro_t *coroutine, void *arg) {
 }
 
 static coro_executor_t *create_bench_executor(size_t workers) {
-  coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+  coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
   config.worker_count = workers;
   config.queue_capacity_per_worker = CORO_EXECUTOR_BENCH_QUEUE_CAPACITY;
   config.coroutine_pool.initial_capacity = 0u;

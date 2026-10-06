@@ -1,4 +1,5 @@
 #include "cmeta_fs.h"
+#include "tinytest.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -7,14 +8,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-static int expect(int condition, const char *message) {
-  if (condition)
-    return 0;
-  fprintf(stderr, "FAIL: %s\n", message);
-  return 1;
-}
-
-int main(void) {
+static void test_replace_fault(void) {
   const char *staging = "cmeta_fs_replace_fault_stage.tmp";
   const char *destination = "cmeta_fs_replace_fault_destination.tmp";
   cmeta_fs_buf_t old_bytes = cmeta_fs_buf_init((char *)"old", 3u);
@@ -24,29 +18,28 @@ int main(void) {
   const char *requested = getenv("SALTS_FS_TEST_FAIL_FSYNC_CALL");
   const int fail_call = requested != NULL ? atoi(requested) : 2;
   int rc;
-  int failed = 0;
 
   (void)cmeta_fs_unlink(staging);
   (void)cmeta_fs_unlink(destination);
 
-  failed |= expect(cmeta_fs_write_file(destination, &old_bytes) == 0,
+  check_warn(cmeta_fs_write_file(destination, &old_bytes) == 0,
                    "write old destination");
-  failed |= expect(cmeta_fs_write_file(staging, &new_bytes) == 0,
+  check_warn(cmeta_fs_write_file(staging, &new_bytes) == 0,
                    "write staging file");
 
   rc = cmeta_fs_replace_durable(staging, destination, &state);
 
   if (fail_call == 1) {
-    failed |= expect(rc == -EIO,
+    check_warn(rc == -EIO,
                      "staging fsync fault must surface EIO");
-    failed |= expect(state == SALTS_FS_REPLACE_NOT_PUBLISHED,
+    check_warn(state == SALTS_FS_REPLACE_NOT_PUBLISHED,
                      "staging fsync fault must remain NOT_PUBLISHED");
-    failed |= expect(cmeta_fs_access(staging, SALTS_FS_ACCESS_EXISTS) == 0,
+    check_warn(cmeta_fs_access(staging, SALTS_FS_ACCESS_EXISTS) == 0,
                      "unpublished staging path remains caller-owned");
-    failed |= expect(cmeta_fs_read_file(destination, &actual) == 0,
+    check_warn(cmeta_fs_read_file(destination, &actual) == 0,
                      "old destination remains readable");
     if (actual.base != NULL) {
-      failed |= expect(actual.len == old_bytes.len &&
+      check_warn(actual.len == old_bytes.len &&
                            memcmp(actual.base, old_bytes.base,
                                   old_bytes.len) == 0,
                        "staging fsync fault leaves old destination authoritative");
@@ -58,51 +51,51 @@ int main(void) {
     struct stat current_stat;
     struct stat shm_stat;
 
-    failed |= expect(rc == -EIO,
+    check_warn(rc == -EIO,
                      "post-rename parent fsync fault must surface EIO");
-    failed |= expect(state == SALTS_FS_REPLACE_DURABILITY_UNKNOWN,
+    check_warn(state == SALTS_FS_REPLACE_DURABILITY_UNKNOWN,
                      "post-rename fsync fault must report DURABILITY_UNKNOWN");
-    failed |= expect(cmeta_fs_access(staging, SALTS_FS_ACCESS_EXISTS) < 0,
+    check_warn(cmeta_fs_access(staging, SALTS_FS_ACCESS_EXISTS) < 0,
                      "renamed staging path must be gone");
-    failed |= expect(cmeta_fs_read_file(destination, &actual) == 0,
+    check_warn(cmeta_fs_read_file(destination, &actual) == 0,
                      "published destination must be readable");
     if (actual.base != NULL) {
-      failed |= expect(actual.len == new_bytes.len,
+      check_warn(actual.len == new_bytes.len,
                        "published destination length");
-      failed |= expect(actual.len == new_bytes.len &&
+      check_warn(actual.len == new_bytes.len &&
                            memcmp(actual.base, new_bytes.base,
                                   new_bytes.len) == 0,
                        "published destination contains complete staging bytes");
       cmeta_fs_buf_free(&actual);
     }
 
-    failed |= expect(stat(".", &current_stat) == 0,
+    check_warn(stat(".", &current_stat) == 0,
                      "stat current filesystem");
-    failed |= expect(stat("/dev/shm", &shm_stat) == 0, "stat /dev/shm");
-    failed |= expect(current_stat.st_dev != shm_stat.st_dev,
+    check_warn(stat("/dev/shm", &shm_stat) == 0, "stat /dev/shm");
+    check_warn(current_stat.st_dev != shm_stat.st_dev,
                      "canonical Linux CI requires /dev/shm to be a different filesystem");
 
     (void)snprintf(cross_stage, sizeof(cross_stage),
                    "/dev/shm/salts-fs-cross-device-%ld.tmp", (long)getpid());
     (void)cmeta_fs_unlink(cross_stage);
     (void)cmeta_fs_unlink(cross_destination);
-    failed |= expect(cmeta_fs_write_file(cross_stage, &new_bytes) == 0,
+    check_warn(cmeta_fs_write_file(cross_stage, &new_bytes) == 0,
                      "write cross-device staging file");
-    failed |= expect(cmeta_fs_write_file(cross_destination, &old_bytes) == 0,
+    check_warn(cmeta_fs_write_file(cross_destination, &old_bytes) == 0,
                      "write cross-device destination");
     state = SALTS_FS_REPLACE_PUBLISHED_DURABLE;
     rc = cmeta_fs_replace_durable(cross_stage, cross_destination, &state);
-    failed |= expect(rc == -EXDEV,
+    check_warn(rc == -EXDEV,
                      "cross-filesystem publication must fail with EXDEV");
-    failed |= expect(state == SALTS_FS_REPLACE_NOT_PUBLISHED,
+    check_warn(state == SALTS_FS_REPLACE_NOT_PUBLISHED,
                      "cross-filesystem failure must remain NOT_PUBLISHED");
-    failed |= expect(cmeta_fs_access(cross_stage, SALTS_FS_ACCESS_EXISTS) == 0,
+    check_warn(cmeta_fs_access(cross_stage, SALTS_FS_ACCESS_EXISTS) == 0,
                      "cross-device staging file must remain caller-owned");
     actual = (cmeta_fs_buf_t){0};
-    failed |= expect(cmeta_fs_read_file(cross_destination, &actual) == 0,
+    check_warn(cmeta_fs_read_file(cross_destination, &actual) == 0,
                      "old cross-device destination remains readable");
     if (actual.base != NULL) {
-      failed |= expect(actual.len == old_bytes.len &&
+      check_warn(actual.len == old_bytes.len &&
                            memcmp(actual.base, old_bytes.base,
                                   old_bytes.len) == 0,
                        "cross-device failure leaves old destination authoritative");
@@ -111,16 +104,18 @@ int main(void) {
     (void)cmeta_fs_unlink(cross_stage);
     (void)cmeta_fs_unlink(cross_destination);
   } else {
-    failed |= expect(0, "unsupported fsync fault call requested");
+    check_warn(0, "unsupported fsync fault call requested");
   }
 
   (void)cmeta_fs_unlink(staging);
   (void)cmeta_fs_unlink(destination);
 
-  if (failed != 0)
-    return 1;
-  puts(fail_call == 1
-           ? "PASS: durable replace pre-publication fsync failure contract"
-           : "PASS: durable replace uncertain-publication and cross-device contract");
-  return 0;
+}
+
+suite("Durable file replacement faults") {
+  group("injected filesystem failures") {
+    it("preserves publication state and authoritative file contents") {
+      test_replace_fault();
+    }
+  }
 }

@@ -1,5 +1,5 @@
-#ifndef SALTS_CORO_EXECUTOR_INTERNAL_H
-#define SALTS_CORO_EXECUTOR_INTERNAL_H
+#ifndef CORO_EXECUTOR_INTERNAL_H
+#define CORO_EXECUTOR_INTERNAL_H
 
 #include "coro_executor.h"
 
@@ -23,7 +23,7 @@ int coro_executor_try_submit_batch_to_internal(
     const coro_executor_task_t *tasks,
     size_t count);
 
-enum { SALTS_CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH = 128u };
+enum { CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH = 128u };
 
 /*
  * Internal benchmark/implementation hook for Phase B.
@@ -41,4 +41,4 @@ int coro_executor_set_dequeue_batch_limit_internal(
 }
 #endif
 
-#endif /* SALTS_CORO_EXECUTOR_INTERNAL_H */
+#endif /* CORO_EXECUTOR_INTERNAL_H */

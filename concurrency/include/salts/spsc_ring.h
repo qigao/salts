@@ -1,8 +1,6 @@
 #ifndef SALTS_SPSC_RING_H
 #define SALTS_SPSC_RING_H
 
-#include <salts/concurrency.h>
-
 #ifdef __cplusplus
   #include <atomic>
   #define SALTS_SPSC_ATOMIC_SIZE_T std::atomic<size_t>
@@ -37,17 +35,13 @@ typedef struct cmeta_spsc_ring {
   size_t pending_wrap_len;
 } cmeta_spsc_ring;
 
-SALTS_CONCURRENCY_C_API bool cmeta_spsc_ring_init(cmeta_spsc_ring *ring, uint8_t *storage,
-                                                   size_t size);
-SALTS_CONCURRENCY_C_API uint8_t *cmeta_spsc_ring_write_acquire(cmeta_spsc_ring *ring,
-                                                               size_t required);
-SALTS_CONCURRENCY_C_API void cmeta_spsc_ring_write_release(cmeta_spsc_ring *ring,
-                                                           size_t written);
-SALTS_CONCURRENCY_C_API uint8_t *cmeta_spsc_ring_read_acquire(cmeta_spsc_ring *ring,
-                                                              size_t *available);
-SALTS_CONCURRENCY_C_API void cmeta_spsc_ring_read_release(cmeta_spsc_ring *ring, size_t read);
-SALTS_CONCURRENCY_C_API size_t cmeta_spsc_ring_write_available(const cmeta_spsc_ring *ring);
-SALTS_CONCURRENCY_C_API size_t cmeta_spsc_ring_read_available(const cmeta_spsc_ring *ring);
+bool cmeta_spsc_ring_init(cmeta_spsc_ring *ring, uint8_t *storage, size_t size);
+uint8_t *cmeta_spsc_ring_write_acquire(cmeta_spsc_ring *ring, size_t required);
+void cmeta_spsc_ring_write_release(cmeta_spsc_ring *ring, size_t written);
+uint8_t *cmeta_spsc_ring_read_acquire(cmeta_spsc_ring *ring, size_t *available);
+void cmeta_spsc_ring_read_release(cmeta_spsc_ring *ring, size_t read);
+size_t cmeta_spsc_ring_write_available(const cmeta_spsc_ring *ring);
+size_t cmeta_spsc_ring_read_available(const cmeta_spsc_ring *ring);
 
 #ifdef __cplusplus
 }

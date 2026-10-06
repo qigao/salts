@@ -1,4 +1,4 @@
-#include "tinytest.h"
+#include "tinytest.hpp"
 #include <cflow/cflow.h>
 #include <cflow/time.h>
 

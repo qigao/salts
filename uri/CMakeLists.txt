@@ -2,6 +2,7 @@ set(TARGET_NAME uri_parser)
 
 # Generated files
 cmake_add_grammar(URI
+  RE2C_EXECUTABLE "${RE2C_EXECUTABLE}"
   LEXER_RE ${CMAKE_CURRENT_SOURCE_DIR}/parser/uri_lexer.re
   FOLDER "uri/grammar")
 
@@ -11,6 +12,7 @@ cmake_add_source(SOURCE_FILES DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src)
 add_library(${TARGET_NAME} STATIC ${SOURCE_FILES} ${URI_LEXER_GEN})
 
 cmake_config_target(${TARGET_NAME}
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   ALIAS Salts::UriParser
   FOLDER "uri"
   EXPORT_NAME UriParser)

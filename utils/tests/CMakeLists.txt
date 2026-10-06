@@ -41,12 +41,12 @@ if(TARGET test_cmeta_process)
     ENVIRONMENT "SALTS_PROCESS_PARENT_SENTINEL=parent-value")
 endif()
 
-# This link contract intentionally depends only on Core. Its legacy headers
+# Core is the only production dependency of this link contract. Its legacy headers
 # must pull Platform/Concurrency transitively through the exported target graph.
 cmake_add_test(test_execution_compat
   SOURCES ${EXECUTION_COMPAT_C}
   FOLDER "utils/tests"
-  LIBS Salts::Core)
+  LIBS Salts::TinyTest Salts::Core)
 set_target_properties(test_execution_compat PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
@@ -66,7 +66,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_executable(cmeta_fs_replace_fault_test
                  ${SALTS_FS_REPLACE_FAULT_C})
   target_compile_features(cmeta_fs_replace_fault_test PRIVATE c_std_11)
-  target_link_libraries(cmeta_fs_replace_fault_test PRIVATE Salts::Core)
+  target_link_libraries(cmeta_fs_replace_fault_test PRIVATE Salts::Core Salts::TinyTest)
   set_target_properties(cmeta_fs_replace_fault_test
                         PROPERTIES C_STANDARD_REQUIRED ON
                                    FOLDER "utils/tests")
@@ -99,7 +99,7 @@ endif()
 cmake_add_test(test_fmt_surface_contract_c
   SOURCES ${FMT_SURFACE_CONTRACT_C}
   FOLDER "utils/tests"
-  LIBS Salts::CMeta Salts::Platform Salts::Concurrency)
+  LIBS Salts::TinyTest Salts::CMeta Salts::Platform Salts::Concurrency)
 target_include_directories(test_fmt_surface_contract_c PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../include
   ${CMAKE_CURRENT_SOURCE_DIR}/../parser
@@ -121,7 +121,7 @@ endif()
 cmake_add_test(test_fmt_surface_contract_cpp
   SOURCES ${FMT_SURFACE_CONTRACT_CPP}
   FOLDER "utils/tests"
-  LIBS Salts::CMeta Salts::Platform Salts::Concurrency)
+  LIBS Salts::TinyTest Salts::CMeta Salts::Platform Salts::Concurrency)
 target_include_directories(test_fmt_surface_contract_cpp PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../include
   ${CMAKE_CURRENT_SOURCE_DIR}/../parser

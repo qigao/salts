@@ -313,7 +313,7 @@ static void no_op_free(void *user_data, void *ptr) {
 }
 
 static coro_executor_t *create_single_slot_executor(void) {
-  coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+  coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
   config.worker_count = 1u;
   config.queue_capacity_per_worker = 1u;
   config.coroutine_pool.initial_capacity = 0u;
@@ -334,7 +334,7 @@ spec("Salts coroutine executor") {
   }
 
   it("routes an external completion to the same shard after shutdown") {
-    coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
     coro_executor_t *executor;
     coro_executor_t *other_executor;
     await_task_state state = {0};
@@ -442,7 +442,7 @@ spec("Salts coroutine executor") {
   }
 
   it("accepts concurrent completion producers on one bounded wake queue") {
-    coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
     coro_executor_t *executor;
     await_task_state states[EXECUTOR_TEST_AWAIT_COUNT] = {0};
     coro_executor_task_t tasks[EXECUTOR_TEST_AWAIT_COUNT];
@@ -523,7 +523,7 @@ spec("Salts coroutine executor") {
   }
 
   it("keeps an explicitly assigned coroutine on one worker across yield") {
-    coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
     coro_executor_t *executor;
     affinity_task_state states[2];
     coro_executor_task_t tasks[2];
@@ -551,7 +551,7 @@ spec("Salts coroutine executor") {
   }
 
   it("round robins unpinned coroutines across workers") {
-    coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
     coro_executor_t *executor;
     round_robin_task_state states[4];
     coro_executor_task_t tasks[4];
@@ -577,7 +577,7 @@ spec("Salts coroutine executor") {
   }
 
   it("accepts concurrent MPSC producers on bounded shard queues") {
-    coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
     coro_executor_t *executor;
     lifecycle_task_state task_state = {0};
     producer_state producers[EXECUTOR_TEST_PRODUCER_COUNT];
@@ -609,7 +609,7 @@ spec("Salts coroutine executor") {
   }
 
   it("admits an internal batch all-or-none and preserves FIFO lifecycle") {
-    coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
     coro_executor_t *executor;
     batch_task_state state = {0};
     batch_task_arg args[4];
@@ -647,7 +647,7 @@ spec("Salts coroutine executor") {
   }
 
   it("batches internal dequeue without changing FIFO lifecycle") {
-    coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
     coro_executor_t *executor;
     batch_task_state state = {0};
     batch_task_arg args[8];
@@ -669,7 +669,7 @@ spec("Salts coroutine executor") {
         SALTS_EINVAL);
     check_equal(
         coro_executor_set_dequeue_batch_limit_internal(
-            executor, 0u, SALTS_CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH + 1u),
+            executor, 0u, CORO_EXECUTOR_INTERNAL_MAX_DEQUEUE_BATCH + 1u),
         SALTS_EINVAL);
 
     for (size_t index = 0u; index < 8u; ++index) {
@@ -696,7 +696,7 @@ spec("Salts coroutine executor") {
   }
 
   it("rejects an internal batch atomically when bounded capacity is insufficient") {
-    coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
     coro_executor_t *executor;
     gated_task_state gate = {0};
     coro_executor_task_t gate_task = {gated_task, NULL, NULL, &gate};
@@ -888,7 +888,7 @@ spec("Salts coroutine executor") {
   }
 
   it("cancels and finalizes exactly once when frame allocation fails") {
-    coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
     coro_executor_t *executor;
     lifecycle_task_state state = {0};
     coro_executor_task_t task = {lifecycle_task, lifecycle_cancel, lifecycle_finalize,
@@ -921,12 +921,12 @@ spec("Salts coroutine executor") {
   }
 
   it("rejects malformed bounded configurations") {
-    coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
 
     config.queue_capacity_per_worker = 3u;
     check_null(coro_executor_create(&config));
 
-    config = (coro_executor_config_t)SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    config = (coro_executor_config_t)CORO_EXECUTOR_CONFIG_DEFAULT;
     config.coroutine_pool.max_capacity = 0u;
     check_null(coro_executor_create(&config));
   }

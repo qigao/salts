@@ -45,7 +45,7 @@ static void coro_pool_free_entry(coro_pool_t *pool, void *ptr) {
 }
 
 coro_pool_t *coro_pool_create(const coro_pool_config_t *config) {
-  coro_pool_config_t defaults = SALTS_CORO_POOL_CONFIG_DEFAULT;
+  coro_pool_config_t defaults = CORO_POOL_CONFIG_DEFAULT;
   coro_pool_t *pool = NULL;
 
   if (!config) {

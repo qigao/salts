@@ -2,6 +2,7 @@
 #include <salts/random.h>
 #include <salts/readiness.h>
 #include <salts/thread.h>
+#include <tinytest.hpp>
 #include <type_traits>
 
 static_assert(std::is_same_v<decltype(cmeta_hrtime()), uint64_t>);
@@ -23,14 +24,28 @@ static_assert(std::is_same_v<decltype(&cmeta_readiness_arm),
                              int (*)(cmeta_readiness_registration *, cmeta_readiness_events,
                                      cmeta_readiness_callback, void *)>);
 
-int main() {
-  cmeta_readiness_reactor reactor{};
-  cmeta_readiness_registration registration{};
-  cmeta_readiness_config config{1, 1};
-  cmeta_readiness_backend_kind backend_kind = SALTS_READINESS_BACKEND_POLL;
-  return cmeta_hrtime() > 0 && reactor.impl == nullptr && registration.impl == nullptr &&
-                 registration._admission == 0 && config.registration_capacity == 1 &&
-                 backend_kind == SALTS_READINESS_BACKEND_POLL
-             ? 0
-             : 1;
+suite("Platform C++ headers") {
+  group("clock") {
+    it("exposes a positive high-resolution timestamp") {
+      check_greater(cmeta_hrtime(), uint64_t{0});
+    }
+  }
+
+  group("readiness values") {
+    it("value-initializes empty reactor and registration handles") {
+      const cmeta_readiness_reactor reactor{};
+      const cmeta_readiness_registration registration{};
+      check_equal(reactor.impl, nullptr);
+      check_equal(registration.impl, nullptr);
+      check_equal(registration._admission, 0u);
+    }
+
+    it("accepts aggregate configuration and backend selection") {
+      constexpr size_t capacity = 1;
+      const cmeta_readiness_config config{capacity, capacity};
+      const cmeta_readiness_backend_kind backend_kind = SALTS_READINESS_BACKEND_POLL;
+      check_equal(config.registration_capacity, capacity);
+      check_equal(backend_kind, SALTS_READINESS_BACKEND_POLL);
+    }
+  }
 }

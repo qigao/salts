@@ -189,6 +189,9 @@ exposes OS receive/send buffers, explicit `TCP_NODELAY` via `nodelay`,
 keepalive enable plus idle/interval/probe count, and linger. Generic native
 socket adoption preserves an externally configured live policy; only
 `cnet_accepted_stream` handoff applies the final client's configured policy.
+Direct `cnet_listener_accept*()` calls, including TLS accept, preserve the
+listener's TCP policy without applying the receiving client's future-connection
+policy.
 `cnet_datagram_config.reuse_port` exposes the same listener-port
 sharing decision for UDP and the unified UDP/KCP packet endpoint.
 

@@ -80,7 +80,7 @@
                 "strategy": "external"
             },
             "environment": {
-                "VCPKG_WINDOWS_TRIPLET": "$penv{VCPKG_WINDOWS_TRIPLET}"
+                "VCPKG_WINDOWS_TRIPLET": "x64-windows"
             }
         },
         {
@@ -367,6 +367,7 @@
                 "win-release-user"
             ],
             "environment": {
+                "VCPKG_WINDOWS_TRIPLET": "$penv{VCPKG_WINDOWS_TRIPLET}",
                 "SALTS_ROOT": "${sourceDir}/stage/sdk/windows-x64"
             }
         },

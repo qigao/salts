@@ -1,7 +1,8 @@
 set(TARGET_NAME salts)
 # Add parser subdirectory first (generates lexer)
 add_subdirectory(parser)
-cmake_add_source(SOURCE_FILES RECURSE)
+cmake_add_source(SOURCE_FILES RECURSE
+  DIRS "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/include")
 find_path(SIMDE_INCLUDE_DIRS "simde/x86/sse2.h" REQUIRED)
 find_package(zstd CONFIG REQUIRED)
 find_package(base64 CONFIG REQUIRED)
@@ -11,6 +12,7 @@ add_library(${TARGET_NAME} SHARED ${SOURCE_FILES})
 # Configure target
 cmake_config_target(
   ${TARGET_NAME}
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   ALIAS
   Salts::Core
   FOLDER

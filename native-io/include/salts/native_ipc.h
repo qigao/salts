@@ -2,13 +2,16 @@
 #define SALTS_NATIVE_IPC_H
 
 #include <salts/error_codes.h>
-#include <salts/native_io_module.h>
 
 #ifndef __cplusplus
   #include <stdbool.h>
 #endif
 #include <stddef.h>
 #include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef uint64_t cmeta_ipc_request_id;
 
@@ -81,21 +84,20 @@ typedef struct cmeta_ipc_pipe_server_stats {
 } cmeta_ipc_pipe_server_stats;
 
 /** Returns compile-time support for one explicit rendezvous capability. */
-SALTS_NATIVE_IO_C_API bool
-cmeta_ipc_pipe_capability_supported(cmeta_ipc_pipe_capability capability);
+bool cmeta_ipc_pipe_capability_supported(cmeta_ipc_pipe_capability capability);
 
 /** Initializes endpoint to the invalid, unowned state. NULL is ignored. */
-SALTS_NATIVE_IO_C_API void cmeta_ipc_pipe_endpoint_init(cmeta_ipc_pipe_endpoint *endpoint);
+void cmeta_ipc_pipe_endpoint_init(cmeta_ipc_pipe_endpoint *endpoint);
 
 /** Returns whether endpoint currently owns one native handle or descriptor. */
-SALTS_NATIVE_IO_C_API bool cmeta_ipc_pipe_endpoint_valid(const cmeta_ipc_pipe_endpoint *endpoint);
+bool cmeta_ipc_pipe_endpoint_valid(const cmeta_ipc_pipe_endpoint *endpoint);
 
 /**
  * Invalidates endpoint, then closes its owned identity. Closing an invalid
  * endpoint is idempotent. Returns SALTS_EINVAL for NULL or a negative native
  * error when close fails.
  */
-SALTS_NATIVE_IO_C_API int cmeta_ipc_pipe_endpoint_close(cmeta_ipc_pipe_endpoint *endpoint);
+int cmeta_ipc_pipe_endpoint_close(cmeta_ipc_pipe_endpoint *endpoint);
 
 /**
  * Initializes a fixed-capacity, single-owner Windows named-pipe accept server.
@@ -107,41 +109,40 @@ SALTS_NATIVE_IO_C_API int cmeta_ipc_pipe_endpoint_close(cmeta_ipc_pipe_endpoint 
  * Returns SALTS_ENOTSUP outside Windows, SALTS_ENOMEM on allocation failure,
  * or SALTS_EINVAL for malformed state/configuration.
  */
-SALTS_NATIVE_IO_C_API int cmeta_ipc_pipe_server_init(cmeta_ipc_pipe_server *server,
-                                                     const cmeta_ipc_pipe_server_config *config);
+int cmeta_ipc_pipe_server_init(cmeta_ipc_pipe_server *server,
+                               const cmeta_ipc_pipe_server_config *config);
 
 /**
  * Starts one overlapped accept without waiting. On success, out_request_id is
  * nonzero and exactly one terminal callback follows. Returns SALTS_ENOBUFS at
  * capacity, SALTS_ESHUTDOWN after close, or a negative native error.
  */
-SALTS_NATIVE_IO_C_API int cmeta_ipc_pipe_server_try_accept(cmeta_ipc_pipe_server *server,
-                                                           cmeta_ipc_request_id *out_request_id);
+int cmeta_ipc_pipe_server_try_accept(cmeta_ipc_pipe_server *server,
+                                     cmeta_ipc_request_id *out_request_id);
 
 /** Requests cancellation; the later callback remains authoritative. */
-SALTS_NATIVE_IO_C_API int cmeta_ipc_pipe_server_cancel(cmeta_ipc_pipe_server *server,
-                                                       cmeta_ipc_request_id request_id);
+int cmeta_ipc_pipe_server_cancel(cmeta_ipc_pipe_server *server, cmeta_ipc_request_id request_id);
 
 /**
  * Polls at most max_events terminal accepts on the owner thread. A successful
  * callback owns endpoint before invocation; failed/cancelled callbacks receive
  * an invalid endpoint. Callbacks must not reenter the server.
  */
-SALTS_NATIVE_IO_C_API int cmeta_ipc_pipe_server_observe(cmeta_ipc_pipe_server *server,
-                                                        size_t max_events, size_t *out_count);
+int cmeta_ipc_pipe_server_observe(cmeta_ipc_pipe_server *server, size_t max_events,
+                                  size_t *out_count);
 
 /** Stops admission and requests cancellation for every pending accept. */
-SALTS_NATIVE_IO_C_API int cmeta_ipc_pipe_server_close(cmeta_ipc_pipe_server *server);
+int cmeta_ipc_pipe_server_close(cmeta_ipc_pipe_server *server);
 
 /** Returns true only after close and authoritative terminal drain. */
-SALTS_NATIVE_IO_C_API bool cmeta_ipc_pipe_server_is_quiescent(const cmeta_ipc_pipe_server *server);
+bool cmeta_ipc_pipe_server_is_quiescent(const cmeta_ipc_pipe_server *server);
 
 /** Copies fixed-capacity lifecycle counters without advancing the server. */
-SALTS_NATIVE_IO_C_API bool cmeta_ipc_pipe_server_get_stats(const cmeta_ipc_pipe_server *server,
-                                                           cmeta_ipc_pipe_server_stats *out_stats);
+bool cmeta_ipc_pipe_server_get_stats(const cmeta_ipc_pipe_server *server,
+                                     cmeta_ipc_pipe_server_stats *out_stats);
 
 /** Destroys a closed, quiescent server; otherwise returns SALTS_EBUSY. */
-SALTS_NATIVE_IO_C_API int cmeta_ipc_pipe_server_destroy(cmeta_ipc_pipe_server *server);
+int cmeta_ipc_pipe_server_destroy(cmeta_ipc_pipe_server *server);
 
 /**
  * Performs one Windows CreateFile attempt and never waits or retries. Success
@@ -151,9 +152,8 @@ SALTS_NATIVE_IO_C_API int cmeta_ipc_pipe_server_destroy(cmeta_ipc_pipe_server *s
  * leaves out_endpoint invalid and unowned.
  * out_endpoint must first be initialized to its invalid state.
  */
-SALTS_NATIVE_IO_C_API int cmeta_ipc_named_pipe_connect(const char *name,
-                                                       cmeta_ipc_pipe_direction direction,
-                                                       cmeta_ipc_pipe_endpoint *out_endpoint);
+int cmeta_ipc_named_pipe_connect(const char *name, cmeta_ipc_pipe_direction direction,
+                                 cmeta_ipc_pipe_endpoint *out_endpoint);
 
 /**
  * Opens an existing POSIX FIFO as one nonblocking control-plane operation.
@@ -162,7 +162,12 @@ SALTS_NATIVE_IO_C_API int cmeta_ipc_named_pipe_connect(const char *name,
  * rendezvous failure; an interrupted syscall may be restarted. out_endpoint
  * must first be initialized to its invalid state.
  */
-SALTS_NATIVE_IO_C_API int cmeta_ipc_fifo_open(const char *path, cmeta_ipc_pipe_direction direction,
-                                              cmeta_ipc_pipe_endpoint *out_endpoint);
+int cmeta_ipc_fifo_open(const char *path, cmeta_ipc_pipe_direction direction,
+                        cmeta_ipc_pipe_endpoint *out_endpoint);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* SALTS_NATIVE_IPC_H */

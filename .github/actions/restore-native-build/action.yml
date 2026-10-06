@@ -16,6 +16,9 @@ runs:
         path: compiled
     - name: Restore matching build and source timestamps
       shell: bash
+      env:
+        EXPECTED_ARTIFACT: ${{ inputs.artifact }}
+        EXPECTED_BUILD_DIRECTORY: ${{ inputs.build-dir }}
       run: |
         set -euo pipefail
         if [ "$(tar -xOf compiled/native-build.tar native-build-commit.txt)" != "$(git rev-parse HEAD)" ]; then
@@ -26,11 +29,25 @@ runs:
           echo 'Build artifact requires the original workspace path' >&2
           exit 1
         fi
-        if [ "$(tar -xOf compiled/native-build.tar native-build-image.txt)" != "$ImageOS/$ImageVersion" ]; then
-          echo 'Build artifact requires the same runner image and compiler installation' >&2
+        build_platform="$(tar -xOf compiled/native-build.tar native-build-platform.txt)"
+        current_platform="$RUNNER_OS/$RUNNER_ARCH/$ImageOS"
+        if [ "$build_platform" != "$current_platform" ]; then
+          printf 'Build artifact platform mismatch: built=%s current=%s\n' "$build_platform" "$current_platform" >&2
           exit 1
         fi
+        build_profile="$(tar -xOf compiled/native-build.tar native-build-profile.txt)"
+        expected_profile="$(printf '%s\n%s' "$EXPECTED_ARTIFACT" "$EXPECTED_BUILD_DIRECTORY")"
+        if [ "$build_profile" != "$expected_profile" ]; then
+          printf 'Build artifact profile mismatch: built=[%s] expected=[%s]\n' "$build_profile" "$expected_profile" >&2
+          exit 1
+        fi
+        # Hosted jobs can receive different revisions of the same runner image.
+        # ImageVersion is provenance, not a compiler or runtime ABI contract.
+        # CTest must still fail on loader errors and incompatible dependencies.
+        build_image="$(tar -xOf compiled/native-build.tar native-build-image.txt)"
+        printf 'Build image: %s; consumer image: %s/%s\n' "$build_image" "$ImageOS" "$ImageVersion"
         tar -xf compiled/native-build.tar
+        test -f "$EXPECTED_BUILD_DIRECTORY/CMakeCache.txt"
     - name: Restore Windows runtime selection
       if: runner.os == 'Windows'
       shell: pwsh

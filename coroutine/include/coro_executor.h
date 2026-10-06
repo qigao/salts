@@ -3,15 +3,14 @@
  * @brief Bounded sharded executor for cooperative coroutines.
  */
 
-#ifndef SALTS_CORO_EXECUTOR_H
-#define SALTS_CORO_EXECUTOR_H
+#ifndef CORO_EXECUTOR_H
+#define CORO_EXECUTOR_H
 
 #include "coro_pool.h"
 
+#include <salts/error_codes.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <salts/coroutine_module.h>
-#include <salts/error_codes.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -63,12 +62,12 @@ typedef struct coro_executor_config_s {
   coro_pool_config_t coroutine_pool;
 } coro_executor_config_t;
 
-#define SALTS_CORO_EXECUTOR_DEFAULT_QUEUE_CAPACITY_PER_WORKER 1024u
-#define SALTS_CORO_EXECUTOR_DEFAULT_MAX_COROUTINES_PER_WORKER 64u
-#define SALTS_CORO_EXECUTOR_CONFIG_DEFAULT                                                         \
+#define CORO_EXECUTOR_DEFAULT_QUEUE_CAPACITY_PER_WORKER 1024u
+#define CORO_EXECUTOR_DEFAULT_MAX_COROUTINES_PER_WORKER 64u
+#define CORO_EXECUTOR_CONFIG_DEFAULT                                                               \
   {                                                                                                \
-    0u, SALTS_CORO_EXECUTOR_DEFAULT_QUEUE_CAPACITY_PER_WORKER, {                                   \
-      0u, SALTS_CORO_EXECUTOR_DEFAULT_MAX_COROUTINES_PER_WORKER, 0u, 0u, NULL, NULL, NULL          \
+    0u, CORO_EXECUTOR_DEFAULT_QUEUE_CAPACITY_PER_WORKER, {                                         \
+      0u, CORO_EXECUTOR_DEFAULT_MAX_COROUTINES_PER_WORKER, 0u, 0u, NULL, NULL, NULL                \
     }                                                                                              \
   }
 
@@ -102,8 +101,7 @@ typedef struct coro_executor_stats_s {
  * @return An owning executor handle, or NULL for invalid configuration,
  * allocation failure, or shard startup failure.
  */
-SALTS_COROUTINE_C_API coro_executor_t *
-coro_executor_create(const coro_executor_config_t *config);
+coro_executor_t *coro_executor_create(const coro_executor_config_t *config);
 
 /**
  * Submit to a round-robin shard, waiting only for that shard's queue space.
@@ -113,8 +111,7 @@ coro_executor_create(const coro_executor_config_t *config);
  * @return SALTS_OK, SALTS_EINVAL, SALTS_ESHUTDOWN, or SALTS_EBUSY when a
  * callback on this executor would otherwise wait for saturated queue space.
  */
-SALTS_COROUTINE_C_API int coro_executor_submit(coro_executor_t *executor,
-                                                     const coro_executor_task_t *task);
+int coro_executor_submit(coro_executor_t *executor, const coro_executor_task_t *task);
 
 /**
  * Try a round-robin submission without waiting for queue space.
@@ -123,8 +120,7 @@ SALTS_COROUTINE_C_API int coro_executor_submit(coro_executor_t *executor,
  * @param task Descriptor copied on successful admission.
  * @return SALTS_OK, SALTS_EINVAL, SALTS_ESHUTDOWN, or SALTS_ENOBUFS.
  */
-SALTS_COROUTINE_C_API int coro_executor_try_submit(coro_executor_t *executor,
-                                                         const coro_executor_task_t *task);
+int coro_executor_try_submit(coro_executor_t *executor, const coro_executor_task_t *task);
 
 /**
  * Submit to an explicit shard, waiting for bounded queue space.
@@ -138,9 +134,8 @@ SALTS_COROUTINE_C_API int coro_executor_try_submit(coro_executor_t *executor,
  * @param task Descriptor copied on successful admission.
  * @return SALTS_OK, SALTS_EINVAL, SALTS_ESHUTDOWN, or SALTS_EBUSY.
  */
-SALTS_COROUTINE_C_API int coro_executor_submit_to(coro_executor_t *executor,
-                                                        size_t shard,
-                                                        const coro_executor_task_t *task);
+int coro_executor_submit_to(coro_executor_t *executor, size_t shard,
+                            const coro_executor_task_t *task);
 
 /**
  * Try an explicit-shard submission without waiting for queue space.
@@ -150,9 +145,8 @@ SALTS_COROUTINE_C_API int coro_executor_submit_to(coro_executor_t *executor,
  * @param task Descriptor copied on successful admission.
  * @return SALTS_OK, SALTS_EINVAL, SALTS_ESHUTDOWN, or SALTS_ENOBUFS.
  */
-SALTS_COROUTINE_C_API int coro_executor_try_submit_to(coro_executor_t *executor,
-                                                            size_t shard,
-                                                            const coro_executor_task_t *task);
+int coro_executor_try_submit_to(coro_executor_t *executor, size_t shard,
+                                const coro_executor_task_t *task);
 
 /**
  * Cooperatively yield the currently running executor coroutine.
@@ -160,7 +154,7 @@ SALTS_COROUTINE_C_API int coro_executor_try_submit_to(coro_executor_t *executor,
  * @return SALTS_OK, SALTS_EINVAL outside an executor coroutine, or SALTS_EIO
  *         if the underlying coroutine cannot yield.
  */
-SALTS_COROUTINE_C_API int coro_executor_yield(void);
+int coro_executor_yield(void);
 
 /**
  * Reserve one bounded await slot for the current executor coroutine.
@@ -172,7 +166,7 @@ SALTS_COROUTINE_C_API int coro_executor_yield(void);
  * @return SALTS_OK, SALTS_EINVAL outside an executor coroutine, SALTS_EBUSY
  *         for a second active await, or SALTS_ENOBUFS at the shard limit.
  */
-SALTS_COROUTINE_C_API int coro_executor_await_begin(coro_executor_await_t *out_await);
+int coro_executor_await_begin(coro_executor_await_t *out_await);
 
 /**
  * Suspend until the matching completion is routed to this coroutine's shard.
@@ -187,8 +181,7 @@ SALTS_COROUTINE_C_API int coro_executor_await_begin(coro_executor_await_t *out_a
  * @return SALTS_OK, SALTS_EINVAL for the wrong coroutine/shard, SALTS_ENOENT
  *         for a stale handle, or SALTS_EIO/SALTS_EPROTO for scheduler failure.
  */
-SALTS_COROUTINE_C_API int coro_executor_await(coro_executor_await_t await_handle,
-                                                    int *out_status);
+int coro_executor_await(coro_executor_await_t await_handle, int *out_status);
 
 /**
  * Suspend until completion wins or the relative timeout expires.
@@ -204,9 +197,8 @@ SALTS_COROUTINE_C_API int coro_executor_await(coro_executor_await_t await_handle
  * @return SALTS_OK, SALTS_EINVAL, SALTS_ENOENT, SALTS_EALREADY, SALTS_EIO, or
  *         SALTS_EPROTO under the same ownership rules as await.
  */
-SALTS_COROUTINE_C_API int
-coro_executor_await_for(coro_executor_await_t await_handle, uint32_t timeout_ms,
-                             int *out_status);
+int coro_executor_await_for(coro_executor_await_t await_handle, uint32_t timeout_ms,
+                            int *out_status);
 
 /**
  * Publish one terminal completion from any external thread.
@@ -223,9 +215,8 @@ coro_executor_await_for(coro_executor_await_t await_handle, uint32_t timeout_ms,
  *         SALTS_ENOENT for a stale handle, SALTS_EALREADY for a duplicate
  *         completion, or SALTS_ENOBUFS if the wake-queue invariant is broken.
  */
-SALTS_COROUTINE_C_API int
-coro_executor_await_complete(coro_executor_t *executor,
-                                   coro_executor_await_t await_handle, int status);
+int coro_executor_await_complete(coro_executor_t *executor, coro_executor_await_t await_handle,
+                                 int status);
 
 /**
  * Release an await whose external operation was not successfully started.
@@ -238,7 +229,7 @@ coro_executor_await_complete(coro_executor_t *executor,
  *         for a stale handle, SALTS_EALREADY after completion, or SALTS_EBUSY
  *         after suspension.
  */
-SALTS_COROUTINE_C_API int coro_executor_await_abort(coro_executor_await_t await_handle);
+int coro_executor_await_abort(coro_executor_await_t await_handle);
 
 /**
  * Close admission. Accepted tasks are drained; repeated calls are harmless.
@@ -246,7 +237,7 @@ SALTS_COROUTINE_C_API int coro_executor_await_abort(coro_executor_await_t await_
  * @param executor Owning executor handle.
  * @return SALTS_OK or SALTS_EINVAL.
  */
-SALTS_COROUTINE_C_API int coro_executor_shutdown(coro_executor_t *executor);
+int coro_executor_shutdown(coro_executor_t *executor);
 
 /**
  * Wait until all currently accepted tasks settle.
@@ -259,7 +250,7 @@ SALTS_COROUTINE_C_API int coro_executor_shutdown(coro_executor_t *executor);
  * @param executor Owning executor handle.
  * @return SALTS_OK, SALTS_EINVAL, or SALTS_EBUSY from this executor's callback.
  */
-SALTS_COROUTINE_C_API int coro_executor_wait(coro_executor_t *executor);
+int coro_executor_wait(coro_executor_t *executor);
 
 /**
  * Drain and destroy the executor.
@@ -270,17 +261,16 @@ SALTS_COROUTINE_C_API int coro_executor_wait(coro_executor_t *executor);
  * @param executor Owning executor handle.
  * @return SALTS_OK, SALTS_EINVAL, or SALTS_EBUSY.
  */
-SALTS_COROUTINE_C_API int coro_executor_destroy(coro_executor_t *executor);
+int coro_executor_destroy(coro_executor_t *executor);
 
 /** @return The executor owning the current shard thread, or NULL otherwise. */
-SALTS_COROUTINE_C_API coro_executor_t *coro_executor_current(void);
+coro_executor_t *coro_executor_current(void);
 
 /**
  * @param executor Executor whose current shard is queried.
  * @return The current shard index, or SIZE_MAX outside executor.
  */
-SALTS_COROUTINE_C_API size_t
-coro_executor_current_shard(const coro_executor_t *executor);
+size_t coro_executor_current_shard(const coro_executor_t *executor);
 
 /**
  * Copy a concurrent statistics snapshot. Individual counters are atomic, but
@@ -289,11 +279,10 @@ coro_executor_current_shard(const coro_executor_t *executor);
  * @param executor Executor to observe.
  * @param stats Caller-owned output structure.
  */
-SALTS_COROUTINE_C_API void coro_executor_get_stats(const coro_executor_t *executor,
-                                                         coro_executor_stats_t *stats);
+void coro_executor_get_stats(const coro_executor_t *executor, coro_executor_stats_t *stats);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* SALTS_CORO_EXECUTOR_H */
+#endif /* CORO_EXECUTOR_H */

@@ -3,10 +3,8 @@
 #include <salts/clock.h>
 #include <salts/error_codes.h>
 
-#ifdef NDEBUG
-#undef NDEBUG
-#endif
-#include <assert.h>
+#include <tinytest.h>
+#include "cnet_external_test_cleanup.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -65,7 +63,8 @@ static void on_state(void *user, cnet_connection connection,
                      cnet_connection_state state,
                      const cnet_error *error) {
   state_probe *probe = (state_probe *)user;
-  assert(probe != NULL);
+  check_warn(probe != NULL);
+  if (probe == NULL) return;
   probe->connection = connection;
   if (state == CNET_CONNECTION_CONNECTED) {
     char version[16] = {0};
@@ -155,20 +154,27 @@ static int drive_shared_once(cnet_listener *listener,
   return advance_client(client);
 }
 
+static native_io_backend backend;
+static cnet_client server;
+static cnet_client client;
+static cnet_listener listener;
+static cnet_tls_server tls_server;
+static cnet_tls_client tls_client;
+static state_probe server_probe;
+static state_probe client_probe;
+static cnet_connection outbound;
+static cnet_connection accepted;
+
 static void test_external_tls_listener_shared_progress(void) {
+  enum { LISTENER_BUFFER_BYTES = 16384, CLIENT_BUFFER_BYTES = 4096 };
   static const char *alpn[] = {"http/1.1"};
-  native_io_backend backend = {0};
   native_io_backend_config backend_config = {
       test_backend_kind(), 32u, 64u, TEST_BATCH};
-  cnet_client server = {0};
-  cnet_client client = {0};
   cnet_client_config server_config = test_client_config();
   cnet_client_config client_config = test_client_config();
-  cnet_listener listener = {0};
+  cnet_stream_socket_options server_socket_options = CNET_STREAM_SOCKET_OPTIONS_INIT;
   cnet_stream_endpoint bind = CNET_STREAM_ENDPOINT_INIT;
   cnet_stream_endpoint local = CNET_STREAM_ENDPOINT_INIT;
-  cnet_tls_server tls_server = {0};
-  cnet_tls_client tls_client = {0};
   cnet_tls_server_config server_tls_config = {
       .size = sizeof(server_tls_config),
       .cert_file = CNET_EXTERNAL_TLS_CERT,
@@ -184,55 +190,69 @@ static void test_external_tls_listener_shared_progress(void) {
       .alpn_protocol_count = 1u};
   cnet_connect_options connect_options;
   cnet_observer server_observer = {0};
-  state_probe server_probe = {0};
-  state_probe client_probe = {0};
   native_io_request first = {0};
   native_io_request duplicate = {0};
-  cnet_connection outbound = {0};
-  cnet_connection accepted = {0};
   bool listener_consumed = false;
   bool accept_completion_seen = false;
   bool accepted_started = false;
   uint64_t deadline;
+  uint64_t listener_receive_buffer = 0u;
+  uint64_t listener_send_buffer = 0u;
   char uri[64];
 
-  assert(native_io_backend_init(&backend, &backend_config) == SALTS_OK);
-  assert(cnet_client_init_external(
+  check(native_io_backend_init(&backend, &backend_config) == SALTS_OK);
+  check(cnet_client_init_external(
              &server, &server_config, &backend) == SALTS_OK);
-  assert(cnet_client_init_external(
+  check(cnet_client_init_external(
              &client, &client_config, &backend) == SALTS_OK);
+  server_socket_options.receive_buffer_bytes = CLIENT_BUFFER_BYTES;
+  server_socket_options.send_buffer_bytes = CLIENT_BUFFER_BYTES;
+  check_equal(cnet_client_set_stream_socket_options(&server, &server_socket_options),
+              SALTS_OK);
 
-  assert(cnet_tls_server_init(
+  check(cnet_tls_server_init(
              &tls_server, &server_tls_config) == SALTS_OK);
-  assert(cnet_tls_client_init(
+  check(cnet_tls_client_init(
              &tls_client, &client_tls_config) == SALTS_OK);
 
   bind.family = CNET_DATAGRAM_ADDRESS_IPV4;
   bind.address[0] = 127u;
   bind.address[3] = 1u;
-  assert(cnet_listener_open(
+  check(cnet_listener_open(
              &listener, test_backend_kind(),
              CNET_DATAGRAM_ADDRESS_IPV4) == SALTS_OK);
-  assert(cnet_listener_bind_open_endpoint(&listener, &bind) == SALTS_OK);
-  assert(cnet_listener_local_endpoint(&listener, &local) == SALTS_OK);
-  assert(local.port != 0u);
-  assert(cnet_listener_listen(&listener, 8u) == SALTS_OK);
-  assert(cnet_listener_attach_external(&listener, &backend) == SALTS_OK);
+  check_equal(cnet_listener_tcp_option_set(
+                  &listener, CNET_TCP_SOCKET_RECEIVE_BUFFER_BYTES, LISTENER_BUFFER_BYTES),
+              SALTS_OK);
+  check_equal(cnet_listener_tcp_option_set(
+                  &listener, CNET_TCP_SOCKET_SEND_BUFFER_BYTES, LISTENER_BUFFER_BYTES),
+              SALTS_OK);
+  check_equal(cnet_listener_tcp_option_get(
+                  &listener, CNET_TCP_SOCKET_RECEIVE_BUFFER_BYTES, &listener_receive_buffer),
+              SALTS_OK);
+  check_equal(cnet_listener_tcp_option_get(
+                  &listener, CNET_TCP_SOCKET_SEND_BUFFER_BYTES, &listener_send_buffer),
+              SALTS_OK);
+  check(cnet_listener_bind_open_endpoint(&listener, &bind) == SALTS_OK);
+  check(cnet_listener_local_endpoint(&listener, &local) == SALTS_OK);
+  check(local.port != 0u);
+  check(cnet_listener_listen(&listener, 8u) == SALTS_OK);
+  check(cnet_listener_attach_external(&listener, &backend) == SALTS_OK);
 
   {
     int ready = 0;
-    assert(cnet_listener_wait(&listener, 0u, &ready) == SALTS_ENOTSUP);
+    check(cnet_listener_wait(&listener, 0u, &ready) == SALTS_ENOTSUP);
   }
 
-  assert(cnet_listener_submit_external_accept(
+  check(cnet_listener_submit_external_accept(
              &listener, &first) == SALTS_OK);
-  assert(native_io_request_valid(first));
-  assert(cnet_listener_submit_external_accept(
+  check(native_io_request_valid(first));
+  check(cnet_listener_submit_external_accept(
              &listener, &duplicate) == SALTS_OK);
-  assert(duplicate.slot == first.slot);
-  assert(duplicate.generation == first.generation);
+  check(duplicate.slot == first.slot);
+  check(duplicate.generation == first.generation);
 
-  assert(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u",
+  check(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u",
                   (unsigned int)local.port) > 0);
 
   client_probe.client = &client;
@@ -242,8 +262,8 @@ static void test_external_tls_listener_shared_progress(void) {
           .on_state = on_state,
           .user = &client_probe},
       .tls_client = &tls_client};
-  assert(cnet_connect(&client, &connect_options, &outbound) == SALTS_OK);
-  assert(cnet_tls_client_destroy(&tls_client) == SALTS_OK);
+  check(cnet_connect(&client, &connect_options, &outbound) == SALTS_OK);
+  check(cnet_tls_client_destroy(&tls_client) == SALTS_OK);
 
   server_probe.client = &server;
   server_observer.on_state = on_state;
@@ -253,7 +273,7 @@ static void test_external_tls_listener_shared_progress(void) {
   while ((!client_probe.connected || !server_probe.connected) &&
          !client_probe.failed && !server_probe.failed &&
          cmeta_monotonic_ms() < deadline) {
-    assert(drive_shared_once(
+    check(drive_shared_once(
                &listener, &server, &client, &backend,
                25u, &listener_consumed) == SALTS_OK);
 
@@ -261,52 +281,81 @@ static void test_external_tls_listener_shared_progress(void) {
 
     if (accept_completion_seen && !accepted_started) {
       native_io_request blocked = {0};
-      assert(cnet_listener_submit_external_accept(
+      check(cnet_listener_submit_external_accept(
                  &listener, &blocked) == SALTS_EALREADY);
-      assert(!native_io_request_valid(blocked));
-      assert(cnet_listener_accept_tls(
+      check(!native_io_request_valid(blocked));
+      check(cnet_listener_accept_tls(
                  &listener, &server, &tls_server,
                  &server_observer, &accepted) == SALTS_OK);
-      assert(accepted.slot != 0u);
-      assert(accepted.generation != 0u);
+      check(accepted.slot != 0u);
+      check(accepted.generation != 0u);
       accepted_started = true;
     }
   }
 
-  assert(accept_completion_seen);
-  assert(accepted_started);
-  assert(client_probe.connected);
-  assert(server_probe.connected);
-  assert(!client_probe.failed);
-  assert(!server_probe.failed);
+  check(accept_completion_seen);
+  check(accepted_started);
+  check(client_probe.connected);
+  check(server_probe.connected);
+  check(!client_probe.failed);
+  check(!server_probe.failed);
 
-  assert(cnet_close(&client, outbound) == SALTS_OK);
-  assert(cnet_close(&server, accepted) == SALTS_OK);
+  {
+    uint64_t inherited = 0u;
+    check_equal(cnet_connection_tcp_option_get(
+                    &server, accepted, CNET_TCP_SOCKET_RECEIVE_BUFFER_BYTES, &inherited),
+                SALTS_OK);
+    check_equal(inherited, listener_receive_buffer);
+    check_equal(cnet_connection_tcp_option_get(
+                    &server, accepted, CNET_TCP_SOCKET_SEND_BUFFER_BYTES, &inherited),
+                SALTS_OK);
+    check_equal(inherited, listener_send_buffer);
+  }
+
+  check(cnet_close(&client, outbound) == SALTS_OK);
+  check(cnet_close(&server, accepted) == SALTS_OK);
 
   deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
   while ((!client_probe.terminal || !server_probe.terminal) &&
          cmeta_monotonic_ms() < deadline) {
-    assert(drive_shared_once(
+    check(drive_shared_once(
                &listener, &server, &client, &backend,
                25u, NULL) == SALTS_OK);
   }
-  assert(client_probe.terminal);
-  assert(server_probe.terminal);
-  assert(!client_probe.failed);
-  assert(!server_probe.failed);
+  check(client_probe.terminal);
+  check(server_probe.terminal);
+  check(!client_probe.failed);
+  check(!server_probe.failed);
 
-  assert(cnet_listener_close(&listener) == SALTS_OK);
-  assert(cnet_listener_destroy(&listener) == SALTS_OK);
-  assert(cnet_tls_server_destroy(&tls_server) == SALTS_OK);
-  assert(cnet_client_stop_external(&server) == SALTS_OK);
-  assert(cnet_client_destroy(&server) == SALTS_OK);
-  assert(cnet_client_stop_external(&client) == SALTS_OK);
-  assert(cnet_client_destroy(&client) == SALTS_OK);
-  assert(native_io_backend_close(&backend) == SALTS_OK);
-  assert(native_io_backend_destroy(&backend) == SALTS_OK);
+  check(cnet_listener_close(&listener) == SALTS_OK);
+  check(cnet_listener_destroy(&listener) == SALTS_OK);
+  check(cnet_tls_server_destroy(&tls_server) == SALTS_OK);
+  check(cnet_client_stop_external(&server) == SALTS_OK);
+  check(cnet_client_destroy(&server) == SALTS_OK);
+  check(cnet_client_stop_external(&client) == SALTS_OK);
+  check(cnet_client_destroy(&client) == SALTS_OK);
+  check(native_io_backend_close(&backend) == SALTS_OK);
+  check(native_io_backend_destroy(&backend) == SALTS_OK);
 }
 
-int main(void) {
-  test_external_tls_listener_shared_progress();
-  return 0;
+suite("CNet external TLS listener") {
+    before_each() {
+        check_null(backend.impl);
+        server_probe = (state_probe){0};
+        client_probe = (state_probe){0};
+        outbound = (cnet_connection){0};
+        accepted = (cnet_connection){0};
+    }
+    after_each() {
+        external_test_cleanup cleanup = {&backend, &listener, {{&server, accepted}, {&client, outbound}}};
+        cleanup_external_test(&cleanup);
+        if (tls_client.impl != NULL)
+            check_warn(cnet_tls_client_destroy(&tls_client) == SALTS_OK);
+        if (tls_server.impl != NULL)
+            check_warn(cnet_tls_server_destroy(&tls_server) == SALTS_OK);
+    }
+
+    group("shared TLS progress") {
+        it("external tls listener shared progress") { test_external_tls_listener_shared_progress(); }
+    }
 }

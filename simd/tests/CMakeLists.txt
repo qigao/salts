@@ -1,6 +1,6 @@
 cmake_add_test(cmeta_simd_test
   SOURCES simd_test.c
-  LIBS Salts::SIMD
+  LIBS Salts::TinyTest Salts::SIMD
   FOLDER "simd/tests")
 set_target_properties(cmeta_simd_test PROPERTIES
   C_STANDARD 11
@@ -9,7 +9,7 @@ set_target_properties(cmeta_simd_test PROPERTIES
 
 cmake_add_test(cmeta_simd_header_cpp_test
   SOURCES simd_header_cpp_test.cpp
-  LIBS Salts::SIMD
+  LIBS Salts::TinyTest Salts::SIMD
   FOLDER "simd/tests")
 set_target_properties(cmeta_simd_header_cpp_test PROPERTIES
   CXX_STANDARD 17

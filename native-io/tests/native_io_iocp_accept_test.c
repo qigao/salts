@@ -2,10 +2,7 @@
 
 #include <salts/error_codes.h>
 
-#ifdef NDEBUG
-#undef NDEBUG
-#endif
-#include <assert.h>
+#include <tinytest.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -20,6 +17,11 @@ typedef struct accept_fixture {
     SOCKADDR_IN address;
 } accept_fixture;
 
+static accept_fixture test_fixture;
+static SOCKET test_peer = INVALID_SOCKET;
+static uintptr_t test_accepted = UINTPTR_MAX;
+static uintptr_t test_duplicate = UINTPTR_MAX;
+
 static void fixture_reset(accept_fixture *fixture) {
     memset(fixture, 0, sizeof(*fixture));
     fixture->listener = INVALID_SOCKET;
@@ -32,192 +34,231 @@ static void fixture_init(accept_fixture *fixture) {
     int address_length = (int)sizeof(fixture->address);
 
     fixture_reset(fixture);
-    assert(native_io_backend_init(
+    check(native_io_backend_init(
                &fixture->backend, &config) == SALTS_OK);
 
     fixture->listener = WSASocketW(
         AF_INET, SOCK_STREAM, IPPROTO_TCP,
         NULL, 0u, WSA_FLAG_OVERLAPPED);
-    assert(fixture->listener != INVALID_SOCKET);
+    check(fixture->listener != INVALID_SOCKET);
 
     memset(&fixture->address, 0, sizeof(fixture->address));
     fixture->address.sin_family = AF_INET;
     fixture->address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     fixture->address.sin_port = 0u;
-    assert(bind(
+    check(bind(
                fixture->listener,
                (const SOCKADDR *)&fixture->address,
                (int)sizeof(fixture->address)) == 0);
-    assert(listen(fixture->listener, 4) == 0);
-    assert(getsockname(
+    check(listen(fixture->listener, 4) == 0);
+    check(getsockname(
                fixture->listener,
                (SOCKADDR *)&fixture->address,
                &address_length) == 0);
-    assert(fixture->address.sin_port != 0u);
+    check(fixture->address.sin_port != 0u);
 
-    assert(native_io_backend_attach_socket(
+    check(native_io_backend_attach_socket(
                &fixture->backend,
                (uintptr_t)fixture->listener,
                &fixture->endpoint) == SALTS_OK);
 }
 
 static SOCKET connect_peer(const SOCKADDR_IN *address) {
-    SOCKET peer = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    assert(peer != INVALID_SOCKET);
-    assert(connect(
-               peer, (const SOCKADDR *)address,
+    test_peer = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    check(test_peer != INVALID_SOCKET);
+    check(connect(
+               test_peer, (const SOCKADDR *)address,
                (int)sizeof(*address)) == 0);
-    return peer;
+    return test_peer;
 }
 
 static native_io_completion observe_one(
     native_io_backend *backend) {
     native_io_completion completion = {0};
     size_t count = 0u;
-    assert(native_io_backend_observe(
+    check(native_io_backend_observe(
                backend, &completion, 1u, 2000u,
                &count) == SALTS_OK);
-    assert(count == 1u);
+    check(count == 1u);
     return completion;
 }
 
 static void test_iocp_accept_take_once(void) {
-    accept_fixture fixture;
     native_io_request request = {0};
     native_io_completion completion;
-    uintptr_t accepted = UINTPTR_MAX;
-    uintptr_t duplicate = UINTPTR_MAX;
-    SOCKET peer;
 
-    fixture_init(&fixture);
-    assert(native_io_internal_submit_stream_accept(
-               &fixture.backend, fixture.endpoint,
+    fixture_init(&test_fixture);
+    check(native_io_internal_submit_stream_accept(
+               &test_fixture.backend, test_fixture.endpoint,
                &request) == SALTS_OK);
 
-    peer = connect_peer(&fixture.address);
-    completion = observe_one(&fixture.backend);
-    assert(completion.request.slot == request.slot);
-    assert(completion.request.generation == request.generation);
-    assert(completion.endpoint.slot == fixture.endpoint.slot);
-    assert(completion.endpoint.generation ==
-           fixture.endpoint.generation);
-    assert(completion.kind == NATIVE_IO_COMPLETION_OK);
-    assert(completion.status == SALTS_OK);
+    test_peer = connect_peer(&test_fixture.address);
+    completion = observe_one(&test_fixture.backend);
+    check(completion.request.slot == request.slot);
+    check(completion.request.generation == request.generation);
+    check(completion.endpoint.slot == test_fixture.endpoint.slot);
+    check(completion.endpoint.generation ==
+           test_fixture.endpoint.generation);
+    check(completion.kind == NATIVE_IO_COMPLETION_OK);
+    check(completion.status == SALTS_OK);
 
     /*
      * The observed request slot is retired, but the accepted child remains
      * escrow-owned and therefore keeps the listener generation retained.
      */
-    assert(native_io_backend_release_socket(
-               &fixture.backend, fixture.endpoint) ==
+    check(native_io_backend_release_socket(
+               &test_fixture.backend, test_fixture.endpoint) ==
            SALTS_EBUSY);
 
-    assert(native_io_internal_take_stream_accept(
-               &fixture.backend, request,
-               &accepted) == SALTS_OK);
-    assert(accepted != UINTPTR_MAX);
-    assert(native_io_internal_take_stream_accept(
-               &fixture.backend, request,
-               &duplicate) == SALTS_ENOENT);
-    assert(duplicate == UINTPTR_MAX);
+    check(native_io_internal_take_stream_accept(
+               &test_fixture.backend, request,
+               &test_accepted) == SALTS_OK);
+    check(test_accepted != UINTPTR_MAX);
+    check(native_io_internal_take_stream_accept(
+               &test_fixture.backend, request,
+               &test_duplicate) == SALTS_ENOENT);
+    check(test_duplicate == UINTPTR_MAX);
 
-    assert(closesocket((SOCKET)accepted) == 0);
-    assert(closesocket(peer) == 0);
-    assert(closesocket(fixture.listener) == 0);
-    fixture.listener = INVALID_SOCKET;
-    assert(native_io_backend_release_socket(
-               &fixture.backend, fixture.endpoint) ==
+    check(closesocket((SOCKET)test_accepted) == 0);
+    test_accepted = UINTPTR_MAX;
+    check(closesocket(test_peer) == 0);
+    test_peer = INVALID_SOCKET;
+    check(closesocket(test_fixture.listener) == 0);
+    test_fixture.listener = INVALID_SOCKET;
+    check(native_io_backend_release_socket(
+               &test_fixture.backend, test_fixture.endpoint) ==
            SALTS_OK);
 
-    assert(native_io_backend_close(
-               &fixture.backend) == SALTS_OK);
-    assert(native_io_backend_destroy(
-               &fixture.backend) == SALTS_OK);
+    check(native_io_backend_close(
+               &test_fixture.backend) == SALTS_OK);
+    check(native_io_backend_destroy(
+               &test_fixture.backend) == SALTS_OK);
 }
 
 static void test_iocp_accept_cancel_has_no_child(void) {
-    accept_fixture fixture;
     native_io_request request = {0};
     native_io_completion completion;
-    uintptr_t accepted = UINTPTR_MAX;
     int cancel_status;
 
-    fixture_init(&fixture);
-    assert(native_io_internal_submit_stream_accept(
-               &fixture.backend, fixture.endpoint,
+    fixture_init(&test_fixture);
+    check(native_io_internal_submit_stream_accept(
+               &test_fixture.backend, test_fixture.endpoint,
                &request) == SALTS_OK);
 
     cancel_status = native_io_backend_cancel(
-        &fixture.backend, request);
-    assert(cancel_status == SALTS_OK ||
+        &test_fixture.backend, request);
+    check(cancel_status == SALTS_OK ||
            cancel_status == SALTS_EALREADY);
 
-    completion = observe_one(&fixture.backend);
-    assert(completion.request.slot == request.slot);
-    assert(completion.request.generation == request.generation);
-    assert(completion.kind == NATIVE_IO_COMPLETION_CANCELLED);
-    assert(completion.status == SALTS_ECANCELED);
-    assert(native_io_internal_take_stream_accept(
-               &fixture.backend, request,
-               &accepted) == SALTS_ENOENT);
-    assert(accepted == UINTPTR_MAX);
+    completion = observe_one(&test_fixture.backend);
+    check(completion.request.slot == request.slot);
+    check(completion.request.generation == request.generation);
+    check(completion.kind == NATIVE_IO_COMPLETION_CANCELLED);
+    check(completion.status == SALTS_ECANCELED);
+    check(native_io_internal_take_stream_accept(
+               &test_fixture.backend, request,
+               &test_accepted) == SALTS_ENOENT);
+    check(test_accepted == UINTPTR_MAX);
 
-    assert(closesocket(fixture.listener) == 0);
-    fixture.listener = INVALID_SOCKET;
-    assert(native_io_backend_release_socket(
-               &fixture.backend, fixture.endpoint) ==
+    check(closesocket(test_fixture.listener) == 0);
+    test_fixture.listener = INVALID_SOCKET;
+    check(native_io_backend_release_socket(
+               &test_fixture.backend, test_fixture.endpoint) ==
            SALTS_OK);
-    assert(native_io_backend_close(
-               &fixture.backend) == SALTS_OK);
-    assert(native_io_backend_destroy(
-               &fixture.backend) == SALTS_OK);
+    check(native_io_backend_close(
+               &test_fixture.backend) == SALTS_OK);
+    check(native_io_backend_destroy(
+               &test_fixture.backend) == SALTS_OK);
 }
 
 static void test_iocp_close_retires_unclaimed_child(void) {
-    accept_fixture fixture;
     native_io_request request = {0};
     native_io_completion completion;
-    uintptr_t accepted = UINTPTR_MAX;
-    SOCKET peer;
 
-    fixture_init(&fixture);
-    assert(native_io_internal_submit_stream_accept(
-               &fixture.backend, fixture.endpoint,
+    fixture_init(&test_fixture);
+    check(native_io_internal_submit_stream_accept(
+               &test_fixture.backend, test_fixture.endpoint,
                &request) == SALTS_OK);
-    peer = connect_peer(&fixture.address);
-    completion = observe_one(&fixture.backend);
-    assert(completion.kind == NATIVE_IO_COMPLETION_OK);
+    test_peer = connect_peer(&test_fixture.address);
+    completion = observe_one(&test_fixture.backend);
+    check(completion.kind == NATIVE_IO_COMPLETION_OK);
 
-    assert(native_io_backend_close(
-               &fixture.backend) == SALTS_OK);
-    assert(closesocket(peer) == 0);
-    assert(closesocket(fixture.listener) == 0);
-    fixture.listener = INVALID_SOCKET;
+    check(native_io_backend_close(
+               &test_fixture.backend) == SALTS_OK);
+    check(closesocket(test_peer) == 0);
+    test_peer = INVALID_SOCKET;
+    check(closesocket(test_fixture.listener) == 0);
+    test_fixture.listener = INVALID_SOCKET;
 
     /*
      * During backend shutdown, releasing the listener retires any terminal
      * accepted child still held by the private escrow. The child is not
      * claimable afterwards and is closed exactly once by the backend.
      */
-    assert(native_io_backend_release_socket(
-               &fixture.backend, fixture.endpoint) ==
+    check(native_io_backend_release_socket(
+               &test_fixture.backend, test_fixture.endpoint) ==
            SALTS_OK);
-    assert(native_io_internal_take_stream_accept(
-               &fixture.backend, request,
-               &accepted) == SALTS_ENOENT);
-    assert(accepted == UINTPTR_MAX);
-    assert(native_io_backend_destroy(
-               &fixture.backend) == SALTS_OK);
+    check(native_io_internal_take_stream_accept(
+               &test_fixture.backend, request,
+               &test_accepted) == SALTS_ENOENT);
+    check(test_accepted == UINTPTR_MAX);
+    check(native_io_backend_destroy(
+               &test_fixture.backend) == SALTS_OK);
 }
 
-int main(void) {
-    test_iocp_accept_take_once();
-    test_iocp_accept_cancel_has_no_child();
-    test_iocp_close_retires_unclaimed_child();
-    return 0;
+suite("NativeIO IOCP accept") {
+    before_each() {
+        check_null(test_fixture.backend.impl);
+        fixture_reset(&test_fixture);
+        test_peer = INVALID_SOCKET;
+        test_accepted = test_duplicate = UINTPTR_MAX;
+    }
+    after_each() {
+        enum { CLEANUP_ATTEMPTS = 4, CLEANUP_WAIT_MS = 500 };
+        if (test_accepted != UINTPTR_MAX) {
+            check_warn(closesocket((SOCKET)test_accepted) == 0);
+            test_accepted = UINTPTR_MAX;
+        }
+        if (test_duplicate != UINTPTR_MAX) {
+            check_warn(closesocket((SOCKET)test_duplicate) == 0);
+            test_duplicate = UINTPTR_MAX;
+        }
+        if (test_peer != INVALID_SOCKET) {
+            check_warn(closesocket(test_peer) == 0);
+            test_peer = INVALID_SOCKET;
+        }
+        if (test_fixture.listener != INVALID_SOCKET) {
+            check_warn(closesocket(test_fixture.listener) == 0);
+            test_fixture.listener = INVALID_SOCKET;
+        }
+        if (test_fixture.backend.impl != NULL) {
+            int status = native_io_backend_close(&test_fixture.backend);
+            check_warn(status == SALTS_OK || status == SALTS_EALREADY);
+            if (native_io_endpoint_valid(test_fixture.endpoint)) {
+                int release_status = SALTS_EBUSY;
+                for (unsigned attempt = 0; attempt < CLEANUP_ATTEMPTS; ++attempt) {
+                    release_status = native_io_backend_release_socket(
+                        &test_fixture.backend, test_fixture.endpoint);
+                    if (release_status != SALTS_EBUSY) break;
+                    native_io_completion completion;
+                    size_t count = 0u;
+                    status = native_io_backend_observe(
+                        &test_fixture.backend, &completion, 1u, CLEANUP_WAIT_MS, &count);
+                    check_warn(status == SALTS_OK || status == SALTS_ETIMEDOUT);
+                }
+                check_warn(release_status == SALTS_OK || release_status == SALTS_ENOENT);
+            }
+            check_warn(native_io_backend_destroy(&test_fixture.backend) == SALTS_OK);
+        }
+    }
+    group("accept lifecycle") {
+        it("iocp accept take once") { test_iocp_accept_take_once(); }
+        it("iocp accept cancel has no child") { test_iocp_accept_cancel_has_no_child(); }
+        it("iocp close retires unclaimed child") { test_iocp_close_retires_unclaimed_child(); }
+    }
 }
 #else
-int main(void) {
-    return 0;
+suite("NativeIO IOCP accept") {
+    it_skip("backend is unavailable on this platform") {}
 }
 #endif

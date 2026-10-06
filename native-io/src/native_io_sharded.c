@@ -568,7 +568,7 @@ static void native_io_sharded_cleanup_failed_create(native_io_sharded *runtime) 
 
 int native_io_sharded_create(const native_io_sharded_config *config,
                              native_io_sharded **out_runtime) {
-  coro_executor_config_t executor_config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+  coro_executor_config_t executor_config = CORO_EXECUTOR_CONFIG_DEFAULT;
   native_io_sharded *runtime;
   size_t slot_capacity;
   int status = SALTS_OK;

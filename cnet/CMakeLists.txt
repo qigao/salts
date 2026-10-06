@@ -63,6 +63,7 @@ endfunction()
 
 add_library(${TARGET_NAME} SHARED ${CNET_SOURCE_FILES})
 cmake_config_target(${TARGET_NAME}
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   ALIAS Salts::CNet
   FOLDER "cnet"
   EXPORT_NAME CNet)

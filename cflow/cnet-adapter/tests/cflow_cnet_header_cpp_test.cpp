@@ -1,4 +1,4 @@
-#include "tinytest.h"
+#include "tinytest.hpp"
 
 #include <cflow/io_cnet_adapter.h>
 

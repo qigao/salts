@@ -5,7 +5,7 @@
 #define FieldFind(...) 205
 
 #include "tlog.h"
-#include "tinytest.h"
+#include "tinytest.hpp"
 
 #include <cstddef>
 
