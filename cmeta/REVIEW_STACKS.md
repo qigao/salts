@@ -59,7 +59,7 @@ ObjectRef/admission 的实现没有 diff；从核心分支不应用 E 即可移�
 
 ## CI 门禁
 
-CI 仅保留 Release 构建与运行配置，fastpath 关闭。`<profile> / native` 在 GCC、
+CI 仅保留 Release 构建与运行配置。`<profile> / native` 在 GCC、
 Linux Clang、MSVC、macOS GCC、AppleClang 上统一运行原 native 与 plugin 筛选规则
 的并集，重叠用例只执行一次；不再设置独立的 plugin 或 semantic 矩阵条目，也不再
 注册或选择语义专项 CTest 标签。原专项测试范围不额外并入合并组。
@@ -107,7 +107,7 @@ Core 和 E 的 Linux SDK 使用不同的新安装前缀 `stage/issue984-core/cla
 以下筛选对应当前 Unix native/plugin 组，范围与上述历史语义专项分组不同：
 
 ```sh
-cmake --preset linux-clang-release-ci -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DSALTS_PLATFORM_NATIVE_FASTPATH=OFF
+cmake --preset linux-clang-release-ci -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF
 cmake --build --preset linux-clang-release-ci --parallel 2
 ctest --preset linux-clang-release-ci --no-tests=error --output-on-failure --timeout 60 -R '^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_|cmeta_(pp|const|flags|layout|container)_|cmeta_fingerprint_|cmeta_manifest_)'
 ```

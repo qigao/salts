@@ -45,7 +45,7 @@ $nativeCommon = $shared -or $contractsChanged -or $cmetaRuntime -or $platformRun
 $native = $nativeCommon -or $concurrencyRuntime -or $pluginRuntime -or $utilsRuntime -or
   (Test-Changed '^(coroutine/|platform/tests/|plugin/|cmeta/(tests/|benchmarks/))')
 $execution = $nativeCommon -or $utilsRuntime -or $cflowRuntime -or $coroutineRuntime -or
-  (Test-Changed '^(cstl/|concurrency/|cnet/(include/|src/|tests/|CMakeLists\.txt$)|utils/tests/test_object_pool\.c$|cmeta/tests/cmeta_(scope|execution|pool|collector)|cflow/tests/cflow_stream_terminal_test\.c$)')
+  (Test-Changed '^(cstl/|concurrency/|cnet/(include/|src/|tests/|CMakeLists\.txt$)|utils/tests/test_object_pool\.c$|cflow/tests/cflow_stream_terminal_test\.c$)')
 $projection = $nativeCommon -or $pluginRuntime -or $concurrencyRuntime -or $coroutineRuntime -or $utilsRuntime -or
   (Test-Changed '^(cflow/|cstl/(include/|src/|CMakeLists\.txt$)|cmeta/tests/installed/)')
 $lean = $full -or $contractsChanged -or (Test-Changed '^(\.github/workflows/ci\.yml|cmake/ci/select-ci-scope\.ps1|formal/cmeta_cflow_calculus/|cmeta/include/cmeta/generated/builtin_signature_manifest\.h$|cflow/include/cflow/generated/(builtin_operator_policy|machine_schema)\.h$)')
@@ -116,7 +116,7 @@ $json = ConvertTo-Json -InputObject $checks -Compress
 Write-Output $json
 if ($env:GITHUB_OUTPUT) { Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "checks=$json" }
 
-# CI build/run matrices contain only Release profiles with fastpath disabled.
+# CI build/run matrices contain only Release profiles.
 # Test consumers select suites from the uploaded build without rebuilding modules.
 if ($PrepareRelease -and -not $full) { throw "Release preparation requires a manual CI run" }
 $profiles = @(
@@ -139,7 +139,6 @@ foreach ($profile in $profiles) {
   $profile.clang = $profile.id -in @('linux-clang-release', 'macos-clang-release')
   $entry = $profile.Clone()
   $entry.cross = $entry.family -in @('android', 'ios')
-  $entry.fastpath = 'OFF'
   # Core semantic qualification must also pass without the optional #981 backend.
   # Explicit release packaging still includes the qualified native specialization.
   $entry.native_thunks = if ($PrepareRelease -and $entry.id -in @('linux-release', 'linux-clang-release', 'windows-release')) { 'ON' } else { 'OFF' }

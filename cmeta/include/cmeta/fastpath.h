@@ -4,41 +4,14 @@
 #include <cmeta/function.h>
 #include <salts/fastpath.h>
 
-#ifndef SALTS_PLATFORM_NATIVE_FASTPATH
-#define SALTS_PLATFORM_NATIVE_FASTPATH 0
-#endif
-
 #ifndef __cplusplus
 #include <stdatomic.h>
 
-#if SALTS_PLATFORM_NATIVE_FASTPATH
-#if CMETA_HAS_ATOMIC_POINTER_LOCK_FREE_CONSTANT
-_Static_assert(ATOMIC_POINTER_LOCK_FREE == 2,
-               "CMeta native static call requires always-lock-free atomic pointer storage");
-#endif
-#define CMETA_STATIC_NATIVE_SLOT_(name_) \
-    _Static_assert(sizeof(name_##_target_type) == sizeof(uint64_t) && \
-                   sizeof(_Atomic(name_##_target_type)) == sizeof(uint64_t) && \
-                   _Alignof(_Atomic(name_##_target_type)) >= _Alignof(uint64_t) && \
-                   offsetof(name_##_slot_type, target) == 0u, \
-                   "CMeta native call requires aligned 64-bit atomic target"); \
-    CMETA_INLINE name_##_target_type name_##_load_native( \
-        const name_##_slot_type *slot_) { \
-        return (name_##_target_type)cmeta_fast_target_load_native(slot_); \
-    }
-#define cmeta_static_native_invoke(name_, ...) \
-    name_##_load_native(&(name_))(__VA_ARGS__)
-#define cmeta_static_native_invoke0(name_) name_##_load_native(&(name_))()
-#else
-#define CMETA_STATIC_NATIVE_SLOT_(name_)
-#endif
-
 /*
- * Typed static-call projection over Platform-owned raw target loads.
+ * Typed static-call projection over C11 atomic target storage.
  *
- * CMeta owns declaration/signature/ABI validation. Platform owns the native
- * acquire-load backend and architecture policy. No Reflection lookup occurs on
- * invocation.
+ * CMeta owns declaration/signature/ABI validation. Invocation acquires the
+ * target without a Reflection lookup.
  */
 #define cmeta_static_call(name_, default_) \
     typedef default_##_function_type name_##_target_type; \
@@ -62,7 +35,6 @@ _Static_assert(ATOMIC_POINTER_LOCK_FREE == 2,
         atomic_store_explicit(&slot_->target, target_, memory_order_release); \
         return CMETA_OK; \
     } \
-    CMETA_STATIC_NATIVE_SLOT_(name_) \
     name_##_slot_type name_ = {default_}
 
 #define cmeta_static_update(name_, function_) \

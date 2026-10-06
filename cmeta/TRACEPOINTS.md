@@ -80,6 +80,6 @@ cmake --build --preset win-dev-user --target cmeta_trace_test cmeta_trace_cpp_te
 ctest --preset win-dev-user --output-on-failure -R "^(cmeta_trace_|cmeta_fastpath_(test|cpp_test|.*compile_fail)$|cmeta_manifest_test$|cmeta_header_cpp_test$)"
 ```
 
-Release 使用 `win-release-user`，configure 增加 `-DSALTS_PLATFORM_NATIVE_FASTPATH=ON -DCMETA_BUILD_BENCHMARKS=ON`，build 增加 `cmeta_trace_benchmark`，并使用 `ctest --preset win-release-user -V -R '^cmeta_trace_benchmark$'` 查看 TinyTest benchmark。
+Release 使用 `win-release-user`，configure 增加 `-DCMETA_BUILD_BENCHMARKS=ON`，build 增加 `cmeta_trace_benchmark`，并使用 `ctest --preset win-release-user -V -R '^cmeta_trace_benchmark$'` 查看 TinyTest benchmark。
 
 2026-10-06 本地结果（事实）：MSVC 19.44 + ASan 与 Clang 21.1 各 9/9 通过；额外 C11 aggregate header/core/capabilities ASan 回归 3/3 通过；Release/native 正式测试与 benchmark 通过。MSVC Release `/O2 /Ob2`，25 × 1,000,000 ops 的 plain disabled branch/static key/tracepoint/fault point 均值为 0.468/0.475/0.472/0.474 ns，enabled tracepoint 为 1.271 ns。推论：该负载下 disabled facade 与 baseline 成本接近；此结果不构成跨机器的零开销保证。

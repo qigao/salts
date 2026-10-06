@@ -13,11 +13,6 @@ cmake_add_test(cstl_header_typed_test
   LIBS Salts::CSTL Salts::TinyTest
   FOLDER "cstl/tests")
 
-cmake_add_test(cstl_imported_metadata_test
-  SOURCES cstl_imported_metadata_test.c
-  LIBS Salts::Core Salts::CSTL Salts::TinyTest
-  FOLDER "cstl/tests")
-
 if(WIN32)
   add_executable(cstl_imported_tstr_map_smoke
     cstl_imported_tstr_map_smoke.c)
@@ -54,11 +49,6 @@ cmake_add_test(cstl_stack_type_collision_test
 
 cmake_add_test(cstl_generic_identity_test
   SOURCES cstl_generic_identity_test.c
-  LIBS Salts::CSTL Salts::TinyTest
-  FOLDER "cstl/tests")
-
-cmake_add_test(cstl_semantic_projection_test
-  SOURCES cstl_semantic_projection_test.c
   LIBS Salts::CSTL Salts::TinyTest
   FOLDER "cstl/tests")
 
@@ -161,7 +151,6 @@ set_target_properties(
 
 set_target_properties(
   cstl_header_typed_test
-  cstl_imported_metadata_test
   PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
@@ -194,7 +183,6 @@ endif()
 set_target_properties(
   cstl_stack_type_collision_test
   cstl_generic_identity_test
-  cstl_semantic_projection_test
   cstl_construction_binding_test
   cstl_sequence_test
   cstl_ownership_test

@@ -158,9 +158,6 @@ Existing `CMETA_DATAOF(Type)` and `CMETA_DATAOF_OR(Type, fallback)` keep their
 historical unknown-type behavior. Builtin associations now replay the same
 `CMETA_BUILTIN_DATA_SCHEMA` used by the strict pointer frontend. Fixed-width
 aliases still use `cmeta_data_integer_width`, avoiding duplicate associations.
-See the complete C/C++ example in
-[`cmeta_data_select_test.c`](tests/cmeta_data_select_test.c), which checks builtin
-identity, custom provider selection, const views, and unevaluated pointer effects.
 
 ### Structured scope
 
@@ -643,7 +640,7 @@ the host environment leaves them available.
 `cmeta_static_invoke0(slot)`。
 call 声明要求文件作用域、每槽一个 TU；热路径无 Reflection 查询。
 
-默认使用可移植 C 原子；`SALTS_PLATFORM_NATIVE_FASTPATH=ON` 才暴露显式 native 读取/调用。
+使用可移植 C 原子读取 gate 和函数指针槽；调用保留精确的 C 函数签名。
 C++17 借用 C-owned opaque key。更新失败不改变目标；更新不 retain 或 drain 旧
 提供者，所有旧代码目标必须活到在途调用结束。完整契约、边界、benchmark
 和可编译测试示例见 [FASTPATH.md](FASTPATH.md)。
@@ -1349,14 +1346,13 @@ ptr 必须非 NULL，且恰好指向这个对象中指定成员；类型相同�
 仅有 const 成员的指针不能证明整个对象可写，调用者不能借此声明一个不真实的可写 Owner。
 没有分配、引用计数、状态迁移或线程同步，时间和额外空间均为 O(1)，借用在原对象移动或销毁时失效。
 错误原生类型在编译期拒绝；对象来源和生命周期属于调用前置条件，不进行运行时猜测。
-可编译的 C/C++ 用例见 [container_of 回归](tests/cmeta_container_of_cases.h)。
 
 `CMETA_HAS_CLEANUP` / `CMETA_ATTR_CLEANUP(function)` 只探测和封装原生 cleanup attribute。
 函数接收自动变量的地址，负责该资源自己的清理；没有隐含 free、retain 或返回值处理。
 不支持的编译器令能力值为 0，且不定义 attribute 宏。普通返回和块退出可用于 lexical cleanup；
 longjmp 等非局部退出不属于此入口的保证，异常清理还取决于后端和异常编译选项。
 MSVC 的结构化 scope 入口继续保持相同资源语义，不将缺失 attribute 解释为不清理。
-行为用例见 [cleanup 回归](tests/cmeta_compiler_cleanup_cases.h)，平台机制参见
+平台机制参见
 [GCC cleanup 文档](https://gcc.gnu.org/onlinedocs/gcc/Common-Variable-Attributes.html)。
 
 这些入口均为增量能力，不改变 Reflection ABI；既有 descriptor 与 scope 不会隐式改用它们。

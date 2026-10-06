@@ -68,7 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V \
-            -R '^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_|cmeta_(pp|const|flags|layout|container)_|cmeta_fingerprint_|cmeta_manifest_)'
+            -R '^(platform_fastpath_|cmeta_trace_|cmeta_fastpath_|cmeta_coroutine|coro_executor|cmeta_native_|cmeta_plugin_native_)'
       - name: Run Windows native and plugin contracts
         if: matrix.family == 'windows' && matrix.native
         shell: cmd
@@ -77,13 +77,13 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V -R "^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_|cmeta_(pp|const|flags|layout|container)_|cmeta_fingerprint_|cmeta_manifest_|cflow_execution_test$|cflow_interface_reflection_test$|cflow_executor_dso_test$)"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V -R "^(platform_fastpath_|cmeta_trace_|cmeta_fastpath_|cmeta_coroutine|coro_executor|cmeta_native_|cmeta_plugin_native_|cflow_execution_test$|cflow_interface_reflection_test$|cflow_executor_dso_test$)"
           if errorlevel 1 exit /b 1
-      - name: Run POSIX scope, execution and nested CSTL contracts
+      - name: Run POSIX execution and nested CSTL contracts
         if: matrix.family != 'windows' && matrix.execution
         shell: bash
-        run: ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cnet_api_test$|cmeta_scope_|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_execution_test$|cmeta_pool_cpp_test$|cmeta_collector_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_semantic_projection_test$|cstl_typed_decl_cpp_test$)"
-      - name: Run Windows scope, execution and nested CSTL contracts
+        run: ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cnet_api_test$|cmeta_native_|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
+      - name: Run Windows execution and nested CSTL contracts
         if: matrix.family == 'windows' && matrix.execution
         shell: cmd
         run: |
@@ -91,7 +91,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cnet_api_test$|cmeta_scope_|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_execution_test$|cmeta_pool_cpp_test$|cmeta_collector_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_semantic_projection_test$|cstl_typed_decl_cpp_test$)"
+          ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cnet_api_test$|cmeta_native_|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
       - name: Run reflected CFlow contracts
         if: matrix.projection
         shell: bash

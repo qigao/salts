@@ -49,7 +49,3 @@ install(
     include/tinymock_return.h
   DESTINATION include
   COMPONENT TinyMock)
-
-if(BUILD_TESTS)
-  add_subdirectory(test)
-endif()

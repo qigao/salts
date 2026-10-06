@@ -54,10 +54,6 @@ Data 路径不会降级为按字节复制。直接 value slot 的 `take_data` �
 copy/move authority、存储超限、OOM 或 provider copy/retain 失败均返回 false。
 状态公开用于自动存储，不代表可复制/篡改 owning state；重入修改同一状态不受支持。
 
-完整示例及可执行契约见 [ownership](test/tinymock_ownership_test.c)、
-[rollback](test/tinymock_actions_test.c)、[receiver](test/tinymock_function_auto_mock_test.c)
-和 [Plugin 生命周期](test/tinymock_plugin_lifetime_test.cpp)。
-
 ## 依赖审查结论
 
 - `tinytest` 的公开头、runtime 和 target 无 CMeta 引用；installed equality/C++ 测试只链接

@@ -31,17 +31,6 @@ suite("CMeta fastpath Release benchmarks") {
                 fastpath_benchmark_sink = sum;
             }
             check_equal(fastpath_benchmark_sink, enabled ? enabled_sum : UINT64_C(0));
-#if SALTS_PLATFORM_NATIVE_FASTPATH
-            benchmark_ops(enabled ? "native key / enabled" : "native key / disabled",
-                          FASTPATH_BENCH_SAMPLES, FASTPATH_BENCH_OPERATIONS) {
-                uint64_t sum = 0u;
-                for (uint64_t index = 0u; index < FASTPATH_BENCH_OPERATIONS; ++index)
-                    if (cmeta_fast_key_read_native(&fastpath_benchmark_key))
-                        sum += fastpath_benchmark_target(index);
-                fastpath_benchmark_sink = sum;
-            }
-            check_equal(fastpath_benchmark_sink, enabled ? enabled_sum : UINT64_C(0));
-#endif
         }
     }
     bench("compares direct and atomic target calls") {
@@ -61,14 +50,5 @@ suite("CMeta fastpath Release benchmarks") {
             fastpath_benchmark_sink = sum;
         }
         check_equal(fastpath_benchmark_sink, expected);
-#if SALTS_PLATFORM_NATIVE_FASTPATH
-        benchmark_ops("native static call", FASTPATH_BENCH_SAMPLES, FASTPATH_BENCH_OPERATIONS) {
-            uint64_t sum = 0u;
-            for (uint64_t index = 0u; index < FASTPATH_BENCH_OPERATIONS; ++index)
-                sum += cmeta_static_native_invoke(fastpath_benchmark_slot, index);
-            fastpath_benchmark_sink = sum;
-        }
-        check_equal(fastpath_benchmark_sink, expected);
-#endif
     }
 }

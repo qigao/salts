@@ -7,14 +7,8 @@ suite("Platform static gates and fault permissions") {
         check_false(cmeta_fast_branch(&key));
         check_equal(cmeta_fast_enable(&key), SALTS_OK);
         check_true(cmeta_fast_key_read(&key));
-#if SALTS_PLATFORM_NATIVE_FASTPATH
-        check_true(cmeta_fast_key_read_native(&key));
-#endif
         check_equal(cmeta_fast_disable(&key), SALTS_OK);
         check_false(cmeta_fast_key_read(&key));
-#if SALTS_PLATFORM_NATIVE_FASTPATH
-        check_false(cmeta_fast_key_read_native(&key));
-#endif
         check_equal(cmeta_fast_key_set(NULL, true), SALTS_EINVAL);
         check_equal(cmeta_fast_enable(NULL), SALTS_EINVAL);
         check_equal(cmeta_fast_disable(NULL), SALTS_EINVAL);
