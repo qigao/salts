@@ -767,6 +767,7 @@ spec("CNet public client API") {
     cnet_client client = {0};
     cnet_listener listener = {0};
     cnet_client_config config = cnet_api_test_config();
+    cnet_stream_socket_options stream_options = CNET_STREAM_SOCKET_OPTIONS_INIT;
     cnet_listener_config listener_config = {
         .backend = config.backend, .host = "127.0.0.1", .port = 0u, .backlog = 2u};
     cnet_api_test_listener_probe probe = {0};
@@ -782,6 +783,7 @@ spec("CNet public client API") {
                               .on_send = cnet_api_test_listener_send,
                               .user = &probe};
     uint16_t port = 0u;
+    uint64_t nodelay = 0u;
     int ready = 0;
 
     atomic_init(&probe.connected, 0);
@@ -797,6 +799,9 @@ spec("CNet public client API") {
     check_equal(duplicate.generation, 0u);
 
     check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    stream_options.nodelay = 1;
+    check_equal(cnet_client_set_stream_socket_options(&client, &stream_options),
+                SALTS_OK);
     check_equal(cnet_listener_init(&listener, &listener_config), SALTS_OK);
     check_equal(cnet_listener_port(&listener, &port), SALTS_OK);
     check_true(port != 0u);
@@ -833,6 +838,10 @@ spec("CNet public client API") {
     /* Copied peer metadata survives consumption of the socket owner. */
     check_equal(accepted.peer.family, CNET_DATAGRAM_ADDRESS_IPV4);
     check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
+    check_equal(cnet_connection_tcp_option_get(
+                    &client, connection, CNET_TCP_SOCKET_NODELAY, &nodelay),
+                SALTS_OK);
+    check_equal(nodelay, UINT64_C(1));
 
     check_equal(cnet_close(&client, connection), SALTS_OK);
     check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
