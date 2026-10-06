@@ -182,8 +182,8 @@ triplets fixed to `arm64-linux`. Its build directory is `build/linux-arm64-relea
 and its installation root is `$PKG_ROOT/salts-linux-arm64/release`. Use the same
 name for configure/build/test, and `install-linux-arm64-release-user` to install.
 This is a native ARM64 profile, not an x64-to-ARM64 cross toolchain.
-The ARM64 release job uses `linux-arm64-release-ci` and `linux-arm64-test-ci` on
-an ARM64 runner, with manifest mode enabled and cache-only dependency restore.
+The ARM64 SDK job uses `linux-arm64-release-ci` on an ARM64 runner, enables
+tests in the same build, and uses manifest mode with cache-only dependency restore.
 SDK installation still targets `stage/sdk/linux-arm64` and strips the binaries
 through `install-strip-linux-arm64-release-ci`.
 
@@ -207,64 +207,92 @@ cmake --build --preset install-linux-release-user
 
 The installed CMake package is placed under `<prefix>/lib/cmake/Salts`.
 
-## CI scope and job responsibilities
+## CI builds, checks and release artifacts
 
-`Salts CI` (`.github/workflows/ci.yml`) is the entry point for pull requests,
-pushes to `master`, and manual validation. It cancels superseded runs on the
-same PR/ref and calls the CMeta, Plugin, and benchmark reusable workflows only
-when selected by `cmake/ci/select-ci-scope.ps1`. Path classification has one
-owner; the reusable workflows own their platform matrices and test execution.
-The SDK release workflow runs only through its explicit manual release inputs.
-Neither ordinary pushes nor `v*` tag pushes start SDK builds or publication.
-To publish, run `Salts native SDK release` from Actions with the existing `tag`
-and its exact `release_sha`; the workflow verifies the tag, commit and package
-versions before starting the release jobs. A manual `Salts CI` run performs
-validation only and does not invoke the release workflow.
+`Salts CI` (`.github/workflows/ci.yml`) is the entry point for PRs, pushes to
+`master`, and manual validation. `cmake/ci/select-ci-scope.ps1` owns change
+classification and emits both selected checks and a deduplicated build matrix.
+Documentation-only changes run scope/result jobs. PRs use the full
+merge-base-to-head diff; a documentation follow-up still validates preceding
+code changes. Invalid comparison bases fail explicitly.
 
-| Change | Checks |
-| --- | --- |
-| Only Markdown/reStructuredText documentation | Scope and final result only |
-| CMeta/runtime dependencies | Affected native, execution, projection and Plugin suites |
-| CSTL tests | Execution suite |
-| Lean package or checked-in generated formal outputs | Lean checks (plus native consumers for generated headers) |
-| NativeIO/CNet/Coroutine runtime or benchmarks | Affected benchmark families and native dependants |
-| Shared CMake, presets, vcpkg, vendor or CI dispatcher | Native suites and benchmarks |
-| Manual `Salts CI` run | All suites and benchmark families |
+`native-build.yml` owns native compilation. Each selected configuration builds
+all platform-supported modules and all tests once, then uploads the complete
+build. `native-tests.yml` downloads that build in separate jobs for each
+selected CTest suite (execution, Plugin, projection, fastpath, or ARM headers).
+No native test runs before the build artifacts have been uploaded. Production Release
+configurations also compile the NativeIO/CNet/Coroutine benchmarks. CNet
+fault-injection tests use a separate private static library, so enabling tests
+does not change benchmark instrumentation or the installed shared library.
+No workflow selects individual module build targets.
 
-PR classification uses the merge-base-to-head diff, not the last commit;
-a documentation follow-up on a PR containing code still validates that code.
-Push classification uses the delivered `before..sha` range. A missing or
-unreadable comparison base fails scope selection instead of skipping checks.
-Benchmark family selection also applies to pushes; the existing reduced PR
-and full push/manual workload sizes are preserved. Documentation-only changes
-still report the stable `CI result` check without starting native builds.
+A configuration includes platform, architecture, compiler, build type,
+sanitizer and native-fastpath setting. ASan, TSan and Release cannot share
+binaries. Native-fastpath assembly requires a distinct build from portable
+SDK code and cannot be enabled under TSan. Both TSan suites now consume one
+`linux-tsan-ci` build. With all checks selected, native build jobs decrease
+from 19 (5 fastpath + 1 portable TSan + 6 execution + 1 projection + 2 Plugin
++ 4 benchmark) to 11 (6 portable/compiler profiles + 5 native-fastpath profiles).
+The five fastpath builds retain previous coverage without changing SDK features
+to merge incompatible configurations.
 
-Native CI builds all modules supported by the selected platform. With
-`BUILD_TESTS=ON`, it also builds every module's tests; CTest name/label filters
-select what each validation job runs. For example, in a Visual Studio developer
-shell:
+Test and benchmark jobs download the build tree, matching vcpkg dependencies,
+and source snapshot. Linux epoll and io_uring consume the same `native-linux-release`
+artifact. Benchmark execution is eligible only when the PR/push diff contains
+non-documentation changes under `native-io/` or `cnet/`; shared build files and
+other modules alone do not trigger it. Manual validation has no change range
+and does not run benchmarks. Archives preserve source timestamps, executable
+permissions and symlinks. Consumers require the same commit, workspace path
+and runner image because generated build files contain absolute paths and
+compiler locations. They do not reconfigure or rebuild the candidate modules.
+Compiler-rejection CTest cases still invoke the compiler on intentionally
+invalid test sources; preserving object files and source timestamps, with
+CMake regeneration disabled for these CI builds, avoids recompiling their
+module dependencies. Installed-package test binaries are also compiled before
+upload and executed by the projection consumer.
+The PR-base CNet comparison compiles the different base commit in the producer
+and includes its isolated DSO runtime in the same Windows artifact.
+Benchmark executables are registered with CTest under the `benchmark` label;
+ordinary test presets exclude that label. Benchmark consumers use exact CTest
+name filters on the restored build tree. TLS workload arguments and comparison
+DSO paths are read at CTest execution time, without regenerating the build.
+Tracing is launched by CTest around the benchmark process only, so CTest's own
+output handling does not duplicate measurement markers in the syscall traces.
+Artifacts cost upload/download time and storage; missing/expired artifacts
+fail instead of silently starting another build. Lean remains an independent
+formal build in `cmeta-cflow-calculus.yml`.
 
-```powershell
-cmake --preset win-release-user -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF
-cmake --build --preset win-release-user
-ctest --preset win-release-user --output-on-failure -R "^(salts_plugin_|cmeta_(pp|const|flags|layout)_.*)"
-```
+Release preparation and publication are separate:
 
-CI builds the complete configured graph without selecting individual build
-targets or restricting test modules. Configure options separate tests,
-benchmarks and SDK packaging according to each job's purpose. Lean jobs build
-and validate the formal package; release jobs build all supported SDK modules
-and install/package the results.
+1. Run **Salts CI** on the default branch with `prepare_release=true`.
+   This runs native and formal checks, installs the existing Linux x64/Windows/macOS Release
+   builds, adds Linux ARM64 to the same native producer/consumer matrix,
+   builds the additional Android/iOS configurations, and
+   packages the seven SDK variants as the `salts-native-nuget` artifact.
+   Linux ARM64 tests and SDK installation use one module build; installed
+   package qualification uses existing CMeta/Plugin tests through CTest.
+2. Wait for the entire CI run to succeed. Create the matching immutable
+   version tag, then manually run **Salts native SDK release** with `ci_run_id`,
+   exact `release_sha`, and `tag`.
+3. Publication validates that the source is a successful manual `Salts CI`
+   run from this repository's default branch and the exact release commit.
+   It downloads that run's package, verifies SDK commit/version/profile
+   manifests, and publishes the unchanged package. It does not compile or pack.
 
-This replaces three independent event/path filters with one dispatcher rather
-than extending duplicated filters. It trades a small scope/result job on each
-event for consistent dependency coverage and fewer heavy builds. Manual runs
-now use `Salts CI`; callers of the former individual workflow dispatch endpoints
-must migrate. If required checks are configured, use the new `CI result` name.
-To roll back, restore the dispatcher, classification script, reusable workflow
-triggers together; no source API or package format
-changes are involved. Validate updates with `actionlint` and the relevant
-configure/build/CTest presets; Linux/macOS and runner behavior need CI execution.
+Ordinary pushes, tag pushes, and manual CI with `prepare_release=false` never
+publish. The latter also avoids additional SDK platform builds. Existing
+release callers must supply the new `ci_run_id`; runs without the prepared
+package cannot be promoted. Release preparation has its own concurrency group
+so subsequent ordinary pushes do not cancel it. `CI result` remains the stable
+aggregate check; selecting checks affects execution, not module compilation.
+
+The workflows own artifact production and validation; only the manual release
+workflow owns publication permissions. Compilation, tests or qualification
+failure leaves an unpublishable CI run. Package formats and installed APIs are
+unchanged. To roll back, restore the dispatcher, producer/consumer workflows
+and presets together; do not mix old and new artifact contracts. Validate with
+`actionlint`, CMake presets, full builds and related CTest selections;
+runner-specific execution still requires CI.
 
 ## Using Salts from CMake
 

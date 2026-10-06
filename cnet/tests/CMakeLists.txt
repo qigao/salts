@@ -96,7 +96,7 @@ cmake_add_test(
   SOURCES
   cnet_command_profile_test.c
   LIBS
-  cnet_profile
+  cnet_test_profile
   Salts::Core
   Salts::TinyTest
   INCLUDES
@@ -135,7 +135,7 @@ cmake_add_test(
   SOURCES
   cnet_tls_test.c
   LIBS
-  cnet_profile
+  cnet_test_profile
   Salts::Core
   Salts::TinyTest
   INCLUDES
@@ -225,7 +225,7 @@ cmake_add_test(
   SOURCES
   cnet_owner_test.c
   LIBS
-  cnet_profile
+  cnet_test_profile
   Salts::TinyTest
   INCLUDES
   ${CNET_TEST_PRIVATE_INCLUDE}
@@ -297,7 +297,7 @@ cmake_add_test(
   SOURCES
   cnet_shards_multi_owner_test.c
   LIBS
-  cnet_profile
+  cnet_test_profile
   Salts::TinyTest
   INCLUDES
   ${CNET_TEST_PRIVATE_INCLUDE}
@@ -454,7 +454,7 @@ cmake_add_test(
   cnet_api_test.c
   cnet_send_buffer_api_test.c
   LIBS
-  cnet_profile
+  cnet_test_profile
   Salts::TinyTest
   INCLUDES
   ${CNET_TEST_PRIVATE_INCLUDE}
@@ -575,7 +575,7 @@ cmake_add_test(
   SOURCES
   cnet_stop_contract_test.c
   LIBS
-  cnet_profile
+  cnet_test_profile
   Salts::TinyTest
   INCLUDES
   ${CNET_TEST_PRIVATE_INCLUDE}

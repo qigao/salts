@@ -2,7 +2,8 @@ param(
   [Parameter(Mandatory)][ValidateSet("pull_request", "push", "workflow_dispatch")]
   [string]$EventName,
   [AllowEmptyString()][string]$BaseRef,
-  [Parameter(Mandatory)][string]$HeadRef
+  [Parameter(Mandatory)][string]$HeadRef,
+  [bool]$PrepareRelease = $false
 )
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -29,7 +30,7 @@ function Test-Changed([string]$Pattern) {
 
 # Shared build inputs invalidate all native suites. Formal checks only depend
 # on the Lean package, checked-in generated outputs, and their workflow.
-$shared = $full -or (Test-Changed '^(CMakeLists\.txt|CMakeOptions\.cmake|CMake(User)?Presets\.json|vcpkg(-configuration)?\.json|presets/|vendor/|\.github/actions/setup-build-host/|\.github/workflows/ci\.yml|cmake/(?!ci/)|cmake/ci/select-ci-scope\.ps1)')
+$shared = $full -or (Test-Changed '^(CMakeLists\.txt|CMakeOptions\.cmake|CMake(User)?Presets\.json|vcpkg(-configuration)?\.json|presets/|vendor/|\.github/actions/|\.github/workflows/(ci|native-build|native-tests|sdk-package)\.yml|cmake/(?!ci/)|cmake/ci/select-ci-scope\.ps1)')
 $contractsChanged = Test-Changed '^\.github/workflows/cmeta-cflow-calculus\.yml$'
 $cmetaRuntime = Test-Changed '^cmeta/(include/|src/|CMakeLists\.txt$|tests/CMakeLists\.txt$)'
 $platformRuntime = Test-Changed '^platform/(include/|src/|arch/|CMakeLists\.txt$)'
@@ -48,7 +49,7 @@ $projection = $nativeCommon -or $pluginRuntime -or $concurrencyRuntime -or $coro
   (Test-Changed '^(cflow/|cstl/(include/|src/|CMakeLists\.txt$)|cmeta/tests/installed/)')
 $lean = $full -or $contractsChanged -or (Test-Changed '^(\.github/workflows/ci\.yml|cmake/ci/select-ci-scope\.ps1|formal/cmeta_cflow_calculus/|cmeta/include/cmeta/generated/builtin_signature_manifest\.h$|cflow/include/cflow/generated/(builtin_operator_policy|machine_schema)\.h$)')
 $plugin = $shared -or $cmetaRuntime -or $platformRuntime -or $concurrencyRuntime -or $utilsRuntime -or $harness -or
-  (Test-Changed '^(plugin/|cmeta/tests/cmeta_(pp|const|flags|layout)_|\.github/workflows/plugin-lifecycle-contract\.yml$)')
+  (Test-Changed '^(plugin/|cmeta/tests/cmeta_(pp|const|flags|layout)_)')
 
 $benchmarkCommon = $shared -or $cmetaRuntime -or $utilsRuntime -or $harness -or
   (Test-Changed '^(\.github/workflows/native-io-benchmarks\.yml$|cmake/ci/(?!select-ci-scope\.ps1)|cstl/(include/|src/|CMakeLists\.txt$))')
@@ -73,6 +74,18 @@ $nativeUring = $benchmarkCommon -or $nativeRuntime -or $platformRuntime -or
 $forensic = $full -or (Test-Changed '^(cnet|native-io)/benchmarks/(summarize_|verify_.*mechanism)')
 $compare = $benchmarkCommon -or $cnetRuntime -or $nativeRuntime -or $coroutineRuntime -or $concurrencyRuntime -or $platformRuntime -or
   (Test-Changed '^cnet/benchmarks/cnet_owner_lifecycle_compare\.c$')
+# Benchmark execution is limited to changes owned by these two modules.
+# Manual validation has no change range and does not request benchmark runs.
+$benchmarkChanged = Test-Changed '^(native-io|cnet)/'
+$nativeOwner = $benchmarkChanged -and $nativeOwner
+$nativeStyle = $benchmarkChanged -and $nativeStyle
+$cnetOwner = $benchmarkChanged -and $cnetOwner
+$cnetIo = $benchmarkChanged -and $cnetIo
+$cnetSg = $benchmarkChanged -and $cnetSg
+$coroutine = $benchmarkChanged -and $coroutine
+$nativeUring = $benchmarkChanged -and $nativeUring
+$forensic = $benchmarkChanged -and $forensic
+$compare = $benchmarkChanged -and $compare
 $work = $nativeOwner -or $nativeStyle -or $cnetOwner -or $cnetIo -or $cnetSg -or $coroutine -or $nativeUring -or $forensic
 
 $checks = [ordered]@{
@@ -103,6 +116,77 @@ $checks.profile = if ($EventName -eq "pull_request") { "pr" } else { "full" }
 $json = ConvertTo-Json -InputObject $checks -Compress
 Write-Output $json
 if ($env:GITHUB_OUTPUT) { Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "checks=$json" }
+
+# A build identity includes instrumentation and the native fastpath backend.
+# Test consumers select suites from the uploaded build without rebuilding modules.
+if ($PrepareRelease -and -not $full) { throw "Release preparation requires a manual CI run" }
+$profiles = @(
+  @{ id = 'linux-release'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-release-ci'; build_dir = 'build/linux-gcc-release'; sdk = 'linux-x64' },
+  @{ id = 'linux-asan'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-dev-ci'; build_dir = 'build/linux-gcc-debug'; sdk = '' },
+  @{ id = 'linux-tsan'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-tsan-ci'; build_dir = 'build/linux-gcc-tsan'; sdk = '' },
+  @{ id = 'windows-release'; runner = 'windows-2025'; family = 'windows'; preset = 'win-release-ci'; build_dir = 'build/Msvc-Release'; sdk = 'windows-x64' },
+  @{ id = 'windows-clang'; runner = 'windows-2025'; family = 'windows'; preset = 'win-clang-release-ci'; build_dir = 'build/Clang-Release'; sdk = '' },
+  @{ id = 'macos-release'; runner = 'macos-15'; family = 'mac'; preset = 'mac-arm64-release-ci'; build_dir = 'build/mac-arm64-clang-release'; sdk = 'macos-arm64' }
+)
+if ($PrepareRelease) {
+  $profiles += @{ id = 'linux-arm64-release'; runner = 'ubuntu-24.04-arm'; family = 'linux'; preset = 'linux-arm64-release-ci'; build_dir = 'build/linux-arm64-release'; sdk = 'linux-arm64' }
+}
+$builds = @()
+foreach ($profile in $profiles) {
+  $entry = $profile.Clone()
+  $entry.fastpath = 'OFF'
+  $entry.native = $false
+  $entry.execution = $execution -and $entry.id -ne 'linux-arm64-release'
+  $entry.armheaders = $entry.id -eq 'linux-arm64-release'
+  $entry.portable = $native -and $entry.id -eq 'linux-tsan'
+  $entry.plugin = $plugin -and $entry.id -in @('linux-release', 'windows-release')
+  $entry.projection = $projection -and $entry.id -eq 'linux-release'
+  $entry.benchmarks = if ($entry.id -in @('linux-release', 'windows-release', 'macos-release')) { 'ON' } else { 'OFF' }
+  $entry.package = $PrepareRelease -and [bool]$entry.sdk
+  $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
+  $entry.artifact = $work -and [bool]$entry.sdk
+  if ($entry.execution -or $entry.portable -or $entry.plugin -or $entry.projection -or $entry.package -or $entry.artifact) {
+    $builds += $entry
+  }
+  if ($native -and $profile.id -notin @('linux-tsan', 'linux-arm64-release')) {
+    $entry = $profile.Clone()
+    $entry.id += '-fastpath'
+    $entry.fastpath = 'ON'
+    $entry.native = $true
+    $entry.execution = $false
+    $entry.armheaders = $false
+    $entry.portable = $false
+    $entry.plugin = $false
+    $entry.projection = $false
+    $entry.benchmarks = 'OFF'
+    $entry.package = $false
+    $entry.compare = $false
+    $entry.artifact = $false
+    $builds += $entry
+  }
+}
+$matrix = ConvertTo-Json -InputObject @{ include = $builds } -Depth 5 -Compress
+$testRuns = @()
+$suites = @('native', 'portable', 'execution', 'plugin', 'projection', 'armheaders')
+foreach ($build in $builds) {
+  foreach ($suite in $suites) {
+    if (-not $build[$suite]) { continue }
+    $testRun = $build.Clone()
+    foreach ($selection in $suites) {
+      $testRun[$selection] = $selection -eq $suite
+    }
+    $testRun.suite = $suite
+    $testRuns += $testRun
+  }
+}
+$testMatrix = ConvertTo-Json -InputObject @{ include = $testRuns } -Depth 5 -Compress
+Write-Output $matrix
+if ($env:GITHUB_OUTPUT) {
+  Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "builds=$matrix"
+  Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "has_builds=$($builds.Count -gt 0)".ToLowerInvariant()
+  Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "tests=$testMatrix"
+  Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "has_tests=$($testRuns.Count -gt 0)".ToLowerInvariant()
+}
 if ($env:GITHUB_STEP_SUMMARY) {
   Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "| Check | Selected |`n|---|---|"
   foreach ($key in $checks.Keys) {
