@@ -99,7 +99,10 @@ static cmeta_status scope_normal(void) {
     scope_fail_init_at = 0u;
 
     cmeta_scope(normal, status,
-        cmeta_resources((ScopeProbe, first), (ScopeProbe, second)),
+        cmeta_autos(
+            cmeta_auto(ScopeProbe, first)
+            cmeta_auto(ScopeProbe, second)
+        ),
         cmeta_body(
             first.active = 1;
             first.id = 1;
@@ -119,13 +122,16 @@ static cmeta_status scope_early_exit(void) {
     scope_fail_init_at = 0u;
 
     cmeta_scope(early, status,
-        cmeta_resources((ScopeProbe, first), (ScopeProbe, second)),
+        cmeta_autos(
+            cmeta_auto(ScopeProbe, first)
+            cmeta_auto(ScopeProbe, second)
+        ),
         cmeta_body(
             first.active = 1;
             first.id = 10;
             second.active = 1;
             second.id = 20;
-            cmeta_scope_exit(early, status, CMETA_CALLBACK_ERROR);
+            cmeta_leave(early, status, CMETA_CALLBACK_ERROR);
         )
     );
 
@@ -140,12 +146,15 @@ static cmeta_status scope_move_then_cleanup(void) {
     scope_fail_init_at = 0u;
 
     cmeta_scope(moved, status,
-        cmeta_resources((ScopeProbe, source), (ScopeProbe, destination)),
+        cmeta_autos(
+            cmeta_auto(ScopeProbe, source)
+            cmeta_auto(ScopeProbe, destination)
+        ),
         cmeta_body(
             source.active = 1;
             source.id = 31;
             if (cmeta_move(ScopeProbe, &destination, &source) != CMETA_OK)
-                cmeta_scope_exit(moved, status, CMETA_CALLBACK_ERROR);
+                cmeta_leave(moved, status, CMETA_CALLBACK_ERROR);
         )
     );
 
@@ -161,7 +170,10 @@ static cmeta_status scope_partial_init_failure(void) {
     scope_fail_init_at = 2u;
 
     cmeta_scope(partial, status,
-        cmeta_resources((ScopeProbe, first), (ScopeProbe, second)),
+        cmeta_autos(
+            cmeta_auto(ScopeProbe, first)
+            cmeta_auto(ScopeProbe, second)
+        ),
         cmeta_body(
             first.active = 1;
             first.id = 41;
@@ -183,23 +195,27 @@ static cmeta_status scope_nested(void) {
     scope_fail_init_at = 0u;
 
     cmeta_scope(outer, status,
-        cmeta_resources((ScopeProbe, outer_value)),
+        cmeta_autos(
+            cmeta_auto(ScopeProbe, outer_value)
+        ),
         cmeta_body(
             outer_value.active = 1;
             outer_value.id = 51;
 
             cmeta_scope(inner, inner_status,
-                cmeta_resources((ScopeProbe, inner_value)),
+                cmeta_autos(
+                    cmeta_auto(ScopeProbe, inner_value)
+                ),
                 cmeta_body(
                     inner_value.active = 1;
                     inner_value.id = 52;
-                    cmeta_scope_exit(
+                    cmeta_leave(
                         inner, inner_status, CMETA_CALLBACK_ERROR);
                 )
             );
 
             if (inner_status != CMETA_CALLBACK_ERROR)
-                cmeta_scope_exit(outer, status, CMETA_CALLBACK_ERROR);
+                cmeta_leave(outer, status, CMETA_CALLBACK_ERROR);
         )
     );
 
