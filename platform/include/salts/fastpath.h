@@ -20,6 +20,8 @@ extern "C" {
 bool salts_fast_key_read(const salts_fast_key_state *key);
 int salts_fast_key_set(salts_fast_key_state *key, bool enabled);
 bool salts_fast_key_consume(salts_fast_key_state *key);
+int salts_fast_enable(salts_fast_key_state *key);
+int salts_fast_disable(salts_fast_key_state *key);
 
 #if SALTS_PLATFORM_NATIVE_FASTPATH
 bool salts_fast_key_read_native(const salts_fast_key_state *key);
@@ -43,13 +45,6 @@ static inline bool salts_fast_branch(const salts_fast_key_state *key) {
     return atomic_load_explicit(&key->enabled, memory_order_acquire);
 }
 
-static inline int salts_fast_enable(salts_fast_key_state *key) {
-    return salts_fast_key_set(key, true);
-}
-
-static inline int salts_fast_disable(salts_fast_key_state *key) {
-    return salts_fast_key_set(key, false);
-}
 #endif
 
 #ifdef __cplusplus
