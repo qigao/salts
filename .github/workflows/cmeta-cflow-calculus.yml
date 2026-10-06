@@ -12,7 +12,7 @@ jobs:
   lean:
     if: fromJSON(inputs.scope).lean == 'true'
     name: Lean build and test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: leanprover/lean-action@v1
