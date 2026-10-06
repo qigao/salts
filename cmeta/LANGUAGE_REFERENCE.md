@@ -138,10 +138,12 @@ signatures, provider admission, ownership, failure cleanup and compatibility.
 
 ### Structured scope
 
-`cmeta_scope(name, status, autos, body)` owns 1 through 16 explicit
-`cmeta_auto(Type, local_name)` rows inside `cmeta_autos(...)`. The wrapper
-keeps the leading-comma row stream in one preprocessor argument and has no
-runtime representation. Each type exposes `Type_cmeta_data()` with
+`cmeta_scope(status, autos, body)` owns 1 through 16 explicit
+`(Type, local_name)` rows separated by commas inside `cmeta_autos(...)`.
+The wrapper keeps the tuple list in one preprocessor argument and has no
+runtime representation. `CMETA_PP_UNIQUE` supplies the internal scope identifier;
+the frontend requires `CMETA_HAS_COUNTER`, supported by the qualified GCC, Clang
+and MSVC backends. Each type exposes `Type_cmeta_data()` with
 canonical concrete `construct_ops`. The body is one ISO C expression returning
 `cmeta_status`, usually a typed function call borrowing the local values:
 
@@ -158,8 +160,8 @@ static cmeta_status fill_values(ScopeList *values) {
 
 int main(void) {
     cmeta_status status;
-    cmeta_scope(request, status,
-        cmeta_autos(cmeta_auto(ScopeList, values)),
+    cmeta_scope(status,
+        cmeta_autos((ScopeList, values)),
         cmeta_body(fill_values(&values)));
     return status == CMETA_OK ? 0 : 1;
 }
@@ -198,6 +200,16 @@ Scope setup/cleanup is O(N) time and O(N) bounded automatic storage for N resour
 rows, excluding provider-owned payloads. No heap allocation, source lowerer,
 cleanup attribute, SEH or assembly backend is required. DataDesc layout and the
 generic checked runtime lifecycle APIs retain their existing contracts.
+
+**Source migration (#980):** remove the first, caller-supplied scope token and
+replace adjacent `cmeta_auto(Type, name)` entries with comma-separated
+`(Type, name)` tuples. The old four-argument form and leading-comma entry macro
+are removed. Generated identifiers are unique even for two expansions on the
+same source line. The common PP tuple replay replaces the sentinel/drop layer;
+resource ownership, error status, partial rollback and LIFO cleanup are unchanged.
+This step retains per-resource live state and checked lifecycle binding; static
+lifecycle admission and classification are separate #980 work. No descriptor
+layout or binary ABI changes follow from this source-only scope migration.
 
 **Migration and design decision (#920/#929):** the earlier statement-block
 `cmeta_body(...)` could let native exits bypass cleanup. Pure C macros cannot

@@ -10,7 +10,7 @@
 /*
  * Portable structured lifetime facade.
  *
- * cmeta_auto rows in cmeta_autos are explicit finite resources. Their DataDesc
+ * (Type, name) rows in cmeta_autos are explicit finite resources. Their DataDesc
  * must expose concrete construct_ops. The same ops initialize semantic zero
  * and restore it in reverse declaration order, without Reflection queries.
  *
@@ -19,7 +19,6 @@
  * that function; labels cannot cross the function boundary. Block bodies and
  * cross-scope exits are intentionally rejected rather than leaking resources.
  */
-#define cmeta_auto(type_, name_) , (type_, name_)
 #define cmeta_autos(...) (__VA_ARGS__)
 #define cmeta_body(expression_) (expression_)
 
@@ -75,26 +74,18 @@ CMETA_INLINE cmeta_status cmeta_scope_construct_ops(
         }                                                                      \
     } while (0);
 
-/* cmeta_auto deliberately emits a leading comma. Prefixing a sentinel turns
- * the field stream into ordinary variadic arguments; this trampoline drops the
- * sentinel and preserves the finite row list for forward/reverse replay. */
-#define CMETA_SCOPE_ROWS_(autos_) \
-    CMETA_SCOPE_ROWS_EXPAND_(cmeta_scope_auto_sentinel CMETA_PP_UNPAREN autos_)
-#define CMETA_SCOPE_ROWS_EXPAND_(...) CMETA_SCOPE_ROWS_DROP_(__VA_ARGS__)
-#define CMETA_SCOPE_ROWS_DROP_(sentinel_, ...) __VA_ARGS__
-
 #define CMETA_SCOPE_DECLARE_ALL_(scope_, autos_) \
-    CMETA_SCOPE_DECLARE_ALL_EXPAND_(scope_, CMETA_SCOPE_ROWS_(autos_))
+    CMETA_SCOPE_DECLARE_ALL_EXPAND_(scope_, CMETA_PP_UNPAREN autos_)
 #define CMETA_SCOPE_DECLARE_ALL_EXPAND_(scope_, ...) \
     CMETA_PP_FOR_EACH(CMETA_SCOPE_DECLARE_, scope_, __VA_ARGS__)
 
 #define CMETA_SCOPE_INIT_ALL_(scope_, status_, autos_) \
-    CMETA_SCOPE_INIT_ALL_EXPAND_(scope_, status_, CMETA_SCOPE_ROWS_(autos_))
+    CMETA_SCOPE_INIT_ALL_EXPAND_(scope_, status_, CMETA_PP_UNPAREN autos_)
 #define CMETA_SCOPE_INIT_ALL_EXPAND_(scope_, status_, ...) \
     CMETA_PP_FOR_EACH(CMETA_SCOPE_INIT_, (scope_, status_), __VA_ARGS__)
 
 #define CMETA_SCOPE_DESTROY_ALL_(scope_, autos_) \
-    CMETA_SCOPE_DESTROY_ALL_EXPAND_(scope_, CMETA_SCOPE_ROWS_(autos_))
+    CMETA_SCOPE_DESTROY_ALL_EXPAND_(scope_, CMETA_PP_UNPAREN autos_)
 #define CMETA_SCOPE_DESTROY_ALL_EXPAND_(scope_, ...) \
     CMETA_PP_FOR_EACH_REVERSE(CMETA_SCOPE_DESTROY_, scope_, __VA_ARGS__)
 
@@ -104,7 +95,14 @@ CMETA_INLINE cmeta_status cmeta_scope_construct_ops(
 #define cmeta_leave(scope_, status_, value_) \
     _Static_assert(0, "cmeta_leave is removed; return from the body function")
 
-#define cmeta_scope(scope_, status_, autos_, body_)                           \
+/* Capture the compiler counter once before replaying the resource rows.
+ * __LINE__ cannot distinguish adjacent expansions on the same source line. */
+#if CMETA_HAS_COUNTER
+#define cmeta_scope(status_, autos_, body_) \
+    CMETA_SCOPE_WITH_ID_(CMETA_PP_UNIQUE(cmeta_scope_), status_, autos_, body_)
+#endif
+
+#define CMETA_SCOPE_WITH_ID_(scope_, status_, autos_, body_)                  \
     do {                                                                       \
         (status_) = CMETA_OK;                                                  \
         CMETA_SCOPE_DECLARE_ALL_(scope_, autos_)                              \

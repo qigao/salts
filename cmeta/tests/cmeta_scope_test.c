@@ -107,8 +107,8 @@ static cmeta_status scope_normal(void) {
     cmeta_status status;
     scope_reset(0u);
 
-    cmeta_scope(normal, status,
-        cmeta_autos(cmeta_auto(ScopeProbe, first) cmeta_auto(ScopeProbe, second)),
+    cmeta_scope(status,
+        cmeta_autos((ScopeProbe, first), (ScopeProbe, second)),
         cmeta_body(scope_normal_body(&first, &second))
     );
 
@@ -128,8 +128,8 @@ static cmeta_status scope_early_exit(void) {
     cmeta_status status;
     scope_reset(0u);
 
-    cmeta_scope(early, status,
-        cmeta_autos(cmeta_auto(ScopeProbe, first) cmeta_auto(ScopeProbe, second)),
+    cmeta_scope(status,
+        cmeta_autos((ScopeProbe, first), (ScopeProbe, second)),
         cmeta_body(scope_early_body(&first, &second))
     );
 
@@ -147,8 +147,8 @@ static cmeta_status scope_move_then_cleanup(void) {
     cmeta_status status;
     scope_reset(0u);
 
-    cmeta_scope(moved, status,
-        cmeta_autos(cmeta_auto(ScopeProbe, source) cmeta_auto(ScopeProbe, destination)),
+    cmeta_scope(status,
+        cmeta_autos((ScopeProbe, source), (ScopeProbe, destination)),
         cmeta_body(scope_move_body(&source, &destination))
     );
 
@@ -160,8 +160,8 @@ static cmeta_status scope_partial_init_failure(void) {
     cmeta_status status;
     scope_reset(2u);
 
-    cmeta_scope(partial, status,
-        cmeta_autos(cmeta_auto(ScopeProbe, first) cmeta_auto(ScopeProbe, second)),
+    cmeta_scope(status,
+        cmeta_autos((ScopeProbe, first), (ScopeProbe, second)),
         cmeta_body(scope_normal_body(&first, &second))
     );
 
@@ -179,8 +179,8 @@ static cmeta_status scope_outer_body(ScopeProbe *outer_value) {
     cmeta_status inner_status;
     outer_value->active = 1;
     outer_value->id = 51;
-    cmeta_scope(inner, inner_status,
-        cmeta_autos(cmeta_auto(ScopeProbe, inner_value)),
+    cmeta_scope(inner_status,
+        cmeta_autos((ScopeProbe, inner_value)),
         cmeta_body(scope_inner_body(&inner_value))
     );
     /* Propagating the inner error cannot bypass either scope's cleanup. */
@@ -191,8 +191,8 @@ static cmeta_status scope_nested(void) {
     cmeta_status status;
     scope_reset(0u);
 
-    cmeta_scope(outer, status,
-        cmeta_autos(cmeta_auto(ScopeProbe, outer_value)),
+    cmeta_scope(status,
+        cmeta_autos((ScopeProbe, outer_value)),
         cmeta_body(scope_outer_body(&outer_value))
     );
 
@@ -217,12 +217,73 @@ body_done:
 static cmeta_status scope_native_exit(enum ScopeBodyExit mode) {
     cmeta_status status;
     scope_reset(0u);
-    cmeta_scope(native, status, cmeta_autos(cmeta_auto(ScopeProbe, value)),
+    cmeta_scope(status, cmeta_autos((ScopeProbe, value)),
         cmeta_body(scope_native_exit_body(&value, mode)));
     return status;
 }
 
+enum { SCOPE_MAX_RESOURCES = 16 };
+
+static cmeta_status scope_max_body(ScopeProbe *const *values) {
+    size_t i;
+    ++scope_body_count;
+    for (i = 0u; i < SCOPE_MAX_RESOURCES; ++i) {
+        values[i]->active = 1;
+        values[i]->id = (int)i;
+    }
+    return CMETA_OK;
+}
+
+static cmeta_status scope_max_resources(size_t fail_at) {
+    cmeta_status status;
+    scope_reset(fail_at);
+    cmeta_scope(status,
+        cmeta_autos(
+            (ScopeProbe, a), (ScopeProbe, b), (ScopeProbe, c), (ScopeProbe, d),
+            (ScopeProbe, e), (ScopeProbe, f), (ScopeProbe, g), (ScopeProbe, h),
+            (ScopeProbe, i), (ScopeProbe, j), (ScopeProbe, k), (ScopeProbe, l),
+            (ScopeProbe, m), (ScopeProbe, n), (ScopeProbe, o), (ScopeProbe, p)),
+        cmeta_body(scope_max_body((ScopeProbe *const[]){
+            &a, &b, &c, &d, &e, &f, &g, &h,
+            &i, &j, &k, &l, &m, &n, &o, &p})));
+    return status;
+}
+
 spec("CMeta structured scope") {
+    it("generates distinct cleanup labels for scopes on the same source line") {
+        cmeta_status first;
+        cmeta_status second;
+        scope_reset(0u);
+        cmeta_scope(first, cmeta_autos((ScopeProbe, value)), cmeta_body(scope_inner_body(&value))); cmeta_scope(second, cmeta_autos((ScopeProbe, value)), cmeta_body(scope_inner_body(&value)));
+        check_equal(first, CMETA_CALLBACK_ERROR);
+        check_equal(second, CMETA_CALLBACK_ERROR);
+        check_equal(scope_init_count, (size_t)2u);
+        check_equal(scope_restore_count, (size_t)2u);
+        check_equal(scope_destroy_count, (size_t)2u);
+    }
+
+    it("replays the full finite resource list in exact reverse order") {
+        size_t i;
+        check_equal(scope_max_resources(0u), CMETA_OK);
+        check_equal(scope_body_count, (size_t)1u);
+        check_equal(scope_restore_count, (size_t)SCOPE_MAX_RESOURCES);
+        check_equal(scope_destroy_count, (size_t)SCOPE_MAX_RESOURCES);
+        for (i = 0u; i < SCOPE_MAX_RESOURCES; ++i)
+            check_equal(scope_destroy_log[i], (int)(SCOPE_MAX_RESOURCES - i - 1u));
+    }
+
+    it("rolls back every possible partial construction prefix") {
+        size_t fail_at;
+        for (fail_at = 1u; fail_at <= SCOPE_MAX_RESOURCES; ++fail_at) {
+            check_equal(scope_max_resources(fail_at), CMETA_CALLBACK_ERROR);
+            check_equal(scope_init_count, fail_at);
+            check_equal(scope_restore_count, fail_at);
+            check_equal(scope_destroy_count, (size_t)1u);
+            check_equal(scope_destroy_log[0], 99);
+            check_equal(scope_body_count, (size_t)0u);
+        }
+    }
+
     it("keeps native return, goto and break inside the body function") {
         const enum ScopeBodyExit modes[] = {
             SCOPE_BODY_RETURN, SCOPE_BODY_GOTO, SCOPE_BODY_BREAK};
