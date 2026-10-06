@@ -10,3 +10,10 @@ int salts_fast_key_set(salts_fast_key_state *key, bool enabled) {
     atomic_store_explicit(&key->enabled, enabled, memory_order_release);
     return SALTS_OK;
 }
+
+bool salts_fast_key_consume(salts_fast_key_state *key) {
+    if (key == NULL)
+        return false;
+    return atomic_exchange_explicit(
+        &key->enabled, false, memory_order_acq_rel);
+}
