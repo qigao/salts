@@ -3,12 +3,13 @@
 #include <cflow/scheduler.h>
 #include <cflow/time.h>
 #include <salts/thread.h>
-#include "executor_internal.h"
 #include "scheduler_internal.h"
 #include "timer_queue.h"
 #include "tinytest.h"
 
 #include <stdatomic.h>
+
+extern bool cflow_executor_is_current_internal(const cflow_executor *executor);
 
 static atomic_int executor_counter;
 static atomic_int active_callbacks;
