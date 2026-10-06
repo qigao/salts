@@ -41,12 +41,12 @@ suite("CMeta fastpath coroutine ABI") {
         check_not_null(co);
         for (int generation = 0; generation < 2; ++generation) {
             check_equal(cmeta_static_update(fastpath_coro_slot, fastpath_add), CMETA_OK);
-            check_equal(salts_fast_disable(&fastpath_coro_key), CMETA_OK);
+            check_equal(salts_fast_disable(&fastpath_coro_key), SALTS_OK);
             for (int round = 0; round <= FASTPATH_YIELDS; ++round) {
                 check_equal(coro_resume(co), 0);
                 if (round == FASTPATH_YIELDS) break;
                 check_equal(coro_state(co), coro_SUSPENDED);
-                check_equal(salts_fast_key_set(&fastpath_coro_key, round % 2 == 0), CMETA_OK);
+                check_equal(salts_fast_key_set(&fastpath_coro_key, round % 2 == 0), SALTS_OK);
                 check_equal(round % 2 == 0
                     ? cmeta_static_update(fastpath_coro_slot, fastpath_other)
                     : cmeta_static_update(fastpath_coro_slot, fastpath_add), CMETA_OK);
