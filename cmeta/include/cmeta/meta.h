@@ -12,6 +12,7 @@
 #include <cmeta/collector.h>
 #include <cmeta/compute.h>
 #include <cmeta/enum.h>
+#include <cmeta/flags.h>
 #include <cmeta/pp.h>
 #include <cmeta/status.h>
 #include <cmeta/scope.h>
@@ -19,6 +20,7 @@
 #include <cmeta/type_select.h>
 #include <cmeta/type_traits.h>
 #include <cmeta/vector.h>
+#include <cmeta/variant.h>
 #ifndef __cplusplus
   #include <cmeta/contract.h>
   #include <cmeta/generic.h>

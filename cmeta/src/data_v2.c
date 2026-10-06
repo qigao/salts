@@ -979,8 +979,16 @@ cmeta_status cmeta_data_value_init_zero(
         return CMETA_INVALID_ARGUMENT;
     if (desc->fixed_ops != NULL)
         return cmeta_data_fixed_restore_zero(desc, object);
-    if (desc->variant_ops != NULL)
+    if (desc->variant_ops != NULL) {
+        /* A tagged provider must initialize raw storage without inspecting an
+         * indeterminate tag. Existing providers without construction ops keep
+         * their established zero-storage contract. */
+        if (desc->struct_size >= offsetof(cmeta_data_desc, construct_ops) +
+                                    sizeof(desc->construct_ops) &&
+            desc->construct_ops != NULL)
+            return cmeta_data_construct_init_zero(desc, object);
         return cmeta_data_variant_restore_zero(desc, object);
+    }
     switch (desc->kind) {
         case CMETA_DATA_BOOL:
         case CMETA_DATA_SINT:

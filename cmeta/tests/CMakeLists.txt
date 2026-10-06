@@ -7,6 +7,15 @@ cmake_add_test(cmeta_execution_test
 set_target_properties(cmeta_execution_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 set_tests_properties(cmeta_execution_test PROPERTIES TIMEOUT 60)
+cmake_add_test(cmeta_capabilities_test
+  SOURCES cmeta_capabilities_test.c cmeta_capabilities_peer.c cmeta_capabilities_owned.c
+  LIBS Salts::CMeta Salts::TinyTest
+  FOLDER "cmeta/tests")
+
+cmake_add_test(cmeta_capabilities_header_cpp_test
+  SOURCES cmeta_capabilities_header_cpp_test.cpp cmeta_capabilities_owned.c
+  LIBS Salts::CMeta
+  FOLDER "cmeta/tests")
 
 add_executable(cmeta_function_admission_test cmeta_function_admission_test.c)
 target_link_libraries(cmeta_function_admission_test PRIVATE Salts::CMeta Salts::TinyTest)
@@ -242,6 +251,23 @@ function(cmeta_add_compile_failure_test target_name source expected_diagnostic)
     RUN_SERIAL TRUE)
 endfunction()
 
+cmeta_add_compile_failure_test(cmeta_capabilities_missing_trait_compile_fail
+  compile_fail/cmeta_capabilities_missing_trait.c "CMeta required trait is missing")
+cmeta_add_compile_failure_test(cmeta_capabilities_callback_compile_fail
+  compile_fail/cmeta_capabilities_callback.c "CMeta trait callback signature mismatch")
+cmeta_add_compile_failure_test(cmeta_capabilities_field_type_compile_fail
+  compile_fail/cmeta_capabilities_field_type.c "CMeta required field type mismatch")
+cmeta_add_compile_failure_test(cmeta_capabilities_field_qualifier_compile_fail
+  compile_fail/cmeta_capabilities_field_qualifier.c "CMeta required field type mismatch")
+cmeta_add_compile_failure_test(cmeta_capabilities_field_missing_compile_fail
+  compile_fail/cmeta_capabilities_field_missing.c "absent_member")
+cmeta_add_compile_failure_test(cmeta_capabilities_zero_tag_compile_fail
+  compile_fail/cmeta_capabilities_zero_tag.c "CMeta variant tag must be nonzero and fit int")
+cmeta_add_compile_failure_test(cmeta_capabilities_duplicate_tag_compile_fail
+  compile_fail/cmeta_capabilities_duplicate_tag.c "duplicate case|case value.*already|case.*already")
+cmeta_add_compile_failure_test(cmeta_capabilities_flags_type_compile_fail
+  compile_fail/cmeta_capabilities_flags_type.c "OtherFlags|incompatible type for argument 2")
+
 cmeta_add_compile_failure_test(
   cmeta_compute_missing_type_compile_fail
   compile_fail/cmeta_compute_missing_type.c
@@ -293,7 +319,7 @@ cmeta_add_compile_failure_test(
   compile_fail/cmeta_scope_cross_function_goto.c
   "outer__cmeta_cleanup")
 
-set_target_properties(cmeta_header_cpp_test PROPERTIES
+set_target_properties(cmeta_header_cpp_test cmeta_capabilities_header_cpp_test PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON
   CXX_EXTENSIONS OFF)
@@ -301,9 +327,11 @@ set_target_properties(cmeta_header_cpp_test PROPERTIES
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(cmeta_header_cpp_test PRIVATE
     -Werror=old-style-cast)
+  target_compile_options(cmeta_capabilities_header_cpp_test PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Werror=old-style-cast>)
 endif()
 
-set_target_properties(cmeta_core_test PROPERTIES
+set_target_properties(cmeta_core_test cmeta_capabilities_test cmeta_capabilities_header_cpp_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)

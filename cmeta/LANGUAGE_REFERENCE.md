@@ -117,6 +117,25 @@ same rows. Duplicate, unknown, or malformed rows are compile-time errors.
 `TRIVIAL_COPY` and `TRIVIAL_DESTROY` are descriptor properties, not inferred
 callable traits.
 
+### Compile-time capabilities, tagged variants and flags
+
+`cmeta_trait(Capability, callback)` names the existing tagged trait row.
+`cmeta_has_trait(Name, Capability)` and `cmeta_require_trait(Name, Capability)`
+query/check the declaration at compile time; `cmeta_require_field(Owner, member,
+Type)` checks exact native field type without evaluating an object.
+
+`cmeta_variant(Name, "stable.Name", cases...)` takes consecutive
+`cmeta_case(Case, nonzero_int_tag, PayloadType, &payload_data)` rows and generates
+checked typed operations over one inline tag/union and canonical DataDesc.
+`cmeta_match(pointer)` is ordinary switch with `case Name_Case:` labels.
+`cmeta_flags(Name, "stable.Name", rows...)` takes consecutive
+`cmeta_flag(Symbol, uint64_bits, "text")` rows and derives distinct typed values
+and one canonical unsigned64 enum domain. Both finite declarations accept 1–16
+rows; traits still use comma-separated rows.
+
+See [capability contracts and executable examples](CAPABILITIES.md) for callback
+signatures, provider admission, ownership, failure cleanup and compatibility.
+
 ### Structured scope
 
 `cmeta_scope(name, status, autos, body)` owns 1 through 16 explicit
