@@ -106,10 +106,16 @@ suite("CFlow clock interface reflection") {
     const cmeta_interface_desc *meta = cflow_executor_interface();
     const cmeta_function_desc *try_fn;
     const cmeta_function_desc *stats_fn;
+    const cmeta_function_desc *task_fn;
+    const cmeta_function_desc *control_fn;
     size_t index;
 
+    check_true(cmeta_type_desc_valid(&cflow_type_executor_task));
+    check_true(cmeta_type_desc_valid(&cflow_type_executor_task_ptr));
+    check_true(cmeta_type_desc_valid(&cflow_type_executor_control));
+    check_true(cmeta_type_desc_valid(&cflow_type_executor_control_ptr));
     check_true(cmeta_interface_desc_valid(meta));
-    check_equal(meta->method_count, (size_t)9);
+    check_equal(meta->method_count, (size_t)12);
     for (index = 0u; index < meta->method_count; ++index)
       check_true(cmeta_interface_method_reflection_valid(&meta->methods[index]));
 
@@ -138,6 +144,25 @@ suite("CFlow clock interface reflection") {
     check_true(cmeta_interface_method_owns_self(&meta->methods[8]));
     check_equal(cmeta_interface_method_function(&meta->methods[8])->name,
                 "cflow_executor.destroy");
+
+    task_fn = cmeta_interface_method_function(&meta->methods[9]);
+    check_equal(task_fn->name, "cflow_executor.task_admit");
+    check_true(task_fn->return_type == &cflow_type_admission_status);
+    check_equal(task_fn->params[0].flags,
+                (cmeta_param_flags)(CMETA_PARAM_IN | CMETA_PARAM_BORROWED));
+    check_true(task_fn->params[0].type == &cflow_type_executor_task_ptr);
+
+    control_fn = cmeta_interface_method_function(&meta->methods[10]);
+    check_equal(control_fn->name, "cflow_executor.project_control");
+    check_true(control_fn->return_type == &cmeta_type_bool);
+    check_equal(control_fn->params[0].flags,
+                (cmeta_param_flags)(CMETA_PARAM_OUT | CMETA_PARAM_BORROWED));
+    check_true(control_fn->params[0].type == &cflow_type_executor_control_ptr);
+
+    check_equal(cmeta_interface_method_function(&meta->methods[11])->name,
+                "cflow_executor.is_current");
+    check_equal(cmeta_interface_method_function(&meta->methods[11])->param_count,
+                (size_t)0);
   }
 
   it("publishes complete executor control semantics") {
@@ -145,10 +170,11 @@ suite("CFlow clock interface reflection") {
     const cmeta_function_desc *post_fn;
     const cmeta_function_desc *shutdown_fn;
     const cmeta_function_desc *stats_fn;
+    const cmeta_function_desc *task_fn;
     size_t index;
 
     check_true(cmeta_interface_desc_valid(meta));
-    check_equal(meta->method_count, (size_t)4);
+    check_equal(meta->method_count, (size_t)5);
     for (index = 0u; index < meta->method_count; ++index)
       check_true(cmeta_interface_method_reflection_valid(&meta->methods[index]));
 
@@ -177,6 +203,13 @@ suite("CFlow clock interface reflection") {
                &cflow_type_executor_protocol_stats_ptr);
     check_equal(stats_fn->params[0].flags,
                 (cmeta_param_flags)(CMETA_PARAM_OUT | CMETA_PARAM_BORROWED));
+
+    task_fn = cmeta_interface_method_function(&meta->methods[4]);
+    check_equal(task_fn->name, "cflow_executor_control.task_post");
+    check_true(task_fn->return_type == &cflow_type_executor_post_status);
+    check_equal(task_fn->params[0].flags,
+                (cmeta_param_flags)(CMETA_PARAM_IN | CMETA_PARAM_BORROWED));
+    check_true(task_fn->params[0].type == &cflow_type_executor_task_ptr);
 
     check_false(cmeta_interface_desc_has_owning_method(meta));
   }
