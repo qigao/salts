@@ -123,7 +123,7 @@ jobs:
       - name: Run Linux structured scope contracts
         if: matrix.family == 'linux'
         shell: bash
-        run: ctest --preset "${{ matrix.configure_preset }}" --output-on-failure -R "^cmeta_scope_"
+        run: ctest --preset "${{ matrix.configure_preset }}" --output-on-failure -R "^(cmeta_scope_|cstl_generic_identity_test$|cstl_semantic_projection_test$|cstl_typed_decl_cpp_test$)"
 
       - name: Run Windows structured scope contracts
         if: matrix.family == 'windows'
@@ -133,7 +133,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.configure_preset }}" --output-on-failure -R "^cmeta_scope_"
+          ctest --preset "${{ matrix.configure_preset }}" --output-on-failure -R "^(cmeta_scope_|cstl_generic_identity_test$|cstl_semantic_projection_test$|cstl_typed_decl_cpp_test$)"
 
       - name: Source hygiene
         shell: bash
