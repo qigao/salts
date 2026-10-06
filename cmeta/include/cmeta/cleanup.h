@@ -7,7 +7,16 @@
 /** One lexical obligation, not a Reflection trait or resource owner. The
  * resource adapter supplies its existing nofail release authority. Records
  * and resources stay at stable addresses, under a single-threaded owner.
- * Do not copy an armed record. No allocation, registration, or hidden retain. */
+ * Do not copy an armed record. No allocation, registration, or hidden retain.
+ *
+ * Automatic discharge is a no-fail semantic contract in both C and C++: the
+ * callback must complete local ownership release without a recoverable error
+ * or exception. A void signature alone does not prove that contract. Adapters
+ * must use an authority that promises no-fail discharge, keep its prerequisites
+ * alive, and specify fail-fast termination for detected invariant violations.
+ * Fallible flush/commit/close belongs in an explicit status-returning operation
+ * before discharge; never cast it to this callback or discard its error. No
+ * retry or external settlement is implied by lexical cleanup. */
 typedef void (*cmeta_cleanup_fn)(void *authority, void *resource);
 typedef struct cmeta_cleanup {
     cmeta_cleanup_fn release;

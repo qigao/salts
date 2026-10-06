@@ -61,3 +61,18 @@ add_dependencies(cmeta_plugin_scope_cpp_test cmeta_plugin_linker_fixture_cpp)
 set_target_properties(cmeta_plugin_scope_cpp_test PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 set_tests_properties(cmeta_plugin_linker_test cmeta_plugin_scope_cpp_test PROPERTIES TIMEOUT 60)
+
+cmake_add_test(cmeta_plugin_cleanup_fatal_test
+  SOURCES "${plugin_linker_test_dir}/plugin_cleanup_fatal_test.c"
+  LIBS Salts::Plugin FOLDER "plugin/tests")
+cmake_add_test(cmeta_plugin_scope_fatal_cpp_test
+  SOURCES "${plugin_linker_test_dir}/plugin_scope_fatal_cpp_test.cpp"
+  LIBS Salts::Plugin
+  DEFS "PLUGIN_SCOPE_PATH=\"$<TARGET_FILE:cmeta_plugin_linker_fixture_cpp>\""
+  FOLDER "plugin/tests")
+add_dependencies(cmeta_plugin_scope_fatal_cpp_test cmeta_plugin_linker_fixture_cpp)
+set_target_properties(cmeta_plugin_cleanup_fatal_test cmeta_plugin_scope_fatal_cpp_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+set_tests_properties(cmeta_plugin_cleanup_fatal_test cmeta_plugin_scope_fatal_cpp_test
+  PROPERTIES TIMEOUT 30)
