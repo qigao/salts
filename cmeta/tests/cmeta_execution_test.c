@@ -1,7 +1,7 @@
 #include <cmeta/pool.h>
 #include <cmeta/local.h>
-#include <cmeta/atomic.h>
-#include <cmeta/rcu.h>
+#include <salts/atomic.h>
+#include <salts/rcu.h>
 #include <cstl/typed.h>
 #include "tinytest.h"
 #include <stdlib.h>
@@ -45,10 +45,10 @@ static const cmeta_data_desc value_data = {
 static const cmeta_data_desc *ExecutionValue_cmeta_data(void) { return &value_data; }
 cmeta_type(Pool, ValuePool, ExecutionValue);
 cmeta_type(Local, ValueLocal, ExecutionValue);
-cmeta_type(Atomic, IntAtomic, int);
+SALTS_ATOMIC_TYPE(IntAtomic, int);
 typedef int *IntPointer;
-cmeta_type(Atomic, PointerAtomic, IntPointer);
-cmeta_type(Rcu, IntRcu, int);
+SALTS_ATOMIC_TYPE(PointerAtomic, IntPointer);
+SALTS_RCU_TYPE(IntRcu, int);
 cmeta_type(Vec, ExecutionVec, int);
 cmeta_type(Pool, VecPool, ExecutionVec);
 static cmeta_thread_local(ValueLocal, tls_value);
@@ -122,7 +122,7 @@ spec("CMeta execution primitives") {
         check_equal(ValuePool_init(&pool, 2), CMETA_OK);
         check_equal(ValuePool_init(&other, 1), CMETA_OK);
         copied = pool;
-        check_equal(ValuePool_acquire(&copied, &extra), CMETA_INVALID_ARGUMENT);
+        check_equal(ValuePool_acquire(&copied, &extra), SALTS_EINVAL);
         check_equal(ValuePool_acquire(&pool, &first), CMETA_OK);
         check_equal(ValuePool_acquire(&pool, &second), CMETA_OK);
         check_equal(ValuePool_acquire(&pool, &extra), CMETA_CAPACITY_EXCEEDED);
@@ -134,15 +134,15 @@ spec("CMeta execution primitives") {
         check_not_null(value->owned);
         value->value = 9;
         copy = first;
-        check_equal(ValuePool_release(&pool, &copy), CMETA_INVALID_ARGUMENT);
-        check_equal(ValuePool_release(&other, &first), CMETA_INVALID_ARGUMENT);
+        check_equal(ValuePool_release(&pool, &copy), SALTS_EINVAL);
+        check_equal(ValuePool_release(&other, &first), SALTS_EINVAL);
         check_equal(ValuePool_destroy(&pool), CMETA_BUSY);
-        check_equal(ValuePool_move_out(&pool, &first, value), CMETA_INVALID_ARGUMENT);
+        check_equal(ValuePool_move_out(&pool, &first, value), SALTS_EINVAL);
         check_equal(ValuePool_move_out(&pool, &first, &destination), CMETA_OK);
         check_null(value->owned);
         check_equal(destination.value, 9);
         check_equal(ValuePool_release(&pool, &first), CMETA_OK);
-        check_equal(ValuePool_release(&pool, &first), CMETA_INVALID_ARGUMENT);
+        check_equal(ValuePool_release(&pool, &first), SALTS_EINVAL);
         check_equal(ValuePool_acquire(&pool, &extra), CMETA_OK);
         check_equal(ValuePool_release(&pool, &extra), CMETA_OK);
         check_equal(ValuePool_release(&pool, &second), CMETA_OK);
@@ -156,7 +156,7 @@ spec("CMeta execution primitives") {
         ValuePool pool = {0}; ValuePool_lease lease = {0};
         ValueLocal local = {0};
         atomic_store(&destroyed, 0);
-        check_equal(ValuePool_init(&pool, 0), CMETA_INVALID_ARGUMENT);
+        check_equal(ValuePool_init(&pool, 0), SALTS_EINVAL);
         check_equal(ValuePool_init(&pool, SIZE_MAX), CMETA_CAPACITY_EXCEEDED);
         check_equal(ValuePool_init(&pool, 1), CMETA_OK);
         fail_init = true;
@@ -197,7 +197,7 @@ spec("CMeta execution primitives") {
         check_equal(cmeta_pool_release(&pool, &lease), CMETA_OK);
         check_equal(cmeta_pool_destroy(&pool), CMETA_OK);
         check_equal(cmeta_pool_init(&pool, &data, sizeof(ExecutionValue),
-            object_pool_max_alignment() * 2, 1), CMETA_INVALID_ARGUMENT);
+            object_pool_max_alignment() * 2, 1), SALTS_EINVAL);
     }
     it("keeps TLS isolated and rejects wrong-thread access to locals and pools") {
         ValuePool pool = {0}; ValueLocal copy;
@@ -212,8 +212,8 @@ spec("CMeta execution primitives") {
         check_equal(salts_thread_create(&thread, exercise_local, &ctx), 0);
         if (thread != NULL) check_equal(salts_thread_join(&thread), 0);
         check_true(ctx.foreign_get_null);
-        check_equal(ctx.foreign_destroy, CMETA_INVALID_ARGUMENT);
-        check_equal(ctx.foreign_pool, CMETA_INVALID_ARGUMENT);
+        check_equal(ctx.foreign_destroy, SALTS_EINVAL);
+        check_equal(ctx.foreign_pool, SALTS_EINVAL);
         check_equal(ctx.init, CMETA_OK); check_equal(ctx.destroy, CMETA_OK);
         check_equal(ctx.value, 20);
         check_equal(ValueLocal_get(&tls_value)->value, 10);
@@ -226,12 +226,12 @@ spec("CMeta execution primitives") {
         IntPointer pointer_expected = &first, pointer_out = NULL;
         bool exchanged = false, lock_free;
         check_equal(IntAtomic_init(&value, 4), CMETA_OK);
-        check_equal(IntAtomic_load(&value, memory_order_release, &out), CMETA_INVALID_ARGUMENT);
+        check_equal(IntAtomic_load(&value, memory_order_release, &out), SALTS_EINVAL);
         check_equal(out, 77);
-        check_equal(IntAtomic_store(&value, 9, memory_order_acquire), CMETA_INVALID_ARGUMENT);
-        check_equal(IntAtomic_exchange(&value, 9, (memory_order)99, &out), CMETA_INVALID_ARGUMENT);
+        check_equal(IntAtomic_store(&value, 9, memory_order_acquire), SALTS_EINVAL);
+        check_equal(IntAtomic_exchange(&value, 9, (memory_order)99, &out), SALTS_EINVAL);
         check_equal(IntAtomic_compare_exchange(&value, &expected, 5,
-            memory_order_release, memory_order_acquire, &exchanged), CMETA_INVALID_ARGUMENT);
+            memory_order_release, memory_order_acquire, &exchanged), SALTS_EINVAL);
         check_equal(expected, 3);
         check_equal(IntAtomic_compare_exchange(&value, &expected, 5,
             memory_order_acq_rel, memory_order_acquire, &exchanged), CMETA_OK);
@@ -294,7 +294,7 @@ spec("CMeta execution primitives") {
                 check_equal(IntAtomic_init(&value, 1), CMETA_OK);
                 check_equal(IntAtomic_compare_exchange(&value, &expected, 2,
                     orders[success], orders[failure], &exchanged),
-                    admitted[success][failure] ? CMETA_OK : CMETA_INVALID_ARGUMENT);
+                    admitted[success][failure] ? CMETA_OK : SALTS_EINVAL);
                 check_equal(exchanged, admitted[success][failure]);
             }
         }
