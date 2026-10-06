@@ -54,11 +54,13 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
  * ------------------------------------------------------------------------- */
 
 #define CMETA_CONTAINER1_INDEX_RANGE_DEFINE_WITH_TYPE_EXT(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr) \
+    CMETA_CONTAINER1_INDEX_RANGE_DEFINE_WITH_TYPE_EXT_VALUE(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr, NULL, NULL)
+#define CMETA_CONTAINER1_INDEX_RANGE_DEFINE_WITH_TYPE_EXT_VALUE(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr, value_traits, value_identity) \
     CMETA_LOCAL const cmeta_type_desc name##_element_cmeta_type = { \
         CMETA_CONTAINER_STR(type), sizeof(type), _Alignof(type), CMETA_T_OBJECT, NULL, NULL, NULL \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
-        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, NULL, NULL \
+        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, (value_traits), (value_identity) \
     }; \
     CMETA_INLINE size_t name##_cmeta_range_size(const void *object) { \
         const name *self = (const name *)object; \
@@ -104,11 +106,13 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
 #define CMETA_CONTAINER1_INDEX_RANGE_DEFINE(name, type, prefix, flags, version_accessor, collector_factory) \
     CMETA_CONTAINER1_INDEX_RANGE_DEFINE_WITH_TYPE(name, type, CMETA_TYPEOF_OR(type, &name##_element_cmeta_type), prefix, flags, version_accessor, collector_factory)
 #define CMETA_CONTAINER1_LINK_RANGE_DEFINE_WITH_TYPE_EXT(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr) \
+    CMETA_CONTAINER1_LINK_RANGE_DEFINE_WITH_TYPE_EXT_VALUE(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr, NULL, NULL)
+#define CMETA_CONTAINER1_LINK_RANGE_DEFINE_WITH_TYPE_EXT_VALUE(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr, value_traits, value_identity) \
     CMETA_LOCAL const cmeta_type_desc name##_element_cmeta_type = { \
         CMETA_CONTAINER_STR(type), sizeof(type), _Alignof(type), CMETA_T_OBJECT, NULL, NULL, NULL \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
-        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, NULL, NULL \
+        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, (value_traits), (value_identity) \
     }; \
     CMETA_INLINE size_t name##_cmeta_range_size(const void *object) { \
         const name *self = (const name *)object; \
@@ -416,11 +420,13 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
  * ------------------------------------------------------------------------- */
 
 #define CMETA_CONTAINER1_SLOT_RANGE_DEFINE_WITH_TYPE_EXT(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr) \
+    CMETA_CONTAINER1_SLOT_RANGE_DEFINE_WITH_TYPE_EXT_VALUE(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr, NULL, NULL)
+#define CMETA_CONTAINER1_SLOT_RANGE_DEFINE_WITH_TYPE_EXT_VALUE(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr, value_traits, value_identity) \
     CMETA_LOCAL const cmeta_type_desc name##_element_cmeta_type = { \
         CMETA_CONTAINER_STR(type), sizeof(type), _Alignof(type), CMETA_T_OBJECT, NULL, NULL, NULL \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
-        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, NULL, NULL \
+        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, (value_traits), (value_identity) \
     }; \
     CMETA_INLINE size_t name##_cmeta_range_size(const void *object) { \
         const name *self = (const name *)object; \
@@ -525,8 +531,10 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         semantic_flags, equal_member, hash_member, compare_member)
 
 #define CMETA_CONTAINER2_RANGES_DEFINE_WITH_TYPES_EXT(name, key_type, value_type, key_desc, value_desc, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags, version_accessor, collector_factory, ext_expr) \
+    CMETA_CONTAINER2_RANGES_DEFINE_WITH_TYPES_EXT_VALUE(name, key_type, value_type, key_desc, value_desc, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags, version_accessor, collector_factory, ext_expr, NULL, NULL)
+#define CMETA_CONTAINER2_RANGES_DEFINE_WITH_TYPES_EXT_VALUE(name, key_type, value_type, key_desc, value_desc, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags, version_accessor, collector_factory, ext_expr, value_traits, value_identity) \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
-        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, NULL, NULL \
+        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, (value_traits), (value_identity) \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_key_cmeta_type = { \
         CMETA_CONTAINER_STR(key_type), sizeof(key_type), _Alignof(key_type), CMETA_T_OBJECT, NULL, NULL, NULL \
@@ -658,8 +666,10 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
  * link per next() call, avoiding repeated rank scans while retaining the
  * public allocation-free cmeta_range contract. */
 #define CMETA_CONTAINER2_LINK_RANGES_DEFINE_WITH_TYPES_EXT(name, key_type, value_type, key_desc, value_desc, prefix, key_flags, value_flags, entry_flags, version_accessor, collector_factory, ext_expr) \
+    CMETA_CONTAINER2_LINK_RANGES_DEFINE_WITH_TYPES_EXT_VALUE(name, key_type, value_type, key_desc, value_desc, prefix, key_flags, value_flags, entry_flags, version_accessor, collector_factory, ext_expr, NULL, NULL)
+#define CMETA_CONTAINER2_LINK_RANGES_DEFINE_WITH_TYPES_EXT_VALUE(name, key_type, value_type, key_desc, value_desc, prefix, key_flags, value_flags, entry_flags, version_accessor, collector_factory, ext_expr, value_traits, value_identity) \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
-        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, NULL, NULL \
+        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, (value_traits), (value_identity) \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_key_cmeta_type = { \
         CMETA_CONTAINER_STR(key_type), sizeof(key_type), _Alignof(key_type), CMETA_T_OBJECT, NULL, NULL, NULL \
