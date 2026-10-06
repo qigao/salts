@@ -86,6 +86,7 @@ typedef struct explicit_owned_buffer {
 } explicit_owned_buffer;
 
 static size_t explicit_owned_live;
+static size_t explicit_owned_copy_budget = SIZE_MAX;
 
 static bool explicit_owned_buffer_is_zero(const void *object) {
   const explicit_owned_buffer *value = (const explicit_owned_buffer *)object;
@@ -119,6 +120,8 @@ static cmeta_status explicit_owned_buffer_assign(
   if (!explicit_owned_buffer_is_zero(value))
     return CMETA_INVALID_ARGUMENT;
   if (size == 0u) return CMETA_OK;
+  if (explicit_owned_copy_budget == 0u) return CMETA_OUT_OF_MEMORY;
+  if (explicit_owned_copy_budget != SIZE_MAX) --explicit_owned_copy_budget;
   copy = (unsigned char *)malloc(size);
   if (copy == NULL) return CMETA_OUT_OF_MEMORY;
   memcpy(copy, data, size);
@@ -215,6 +218,14 @@ cmeta_type(Vec, explicit_owned_vec, explicit_owned_record,
 cmeta_type(Map, explicit_owned_map, int, explicit_owned_record,
       &cmeta_type_int, &cmeta_data_int,
       &explicit_owned_record_type, &explicit_owned_record_data);
+
+cmeta_type(Vec, nested_owned_vec, explicit_owned_vec,
+      &explicit_owned_vec_cmeta_type, &explicit_owned_vec_collection_data);
+cmeta_type(Map, nested_owned_map, int, explicit_owned_vec,
+      &cmeta_type_int, &cmeta_data_int,
+      &explicit_owned_vec_cmeta_type, &explicit_owned_vec_collection_data);
+cmeta_type(Vec, nested_map_vec, explicit_owned_map,
+      &explicit_owned_map_cmeta_type, &explicit_owned_map_map_data);
 
 
 typedef struct cstl_struct_with_vec {
@@ -314,6 +325,98 @@ spec("CSTL semantic projection") {
                     &exact_i32_set_collection_data, &set), CMETA_OK);
     check_equal(cmeta_data_value_restore_zero(
                     &exact_i32_vec_collection_data, &vec), CMETA_OK);
+  }
+
+  it("deep copies nested containers and rolls back partial element copies") {
+    enum { NESTED_ELEMENT_LIMIT = 4u };
+    static const unsigned char bytes[] = {'n', 'e', 's', 't'};
+    explicit_owned_record source = {0};
+    explicit_owned_vec inner = {0};
+    nested_owned_vec outer = {0};
+    nested_owned_map mapped = {0};
+    explicit_owned_map record_map = {0};
+    nested_map_vec map_vector = {0};
+    nested_owned_vec moved = {0};
+    const explicit_owned_vec *copied;
+    const explicit_owned_record *stored;
+    cmeta_trait_flags lifecycle =
+        CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY;
+
+    check_equal(cmeta_type_require_traits(&explicit_owned_vec_cmeta_type,
+                                         lifecycle), CMETA_OK);
+    check_equal(cmeta_type_require_traits(&explicit_owned_map_cmeta_type,
+                                         lifecycle), CMETA_OK);
+    if (cmeta_type_require_traits(&explicit_owned_vec_cmeta_type, lifecycle) !=
+            CMETA_OK ||
+        cmeta_type_require_traits(&explicit_owned_map_cmeta_type, lifecycle) !=
+            CMETA_OK)
+      return;
+    check_true(cmeta_data_value_copy_supported(nested_owned_vec_cmeta_data()));
+    check_true(cmeta_data_value_move_supported(nested_owned_vec_cmeta_data()));
+    check_equal(explicit_owned_live, (size_t)0u);
+    check_equal(cmeta_data_buffer_assign(&explicit_owned_buffer_data,
+        &source.payload, bytes, sizeof(bytes), sizeof(bytes)), CMETA_OK);
+    source.tag = 7;
+    check_equal(explicit_owned_vec_init(&inner, NESTED_ELEMENT_LIMIT), STL_OK);
+    check_equal(explicit_owned_vec_push(&inner, source), STL_OK);
+    check_equal(explicit_owned_vec_push(&inner, source), STL_OK);
+    check_equal(nested_owned_vec_init(&outer, NESTED_ELEMENT_LIMIT), STL_OK);
+    check_equal(nested_owned_vec_push(&outer, inner), STL_OK);
+    check_equal(explicit_owned_live, (size_t)5u);
+    copied = nested_owned_vec_at_const(&outer, 0u);
+    check_not_null(copied);
+    if (copied != NULL) {
+      stored = explicit_owned_vec_at_const(copied, 0u);
+      check_not_null(stored);
+      if (stored != NULL)
+        check_true(stored->payload.data != source.payload.data);
+    }
+
+    explicit_owned_copy_budget = 1u;
+    check_equal(nested_owned_vec_push(&outer, inner), STL_OUT_OF_MEMORY);
+    explicit_owned_copy_budget = SIZE_MAX;
+    check_equal(nested_owned_vec_size(&outer), (size_t)1u);
+    check_equal(explicit_owned_live, (size_t)5u);
+    check_equal(nested_owned_map_init(&mapped, NESTED_ELEMENT_LIMIT), STL_OK);
+    check_equal(nested_owned_map_put(&mapped, 1, inner), STL_OK);
+    check_equal(explicit_owned_live, (size_t)7u);
+    explicit_owned_copy_budget = 1u;
+    check_equal(nested_owned_map_put(&mapped, 1, inner), STL_OUT_OF_MEMORY);
+    explicit_owned_copy_budget = SIZE_MAX;
+    check_equal(nested_owned_map_size(&mapped), (size_t)1u);
+    check_equal(explicit_owned_live, (size_t)7u);
+    check_equal(explicit_owned_map_init(&record_map, NESTED_ELEMENT_LIMIT), STL_OK);
+    check_equal(explicit_owned_map_put(&record_map, 1, source), STL_OK);
+    check_equal(nested_map_vec_init(&map_vector, NESTED_ELEMENT_LIMIT), STL_OK);
+    check_equal(nested_map_vec_push(&map_vector, record_map), STL_OK);
+    check_equal(explicit_owned_live, (size_t)9u);
+
+    explicit_owned_map_destroy(&record_map);
+    explicit_owned_vec_destroy(&inner);
+    check_equal(cmeta_data_value_restore_zero(&explicit_owned_record_data,
+                                              &source), CMETA_OK);
+    check_equal(explicit_owned_live, (size_t)5u);
+    check_equal(cmeta_data_value_move(nested_owned_vec_cmeta_data(),
+                                      &moved, &outer), CMETA_OK);
+    check_equal(nested_owned_vec_size(&outer), (size_t)0u);
+    copied = nested_owned_vec_at_const(&moved, 0u);
+    check_not_null(copied);
+    if (copied != NULL) {
+      stored = explicit_owned_vec_at_const(copied, 1u);
+      check_not_null(stored);
+      if (stored != NULL) {
+        check_equal(stored->tag, 7);
+        check_equal(memcmp(stored->payload.data, bytes, sizeof(bytes)), 0);
+      }
+    }
+    nested_map_vec_destroy(&map_vector);
+    nested_owned_map_destroy(&mapped);
+    nested_owned_vec_destroy(&moved);
+    nested_owned_vec_destroy(&outer);
+    check_equal(explicit_owned_live, (size_t)0u);
+    check_equal(cmeta_data_value_restore_zero(nested_owned_vec_cmeta_data(),
+                                              &moved), CMETA_OK);
+    check_equal(explicit_owned_live, (size_t)0u);
   }
 
   it("uses explicit canonical type and data for owning custom values") {
