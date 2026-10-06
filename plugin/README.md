@@ -68,16 +68,16 @@ C 使用静态初始化的 const export 表。C++17 使用显式 CMeta `AsAbi` �
 可选 linker 聚合和 lease RAII 留到后续阶段，本阶段以显式数组为事实源。
 
 正式验证包含 `salts_plugin_declaration_test`、C++ 同源用例、空导出的 passive/managed 用例、
-C/C++ 编译失败用例、已有 loader/lifecycle
-回归，以及 `cmeta/tests/installed` 内的已安装 SDK 声明测试。
+C/C++ 编译失败用例、已有 loader/lifecycle 回归，以及 `cmeta/tests/installed`
+内的已安装 SDK 声明测试。
 
 本地复验使用仓库 preset。在 VS x64 开发环境中设置 README 要求的两个 Windows triplet
 环境变量后执行以下命令；将 `win-dev-user` 替换为 `win-clang-user` 可复验 Clang：
 
 ```powershell
-cmake --preset win-dev-user
-cmake --build --preset win-dev-user --target cmeta_pp_test cmeta_pp_cpp_test cmeta_interface_arity_test cmeta_interface_arity_cpp_test cmeta_interface_header_test cmeta_interface_function_test cmeta_header_cpp_test cmeta_function_admission_test cmeta_function_reflection_test cmeta_function_header_test cmeta_tinymock_interface_test cmeta_tinymock_function_auto_mock_test cmeta_tinymock_cflow_clock_interface_test cflow_interface_reflection_test salts_plugin_declaration_test salts_plugin_declaration_cpp_test salts_plugin_loader_test salts_plugin_lifecycle_test salts_plugin_contract_test salts_plugin_header_cpp_test
-ctest --preset win-dev-user -R "(^(cmeta_pp|cmeta_const_require|cmeta_interface_|salts_plugin_declaration)|^salts_plugin_(loader|lifecycle|contract|header_cpp)_test$|^cmeta_(header_cpp|function_(admission|reflection|header)|tinymock_(interface|function_auto_mock|cflow_clock_interface))_test$|^cflow_interface_reflection_test$)" --output-on-failure
+cmake --preset win-dev-user -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+cmake --build --preset win-dev-user
+ctest --preset win-dev-user -R "(^(cmeta_(pp|const|flags|layout|interface)_|salts_plugin_)|^cmeta_(header_cpp|function_(admission|reflection|header)|tinymock_(interface|function_auto_mock|cflow_clock_interface))_test$|^cflow_interface_reflection_test$)" --output-on-failure
 ```
 
 安装验证先使用 `install-win-release-user` 构建 preset，再令 `CMETA_PACKAGE_ROOT` 指向
