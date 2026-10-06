@@ -356,7 +356,7 @@ bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b) {
     return true;
 }
 
-static const cmeta_type_desc *const cmeta_type_registry[] = {
+static const cmeta_type_desc *const cmeta_builtin_type_catalog[] = {
 #define CMETA_TYPE_REG_ITEM(row, ignored) &CMETA_TYPE_DESC(row),
     CMETA_PP_FOR_EACH_A(CMETA_TYPE_REG_ITEM, ~, CMETA_KNOWN_TYPE_LIST)
 #undef CMETA_TYPE_REG_ITEM
@@ -376,19 +376,19 @@ static const cmeta_type_desc *const cmeta_type_registry[] = {
     &cmeta_type_b64x2
 };
 
-size_t cmeta_type_registry_count(void) {
-    return sizeof(cmeta_type_registry) / sizeof(cmeta_type_registry[0]);
+size_t cmeta_builtin_type_count(void) {
+    return sizeof(cmeta_builtin_type_catalog) / sizeof(cmeta_builtin_type_catalog[0]);
 }
 
-const cmeta_type_desc *cmeta_type_registry_at(size_t index) {
-    return index < cmeta_type_registry_count() ? cmeta_type_registry[index] : NULL;
+const cmeta_type_desc *cmeta_builtin_type_at(size_t index) {
+    return index < cmeta_builtin_type_count() ? cmeta_builtin_type_catalog[index] : NULL;
 }
 
-const cmeta_type_desc *cmeta_type_find(const char *name) {
+const cmeta_type_desc *cmeta_builtin_type_find(const char *name) {
     size_t i;
     if (!name) return NULL;
-    for (i = 0; i < cmeta_type_registry_count(); ++i)
-        if (strcmp(cmeta_type_registry[i]->name, name) == 0) return cmeta_type_registry[i];
+    for (i = 0; i < cmeta_builtin_type_count(); ++i)
+        if (strcmp(cmeta_builtin_type_catalog[i]->name, name) == 0) return cmeta_builtin_type_catalog[i];
     return NULL;
 }
 
