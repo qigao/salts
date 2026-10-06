@@ -61,6 +61,19 @@ suite("Managed C++ structured scope") {
         check_equal(restored_count, size_t{2});
         check_equal(restored[0], 2); check_equal(restored[1], 1);
     }
+    it("restores mixed static managed and trivial rows after a body exception") {
+        auto run = [] {
+            cmeta_status status;
+            cmeta_scope(status, cmeta_autos((FallibleValue, first),
+                (TrivialInt, middle, trivial), (FallibleValue, last)),
+                cmeta_body(throw_from_body()));
+            return status;
+        };
+        check_throws_as(run(), ScopeException);
+        check_equal(initialized_count, size_t{2});
+        check_equal(restored_count, size_t{2});
+        check_equal(restored[0], 2); check_equal(restored[1], 1);
+    }
     it("uses the same exception cleanup after checked admission with trivial rows") {
         auto run = [] {
             cmeta_status status;
