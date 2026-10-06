@@ -13,8 +13,8 @@ int main(void) {
   tstr alpha = tstr_dup("alpha");
   tstr query = tstr_dup("alpha");
   const int *found;
-  const cmeta_receiver_method_set *set;
-  const cmeta_receiver_method *method;
+  const cmeta_receiver_operation_set *set;
+  const cmeta_receiver_operation *method;
   int rc = 0;
 
   if (beta == NULL || alpha == NULL || query == NULL) {
@@ -55,22 +55,22 @@ int main(void) {
     goto cleanup_map;
   }
 
-  set = ImportSafeTstrSmokeMap_receiver_method_set();
-  if (!cmeta_receiver_method_set_valid(set) ||
+  set = ImportSafeTstrSmokeMap_receiver_operation_set();
+  if (!cmeta_receiver_operation_set_valid(set) ||
       !cmeta_generic_desc_equal(set->owner, &stl_map_generic_desc)) {
     rc = 7;
     goto cleanup_map;
   }
 
-  method = cmeta_receiver_method_find(set, "put");
+  method = cmeta_receiver_operation_find(set, "put");
   if (method == NULL ||
-      method->function != ImportSafeTstrSmokeMap_put_function() ||
+      method->abi->function != ImportSafeTstrSmokeMap_put_function() ||
       method->abi != ImportSafeTstrSmokeMap_put_function_abi() ||
       !cmeta_type_equal(
-          cmeta_function_param(method->function, 1u)->type,
+          cmeta_function_param(method->abi->function, 1u)->type,
           SALTS_TSTR_CMETA_TYPE_REF) ||
       !cmeta_type_equal(
-          cmeta_function_param(method->function, 2u)->type,
+          cmeta_function_param(method->abi->function, 2u)->type,
           &cmeta_type_int)) {
     rc = 8;
     goto cleanup_map;

@@ -132,24 +132,24 @@ spec("CSTL imported semantic metadata") {
   }
 
   it("preserves canonical Map receiver reflection for tstr keys") {
-    const cmeta_receiver_method_set *set =
-        ImportSafeTstrIntMap_receiver_method_set();
-    const cmeta_receiver_method *method;
+    const cmeta_receiver_operation_set *set =
+        ImportSafeTstrIntMap_receiver_operation_set();
+    const cmeta_receiver_operation *method;
 
-    check_true(cmeta_receiver_method_set_valid(set));
+    check_true(cmeta_receiver_operation_set_valid(set));
     check_true(cmeta_generic_desc_equal(set->owner, &stl_map_generic_desc));
 
-    method = cmeta_receiver_method_find(set, "put");
+    method = cmeta_receiver_operation_find(set, "put");
     check_not_null(method);
     check_true(
-        method->function == ImportSafeTstrIntMap_put_function());
+        method->abi->function == ImportSafeTstrIntMap_put_function());
     check_true(
         method->abi == ImportSafeTstrIntMap_put_function_abi());
     check_true(cmeta_type_equal(
-        cmeta_function_param(method->function, 1u)->type,
+        cmeta_function_param(method->abi->function, 1u)->type,
         SALTS_TSTR_CMETA_TYPE_REF));
     check_true(cmeta_type_equal(
-        cmeta_function_param(method->function, 2u)->type,
+        cmeta_function_param(method->abi->function, 2u)->type,
         &cmeta_type_int));
   }
 }

@@ -13,7 +13,7 @@ add_library(${TARGET_NAME}
   src/function.c
   src/fixed_array.c
   src/interface.c
-  src/method.c
+  src/operation.c
   src/object.c
   src/infer.c
   src/invokable.c

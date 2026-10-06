@@ -5,7 +5,7 @@
 #include <cmeta/container.h>
 #include <cmeta/data_select.h>
 #include <cmeta/function.h>
-#include <cmeta/method.h>
+#include <cmeta/operation.h>
 #include <cstl/status.h>
 #include <cstl/detail/instance_meta.h>
 
@@ -426,7 +426,7 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_PP_CAT(SALTS_META_C1_METHOD_ENTRY_,kind)(pub,op,extra,__VA_ARGS__)
 
 #define SALTS_META_C1_METHOD_ENTRY_VALUE(pub,op,extra,name,type,type_desc) \
- { CMETA_CONTAINER_STR(pub), &name##_##pub##__function_meta, \
+ { CMETA_CONTAINER_STR(pub), \
    &name##_##pub##__function_abi_meta },
 
 #define SALTS_META_C1_METHOD_ENTRY_PUSH_VALUE SALTS_META_C1_METHOD_ENTRY_VALUE
@@ -456,17 +456,17 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
 #define SALTS_META_C1_METHOD_METADATA(kind,name,type,type_desc,methods) \
  SALTS_META_RECEIVER_TYPE(name) \
  methods(SALTS_META_C1_METHOD_REFLECT_DISPATCH,(name,type,type_desc)) \
- CMETA_LOCAL const cmeta_receiver_method name##_receiver_methods[] = { \
+ CMETA_LOCAL const cmeta_receiver_operation name##_receiver_operations[] = { \
    methods(SALTS_META_C1_METHOD_ENTRY_DISPATCH,(name,type,type_desc)) \
  }; \
- CMETA_LOCAL const cmeta_receiver_method_set name##_receiver_method_set_value = { \
-   sizeof(cmeta_receiver_method_set), &name##_cmeta_type, \
-   name##_receiver_methods, \
-   sizeof(name##_receiver_methods) / sizeof(name##_receiver_methods[0]), \
+ CMETA_LOCAL const cmeta_receiver_operation_set name##_receiver_operation_set_value = { \
+   sizeof(cmeta_receiver_operation_set), &name##_cmeta_type, \
+   name##_receiver_operations, \
+   sizeof(name##_receiver_operations) / sizeof(name##_receiver_operations[0]), \
    SALTS_META_GENERIC_DESC(kind) \
  }; \
- CMETA_INLINE const cmeta_receiver_method_set *name##_receiver_method_set(void) { \
-   return &name##_receiver_method_set_value; \
+ CMETA_INLINE const cmeta_receiver_operation_set *name##_receiver_operation_set(void) { \
+   return &name##_receiver_operation_set_value; \
  }
 
 #define SALTS_META_C2_METHOD_REFLECT_DISPATCH(kind,pub,op,extra,ctx) \
@@ -512,7 +512,7 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
 
 #define SALTS_META_C2_METHOD_ENTRY_PUT( \
     pub,op,extra,name,kt,vt,key_desc,value_desc) \
- { CMETA_CONTAINER_STR(pub), &name##_##pub##__function_meta, \
+ { CMETA_CONTAINER_STR(pub), \
    &name##_##pub##__function_abi_meta },
 
 #define SALTS_META_C2_METHOD_ENTRY_INIT_KV_HASH SALTS_META_METHOD_REFLECT_SKIP
@@ -545,18 +545,18 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  SALTS_META_RECEIVER_TYPE(name) \
  methods(SALTS_META_C2_METHOD_REFLECT_DISPATCH, \
          (name,kt,vt,key_desc,value_desc)) \
- CMETA_LOCAL const cmeta_receiver_method name##_receiver_methods[] = { \
+ CMETA_LOCAL const cmeta_receiver_operation name##_receiver_operations[] = { \
    methods(SALTS_META_C2_METHOD_ENTRY_DISPATCH, \
            (name,kt,vt,key_desc,value_desc)) \
  }; \
- CMETA_LOCAL const cmeta_receiver_method_set name##_receiver_method_set_value = { \
-   sizeof(cmeta_receiver_method_set), &name##_cmeta_type, \
-   name##_receiver_methods, \
-   sizeof(name##_receiver_methods) / sizeof(name##_receiver_methods[0]), \
+ CMETA_LOCAL const cmeta_receiver_operation_set name##_receiver_operation_set_value = { \
+   sizeof(cmeta_receiver_operation_set), &name##_cmeta_type, \
+   name##_receiver_operations, \
+   sizeof(name##_receiver_operations) / sizeof(name##_receiver_operations[0]), \
    SALTS_META_GENERIC_DESC(kind) \
  }; \
- CMETA_INLINE const cmeta_receiver_method_set *name##_receiver_method_set(void) { \
-   return &name##_receiver_method_set_value; \
+ CMETA_INLINE const cmeta_receiver_operation_set *name##_receiver_operation_set(void) { \
+   return &name##_receiver_operation_set_value; \
  }
 
 /* List and Map use small storage bridges where their raw initialization or

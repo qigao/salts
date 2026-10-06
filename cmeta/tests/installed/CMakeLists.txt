@@ -14,6 +14,19 @@ enable_testing()
 
 include("${CMAKE_CURRENT_LIST_DIR}/../../../plugin/tests/linker_tests.cmake")
 
+cmake_add_test(cmeta_installed_operation_test
+  SOURCES ../cmeta_operation_test.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests/installed")
+cmake_add_test(cmeta_installed_function_reflection_test
+  SOURCES ../cmeta_function_reflection_test.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests/installed")
+cmake_add_test(cmeta_installed_invokable_test
+  SOURCES ../cmeta_invokable_test.c ../cmeta_invokable_peer.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests/installed")
+set_target_properties(cmeta_installed_operation_test
+  cmeta_installed_function_reflection_test cmeta_installed_invokable_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
 # Reuse the declaration regressions against imported SDK targets. No source-tree
 # public include directories are added to these consumers.
 cmake_add_test(cmeta_installed_pp_test

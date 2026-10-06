@@ -23,17 +23,17 @@ static_assert(std::is_standard_layout_v<cmeta_function_desc>,
               "function reflection remains a C ABI");
 static_assert(std::is_standard_layout_v<cmeta_function_abi_desc>,
               "function ABI reflection remains a C ABI");
-static_assert(std::is_standard_layout_v<cmeta_receiver_method>,
-              "receiver method entries remain a C ABI");
-static_assert(std::is_standard_layout_v<cmeta_receiver_method_set>,
-              "receiver method sets remain a C ABI");
+static_assert(std::is_standard_layout_v<cmeta_receiver_operation>,
+              "receiver operation entries remain a C ABI");
+static_assert(std::is_standard_layout_v<cmeta_receiver_operation_set>,
+              "receiver operation sets remain a C ABI");
 static_assert(std::is_standard_layout_v<cmeta_receiver_resolution>,
               "receiver call resolutions remain a C ABI");
 static_assert(std::is_standard_layout_v<cmeta_object_lifecycle>,
               "object lifecycle providers remain a C ABI");
-static_assert(std::is_standard_layout_v<cmeta_object_method_binding>,
+static_assert(std::is_standard_layout_v<cmeta_object_operation_binding>,
               "object method bindings remain a C ABI");
-static_assert(std::is_standard_layout_v<cmeta_object_method_provider>,
+static_assert(std::is_standard_layout_v<cmeta_object_operation_provider>,
               "object method providers remain a C ABI");
 static_assert(std::is_standard_layout_v<cmeta_object_field_provider>,
               "object field providers remain a C ABI");

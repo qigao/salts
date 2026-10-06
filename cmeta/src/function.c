@@ -97,6 +97,36 @@ bool cmeta_function_abi_desc_valid(const cmeta_function_abi_desc *desc) {
     return true;
 }
 
+bool cmeta_function_receiver_valid(const cmeta_function_desc *function) {
+    const cmeta_param_desc *receiver = cmeta_function_receiver(function);
+    return receiver != NULL && receiver->type->kind == CMETA_T_POINTER &&
+           cmeta_type_desc_valid(receiver->type->pointee);
+}
+
+bool cmeta_function_receiver_projection_valid(
+    const cmeta_function_desc *function,
+    const cmeta_function_desc *projected) {
+    size_t i;
+    if (!cmeta_function_receiver_valid(function) ||
+        !cmeta_function_desc_valid(projected))
+        return false;
+    if (function->param_count - 1u != projected->param_count ||
+        !cmeta_type_equal(function->return_type, projected->return_type) ||
+        function->result_flags != projected->result_flags ||
+        function->effects != projected->effects ||
+        function->properties != projected->properties)
+        return false;
+    for (i = 0u; i < projected->param_count; ++i) {
+        const cmeta_param_desc *source = &function->params[i + 1u];
+        const cmeta_param_desc *target = &projected->params[i];
+        if (strcmp(source->name, target->name) != 0 ||
+            source->flags != target->flags ||
+            !cmeta_type_equal(source->type, target->type))
+            return false;
+    }
+    return true;
+}
+
 bool cmeta_function_desc_equal(const cmeta_function_desc *left,
                                const cmeta_function_desc *right) {
     size_t i;

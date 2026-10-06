@@ -112,6 +112,18 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
 const cmeta_param_desc *
 cmeta_function_receiver(const cmeta_function_desc *desc);
 
+/** Validate a canonical function whose first parameter is a pointer receiver
+ * with a valid pointee type. No operation set or execution provider is needed. */
+bool cmeta_function_receiver_valid(const cmeta_function_desc *function);
+
+/** Validate removal of exactly the receiver parameter. Preserve return type,
+ * result ownership/nullability, effects, properties and each remaining named
+ * parameter's type/flags. The projected function name may differ. Both inputs
+ * are borrowed live descriptors. O(n^2) including full descriptor validation. */
+bool cmeta_function_receiver_projection_valid(
+    const cmeta_function_desc *function,
+    const cmeta_function_desc *projected);
+
 #ifdef __cplusplus
 }
 #endif

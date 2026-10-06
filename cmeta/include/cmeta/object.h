@@ -2,7 +2,7 @@
 #define CMETA_OBJECT_H
 
 #include <cmeta/data.h>
-#include <cmeta/method.h>
+#include <cmeta/operation.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -54,7 +54,7 @@ bool cmeta_object_lifecycle_valid(
  * Provider-neutral reference to one native object instance.
  *
  * object preserves native identity; it is never a copied value projection.
- * data describes the canonical native semantic/storage type. methods is
+ * data describes the canonical native semantic/storage type. operations is
  * optional and, when present, must describe the same receiver type.
  *
  * This is the runtime-selected identity/lifetime contract, not a replacement
@@ -68,28 +68,28 @@ bool cmeta_object_lifecycle_valid(
  */
 struct cmeta_function_data_desc;
 
-typedef struct cmeta_object_method_binding {
+typedef struct cmeta_object_operation_binding {
     size_t size;
     const struct cmeta_function_data_desc *data;
     cmeta_callable callable;
-} cmeta_object_method_binding;
+} cmeta_object_operation_binding;
 
-#define CMETA_OBJECT_METHOD_BINDING_INIT \
-    { sizeof(cmeta_object_method_binding), NULL, {0} }
+#define CMETA_OBJECT_OPERATION_BINDING_INIT \
+    { sizeof(cmeta_object_operation_binding), NULL, {0} }
 
-typedef cmeta_status (*cmeta_object_method_bind_fn)(
-    void *context, void *object, const cmeta_receiver_method *method,
-    cmeta_object_method_binding *out);
+typedef cmeta_status (*cmeta_object_operation_bind_fn)(
+    void *context, void *object, const cmeta_receiver_operation *operation,
+    cmeta_object_operation_binding *out);
 
-typedef struct cmeta_object_method_provider {
+typedef struct cmeta_object_operation_provider {
     size_t size;
-    const cmeta_receiver_method_set *methods;
+    const cmeta_receiver_operation_set *operations;
     void *context;
-    cmeta_object_method_bind_fn bind;
-} cmeta_object_method_provider;
+    cmeta_object_operation_bind_fn bind;
+} cmeta_object_operation_provider;
 
-bool cmeta_object_method_provider_valid(
-    const cmeta_object_method_provider *provider);
+bool cmeta_object_operation_provider_valid(
+    const cmeta_object_operation_provider *provider);
 
 /**
  * Explicit reflected-field access authority.
@@ -132,8 +132,8 @@ typedef struct cmeta_object_ref {
     void *object;
     const cmeta_data_desc *data;
     const cmeta_object_field_provider *field_provider;
-    const cmeta_receiver_method_set *methods;
-    const cmeta_object_method_provider *method_provider;
+    const cmeta_receiver_operation_set *operations;
+    const cmeta_object_operation_provider *operation_provider;
     cmeta_object_lifetime lifetime;
     const cmeta_object_lifecycle *lifecycle;
 } cmeta_object_ref;
@@ -145,7 +145,7 @@ typedef struct cmeta_object_ref {
 #else
 #define CMETA_OBJECT_REF_INIT \
     { .size = sizeof(cmeta_object_ref), .object = NULL, .data = NULL, \
-      .field_provider = NULL, .methods = NULL, .method_provider = NULL, \
+      .field_provider = NULL, .operations = NULL, .operation_provider = NULL, \
       .lifetime = CMETA_OBJECT_LIFETIME_NONE, .lifecycle = NULL }
 #endif
 
@@ -155,36 +155,36 @@ bool cmeta_object_ref_valid(const cmeta_object_ref *ref);
 /**
  * Publish a borrowed native object through the canonical dynamic C contract.
  *
- * The native instance, data descriptor, optional method set, and any provider
+ * The native instance, data descriptor, optional operation set, and any provider
  * or module that owns them are borrowed. This call does not retain, copy, move
  * or otherwise alter the native object.
  */
 cmeta_status cmeta_object_borrow(
     cmeta_object_ref *out, void *object, const cmeta_data_desc *data,
-    const cmeta_receiver_method_set *methods);
+    const cmeta_receiver_operation_set *operations);
 
 /**
- * Publish a borrowed native object with canonical executable receiver methods.
+ * Publish a borrowed native object with canonical executable receiver operations.
  *
- * provider->methods is both the reflected method authority and the executable
+ * provider->operations is both the reflected operation authority and the executable
  * capability set. The provider is borrowed with the object and must remain
  * alive, together with any module/code it references, through final release.
  */
 cmeta_status cmeta_object_borrow_with_provider(
     cmeta_object_ref *out, void *object, const cmeta_data_desc *data,
-    const cmeta_object_method_provider *provider);
+    const cmeta_object_operation_provider *provider);
 
 /**
- * Publish one borrowed object with explicit field and/or method providers.
+ * Publish one borrowed object with explicit field and/or operation providers.
  *
- * A field provider must name this exact data descriptor. A method provider
- * carries its own exact method-set capability. Either provider may be NULL,
+ * A field provider must name this exact data descriptor. An operation provider
+ * carries its own exact operation-set capability. Either provider may be NULL,
  * but at least one must be present.
  */
 cmeta_status cmeta_object_borrow_with_providers(
     cmeta_object_ref *out, void *object, const cmeta_data_desc *data,
     const cmeta_object_field_provider *field_provider,
-    const cmeta_object_method_provider *method_provider);
+    const cmeta_object_operation_provider *operation_provider);
 
 /**
  * Upgrade a BORROWED object handle to SHARED ownership.
@@ -246,15 +246,15 @@ cmeta_status cmeta_object_field_assign(
     const cmeta_data_desc *value_data, const void *value);
 
 /**
- * Resolve one receiver method in the context of this exact native object type.
+ * Resolve one receiver operation in the context of this exact native object type.
  *
  * Resolution remains descriptive. Execution uses the canonical
- * cmeta_receiver_method_invokable_bind() join only after a provider has
+ * cmeta_receiver_operation_invokable_bind() join only after a provider has
  * produced an exact receiver-bound callable and receiver-elided FunctionData.
  */
-cmeta_receiver_resolve_status cmeta_object_method_resolve(
+cmeta_receiver_resolve_status cmeta_object_operation_resolve(
     const cmeta_object_ref *ref, const cmeta_generic_desc *owner,
-    const char *method_name,
+    const char *operation_name,
     const cmeta_type_desc *const *argument_types, size_t argument_count,
     cmeta_receiver_resolution *out);
 

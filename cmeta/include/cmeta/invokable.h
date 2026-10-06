@@ -4,7 +4,7 @@
 #include <cmeta/cmeta.h>
 #include <cmeta/data.h>
 #include <cmeta/function.h>
-#include <cmeta/method.h>
+#include <cmeta/operation.h>
 #include <cmeta/object.h>
 
 #include <stddef.h>
@@ -62,29 +62,29 @@ cmeta_status cmeta_interface_method_invokable_bind(
     cmeta_callable callable, cmeta_invokable *out);
 
 /**
- * Join a reflected receiver method to an already receiver-bound exact callable.
+ * Join a reflected receiver operation to an already receiver-bound exact callable.
  *
  * data->function must be the receiver-elided projection validated by
- * cmeta_receiver_method_projection_valid(). The callable provider is
+ * cmeta_function_receiver_projection_valid(). The callable provider is
  * responsible for binding the concrete receiver through a type-correct thunk
  * or capture; CMeta never casts/interprets the original receiver ABI.
  */
-cmeta_status cmeta_receiver_method_invokable_bind(
-    const cmeta_receiver_method *method,
+cmeta_status cmeta_receiver_operation_invokable_bind(
+    const cmeta_receiver_operation *operation,
     const cmeta_function_data_desc *data,
     cmeta_callable callable, cmeta_invokable *out);
 
 /**
- * Ask the bound object's canonical method provider for the exact
+ * Ask the bound object's canonical operation provider for the exact
  * receiver-bound callable/FunctionData pair, then validate that pair through
- * cmeta_receiver_method_invokable_bind().
+ * cmeta_receiver_operation_invokable_bind().
  *
- * method must be the exact entry resolved from object->methods. This pointer is
+ * operation must be the exact entry resolved from object->operations. This pointer is
  * a provider capability token, not a replacement for semantic type identity.
  */
-cmeta_status cmeta_object_method_invokable_bind(
+cmeta_status cmeta_object_operation_invokable_bind(
     const cmeta_object_ref *object,
-    const cmeta_receiver_method *method,
+    const cmeta_receiver_operation *operation,
     cmeta_invokable *out);
 
 bool cmeta_invokable_valid(const cmeta_invokable *invokable);
