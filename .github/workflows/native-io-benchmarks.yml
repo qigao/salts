@@ -261,32 +261,32 @@ jobs:
             family: linux
             backend: epoll
             artifact: linux-epoll
-            configure_preset: linux-release-user
-            build_preset: linux-release-user
+            configure_preset: linux-release-ci
+            build_preset: linux-release-ci
             build_dir: build/linux-gcc-release
           - host: io_uring / Ubuntu 24.04 GCC
             runner: ubuntu-24.04
             family: linux
             backend: io_uring
             artifact: linux-io-uring
-            configure_preset: linux-release-user
-            build_preset: linux-release-user
+            configure_preset: linux-release-ci
+            build_preset: linux-release-ci
             build_dir: build/linux-gcc-release
           - host: IOCP / Windows 2025 MSVC v145
             runner: windows-2025
             family: windows
             backend: iocp
             artifact: windows-iocp
-            configure_preset: win-release-user
-            build_preset: win-release-user
+            configure_preset: win-release-ci
+            build_preset: win-release-ci
             build_dir: build/Msvc-Release
           - host: kqueue / macOS 15 AppleClang
             runner: macos-15
             family: mac
             backend: kqueue
             artifact: macos-kqueue
-            configure_preset: mac-release-user
-            build_preset: mac-release-user
+            configure_preset: mac-release-ci
+            build_preset: mac-release-ci
             build_dir: build/mac-clang-release
 
     steps:
@@ -372,20 +372,20 @@ jobs:
               [string]::IsNullOrWhiteSpace($env:ImageVersion)) {
             throw "GitHub runner image identity is unavailable"
           }
-          if ([string]::IsNullOrWhiteSpace($env:QIGAO_VCPKG_WINDOWS_TRIPLET)) {
+          if ([string]::IsNullOrWhiteSpace($env:VCPKG_WINDOWS_TRIPLET)) {
             throw "Windows vcpkg target triplet is unavailable"
           }
 
           $binaryCache = Join-Path $env:GITHUB_WORKSPACE "build\vcpkg-binary-cache"
           $installedBin = Join-Path $env:GITHUB_WORKSPACE `
-            "vcpkg_installed\$env:QIGAO_VCPKG_WINDOWS_TRIPLET\bin"
+            "vcpkg_installed\$env:VCPKG_WINDOWS_TRIPLET\bin"
           New-Item -ItemType Directory -Force -Path $binaryCache | Out-Null
           "PROJECT_ROOT=$env:GITHUB_WORKSPACE" >> $env:GITHUB_ENV
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
           "VCPKG_BINARY_CACHE=$binaryCache" >> $env:GITHUB_ENV
           $installedBin >> $env:GITHUB_PATH
           "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
-          "triplet=$env:QIGAO_VCPKG_WINDOWS_TRIPLET" >> $env:GITHUB_OUTPUT
+          "triplet=$env:VCPKG_WINDOWS_TRIPLET" >> $env:GITHUB_OUTPUT
 
       - name: Restore Windows vcpkg binary cache
         if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
@@ -447,17 +447,19 @@ jobs:
         if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         shell: cmd
         run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=OFF -DNATIVE_IO_BUILD_BENCHMARKS=ON -DCOROUTINE_BUILD_BENCHMARKS=ON -DCNET_BUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build Windows benchmark targets
         if: needs.scope.outputs.work == 'true' && matrix.family == 'windows'
         shell: cmd
         run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
       - name: Configure and build macOS benchmark targets
         if: needs.scope.outputs.work == 'true' && matrix.family == 'mac'
@@ -482,17 +484,18 @@ jobs:
           if errorlevel 1 exit /b 1
           cd /d "%BASELINE_SOURCE%"
           set "PROJECT_ROOT=%BASELINE_SOURCE%"
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           for /f "tokens=2 delims==" %%T in ('findstr /b /c:"VCPKG_TARGET_TRIPLET:STRING=" "%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\CMakeCache.txt"') do set "BASELINE_TARGET_TRIPLET=%%T"
           if not defined BASELINE_TARGET_TRIPLET exit /b 1
-          set "BASELINE_PKGCONF=%BASELINE_SOURCE%\vcpkg_installed\%QIGAO_VCPKG_WINDOWS_HOST_TRIPLET%\tools\pkgconf\pkgconf.exe"
+          set "BASELINE_PKGCONF=%BASELINE_SOURCE%\vcpkg_installed\%VCPKG_WINDOWS_HOST_TRIPLET%\tools\pkgconf\pkgconf.exe"
           cmake -S . -B build\Msvc-Release -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
-            -DCMAKE_TOOLCHAIN_FILE="%QIGAO_VCPKG_TOOLCHAIN_FILE%" ^
+            -DCMAKE_TOOLCHAIN_FILE="%VCPKG_TOOLCHAIN_FILE%" ^
             -DVCPKG_TARGET_TRIPLET=%BASELINE_TARGET_TRIPLET% ^
-            -DVCPKG_HOST_TRIPLET=%QIGAO_VCPKG_WINDOWS_HOST_TRIPLET% ^
+            -DVCPKG_HOST_TRIPLET=%VCPKG_WINDOWS_HOST_TRIPLET% ^
             -DVCPKG_MANIFEST_MODE=ON ^
             -DVCPKG_INSTALLED_DIR="%BASELINE_SOURCE%\vcpkg_installed" ^
             -DBUILD_TESTS=OFF -DENABLE_TESTS=OFF ^

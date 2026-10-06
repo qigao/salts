@@ -87,9 +87,9 @@ Salts intentionally uses C11's compile-time facilities to make strongly typed AP
 For example:
 
 ```c
-Struct(User,
-    (int, id),
-    (double, score)
+cmeta_struct(User,
+    cmeta_field(int, id),
+    cmeta_field(double, score)
 );
 
 cmeta_type(Vec, UserVec, User);
@@ -125,12 +125,34 @@ All user presets consume the shared [qigao/vcpkg-cache](https://github.com/qigao
 binary feed in read-only mode through `cmake/vcpkg-cache.nuget.config`, alongside
 the default local binary cache. Export `GITHUB_TOKEN` with
 `read:packages` access before configuring; the config references this environment
-variable and contains no token. The shared user preset selects
-`cmake/QigaoVcpkgToolchain.cmake` directly from the cache checkout. Windows uses
-`%LOCALAPPDATA%/qigao/vcpkg-cache`; Linux requires `VCPKG_CACHE_REPOSITORY_ROOT`
-to point to its checkout and Mono for NuGet binary restore. Clone the cache
-repository to that location before configuring. Configure presets do not load
-`.env` files automatically.
+variable and contains no token. The platform presets select
+`cmake/QigaoVcpkgToolchain.cmake` directly from a checkout at these fixed locations:
+
+| Host platform | vcpkg-cache checkout |
+| --- | --- |
+| Windows (including Android cross builds) | `%LOCALAPPDATA%/qigao/vcpkg-cache` |
+| Linux (including Android cross builds) | `$HOME/.cache/qigao/vcpkg-cache` |
+| macOS | `$HOME/Library/Caches/qigao/vcpkg-cache` |
+
+Clone the shared cache repository into the matching directory before configuring.
+Linux also requires Mono for NuGet binary restore. Local presets do not read
+`VCPKG_CACHE_REPOSITORY_ROOT` from the parent environment or load `.env` files.
+Windows presets require `VCPKG_WINDOWS_TRIPLET` and `VCPKG_WINDOWS_HOST_TRIPLET`
+to select the installed target and host triplets; both can be `x64-windows`
+for a standard local MSVC toolchain.
+
+Cache configuration belongs to the hidden presets in `CMakeUserPresets.json`.
+Configure, build, test and install presets inherit the matching environment;
+no `.env` loader or shell wrapper is required. Run Windows commands in a
+Visual Studio developer environment.
+
+CI uses the `win-release-ci`, `win-clang-release-ci`, `linux-dev-ci`, `linux-release-ci`,
+`mac-release-ci` and `android-arm64-v8a-release-ci` presets. These preserve
+the cache action's `VCPKG_CACHE_REPOSITORY_ROOT` and `VCPKG_BINARY_SOURCES`
+instead of using local paths. The repository's shared setup action adapts the
+upstream action's legacy Windows triplet environment names to
+`VCPKG_WINDOWS_TRIPLET` and `VCPKG_WINDOWS_HOST_TRIPLET`, and exports
+`VCPKG_TOOLCHAIN_FILE` for builds that pass the toolchain explicitly.
 
 ### Windows Release
 

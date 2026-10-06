@@ -60,6 +60,7 @@ runs:
       env:
         CONTRACT_VERSION: ${{ steps.vcpkg_cache.outputs.contract_version }}
         CACHE_REVISION: ${{ steps.vcpkg_cache.outputs.cache_revision }}
+        TOOLCHAIN_FILE: ${{ steps.vcpkg_cache.outputs.toolchain_file }}
       run: |
         $ErrorActionPreference = "Stop"
         if ([string]::IsNullOrWhiteSpace($env:CONTRACT_VERSION)) {
@@ -77,4 +78,17 @@ runs:
         if ([string]::IsNullOrWhiteSpace($env:VCPKG_ROOT)) {
           throw "canonical VCPKG_ROOT is unavailable"
         }
-        "QIGAO_VCPKG_ROOT=$env:VCPKG_ROOT" >> $env:GITHUB_ENV
+        if ([string]::IsNullOrWhiteSpace($env:TOOLCHAIN_FILE) -or
+            -not (Test-Path -LiteralPath $env:TOOLCHAIN_FILE -PathType Leaf)) {
+          throw "canonical vcpkg toolchain is unavailable"
+        }
+        "VCPKG_TOOLCHAIN_FILE=$env:TOOLCHAIN_FILE" >> $env:GITHUB_ENV
+        if ($env:RUNNER_OS -eq "Windows") {
+          # The upstream action still exports its Windows contract with legacy names.
+          if ([string]::IsNullOrWhiteSpace($env:QIGAO_VCPKG_WINDOWS_TRIPLET) -or
+              [string]::IsNullOrWhiteSpace($env:QIGAO_VCPKG_WINDOWS_HOST_TRIPLET)) {
+            throw "canonical Windows vcpkg triplets are unavailable"
+          }
+          "VCPKG_WINDOWS_TRIPLET=$env:QIGAO_VCPKG_WINDOWS_TRIPLET" >> $env:GITHUB_ENV
+          "VCPKG_WINDOWS_HOST_TRIPLET=$env:QIGAO_VCPKG_WINDOWS_HOST_TRIPLET" >> $env:GITHUB_ENV
+        }

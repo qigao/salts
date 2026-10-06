@@ -254,6 +254,37 @@ cmeta_add_compile_failure_test(
   compile_fail/cmeta_intrusive_type_mismatch.c
   "CMeta intrusive member type mismatch")
 
+cmeta_add_compile_failure_test(
+  cmeta_scope_return_compile_fail
+  compile_fail/cmeta_scope_return.c
+  "syntax error.*return|expected expression")
+
+cmeta_add_compile_failure_test(
+  cmeta_scope_goto_compile_fail
+  compile_fail/cmeta_scope_goto.c
+  "syntax error.*goto|expected expression")
+
+cmeta_add_compile_failure_test(
+  cmeta_scope_break_compile_fail
+  compile_fail/cmeta_scope_break.c
+  "syntax error.*break|expected expression")
+
+cmeta_add_compile_failure_test(
+  cmeta_scope_cross_exit_compile_fail
+  compile_fail/cmeta_scope_cross_exit.c
+  "cmeta_scope_exit is removed")
+
+cmeta_add_compile_failure_test(
+  cmeta_scope_leave_compile_fail
+  compile_fail/cmeta_scope_cross_exit.c
+  "cmeta_leave is removed")
+target_compile_definitions(cmeta_scope_leave_compile_fail PRIVATE CMETA_TEST_LEAVE=1)
+
+cmeta_add_compile_failure_test(
+  cmeta_scope_cross_function_goto_compile_fail
+  compile_fail/cmeta_scope_cross_function_goto.c
+  "outer__cmeta_cleanup")
+
 set_target_properties(cmeta_header_cpp_test PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON

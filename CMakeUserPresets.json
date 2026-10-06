@@ -9,6 +9,38 @@
             "hidden": true,
             "toolchainFile": "$env{VCPKG_CACHE_REPOSITORY_ROOT}/cmake/QigaoVcpkgToolchain.cmake",
             "environment": {
+                "VCPKG_BINARY_SOURCES": "clear;default,readwrite;nugettimeout,1800;nugetconfig,${sourceDir}/cmake/vcpkg-cache.nuget.config,read"
+            }
+        },
+        {
+            "name": "vcpkg-cache-windows",
+            "hidden": true,
+            "inherits": "vcpkg-cache",
+            "environment": {
+                "VCPKG_CACHE_REPOSITORY_ROOT": "$penv{LOCALAPPDATA}/qigao/vcpkg-cache"
+            }
+        },
+        {
+            "name": "vcpkg-cache-linux",
+            "hidden": true,
+            "inherits": "vcpkg-cache",
+            "environment": {
+                "VCPKG_CACHE_REPOSITORY_ROOT": "$penv{HOME}/.cache/qigao/vcpkg-cache"
+            }
+        },
+        {
+            "name": "vcpkg-cache-macos",
+            "hidden": true,
+            "inherits": "vcpkg-cache",
+            "environment": {
+                "VCPKG_CACHE_REPOSITORY_ROOT": "$penv{HOME}/Library/Caches/qigao/vcpkg-cache"
+            }
+        },
+        {
+            "name": "vcpkg-cache-ci",
+            "hidden": true,
+            "inherits": "vcpkg-cache",
+            "environment": {
                 "VCPKG_CACHE_REPOSITORY_ROOT": "$penv{VCPKG_CACHE_REPOSITORY_ROOT}",
                 "VCPKG_BINARY_SOURCES": "$penv{VCPKG_BINARY_SOURCES}"
             }
@@ -16,12 +48,16 @@
         {
             "name": "win-toolchain",
             "hidden": true,
-            "inherits": "vcpkg-cache",
+            "inherits": "vcpkg-cache-windows",
+            "cacheVariables": {
+                "VCPKG_HOST_TRIPLET": "$env{VCPKG_WINDOWS_HOST_TRIPLET}"
+            },
             "environment": {
                 "PROJECT_ROOT": "$penv{PROJECT_ROOT}",
                 "PKG_ROOT": "$env{PROJECT_ROOT}/external/pkgs",
                 "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
-                "VCPKG_ROOT": "$penv{VCPKG_ROOT}"
+                "VCPKG_ROOT": "$penv{VCPKG_ROOT}",
+                "VCPKG_WINDOWS_HOST_TRIPLET": "$penv{VCPKG_WINDOWS_HOST_TRIPLET}"
             }
         },
         {
@@ -30,7 +66,7 @@
             "inherits": "win-toolchain",
             "cacheVariables": {
                 "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}",
-                "VCPKG_TARGET_TRIPLET": "$env{QIGAO_VCPKG_WINDOWS_TRIPLET}",
+                "VCPKG_TARGET_TRIPLET": "$env{VCPKG_WINDOWS_TRIPLET}",
                 "VCPKG_MANIFEST_MODE": "ON"
             },
             "architecture": {
@@ -40,12 +76,15 @@
             "toolset": {
                 "value": "host=x64",
                 "strategy": "external"
+            },
+            "environment": {
+                "VCPKG_WINDOWS_TRIPLET": "$penv{VCPKG_WINDOWS_TRIPLET}"
             }
         },
         {
             "name": "linux-paths",
             "hidden": true,
-            "inherits": "vcpkg-cache",
+            "inherits": "vcpkg-cache-linux",
             "cacheVariables": {
                 "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}",
                 "VCPKG_TARGET_TRIPLET": "x64-linux",
@@ -93,11 +132,11 @@
             "cacheVariables": {
                 "ENABLE_SANITIZER_ADDRESS": "ON",
                 "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
-                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/debug"
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/debug"
             },
             "environment": {
                 "SALTS_ROOT": "$env{PKG_ROOT}/salts/debug",
-                "PATH": "${sourceDir}/build/Msvc/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
+                "PATH": "${sourceDir}/build/Msvc/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
                 "base-win-dev-user",
@@ -108,11 +147,11 @@
             "name": "win-release-user",
             "cacheVariables": {
                 "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
-                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}"
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}"
             },
             "environment": {
                 "SALTS_ROOT": "$env{PKG_ROOT}/salts/release",
-                "PATH": "${sourceDir}/build/Msvc-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
+                "PATH": "${sourceDir}/build/Msvc-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
                 "base-win-release-user",
@@ -151,7 +190,7 @@
             },
             "inherits": [
                 "release-mac-ninja",
-                "vcpkg-cache"
+                "vcpkg-cache-macos"
             ]
         },
         {
@@ -203,7 +242,7 @@
             },
             "inherits": [
                 "android-arm64-v8a-release",
-                "vcpkg-cache"
+                "vcpkg-cache-linux"
             ]
         },
         {
@@ -283,11 +322,11 @@
             "cacheVariables": {
                 "ENABLE_SANITIZER_ADDRESS": "OFF",
                 "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
-                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/debug"
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/debug"
             },
             "environment": {
                 "SALTS_ROOT": "$env{PKG_ROOT}/salts/debug",
-                "PATH": "${sourceDir}/build/Clang/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
+                "PATH": "${sourceDir}/build/Clang/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
                 "base-win-dev-clang-user",
@@ -300,19 +339,83 @@
                 "ENABLE_SANITIZER_ADDRESS": "OFF",
                 "ENABLE_TESTS": "ON",
                 "CMAKE_INSTALL_PREFIX": "$env{SALTS_ROOT}",
-                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}"
+                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}"
             },
             "environment": {
                 "SALTS_ROOT": "$env{PKG_ROOT}/salts/release",
-                "PATH": "${sourceDir}/build/Clang-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
+                "PATH": "${sourceDir}/build/Clang-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
                 "base-win-release-clang-user",
                 "win-paths"
             ]
+        },
+        {
+            "name": "win-release-ci",
+            "inherits": [
+                "vcpkg-cache-ci",
+                "win-release-user"
+            ]
+        },
+        {
+            "name": "win-clang-release-ci",
+            "inherits": [
+                "vcpkg-cache-ci",
+                "win-clang-release-user"
+            ]
+        },
+        {
+            "name": "linux-release-ci",
+            "inherits": [
+                "vcpkg-cache-ci",
+                "linux-release-user"
+            ]
+        },
+        {
+            "name": "mac-release-ci",
+            "inherits": [
+                "vcpkg-cache-ci",
+                "mac-release-user"
+            ]
+        },
+        {
+            "name": "android-arm64-v8a-release-ci",
+            "inherits": [
+                "vcpkg-cache-ci",
+                "android-arm64-v8a-release-user"
+            ]
+        },
+        {
+            "name": "linux-dev-ci",
+            "inherits": [
+                "vcpkg-cache-ci",
+                "linux-dev-user"
+            ]
         }
     ],
     "buildPresets": [
+        {
+            "name": "win-release-ci",
+            "configurePreset": "win-release-ci"
+        },
+        {
+            "name": "win-clang-release-ci",
+            "configurePreset": "win-clang-release-ci"
+        },
+        {
+            "name": "install-win-release-ci",
+            "configurePreset": "win-release-ci",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "install-win-clang-release-ci",
+            "configurePreset": "win-clang-release-ci",
+            "targets": [
+                "install"
+            ]
+        },
         {
             "name": "win-dev-user",
             "configurePreset": "win-dev-user"
@@ -463,9 +566,42 @@
             "targets": [
                 "install"
             ]
+        },
+        {
+            "name": "linux-release-ci",
+            "configurePreset": "linux-release-ci"
+        },
+        {
+            "name": "mac-release-ci",
+            "configurePreset": "mac-release-ci"
+        },
+        {
+            "name": "android-arm64-v8a-release-ci",
+            "configurePreset": "android-arm64-v8a-release-ci"
+        },
+        {
+            "name": "linux-dev-ci",
+            "configurePreset": "linux-dev-ci"
+        },
+        {
+            "name": "install-linux-dev-ci",
+            "configurePreset": "linux-dev-ci",
+            "targets": [
+                "install"
+            ]
         }
     ],
     "testPresets": [
+        {
+            "name": "win-release-ci",
+            "inherits": "base-test",
+            "configurePreset": "win-release-ci"
+        },
+        {
+            "name": "win-clang-release-ci",
+            "inherits": "base-test",
+            "configurePreset": "win-clang-release-ci"
+        },
         {
             "name": "win-dev-user",
             "inherits": "base-test",
@@ -495,6 +631,16 @@
             "name": "win-clang-release-user",
             "inherits": "base-test",
             "configurePreset": "win-clang-release-user"
+        },
+        {
+            "name": "linux-release-ci",
+            "inherits": "base-test",
+            "configurePreset": "linux-release-ci"
+        },
+        {
+            "name": "linux-dev-ci",
+            "inherits": "base-test",
+            "configurePreset": "linux-dev-ci"
         }
     ]
 }
