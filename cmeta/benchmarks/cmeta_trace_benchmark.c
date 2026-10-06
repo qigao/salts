@@ -4,7 +4,7 @@
 enum { TRACE_BENCH_SAMPLES = 25, TRACE_BENCH_OPERATIONS = 1000000 };
 static volatile bool trace_plain_enabled;
 static volatile uint64_t trace_benchmark_sink;
-cmeta_static_key(trace_benchmark_key, false);
+SALTS_FAST_KEY(trace_benchmark_key, false);
 cmeta_fault_point(trace_benchmark_fault);
 cmeta_tracepoint(trace_benchmark_event, cmeta_field(uint64_t, sequence));
 static void trace_benchmark_backend(const trace_benchmark_event_payload *event) {
@@ -26,7 +26,7 @@ suite("CMeta trace and fault Release benchmarks") {
         benchmark_ops("disabled static key", TRACE_BENCH_SAMPLES, TRACE_BENCH_OPERATIONS) {
             uint64_t sum = 0u;
             for (uint64_t i = 0u; i < TRACE_BENCH_OPERATIONS; ++i)
-                if (cmeta_static_branch(&trace_benchmark_key)) sum += i;
+                if (salts_fast_branch(&trace_benchmark_key)) sum += i;
             trace_benchmark_sink = sum;
         }
         check_equal(trace_benchmark_sink, UINT64_C(0));
