@@ -99,7 +99,10 @@ static cmeta_status scope_normal(void) {
     scope_fail_init_at = 0u;
 
     cmeta_scope(normal, status,
-        cmeta_auto(ScopeProbe, first)\n        cmeta_auto(ScopeProbe, second),
+        cmeta_autos(
+            cmeta_auto(ScopeProbe, first)
+            cmeta_auto(ScopeProbe, second)
+        ),
         cmeta_body(
             first.active = 1;
             first.id = 1;
@@ -119,7 +122,10 @@ static cmeta_status scope_early_exit(void) {
     scope_fail_init_at = 0u;
 
     cmeta_scope(early, status,
-        cmeta_auto(ScopeProbe, first)\n        cmeta_auto(ScopeProbe, second),
+        cmeta_autos(
+            cmeta_auto(ScopeProbe, first)
+            cmeta_auto(ScopeProbe, second)
+        ),
         cmeta_body(
             first.active = 1;
             first.id = 10;
@@ -140,7 +146,10 @@ static cmeta_status scope_move_then_cleanup(void) {
     scope_fail_init_at = 0u;
 
     cmeta_scope(moved, status,
-        cmeta_auto(ScopeProbe, source)\n        cmeta_auto(ScopeProbe, destination),
+        cmeta_autos(
+            cmeta_auto(ScopeProbe, source)
+            cmeta_auto(ScopeProbe, destination)
+        ),
         cmeta_body(
             source.active = 1;
             source.id = 31;
@@ -161,7 +170,10 @@ static cmeta_status scope_partial_init_failure(void) {
     scope_fail_init_at = 2u;
 
     cmeta_scope(partial, status,
-        cmeta_auto(ScopeProbe, first)\n        cmeta_auto(ScopeProbe, second),
+        cmeta_autos(
+            cmeta_auto(ScopeProbe, first)
+            cmeta_auto(ScopeProbe, second)
+        ),
         cmeta_body(
             first.active = 1;
             first.id = 41;
