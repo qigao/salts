@@ -192,3 +192,22 @@ CSTL 资源释放、C++ 头文件和 installed SDK。
 runtime-only metadata 自动分类及坏 metadata 拒绝。公开 binding 布局和函数 ABI 不变。
 回滚时同时恢复 lifecycle 声明生成器、scope lowering 和 CSTL facts 发布，避免声明与消费
 不一致；不改变持久化数据，也不添加 ABI 兼容路径。
+
+## 新增 merge gate 对照（2026-10-07）
+
+| #980 条目 | 实现与验收面 |
+|---|---|
+| P2：canonical facts 自动选择 | lifecycle 声明统一发布分类；普通两字段 scope 和 CSTL consumer 自动选择；C/C++ 混合分类与未知分类保守测试 |
+| P4：validated borrowed binding 信任契约 | lifecycle、ObjectRef field、invokable 公共头明确成功 admission、禁止伪造/修改、外层 lease；不改变 struct 布局或加入 cookie |
+| Acceptance：调用点不重复优化分类 | 普通 scope 覆盖 trivial、nofail、fallible；16 项边界、partial rollback、LIFO、move、嵌套、异常及 nofail 违例终止测试 |
+| Acceptance：binding 不被描述为不可伪造能力 | 本节及公共头明确 C caller trust；canonical descriptor/provider 是 authority，无隐藏 retain 或第二份身份模型 |
+
+事实：实现提交 `d51b7b13` 的 MSVC 完整构建通过，语义 CTest 190/190、相邻消费者
+30/30；远端 GCC 12.2 和 Clang 14.0.6 完整构建通过，语义各 189 通过、1 项 C23 能力
+检测跳过，消费者各 29/29。Clang installed SDK 50/50，包含同源 C/C++ scope 回归和
+no-fail fatal 测试。普通 Linux configure 的 native/fastpath 均为 OFF。
+补充提交 `be37997c` 仅新增保守分类测试及说明；MSVC/GCC/Clang 的 cleanup C/C++
+均重新通过 2/2，installed SDK 重新通过 50/50。
+日志位于本地或 `root@eu:/root/dev/salts-clang-976-977` 的
+`build/issue980-{msvc,gcc,clang}-{semantic,consumers}.log` 和 `build/issue980-sdk-tests.log`。
+macOS GCC/AppleClang 本轮结果仍需 CI 验证；此处不据三种编译器实测宣称所有平台已通过。
