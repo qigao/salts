@@ -2,6 +2,8 @@
 #define SALTS_THREAD_PRIMITIVES_H
 
 #include <salts/platform.h>
+#include <salts/error_codes.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifndef SALTS_THREAD_LOCAL
@@ -30,6 +32,52 @@ typedef struct salts_once_s {
 #define SALTS_ONCE_INIT {0}
 
 typedef void (*salts_thread_cb)(void *arg);
+
+/*
+ * Address-stable thread-affinity state owned by Salts::Platform.
+ * This carries no value lifecycle callbacks and owns no payload.
+ */
+typedef struct salts_thread_affine_state {
+  const void *owner;
+  const void *thread;
+  bool busy;
+} salts_thread_affine_state;
+
+static inline int salts_thread_affine_init(
+    salts_thread_affine_state *state, const void *owner) {
+  if (state == NULL || owner == NULL || state->owner != NULL)
+    return SALTS_EINVAL;
+  state->owner = owner;
+  state->thread = salts_thread_current_token();
+  state->busy = false;
+  return SALTS_OK;
+}
+
+static inline int salts_thread_affine_check(
+    const salts_thread_affine_state *state, const void *owner) {
+  if (state == NULL || owner == NULL || state->owner != owner ||
+      state->thread != salts_thread_current_token())
+    return SALTS_EINVAL;
+  return state->busy ? SALTS_EBUSY : SALTS_OK;
+}
+
+static inline int salts_thread_affine_set_busy(
+    salts_thread_affine_state *state, const void *owner, bool busy) {
+  int status = salts_thread_affine_check(state, owner);
+  if (status != SALTS_OK)
+    return status;
+  state->busy = busy;
+  return SALTS_OK;
+}
+
+static inline int salts_thread_affine_reset(
+    salts_thread_affine_state *state, const void *owner) {
+  int status = salts_thread_affine_check(state, owner);
+  if (status != SALTS_OK)
+    return status;
+  *state = (salts_thread_affine_state){0};
+  return SALTS_OK;
+}
 
 SALTS_PLATFORM_C_API void salts_mutex_init(salts_mutex_t *mutex);
 SALTS_PLATFORM_C_API void salts_mutex_destroy(salts_mutex_t *mutex);
