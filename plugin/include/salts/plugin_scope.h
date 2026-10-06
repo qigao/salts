@@ -1,5 +1,5 @@
-#ifndef SALTS_PLUGIN_SCOPE_H
-#define SALTS_PLUGIN_SCOPE_H
+#ifndef CMETA_PLUGIN_SCOPE_H
+#define CMETA_PLUGIN_SCOPE_H
 
 #include <salts/plugin.h>
 #include <cmeta/cleanup.h>
@@ -15,7 +15,7 @@ typedef struct cmeta_plugin_cleanup_lease {
 static inline void cmeta_plugin_cleanup_release_(void *authority, void *resource) {
     cmeta_plugin_cleanup_lease *owner = (cmeta_plugin_cleanup_lease *)resource;
     (void)authority;
-    if (cmeta_plugin_registry_release(owner->registry, owner->lease) != SALTS_PLUGIN_OK)
+    if (cmeta_plugin_registry_release(owner->registry, owner->lease) != CMETA_PLUGIN_OK)
         abort();
 }
 static inline cmeta_status cmeta_plugin_cleanup_arm(
@@ -48,24 +48,24 @@ public:
           manifest_(std::exchange(other.manifest_, nullptr)) {}
 
     ~plugin_lease_scope() noexcept {
-        if (close() != SALTS_PLUGIN_OK) std::terminate();
+        if (close() != CMETA_PLUGIN_OK) std::terminate();
     }
 
     [[nodiscard]] cmeta_plugin_status acquire(cmeta_plugin_registry &registry,
                                                cmeta_plugin_ref ref) noexcept {
-        if (registry_ != nullptr) return SALTS_PLUGIN_INVALID_STATE;
+        if (registry_ != nullptr) return CMETA_PLUGIN_INVALID_STATE;
         const cmeta_plugin_status status =
             cmeta_plugin_registry_acquire(&registry, ref, &lease_, &manifest_);
-        if (status == SALTS_PLUGIN_OK) registry_ = &registry;
+        if (status == CMETA_PLUGIN_OK) registry_ = &registry;
         return status;
     }
 
     /* Failure preserves ownership for an explicit retry. Automatic cleanup
      * cannot report an error; an invalid registry/lease at destruction is fatal. */
     [[nodiscard]] cmeta_plugin_status close() noexcept {
-        if (registry_ == nullptr) return SALTS_PLUGIN_OK;
+        if (registry_ == nullptr) return CMETA_PLUGIN_OK;
         const cmeta_plugin_status status = cmeta_plugin_registry_release(registry_, &lease_);
-        if (status == SALTS_PLUGIN_OK) {
+        if (status == CMETA_PLUGIN_OK) {
             registry_ = nullptr;
             manifest_ = nullptr;
         }
@@ -92,13 +92,13 @@ static inline cmeta_plugin_status cmeta_plugin_with_lease(
     cmeta_plugin_lease lease = {0};
     const cmeta_plugin_manifest *manifest = NULL;
     cmeta_plugin_status status;
-    if (body == NULL) return SALTS_PLUGIN_INVALID_ARGUMENT;
+    if (body == NULL) return CMETA_PLUGIN_INVALID_ARGUMENT;
     status = cmeta_plugin_registry_acquire(registry, ref, &lease, &manifest);
-    if (status != SALTS_PLUGIN_OK) return status;
+    if (status != CMETA_PLUGIN_OK) return status;
     status = body(manifest, context);
     /* A private authoritative lease cannot fail release under this contract.
      * Do not silently strand it when the caller corrupts the registry. */
-    if (cmeta_plugin_registry_release(registry, &lease) != SALTS_PLUGIN_OK) abort();
+    if (cmeta_plugin_registry_release(registry, &lease) != CMETA_PLUGIN_OK) abort();
     return status;
 }
 #endif

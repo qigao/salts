@@ -266,7 +266,9 @@ suite("TinyMock existing CMeta interface") {
     {
       const cmeta_interface_desc *meta = cflow_executor_interface();
       check_true(cmeta_interface_desc_valid(meta));
-      check_equal(meta->method_count, (size_t)9);
+      check_equal(meta->method_count, (size_t)12);
+      for (size_t i = 0; i < meta->method_count; ++i)
+        check_true(cmeta_interface_method_reflection_valid(&meta->methods[i]));
       check_true(cmeta_interface_method_owns_self(&meta->methods[8]));
       check_equal(
           cmeta_interface_method_function(&meta->methods[0])->result_flags,

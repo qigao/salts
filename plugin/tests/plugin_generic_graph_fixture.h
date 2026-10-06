@@ -1,5 +1,5 @@
-#ifndef SALTS_PLUGIN_GENERIC_GRAPH_FIXTURE_H
-#define SALTS_PLUGIN_GENERIC_GRAPH_FIXTURE_H
+#ifndef CMETA_PLUGIN_GENERIC_GRAPH_FIXTURE_H
+#define CMETA_PLUGIN_GENERIC_GRAPH_FIXTURE_H
 
 #include <cmeta/invoke_decl.h>
 
@@ -48,4 +48,4 @@ FunctionInvokeDeclAsAbiResult(
     (plugin_generic_graph_value, value, CMETA_PARAM_IN,
      &plugin_generic_graph_value_type, CMETA_ABI_AGGREGATE));
 
-#endif /* SALTS_PLUGIN_GENERIC_GRAPH_FIXTURE_H */
+#endif /* CMETA_PLUGIN_GENERIC_GRAPH_FIXTURE_H */

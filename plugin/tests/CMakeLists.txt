@@ -133,7 +133,7 @@ set_target_properties(cmeta_plugin_contract_test PROPERTIES
 
 cmake_add_test(cmeta_plugin_header_cpp_test
   SOURCES plugin_header_cpp_test.cpp
-  LIBS Salts::Plugin
+  LIBS Salts::TinyTest Salts::Plugin
   FOLDER "plugin/tests")
 
 set_target_properties(cmeta_plugin_header_cpp_test PROPERTIES
@@ -277,7 +277,7 @@ set_target_properties(cmeta_plugin_lifecycle_test PROPERTIES
 
 
 if(WIN32)
-  set(SALTS_PLUGIN_PRIVATE_DEPENDENCY_DIR
+  set(CMETA_PLUGIN_PRIVATE_DEPENDENCY_DIR
       "${CMAKE_CURRENT_BINARY_DIR}/private_dependency")
 
   add_library(cmeta_plugin_fixture_private_dependency_helper SHARED
@@ -286,7 +286,7 @@ if(WIN32)
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF
-    RUNTIME_OUTPUT_DIRECTORY "${SALTS_PLUGIN_PRIVATE_DEPENDENCY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${CMETA_PLUGIN_PRIVATE_DEPENDENCY_DIR}"
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/private_dependency_import"
     FOLDER "plugin/tests/fixtures")
 
@@ -301,7 +301,7 @@ if(WIN32)
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF
-    RUNTIME_OUTPUT_DIRECTORY "${SALTS_PLUGIN_PRIVATE_DEPENDENCY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${CMETA_PLUGIN_PRIVATE_DEPENDENCY_DIR}"
     FOLDER "plugin/tests/fixtures")
 
   cmake_add_test(cmeta_plugin_windows_dependency_test

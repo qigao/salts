@@ -1,5 +1,5 @@
-#ifndef SALTS_PLUGIN_OBJECT_INTERFACE_FIXTURE_H
-#define SALTS_PLUGIN_OBJECT_INTERFACE_FIXTURE_H
+#ifndef CMETA_PLUGIN_OBJECT_INTERFACE_FIXTURE_H
+#define CMETA_PLUGIN_OBJECT_INTERFACE_FIXTURE_H
 
 #include <cmeta/data.h>
 #include <cmeta/function.h>
@@ -98,4 +98,4 @@ Function0DeclAsAbiResult(
     CMETA_RESULT_BORROWED,
     plugin_object_fixture_identity);
 
-#endif /* SALTS_PLUGIN_OBJECT_INTERFACE_FIXTURE_H */
+#endif /* CMETA_PLUGIN_OBJECT_INTERFACE_FIXTURE_H */

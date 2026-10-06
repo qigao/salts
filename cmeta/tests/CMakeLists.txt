@@ -15,7 +15,8 @@ if(NOT BUILD_SHARED_LIBS AND NOT CMAKE_CROSSCOMPILING)
   target_link_libraries(cmeta_fingerprint_dso_fixture PRIVATE Salts::CMeta)
   target_compile_definitions(cmeta_fingerprint_dso_fixture PRIVATE
     CMETA_FINGERPRINT_DSO_TEST=1 CMETA_FINGERPRINT_DSO_BUILD=1)
-  cmake_config_target(cmeta_fingerprint_dso_fixture FOLDER "cmeta/tests")
+  cmake_config_target(cmeta_fingerprint_dso_fixture FOLDER "cmeta/tests"
+    VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}")
   set_target_properties(cmeta_fingerprint_dso_fixture PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
     CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
@@ -33,14 +34,14 @@ endif()
 
 # CMeta public API regression tests.
 
-foreach(lowering_case IN ITEMS bind cleanup)
+foreach(lowering_case IN ITEMS bind cleanup data_select)
   cmake_add_test(cmeta_${lowering_case}_test
     SOURCES cmeta_${lowering_case}_test.c
     LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
   set_target_properties(cmeta_${lowering_case}_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 endforeach()
-foreach(lowering_case IN ITEMS bind cleanup object_scope)
+foreach(lowering_case IN ITEMS bind cleanup object_scope data_select)
   cmake_add_test(cmeta_${lowering_case}_cpp_test
     SOURCES cmeta_${lowering_case}_cpp_test.cpp
     LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
@@ -115,7 +116,7 @@ cmake_add_test(cmeta_capabilities_test
 
 cmake_add_test(cmeta_capabilities_header_cpp_test
   SOURCES cmeta_capabilities_header_cpp_test.cpp cmeta_capabilities_owned.c
-  LIBS Salts::CMeta
+  LIBS Salts::TinyTest Salts::CMeta
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_test
   SOURCES cmeta_fastpath_test.c cmeta_fastpath_peer.c
@@ -166,7 +167,7 @@ endforeach()
 
 cmake_add_test(cmeta_enum_bits_test
   SOURCES cmeta_enum_bits_test.c
-  LIBS Salts::CMeta
+  LIBS Salts::TinyTest Salts::CMeta
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_core_test
@@ -264,7 +265,7 @@ cmake_add_test(cmeta_meta_header_test
 
 cmake_add_test(cmeta_language_surface_test
   SOURCES cmeta_language_surface_test.c
-  LIBS Salts::CMeta
+  LIBS Salts::TinyTest Salts::CMeta
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_scope_test
@@ -376,6 +377,36 @@ function(cmeta_add_compile_failure_test target_name source expected_diagnostic)
     PASS_REGULAR_EXPRESSION "${expected_diagnostic}"
     RUN_SERIAL TRUE)
 endfunction()
+
+foreach(language IN ITEMS c cpp)
+  foreach(selection_rule IN ITEMS DUPLICATE DESCRIPTOR VOLATILE)
+    string(TOLOWER "${selection_rule}" selection_name)
+    set(selection_target "cmeta_data_select_${selection_name}_${language}_compile_fail")
+    if(selection_rule STREQUAL "DUPLICATE")
+      set(selection_diagnostic "compatible|already (defined|been defined)|redeclared|cannot be overloaded|redefinition|C773[0-9]")
+    elseif(selection_rule STREQUAL "DESCRIPTOR")
+      set(selection_diagnostic "CMeta data schema requires a const DataDesc pointer|no compatible type|not compatible|not match|not found")
+    else()
+      set(selection_diagnostic "negative|CMeta data schema has no exact pointer type|constant expression|size of an array|cmeta_required.*bit field")
+    endif()
+    cmeta_add_compile_failure_test(${selection_target} compile_fail/cmeta_data_select_invalid.${language}
+      "${selection_diagnostic}")
+    target_compile_definitions(${selection_target} PRIVATE "CMETA_SELECT_${selection_rule}=1")
+    if(language STREQUAL "cpp")
+      set_target_properties(${selection_target} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+    endif()
+  endforeach()
+  cmeta_add_compile_failure_test(cmeta_scope_nofail_${language}_compile_fail
+    compile_fail/cmeta_scope_nofail.${language} "CMeta nofail scope requires canonical INIT_NOFAIL")
+  cmeta_add_compile_failure_test(cmeta_data_select_unknown_${language}_compile_fail
+    compile_fail/cmeta_data_select_unknown.${language}
+    "negative|CMeta data schema has no exact pointer type|constant expression|size of an array|cmeta_required.*bit field")
+  if(language STREQUAL "cpp")
+    set_target_properties(cmeta_scope_nofail_${language}_compile_fail
+      cmeta_data_select_unknown_${language}_compile_fail PROPERTIES
+      CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+  endif()
+endforeach()
 
 foreach(lowering_rule IN ITEMS
     "callback|CMeta lifecycle native callback mismatch"

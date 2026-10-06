@@ -14,14 +14,14 @@ cmeta_plugin_status cmeta_plugin_platform_close(
     HMODULE module;
 
     if (library == NULL || library->handle == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     module = (HMODULE)library->handle;
     if (!FreeLibrary(module))
-        return SALTS_PLUGIN_UNLOAD_FAILED;
+        return CMETA_PLUGIN_UNLOAD_FAILED;
 
     library->handle = NULL;
-    return SALTS_PLUGIN_OK;
+    return CMETA_PLUGIN_OK;
 }
 
 static bool cmeta_plugin_windows_explicit_path(const wchar_t *path) {
@@ -70,7 +70,7 @@ cmeta_plugin_status cmeta_plugin_platform_open(
     FARPROC symbol;
 
     if (path == NULL || out_library == NULL || out_query == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     out_library->handle = NULL;
     *out_query = NULL;
@@ -78,24 +78,24 @@ cmeta_plugin_status cmeta_plugin_platform_open(
     wide_length = MultiByteToWideChar(
         CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, NULL, 0);
     if (wide_length <= 0)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     wide_path = (wchar_t *)malloc((size_t)wide_length * sizeof(*wide_path));
     if (wide_path == NULL)
-        return SALTS_PLUGIN_ALLOCATION_FAILED;
+        return CMETA_PLUGIN_ALLOCATION_FAILED;
 
     if (MultiByteToWideChar(
             CP_UTF8, MB_ERR_INVALID_CHARS, path, -1,
             wide_path, wide_length) != wide_length) {
         free(wide_path);
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
     }
 
     if (cmeta_plugin_windows_explicit_path(wide_path)) {
         absolute_path = cmeta_plugin_windows_absolute_path(wide_path);
         if (absolute_path == NULL) {
             free(wide_path);
-            return SALTS_PLUGIN_LOAD_FAILED;
+            return CMETA_PLUGIN_LOAD_FAILED;
         }
         module = LoadLibraryExW(
             absolute_path, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
@@ -108,19 +108,19 @@ cmeta_plugin_status cmeta_plugin_platform_open(
     }
     free(wide_path);
     if (module == NULL)
-        return SALTS_PLUGIN_LOAD_FAILED;
+        return CMETA_PLUGIN_LOAD_FAILED;
 
-    symbol = GetProcAddress(module, SALTS_PLUGIN_QUERY_SYMBOL);
+    symbol = GetProcAddress(module, CMETA_PLUGIN_QUERY_SYMBOL);
     if (symbol == NULL) {
         cmeta_plugin_library cleanup = {(void *)module};
         cmeta_plugin_status cleanup_status =
             cmeta_plugin_platform_close(&cleanup);
-        return cleanup_status == SALTS_PLUGIN_OK
-            ? SALTS_PLUGIN_QUERY_MISSING
+        return cleanup_status == CMETA_PLUGIN_OK
+            ? CMETA_PLUGIN_QUERY_MISSING
             : cleanup_status;
     }
 
     memcpy(out_query, &symbol, sizeof(*out_query));
     out_library->handle = (void *)module;
-    return SALTS_PLUGIN_OK;
+    return CMETA_PLUGIN_OK;
 }

@@ -38,7 +38,7 @@ long plugin_test_widen(int value) {
     return (long)value;
 }
 
-static bool SALTS_PLUGIN_CALL plugin_test_increment_adapter(
+static bool CMETA_PLUGIN_CALL plugin_test_increment_adapter(
     void *context,
     void *return_storage,
     void *const *params,
@@ -56,7 +56,7 @@ static bool SALTS_PLUGIN_CALL plugin_test_increment_adapter(
     return true;
 }
 
-static bool SALTS_PLUGIN_CALL plugin_test_decrement_adapter(
+static bool CMETA_PLUGIN_CALL plugin_test_decrement_adapter(
     void *context,
     void *return_storage,
     void *const *params,
@@ -78,8 +78,8 @@ static cmeta_plugin_manifest make_manifest(
     cmeta_plugin_export exports[2],
     plugin_test_codec *codec) {
     exports[0] = (cmeta_plugin_export){
-        .struct_size = SALTS_PLUGIN_EXPORT_SIZE,
-        .kind = SALTS_PLUGIN_EXPORT_INTERFACE,
+        .struct_size = CMETA_PLUGIN_EXPORT_SIZE,
+        .kind = CMETA_PLUGIN_EXPORT_INTERFACE,
         .contract_version = 1u,
         .capabilities = 1u,
         .export_id = "codec",
@@ -90,8 +90,8 @@ static cmeta_plugin_manifest make_manifest(
         },
     };
     exports[1] = (cmeta_plugin_export){
-        .struct_size = SALTS_PLUGIN_EXPORT_SIZE,
-        .kind = SALTS_PLUGIN_EXPORT_FUNCTION,
+        .struct_size = CMETA_PLUGIN_EXPORT_SIZE,
+        .kind = CMETA_PLUGIN_EXPORT_FUNCTION,
         .contract_version = 1u,
         .capabilities = 2u,
         .export_id = "test.transform.increment",
@@ -105,8 +105,8 @@ static cmeta_plugin_manifest make_manifest(
     };
 
     return (cmeta_plugin_manifest){
-        .struct_size = SALTS_PLUGIN_MANIFEST_SIZE,
-        .abi_version = SALTS_PLUGIN_ABI_VERSION,
+        .struct_size = CMETA_PLUGIN_MANIFEST_SIZE,
+        .abi_version = CMETA_PLUGIN_ABI_VERSION,
         .plugin_id = "test.plugin",
         .version = {1u, 2u, 3u},
         .exports = exports,
@@ -128,11 +128,11 @@ describe("manifest admission") {
         int output = 0;
 
         check_equal(cmeta_plugin_manifest_validate(&manifest),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
 
         check_equal(cmeta_plugin_manifest_find_export(
                         &manifest, "codec", &found),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_true(found == &exports[0]);
         check_true(plugin_test_codec_valid(
             (const plugin_test_codec *)found->value.interface.value));
@@ -142,11 +142,11 @@ describe("manifest admission") {
         check_equal(cmeta_plugin_export_require_interface(
                         found, "test.codec", 1u, 1u,
                         plugin_test_interface_b()),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
 
         check_equal(cmeta_plugin_manifest_find_export(
                         &manifest, "test.transform.increment", &found),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_true(found == &exports[1]);
         check_not_null(found->value.function.desc);
         check_not_null(found->value.function.abi);
@@ -156,7 +156,7 @@ describe("manifest admission") {
         check_true(found->value.function.abi->function == found->value.function.desc);
         check_equal(cmeta_plugin_export_require_function(
                         found, "test.transform", 1u, 2u),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
 
         params[0] = &input;
         check_true(found->value.function.invoke(
@@ -165,7 +165,7 @@ describe("manifest admission") {
 
         check_equal(cmeta_plugin_manifest_find_export(
                         &manifest, "missing", &found),
-                    SALTS_PLUGIN_UNKNOWN_EXPORT);
+                    CMETA_PLUGIN_UNKNOWN_EXPORT);
         check_null(found);
     }
 
@@ -176,34 +176,34 @@ describe("manifest admission") {
         cmeta_plugin_export exports[2];
         cmeta_plugin_manifest manifest = make_manifest(exports, &codec);
 
-        manifest.abi_version = SALTS_PLUGIN_ABI_VERSION + 1u;
+        manifest.abi_version = CMETA_PLUGIN_ABI_VERSION + 1u;
         check_equal(cmeta_plugin_manifest_validate(&manifest),
-                    SALTS_PLUGIN_UNSUPPORTED_ABI);
+                    CMETA_PLUGIN_UNSUPPORTED_ABI);
 
         manifest = make_manifest(exports, &codec);
-        manifest.abi_version = SALTS_PLUGIN_ABI_VERSION - 1u;
+        manifest.abi_version = CMETA_PLUGIN_ABI_VERSION - 1u;
         check_equal(cmeta_plugin_manifest_validate(&manifest),
-                    SALTS_PLUGIN_UNSUPPORTED_ABI);
+                    CMETA_PLUGIN_UNSUPPORTED_ABI);
 
         manifest = make_manifest(exports, &codec);
-        manifest.struct_size = SALTS_PLUGIN_MANIFEST_SIZE - 1u;
+        manifest.struct_size = CMETA_PLUGIN_MANIFEST_SIZE - 1u;
         check_equal(cmeta_plugin_manifest_validate(&manifest),
-                    SALTS_PLUGIN_INVALID_MANIFEST);
+                    CMETA_PLUGIN_INVALID_MANIFEST);
 
         manifest = make_manifest(exports, &codec);
-        manifest.struct_size = SALTS_PLUGIN_MANIFEST_SIZE + 1u;
+        manifest.struct_size = CMETA_PLUGIN_MANIFEST_SIZE + 1u;
         check_equal(cmeta_plugin_manifest_validate(&manifest),
-                    SALTS_PLUGIN_INVALID_MANIFEST);
+                    CMETA_PLUGIN_INVALID_MANIFEST);
 
         manifest = make_manifest(exports, &codec);
-        exports[0].struct_size = SALTS_PLUGIN_EXPORT_SIZE - 1u;
+        exports[0].struct_size = CMETA_PLUGIN_EXPORT_SIZE - 1u;
         check_equal(cmeta_plugin_manifest_validate(&manifest),
-                    SALTS_PLUGIN_INVALID_MANIFEST);
+                    CMETA_PLUGIN_INVALID_MANIFEST);
 
         manifest = make_manifest(exports, &codec);
-        exports[0].struct_size = SALTS_PLUGIN_EXPORT_SIZE + 1u;
+        exports[0].struct_size = CMETA_PLUGIN_EXPORT_SIZE + 1u;
         check_equal(cmeta_plugin_manifest_validate(&manifest),
-                    SALTS_PLUGIN_INVALID_MANIFEST);
+                    CMETA_PLUGIN_INVALID_MANIFEST);
     }
 
     it("requires complete FunctionAbi and a matching exact adapter") {
@@ -216,19 +216,19 @@ describe("manifest admission") {
 
         exports[1].value.function.abi = FunctionAbi(plugin_test_widen);
         check_equal(cmeta_plugin_manifest_validate(&manifest),
-                    SALTS_PLUGIN_INVALID_MANIFEST);
+                    CMETA_PLUGIN_INVALID_MANIFEST);
 
         manifest = make_manifest(exports, &codec);
         incomplete.return_carrier = CMETA_ABI_UNSPECIFIED;
         exports[1].value.function.abi = &incomplete;
         check_true(cmeta_function_abi_desc_valid(&incomplete));
         check_equal(cmeta_plugin_manifest_validate(&manifest),
-                    SALTS_PLUGIN_INVALID_MANIFEST);
+                    CMETA_PLUGIN_INVALID_MANIFEST);
 
         manifest = make_manifest(exports, &codec);
         exports[1].value.function.invoke = NULL;
         check_equal(cmeta_plugin_manifest_validate(&manifest),
-                    SALTS_PLUGIN_INVALID_MANIFEST);
+                    CMETA_PLUGIN_INVALID_MANIFEST);
     }
 
     it("rejects duplicate exports and bounded-capacity overflow") {
@@ -240,12 +240,12 @@ describe("manifest admission") {
 
         exports[1].export_id = exports[0].export_id;
         check_equal(cmeta_plugin_manifest_validate(&manifest),
-                    SALTS_PLUGIN_DUPLICATE_EXPORT);
+                    CMETA_PLUGIN_DUPLICATE_EXPORT);
 
         manifest = make_manifest(exports, &codec);
-        manifest.export_count = SALTS_PLUGIN_MAX_EXPORTS + 1u;
+        manifest.export_count = CMETA_PLUGIN_MAX_EXPORTS + 1u;
         check_equal(cmeta_plugin_manifest_validate(&manifest),
-                    SALTS_PLUGIN_CAPACITY_EXCEEDED);
+                    CMETA_PLUGIN_CAPACITY_EXCEEDED);
     }
 }
 
@@ -264,8 +264,8 @@ describe("semantic identity") {
 
     it("uses contract identity independently from Function/adapter addresses") {
         cmeta_plugin_export left = {
-            .struct_size = SALTS_PLUGIN_EXPORT_SIZE,
-            .kind = SALTS_PLUGIN_EXPORT_FUNCTION,
+            .struct_size = CMETA_PLUGIN_EXPORT_SIZE,
+            .kind = CMETA_PLUGIN_EXPORT_FUNCTION,
             .contract_version = 1u,
             .capabilities = 2u,
             .export_id = "test.transform.increment",
@@ -278,8 +278,8 @@ describe("semantic identity") {
             },
         };
         cmeta_plugin_export right = {
-            .struct_size = SALTS_PLUGIN_EXPORT_SIZE,
-            .kind = SALTS_PLUGIN_EXPORT_FUNCTION,
+            .struct_size = CMETA_PLUGIN_EXPORT_SIZE,
+            .kind = CMETA_PLUGIN_EXPORT_FUNCTION,
             .contract_version = 1u,
             .capabilities = 2u,
             .export_id = "test.transform.decrement",
@@ -298,47 +298,47 @@ describe("semantic identity") {
 
         check_equal(cmeta_plugin_export_require_function(
                         &left, "test.transform", 1u, 2u),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(cmeta_plugin_export_require_function(
                         &right, "test.transform", 1u, 2u),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
 
         check_equal(cmeta_plugin_export_require_function(
                         &left, "test.transform", 2u, 2u),
-                    SALTS_PLUGIN_INCOMPATIBLE_CONTRACT);
+                    CMETA_PLUGIN_INCOMPATIBLE_CONTRACT);
         check_equal(cmeta_plugin_export_require_function(
                         &left, "test.transform", 1u, 4u),
-                    SALTS_PLUGIN_INCOMPATIBLE_CONTRACT);
+                    CMETA_PLUGIN_INCOMPATIBLE_CONTRACT);
     }
 }
 
 describe("ABI layout contract") {
     it("uses exact current layouts rather than compatibility prefixes") {
-        check_equal(SALTS_PLUGIN_EXPORT_SIZE,
+        check_equal(CMETA_PLUGIN_EXPORT_SIZE,
                     (uint32_t)sizeof(cmeta_plugin_export));
-        check_equal(SALTS_PLUGIN_MANIFEST_SIZE,
+        check_equal(CMETA_PLUGIN_MANIFEST_SIZE,
                     (uint32_t)sizeof(cmeta_plugin_manifest));
-        check_equal((unsigned)SALTS_PLUGIN_ABI_VERSION, 5u);
+        check_equal((unsigned)CMETA_PLUGIN_ABI_VERSION, 5u);
     }
 }
 
 describe("status contract") {
     it("keeps required failure classes distinct") {
         check_equal(strcmp(cmeta_plugin_status_string(
-                        SALTS_PLUGIN_INVALID_MANIFEST), "invalid_manifest"), 0);
+                        CMETA_PLUGIN_INVALID_MANIFEST), "invalid_manifest"), 0);
         check_equal(strcmp(cmeta_plugin_status_string(
-                        SALTS_PLUGIN_UNSUPPORTED_ABI), "unsupported_abi"), 0);
+                        CMETA_PLUGIN_UNSUPPORTED_ABI), "unsupported_abi"), 0);
         check_equal(strcmp(cmeta_plugin_status_string(
-                        SALTS_PLUGIN_DUPLICATE_PLUGIN_ID), "duplicate_plugin_id"), 0);
+                        CMETA_PLUGIN_DUPLICATE_PLUGIN_ID), "duplicate_plugin_id"), 0);
         check_equal(strcmp(cmeta_plugin_status_string(
-                        SALTS_PLUGIN_DUPLICATE_EXPORT), "duplicate_export"), 0);
+                        CMETA_PLUGIN_DUPLICATE_EXPORT), "duplicate_export"), 0);
         check_equal(strcmp(cmeta_plugin_status_string(
-                        SALTS_PLUGIN_UNKNOWN_EXPORT), "unknown_export"), 0);
+                        CMETA_PLUGIN_UNKNOWN_EXPORT), "unknown_export"), 0);
         check_equal(strcmp(cmeta_plugin_status_string(
-                        SALTS_PLUGIN_INCOMPATIBLE_CONTRACT),
+                        CMETA_PLUGIN_INCOMPATIBLE_CONTRACT),
                     "incompatible_contract"), 0);
         check_equal(strcmp(cmeta_plugin_status_string(
-                        SALTS_PLUGIN_CAPACITY_EXCEEDED),
+                        CMETA_PLUGIN_CAPACITY_EXCEEDED),
                     "capacity_exceeded"), 0);
     }
 }

@@ -11,14 +11,14 @@ cmeta_plugin_status cmeta_plugin_platform_close(
     void *handle;
 
     if (library == NULL || library->handle == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     handle = library->handle;
     if (dlclose(handle) != 0)
-        return SALTS_PLUGIN_UNLOAD_FAILED;
+        return CMETA_PLUGIN_UNLOAD_FAILED;
 
     library->handle = NULL;
-    return SALTS_PLUGIN_OK;
+    return CMETA_PLUGIN_OK;
 }
 
 cmeta_plugin_status cmeta_plugin_platform_open(
@@ -30,28 +30,28 @@ cmeta_plugin_status cmeta_plugin_platform_open(
     const char *error;
 
     if (path == NULL || out_library == NULL || out_query == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     out_library->handle = NULL;
     *out_query = NULL;
 
     handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (handle == NULL)
-        return SALTS_PLUGIN_LOAD_FAILED;
+        return CMETA_PLUGIN_LOAD_FAILED;
 
     dlerror();
-    symbol = dlsym(handle, SALTS_PLUGIN_QUERY_SYMBOL);
+    symbol = dlsym(handle, CMETA_PLUGIN_QUERY_SYMBOL);
     error = dlerror();
     if (error != NULL || symbol == NULL) {
         cmeta_plugin_library cleanup = {handle};
         cmeta_plugin_status cleanup_status =
             cmeta_plugin_platform_close(&cleanup);
-        return cleanup_status == SALTS_PLUGIN_OK
-            ? SALTS_PLUGIN_QUERY_MISSING
+        return cleanup_status == CMETA_PLUGIN_OK
+            ? CMETA_PLUGIN_QUERY_MISSING
             : cleanup_status;
     }
 
     memcpy(out_query, &symbol, sizeof(*out_query));
     out_library->handle = handle;
-    return SALTS_PLUGIN_OK;
+    return CMETA_PLUGIN_OK;
 }

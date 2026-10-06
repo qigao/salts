@@ -44,23 +44,23 @@ static plugin_lifecycle_test_api fixture_api = {
     &fixture_state, &lifecycle_fixture_api_impl_vtable
 };
 
-static cmeta_plugin_status SALTS_PLUGIN_CALL
+static cmeta_plugin_status CMETA_PLUGIN_CALL
 fixture_start(void *self) {
     lifecycle_fixture_state *state = (lifecycle_fixture_state *)self;
     atomic_store(&state->stopping, false);
     atomic_store(&state->started, true);
-    return SALTS_PLUGIN_OK;
+    return CMETA_PLUGIN_OK;
 }
 
-static cmeta_plugin_status SALTS_PLUGIN_CALL
+static cmeta_plugin_status CMETA_PLUGIN_CALL
 fixture_request_stop(void *self) {
     lifecycle_fixture_state *state = (lifecycle_fixture_state *)self;
     atomic_store(&state->stopping, true);
     atomic_store(&state->started, false);
-    return SALTS_PLUGIN_OK;
+    return CMETA_PLUGIN_OK;
 }
 
-static bool SALTS_PLUGIN_CALL
+static bool CMETA_PLUGIN_CALL
 fixture_is_quiescent(const void *self) {
     const lifecycle_fixture_state *state =
         (const lifecycle_fixture_state *)self;
@@ -68,7 +68,7 @@ fixture_is_quiescent(const void *self) {
            atomic_load(&state->active_calls) == 0u;
 }
 
-static void SALTS_PLUGIN_CALL
+static void CMETA_PLUGIN_CALL
 fixture_destroy(void *self) {
     lifecycle_fixture_state *state = (lifecycle_fixture_state *)self;
     atomic_store(&state->started, false);
@@ -80,6 +80,6 @@ fixture_destroy(void *self) {
     X(interface, (plugin_lifecycle_test_api, &fixture_api), "service", \
       "test.lifecycle.service", 1u, 1u)
 
-SALTS_PLUGIN_DECLARE(fixture, "test.loader.lifecycle", (1u,0u,0u),
-    FIXTURE_EXPORTS, SALTS_PLUGIN_LIFECYCLE(&fixture_state,
+CMETA_PLUGIN_DECLARE(fixture, "test.loader.lifecycle", (1u,0u,0u),
+    FIXTURE_EXPORTS, CMETA_PLUGIN_LIFECYCLE(&fixture_state,
         fixture_start, fixture_request_stop, fixture_is_quiescent, fixture_destroy));

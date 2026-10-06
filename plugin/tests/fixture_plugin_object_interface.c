@@ -26,7 +26,7 @@ plugin_object_fixture_state *plugin_object_fixture_identity(void) {
     return &fixture_state;
 }
 
-static bool SALTS_PLUGIN_CALL fixture_identity_invoke(
+static bool CMETA_PLUGIN_CALL fixture_identity_invoke(
     void *context,
     void *return_storage,
     void *const *params,
@@ -45,17 +45,17 @@ static bool SALTS_PLUGIN_CALL fixture_identity_invoke(
 static plugin_object_fixture_api fixture_api;
 static cmeta_plugin_export fixture_exports[2];
 static cmeta_plugin_manifest fixture_manifest = {
-    .struct_size = SALTS_PLUGIN_MANIFEST_SIZE,
-    .abi_version = SALTS_PLUGIN_ABI_VERSION,
+    .struct_size = CMETA_PLUGIN_MANIFEST_SIZE,
+    .abi_version = CMETA_PLUGIN_ABI_VERSION,
     .plugin_id = "test.loader.object_interface",
     .version = {1u, 0u, 0u},
 };
 static bool fixture_initialized;
 
-SALTS_PLUGIN_QUERY_EXPORT
-const cmeta_plugin_manifest *SALTS_PLUGIN_CALL
+CMETA_PLUGIN_QUERY_EXPORT
+const cmeta_plugin_manifest *CMETA_PLUGIN_CALL
 cmeta_plugin_query(uint32_t host_abi) {
-    if (host_abi != SALTS_PLUGIN_ABI_VERSION)
+    if (host_abi != CMETA_PLUGIN_ABI_VERSION)
         return NULL;
 
     if (!fixture_initialized) {
@@ -64,8 +64,8 @@ cmeta_plugin_query(uint32_t host_abi) {
                 &fixture_state);
 
         fixture_exports[0] = (cmeta_plugin_export){
-            .struct_size = SALTS_PLUGIN_EXPORT_SIZE,
-            .kind = SALTS_PLUGIN_EXPORT_INTERFACE,
+            .struct_size = CMETA_PLUGIN_EXPORT_SIZE,
+            .kind = CMETA_PLUGIN_EXPORT_INTERFACE,
             .contract_version = 1u,
             .capabilities = 1u,
             .export_id = "service",
@@ -77,8 +77,8 @@ cmeta_plugin_query(uint32_t host_abi) {
         };
 
         fixture_exports[1] = (cmeta_plugin_export){
-            .struct_size = SALTS_PLUGIN_EXPORT_SIZE,
-            .kind = SALTS_PLUGIN_EXPORT_FUNCTION,
+            .struct_size = CMETA_PLUGIN_EXPORT_SIZE,
+            .kind = CMETA_PLUGIN_EXPORT_FUNCTION,
             .contract_version = 1u,
             .capabilities = 1u,
             .export_id = "borrow_identity",

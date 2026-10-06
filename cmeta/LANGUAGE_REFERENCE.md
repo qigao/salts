@@ -136,6 +136,32 @@ rows; traits still use comma-separated rows.
 See [capability contracts and executable examples](CAPABILITIES.md) for callback
 signatures, provider admission, ownership, failure cleanup and compatibility.
 
+### Schema-driven Data selection
+
+`<cmeta/data_select.h>` exposes `cmeta_data_of(pointer)` for builtin types and
+`cmeta_data_of_in(pointer, schema)` for an explicit `Schema(M, (NativeType,
+descriptor_expression), ...)`. A row names an unqualified native type and an
+expression of exactly `const cmeta_data_desc *`; its descriptor remains the
+provider's canonical object. No registry, copied metadata or lifetime retention
+is introduced. C11 uses `_Generic`; C++17 uses exact pointer type matching.
+
+The pointer is an unevaluated type witness and may be null. Mutable and const
+pointees select the same descriptor. Unknown/volatile pointers, duplicate
+compatible types (including typedef aliases), and wrong descriptor expression
+types are compile errors. Only the selected descriptor expression executes,
+exactly once. Schema expressions must be usable from static context in C++;
+provider accessors are the portable way to express computed descriptors.
+This proves native selection and descriptor pointer type, not arbitrary foreign
+descriptor validity: provider/Plugin admission remains mandatory at its boundary.
+
+Existing `CMETA_DATAOF(Type)` and `CMETA_DATAOF_OR(Type, fallback)` keep their
+historical unknown-type behavior. Builtin associations now replay the same
+`CMETA_BUILTIN_DATA_SCHEMA` used by the strict pointer frontend. Fixed-width
+aliases still use `cmeta_data_integer_width`, avoiding duplicate associations.
+See the complete C/C++ example in
+[`cmeta_data_select_test.c`](tests/cmeta_data_select_test.c), which checks builtin
+identity, custom provider selection, const views, and unevaluated pointer effects.
+
 ### Structured scope
 
 `cmeta_scope(status, autos, body)` owns 1 through 16 explicit
@@ -225,8 +251,10 @@ replace adjacent `cmeta_auto(Type, name)` entries with comma-separated
 are removed. Generated identifiers are unique even for two expansions on the
 same source line. The common PP tuple replay replaces the sentinel/drop layer;
 resource ownership, error status, partial rollback and LIFO cleanup are unchanged.
-Per-resource live/ops state is retained; lifecycle classification is separate
-#980 work. Types that only expose a DataDesc accessor must explicitly use
+Managed/fallible rows retain per-resource live/ops state. Explicit trivial rows
+omit it; all-nofail resource sets use `cmeta_scope_nofail` without per-resource
+bookkeeping. See [lifecycle classification](LIFECYCLE_LOWERING.md).
+Types that only expose a DataDesc accessor must explicitly use
 `cmeta_scope_checked` or publish an authoritative static lifecycle declaration.
 No descriptor layout or binary ABI changes follow from this source migration.
 

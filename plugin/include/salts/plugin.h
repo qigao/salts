@@ -1,5 +1,5 @@
-#ifndef SALTS_PLUGIN_H
-#define SALTS_PLUGIN_H
+#ifndef CMETA_PLUGIN_RUNTIME_H
+#define CMETA_PLUGIN_RUNTIME_H
 
 #include <cmeta/cmeta.h>
 #include <cmeta/function.h>
@@ -22,60 +22,60 @@ extern "C" {
  * A plugin built for another epoch must be rebuilt before descriptor pointers
  * are consumed.
  */
-#define SALTS_PLUGIN_ABI_VERSION 5u
-#define SALTS_PLUGIN_QUERY_SYMBOL "cmeta_plugin_query"
+#define CMETA_PLUGIN_ABI_VERSION 5u
+#define CMETA_PLUGIN_QUERY_SYMBOL "cmeta_plugin_query"
 
-#define SALTS_PLUGIN_MAX_EXPORTS 256u
-#define SALTS_PLUGIN_ID_MAX 255u
-#define SALTS_PLUGIN_EXPORT_ID_MAX 255u
-#define SALTS_PLUGIN_CONTRACT_ID_MAX 255u
-#define SALTS_PLUGIN_PATH_MAX 4095u
-#define SALTS_PLUGIN_MAX_LEASES_PER_PLUGIN 64u
+#define CMETA_PLUGIN_MAX_EXPORTS 256u
+#define CMETA_PLUGIN_ID_MAX 255u
+#define CMETA_PLUGIN_EXPORT_ID_MAX 255u
+#define CMETA_PLUGIN_CONTRACT_ID_MAX 255u
+#define CMETA_PLUGIN_PATH_MAX 4095u
+#define CMETA_PLUGIN_MAX_LEASES_PER_PLUGIN 64u
 
 #if defined(__cplusplus)
-#  define SALTS_PLUGIN_EXTERN_C extern "C"
+#  define CMETA_PLUGIN_EXTERN_C extern "C"
 #else
-#  define SALTS_PLUGIN_EXTERN_C
+#  define CMETA_PLUGIN_EXTERN_C
 #endif
 
 #if defined(_WIN32)
-#  define SALTS_PLUGIN_ENTRY __declspec(dllexport)
-#  define SALTS_PLUGIN_CALL __cdecl
+#  define CMETA_PLUGIN_ENTRY __declspec(dllexport)
+#  define CMETA_PLUGIN_CALL __cdecl
 #elif defined(__GNUC__) && __GNUC__ >= 4
-#  define SALTS_PLUGIN_ENTRY __attribute__((visibility("default")))
-#  define SALTS_PLUGIN_CALL
+#  define CMETA_PLUGIN_ENTRY __attribute__((visibility("default")))
+#  define CMETA_PLUGIN_CALL
 #else
-#  define SALTS_PLUGIN_ENTRY
-#  define SALTS_PLUGIN_CALL
+#  define CMETA_PLUGIN_ENTRY
+#  define CMETA_PLUGIN_CALL
 #endif
 
-#define SALTS_PLUGIN_QUERY_EXPORT SALTS_PLUGIN_EXTERN_C SALTS_PLUGIN_ENTRY
+#define CMETA_PLUGIN_QUERY_EXPORT CMETA_PLUGIN_EXTERN_C CMETA_PLUGIN_ENTRY
 
 typedef enum cmeta_plugin_status {
-    SALTS_PLUGIN_OK = 0,
-    SALTS_PLUGIN_INVALID_ARGUMENT,
-    SALTS_PLUGIN_INVALID_MANIFEST,
-    SALTS_PLUGIN_UNSUPPORTED_ABI,
-    SALTS_PLUGIN_DUPLICATE_PLUGIN_ID,
-    SALTS_PLUGIN_DUPLICATE_EXPORT,
-    SALTS_PLUGIN_UNKNOWN_EXPORT,
-    SALTS_PLUGIN_INCOMPATIBLE_CONTRACT,
-    SALTS_PLUGIN_CAPACITY_EXCEEDED,
-    SALTS_PLUGIN_ALLOCATION_FAILED,
-    SALTS_PLUGIN_LOAD_FAILED,
-    SALTS_PLUGIN_QUERY_MISSING,
-    SALTS_PLUGIN_QUERY_REJECTED,
-    SALTS_PLUGIN_UNKNOWN_PLUGIN,
-    SALTS_PLUGIN_STALE,
-    SALTS_PLUGIN_UNLOAD_FAILED,
-    SALTS_PLUGIN_ALREADY,
-    SALTS_PLUGIN_BUSY,
-    SALTS_PLUGIN_INVALID_STATE
+    CMETA_PLUGIN_OK = 0,
+    CMETA_PLUGIN_INVALID_ARGUMENT,
+    CMETA_PLUGIN_INVALID_MANIFEST,
+    CMETA_PLUGIN_UNSUPPORTED_ABI,
+    CMETA_PLUGIN_DUPLICATE_PLUGIN_ID,
+    CMETA_PLUGIN_DUPLICATE_EXPORT,
+    CMETA_PLUGIN_UNKNOWN_EXPORT,
+    CMETA_PLUGIN_INCOMPATIBLE_CONTRACT,
+    CMETA_PLUGIN_CAPACITY_EXCEEDED,
+    CMETA_PLUGIN_ALLOCATION_FAILED,
+    CMETA_PLUGIN_LOAD_FAILED,
+    CMETA_PLUGIN_QUERY_MISSING,
+    CMETA_PLUGIN_QUERY_REJECTED,
+    CMETA_PLUGIN_UNKNOWN_PLUGIN,
+    CMETA_PLUGIN_STALE,
+    CMETA_PLUGIN_UNLOAD_FAILED,
+    CMETA_PLUGIN_ALREADY,
+    CMETA_PLUGIN_BUSY,
+    CMETA_PLUGIN_INVALID_STATE
 } cmeta_plugin_status;
 
 typedef enum cmeta_plugin_export_kind {
-    SALTS_PLUGIN_EXPORT_INTERFACE = 1,
-    SALTS_PLUGIN_EXPORT_FUNCTION = 2
+    CMETA_PLUGIN_EXPORT_INTERFACE = 1,
+    CMETA_PLUGIN_EXPORT_FUNCTION = 2
 } cmeta_plugin_export_kind;
 
 typedef struct cmeta_plugin_version {
@@ -84,10 +84,10 @@ typedef struct cmeta_plugin_version {
     uint32_t patch;
 } cmeta_plugin_version;
 
-typedef cmeta_plugin_status (SALTS_PLUGIN_CALL *cmeta_plugin_start_fn)(void *self);
-typedef cmeta_plugin_status (SALTS_PLUGIN_CALL *cmeta_plugin_request_stop_fn)(void *self);
-typedef bool (SALTS_PLUGIN_CALL *cmeta_plugin_is_quiescent_fn)(const void *self);
-typedef void (SALTS_PLUGIN_CALL *cmeta_plugin_destroy_fn)(void *self);
+typedef cmeta_plugin_status (CMETA_PLUGIN_CALL *cmeta_plugin_start_fn)(void *self);
+typedef cmeta_plugin_status (CMETA_PLUGIN_CALL *cmeta_plugin_request_stop_fn)(void *self);
+typedef bool (CMETA_PLUGIN_CALL *cmeta_plugin_is_quiescent_fn)(const void *self);
+typedef void (CMETA_PLUGIN_CALL *cmeta_plugin_destroy_fn)(void *self);
 
 /*
  * Exact generated execution bridge for a reflected native function.
@@ -98,7 +98,7 @@ typedef void (SALTS_PLUGIN_CALL *cmeta_plugin_destroy_fn)(void *self);
  * source as FunctionMeta/FunctionAbi; it must not reconstruct arbitrary C ABI
  * calls from runtime metadata.
  */
-typedef bool (SALTS_PLUGIN_CALL *cmeta_plugin_function_invoke_fn)(
+typedef bool (CMETA_PLUGIN_CALL *cmeta_plugin_function_invoke_fn)(
     void *context,
     void *return_storage,
     void *const *params,
@@ -149,7 +149,7 @@ typedef struct cmeta_plugin_export {
 } cmeta_plugin_export;
 
 /*
- * Immutable plugin manifest returned by SALTS_PLUGIN_QUERY_SYMBOL.
+ * Immutable plugin manifest returned by CMETA_PLUGIN_QUERY_SYMBOL.
  *
  * Salts::Plugin accepts only the exact current layout and ABI epoch. There is
  * no readable-prefix compatibility, tail compatibility, ABI negotiation or
@@ -172,10 +172,10 @@ typedef struct cmeta_plugin_manifest {
     cmeta_plugin_destroy_fn destroy;
 } cmeta_plugin_manifest;
 
-#define SALTS_PLUGIN_EXPORT_SIZE ((uint32_t)sizeof(cmeta_plugin_export))
-#define SALTS_PLUGIN_MANIFEST_SIZE ((uint32_t)sizeof(cmeta_plugin_manifest))
+#define CMETA_PLUGIN_EXPORT_SIZE ((uint32_t)sizeof(cmeta_plugin_export))
+#define CMETA_PLUGIN_MANIFEST_SIZE ((uint32_t)sizeof(cmeta_plugin_manifest))
 
-typedef const cmeta_plugin_manifest *(SALTS_PLUGIN_CALL *cmeta_plugin_query_fn)(
+typedef const cmeta_plugin_manifest *(CMETA_PLUGIN_CALL *cmeta_plugin_query_fn)(
     uint32_t host_abi);
 
 /* Stable public registry reference. slot is 1-based; zero fields are invalid. */
@@ -185,11 +185,11 @@ typedef struct cmeta_plugin_ref {
 } cmeta_plugin_ref;
 
 typedef enum cmeta_plugin_lifecycle_state {
-    SALTS_PLUGIN_LIFECYCLE_LOADED = 1,
-    SALTS_PLUGIN_LIFECYCLE_STARTING,
-    SALTS_PLUGIN_LIFECYCLE_STARTED,
-    SALTS_PLUGIN_LIFECYCLE_STOPPING,
-    SALTS_PLUGIN_LIFECYCLE_QUIESCENT
+    CMETA_PLUGIN_LIFECYCLE_LOADED = 1,
+    CMETA_PLUGIN_LIFECYCLE_STARTING,
+    CMETA_PLUGIN_LIFECYCLE_STARTED,
+    CMETA_PLUGIN_LIFECYCLE_STOPPING,
+    CMETA_PLUGIN_LIFECYCLE_QUIESCENT
 } cmeta_plugin_lifecycle_state;
 
 typedef struct cmeta_plugin_lease {
@@ -251,7 +251,7 @@ cmeta_plugin_status cmeta_plugin_manifest_find_export(
 /*
  * Bounded dynamic-plugin registry and lifecycle.
  *
- * load() admits only SALTS_PLUGIN_ABI_VERSION with exact current manifest/export
+ * load() admits only CMETA_PLUGIN_ABI_VERSION with exact current manifest/export
  * layouts. It never retries an older ABI.
  *
  * Plugin-owned manifest/export/FunctionMeta/FunctionAbi/type-trait/adapter/
@@ -289,7 +289,7 @@ cmeta_plugin_status cmeta_plugin_registry_acquire(
     const cmeta_plugin_manifest **out_manifest);
 
 /*
- * Releases one live lease. On SALTS_PLUGIN_OK the lease is consumed and reset
+ * Releases one live lease. On CMETA_PLUGIN_OK the lease is consumed and reset
  * to canonical zero. On any non-OK result the caller-supplied lease value is
  * left unchanged; callers may correct the failure cause and retry when the
  * lease is otherwise still authoritative.
@@ -325,4 +325,4 @@ cmeta_plugin_status cmeta_plugin_registry_destroy(
 }
 #endif
 
-#endif /* SALTS_PLUGIN_H */
+#endif /* CMETA_PLUGIN_RUNTIME_H */

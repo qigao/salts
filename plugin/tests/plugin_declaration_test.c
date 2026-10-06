@@ -72,22 +72,22 @@ static decl_api decl_instance = {&decl_state,&decl_vtable};
     X(function,decl_pointer,"pointer","decl.math",1u,1u) \
     X(function,decl_max,"max","decl.math",1u,1u) \
     X(interface,(decl_api,&decl_instance),"api","decl.api",1u,1u)
-SALTS_PLUGIN_DECLARE(decl,"test.declarations",(1u,2u,3u),DECL_EXPORTS,SALTS_PLUGIN_PASSIVE());
+CMETA_PLUGIN_DECLARE(decl,"test.declarations",(1u,2u,3u),DECL_EXPORTS,CMETA_PLUGIN_PASSIVE());
 
 suite("Plugin declarations") {
     before_each() { calls = 0; }
     it("publishes canonical descriptors and exact ABI query") {
-        const cmeta_plugin_manifest *manifest = cmeta_plugin_query(SALTS_PLUGIN_ABI_VERSION);
+        const cmeta_plugin_manifest *manifest = cmeta_plugin_query(CMETA_PLUGIN_ABI_VERSION);
         check_not_null(manifest);
-        check_equal(cmeta_plugin_manifest_validate(manifest),SALTS_PLUGIN_OK);
+        check_equal(cmeta_plugin_manifest_validate(manifest),CMETA_PLUGIN_OK);
         check_equal(manifest->export_count,6u);
         check_equal(manifest->version.minor,2u);
         check_true(manifest->exports[0].value.function.desc == FunctionMeta(decl_zero));
         check_true(manifest->exports[0].value.function.abi == FunctionAbi(decl_zero));
         check_equal(manifest->exports[1].contract_version,UINT32_MAX);
         check_equal(manifest->exports[1].capabilities,UINT64_MAX);
-        check_null(cmeta_plugin_query(SALTS_PLUGIN_ABI_VERSION - 1u));
-        check_null(cmeta_plugin_query(SALTS_PLUGIN_ABI_VERSION + 1u));
+        check_null(cmeta_plugin_query(CMETA_PLUGIN_ABI_VERSION - 1u));
+        check_null(cmeta_plugin_query(CMETA_PLUGIN_ABI_VERSION + 1u));
         check_null(manifest->self);
         check_null(manifest->destroy);
         check_equal(calls,0);

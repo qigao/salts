@@ -27,6 +27,7 @@ endif()
 
 cmake_config_target(
   cmeta_plugin
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   ALIAS Salts::Plugin
   FOLDER "plugin"
   EXPORT_NAME Plugin)

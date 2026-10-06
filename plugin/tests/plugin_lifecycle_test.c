@@ -41,14 +41,14 @@ static cmeta_plugin_registry make_registry(size_t capacity) {
     cmeta_plugin_registry_config config = {capacity};
 
     check_equal(cmeta_plugin_registry_init(&registry, &config),
-                SALTS_PLUGIN_OK);
+                CMETA_PLUGIN_OK);
     check_not_null(registry.impl);
     return registry;
 }
 
 static void destroy_registry(cmeta_plugin_registry *registry) {
     check_equal(cmeta_plugin_registry_destroy(registry),
-                SALTS_PLUGIN_OK);
+                CMETA_PLUGIN_OK);
     check_null(registry->impl);
 }
 
@@ -70,22 +70,22 @@ static void lifecycle_send_worker(void *arg) {
         cmeta_plugin_status status = cmeta_plugin_registry_acquire(
             worker->registry, worker->ref, &lease, &manifest);
 
-        if (status == SALTS_PLUGIN_INVALID_STATE ||
-            status == SALTS_PLUGIN_BUSY ||
-            status == SALTS_PLUGIN_STALE)
+        if (status == CMETA_PLUGIN_INVALID_STATE ||
+            status == CMETA_PLUGIN_BUSY ||
+            status == CMETA_PLUGIN_STALE)
             return;
-        if (status != SALTS_PLUGIN_OK) {
+        if (status != CMETA_PLUGIN_OK) {
             atomic_store(&worker->unexpected, (int)status);
             return;
         }
 
         status = cmeta_plugin_manifest_find_export(
             manifest, "service", &entry);
-        if (status != SALTS_PLUGIN_OK || entry == NULL ||
-            entry->kind != SALTS_PLUGIN_EXPORT_INTERFACE) {
+        if (status != CMETA_PLUGIN_OK || entry == NULL ||
+            entry->kind != CMETA_PLUGIN_EXPORT_INTERFACE) {
             atomic_store(&worker->unexpected,
-                         status == SALTS_PLUGIN_OK
-                             ? (int)SALTS_PLUGIN_INCOMPATIBLE_CONTRACT
+                         status == CMETA_PLUGIN_OK
+                             ? (int)CMETA_PLUGIN_INCOMPATIBLE_CONTRACT
                              : (int)status);
             (void)cmeta_plugin_registry_release(
                 worker->registry, &lease);
@@ -97,7 +97,7 @@ static void lifecycle_send_worker(void *arg) {
                 (plugin_lifecycle_test_api *)entry->value.interface.value;
             if (!plugin_lifecycle_test_api_valid(api)) {
                 atomic_store(&worker->unexpected,
-                             (int)SALTS_PLUGIN_INCOMPATIBLE_CONTRACT);
+                             (int)CMETA_PLUGIN_INCOMPATIBLE_CONTRACT);
                 (void)cmeta_plugin_registry_release(
                     worker->registry, &lease);
                 return;
@@ -107,7 +107,7 @@ static void lifecycle_send_worker(void *arg) {
 
         status = cmeta_plugin_registry_release(
             worker->registry, &lease);
-        if (status != SALTS_PLUGIN_OK) {
+        if (status != CMETA_PLUGIN_OK) {
             atomic_store(&worker->unexpected, (int)status);
             return;
         }
@@ -116,7 +116,7 @@ static void lifecycle_send_worker(void *arg) {
     }
 
     /* The worker is expected to terminate because stop closes admission. */
-    atomic_store(&worker->unexpected, (int)SALTS_PLUGIN_BUSY);
+    atomic_store(&worker->unexpected, (int)CMETA_PLUGIN_BUSY);
 }
 
 static void lifecycle_stop_worker(void *arg) {
@@ -141,30 +141,30 @@ describe("lease-owned DSO access") {
 
         check_equal(cmeta_plugin_registry_load(
                         &registry, PLUGIN_LIFECYCLE_PATH, &ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(lifecycle_info(&registry, ref, &info),
-                    SALTS_PLUGIN_OK);
-        check_equal(info.state, SALTS_PLUGIN_LIFECYCLE_LOADED);
+                    CMETA_PLUGIN_OK);
+        check_equal(info.state, CMETA_PLUGIN_LIFECYCLE_LOADED);
 
         check_equal(cmeta_plugin_registry_acquire(
                         &registry, ref, &lease, &manifest),
-                    SALTS_PLUGIN_INVALID_STATE);
+                    CMETA_PLUGIN_INVALID_STATE);
         check_false(cmeta_plugin_lease_valid(lease));
         check_null(manifest);
 
         check_equal(cmeta_plugin_registry_start(&registry, ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(cmeta_plugin_registry_start(&registry, ref),
-                    SALTS_PLUGIN_ALREADY);
+                    CMETA_PLUGIN_ALREADY);
 
         check_equal(cmeta_plugin_registry_acquire(
                         &registry, ref, &lease, &manifest),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_true(cmeta_plugin_lease_valid(lease));
         check_not_null(manifest);
         check_equal(cmeta_plugin_manifest_find_export(
                         manifest, "service", &entry),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_not_null(entry);
         {
             plugin_lifecycle_test_api *api =
@@ -177,57 +177,57 @@ describe("lease-owned DSO access") {
 
         check_equal(cmeta_plugin_registry_request_stop(
                         &registry, ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(cmeta_plugin_registry_request_stop(
                         &registry, ref),
-                    SALTS_PLUGIN_ALREADY);
+                    CMETA_PLUGIN_ALREADY);
 
         manifest = (const cmeta_plugin_manifest *)(uintptr_t)1u;
         check_equal(cmeta_plugin_registry_acquire(
                         &registry, ref, &rejected, &manifest),
-                    SALTS_PLUGIN_INVALID_STATE);
+                    CMETA_PLUGIN_INVALID_STATE);
         check_false(cmeta_plugin_lease_valid(rejected));
         check_null(manifest);
 
         check_equal(cmeta_plugin_registry_unload(&registry, ref),
-                    SALTS_PLUGIN_BUSY);
+                    CMETA_PLUGIN_BUSY);
         check_equal(cmeta_plugin_registry_poll_quiescent(
                         &registry, ref, &quiescent),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_false(quiescent);
 
         check_equal(cmeta_plugin_registry_release(
                         &registry, &lease),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_false(cmeta_plugin_lease_valid(lease));
 
         check_equal(cmeta_plugin_registry_poll_quiescent(
                         &registry, ref, &quiescent),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_true(quiescent);
         check_equal(lifecycle_info(&registry, ref, &info),
-                    SALTS_PLUGIN_OK);
-        check_equal(info.state, SALTS_PLUGIN_LIFECYCLE_QUIESCENT);
+                    CMETA_PLUGIN_OK);
+        check_equal(info.state, CMETA_PLUGIN_LIFECYCLE_QUIESCENT);
         check_equal(info.active_leases, (size_t)0u);
 
         check_equal(cmeta_plugin_registry_unload(&registry, ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(cmeta_plugin_registry_count(&registry), (size_t)0u);
         check_equal(cmeta_plugin_registry_unload(&registry, ref),
-                    SALTS_PLUGIN_STALE);
+                    CMETA_PLUGIN_STALE);
         check_equal(lifecycle_info(&registry, ref, &info),
-                    SALTS_PLUGIN_STALE);
+                    CMETA_PLUGIN_STALE);
 
         check_equal(cmeta_plugin_registry_load(
                         &registry, PLUGIN_LIFECYCLE_PATH, &reloaded),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(reloaded.slot, ref.slot);
         check_true(reloaded.generation != ref.generation);
         check_equal(lifecycle_info(&registry, ref, &info),
-                    SALTS_PLUGIN_STALE);
+                    CMETA_PLUGIN_STALE);
         check_equal(cmeta_plugin_registry_unload(
                         &registry, reloaded),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
 
         destroy_registry(&registry);
     }
@@ -244,40 +244,40 @@ describe("lease-owned DSO access") {
 
         check_equal(cmeta_plugin_registry_load(
                         &registry, PLUGIN_LIFECYCLE_PATH, &ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(cmeta_plugin_registry_start(&registry, ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(cmeta_plugin_registry_acquire(
                         &registry, ref, &lease, &manifest),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_true(cmeta_plugin_lease_valid(lease));
         saved = lease;
 
         check_equal(cmeta_plugin_registry_release(
                         &wrong_registry, &lease),
-                    SALTS_PLUGIN_STALE);
+                    CMETA_PLUGIN_STALE);
         check_equal(memcmp(&lease, &saved, sizeof(lease)), 0);
         check_equal(lifecycle_info(&registry, ref, &info),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(info.active_leases, (size_t)1u);
 
         check_equal(cmeta_plugin_registry_release(
                         &registry, &lease),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_false(cmeta_plugin_lease_valid(lease));
         check_equal(lifecycle_info(&registry, ref, &info),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(info.active_leases, (size_t)0u);
 
         check_equal(cmeta_plugin_registry_request_stop(
                         &registry, ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(cmeta_plugin_registry_poll_quiescent(
                         &registry, ref, &quiescent),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_true(quiescent);
         check_equal(cmeta_plugin_registry_unload(&registry, ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         destroy_registry(&registry);
         destroy_registry(&wrong_registry);
     }
@@ -290,7 +290,7 @@ describe("lifecycle failures") {
 
         check_equal(cmeta_plugin_registry_load(
                         &registry, PLUGIN_PARTIAL_LIFECYCLE_PATH, &ref),
-                    SALTS_PLUGIN_INVALID_MANIFEST);
+                    CMETA_PLUGIN_INVALID_MANIFEST);
         check_false(cmeta_plugin_ref_valid(ref));
         check_equal(cmeta_plugin_registry_count(&registry), (size_t)0u);
 
@@ -304,18 +304,18 @@ describe("lifecycle failures") {
 
         check_equal(cmeta_plugin_registry_load(
                         &registry, PLUGIN_START_FAIL_PATH, &ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(cmeta_plugin_registry_start(&registry, ref),
-                    SALTS_PLUGIN_BUSY);
+                    CMETA_PLUGIN_BUSY);
         check_equal(lifecycle_info(&registry, ref, &info),
-                    SALTS_PLUGIN_OK);
-        check_equal(info.state, SALTS_PLUGIN_LIFECYCLE_QUIESCENT);
-        check_equal(info.failure, SALTS_PLUGIN_BUSY);
+                    CMETA_PLUGIN_OK);
+        check_equal(info.state, CMETA_PLUGIN_LIFECYCLE_QUIESCENT);
+        check_equal(info.failure, CMETA_PLUGIN_BUSY);
         check_equal(info.active_leases, (size_t)0u);
         check_equal(info.callbacks_inflight, (size_t)0u);
 
         check_equal(cmeta_plugin_registry_unload(&registry, ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         destroy_registry(&registry);
     }
 
@@ -327,28 +327,28 @@ describe("lifecycle failures") {
 
         check_equal(cmeta_plugin_registry_load(
                         &registry, PLUGIN_STOP_FAIL_PATH, &ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(cmeta_plugin_registry_start(&registry, ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(cmeta_plugin_registry_request_stop(
                         &registry, ref),
-                    SALTS_PLUGIN_BUSY);
+                    CMETA_PLUGIN_BUSY);
         check_equal(lifecycle_info(&registry, ref, &info),
-                    SALTS_PLUGIN_OK);
-        check_equal(info.state, SALTS_PLUGIN_LIFECYCLE_STOPPING);
-        check_equal(info.failure, SALTS_PLUGIN_BUSY);
+                    CMETA_PLUGIN_OK);
+        check_equal(info.state, CMETA_PLUGIN_LIFECYCLE_STOPPING);
+        check_equal(info.failure, CMETA_PLUGIN_BUSY);
 
         check_equal(cmeta_plugin_registry_poll_quiescent(
                         &registry, ref, &quiescent),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_true(quiescent);
         check_equal(lifecycle_info(&registry, ref, &info),
-                    SALTS_PLUGIN_OK);
-        check_equal(info.state, SALTS_PLUGIN_LIFECYCLE_QUIESCENT);
-        check_equal(info.failure, SALTS_PLUGIN_BUSY);
+                    CMETA_PLUGIN_OK);
+        check_equal(info.state, CMETA_PLUGIN_LIFECYCLE_QUIESCENT);
+        check_equal(info.failure, CMETA_PLUGIN_BUSY);
 
         check_equal(cmeta_plugin_registry_unload(&registry, ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         destroy_registry(&registry);
     }
 }
@@ -369,10 +369,10 @@ describe("concurrent stop boundaries") {
 
         check_equal(cmeta_plugin_registry_load(
                         &registry, PLUGIN_SLOW_STOP_PATH, &ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         worker.ref = ref;
         check_equal(cmeta_plugin_registry_start(&registry, ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
 
         atomic_init(&worker.status, -1);
         check_equal(cmeta_thread_create(
@@ -381,7 +381,7 @@ describe("concurrent stop boundaries") {
 
         for (attempt = 0u; attempt < 1000u; ++attempt) {
             check_equal(lifecycle_info(&registry, ref, &info),
-                        SALTS_PLUGIN_OK);
+                        CMETA_PLUGIN_OK);
             if (info.callbacks_inflight != 0u) {
                 observed_inflight = true;
                 break;
@@ -389,20 +389,20 @@ describe("concurrent stop boundaries") {
             cmeta_sleep_ms(1u);
         }
         check_true(observed_inflight);
-        check_equal(info.state, SALTS_PLUGIN_LIFECYCLE_STOPPING);
+        check_equal(info.state, CMETA_PLUGIN_LIFECYCLE_STOPPING);
         check_equal(cmeta_plugin_registry_unload(&registry, ref),
-                    SALTS_PLUGIN_BUSY);
+                    CMETA_PLUGIN_BUSY);
 
         check_equal(cmeta_thread_join(&thread), 0);
         cmeta_thread_destroy(&thread);
-        check_equal(atomic_load(&worker.status), (int)SALTS_PLUGIN_OK);
+        check_equal(atomic_load(&worker.status), (int)CMETA_PLUGIN_OK);
 
         check_equal(cmeta_plugin_registry_poll_quiescent(
                         &registry, ref, &quiescent),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_true(quiescent);
         check_equal(cmeta_plugin_registry_unload(&registry, ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         destroy_registry(&registry);
     }
 
@@ -419,10 +419,10 @@ describe("concurrent stop boundaries") {
 
         check_equal(cmeta_plugin_registry_load(
                         &registry, PLUGIN_LIFECYCLE_PATH, &ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         worker.ref = ref;
         check_equal(cmeta_plugin_registry_start(&registry, ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
 
         atomic_init(&worker.successful, 0u);
         atomic_init(&worker.unexpected, 0);
@@ -439,7 +439,7 @@ describe("concurrent stop boundaries") {
 
         check_equal(cmeta_plugin_registry_request_stop(
                         &registry, ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(cmeta_thread_join(&thread), 0);
         cmeta_thread_destroy(&thread);
         check_equal(atomic_load(&worker.unexpected), 0);
@@ -447,14 +447,14 @@ describe("concurrent stop boundaries") {
         for (attempt = 0u; attempt < 1000u; ++attempt) {
             check_equal(cmeta_plugin_registry_poll_quiescent(
                             &registry, ref, &quiescent),
-                        SALTS_PLUGIN_OK);
+                        CMETA_PLUGIN_OK);
             if (quiescent)
                 break;
             cmeta_sleep_ms(1u);
         }
         check_true(quiescent);
         check_equal(cmeta_plugin_registry_unload(&registry, ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
 
         destroy_registry(&registry);
     }

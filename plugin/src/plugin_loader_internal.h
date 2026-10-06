@@ -1,5 +1,5 @@
-#ifndef SALTS_PLUGIN_LOADER_INTERNAL_H
-#define SALTS_PLUGIN_LOADER_INTERNAL_H
+#ifndef CMETA_PLUGIN_LOADER_INTERNAL_H
+#define CMETA_PLUGIN_LOADER_INTERNAL_H
 
 #include <salts/plugin.h>
 
@@ -15,4 +15,4 @@ cmeta_plugin_status cmeta_plugin_platform_open(
 cmeta_plugin_status cmeta_plugin_platform_close(
     cmeta_plugin_library *library);
 
-#endif /* SALTS_PLUGIN_LOADER_INTERNAL_H */
+#endif /* CMETA_PLUGIN_LOADER_INTERNAL_H */

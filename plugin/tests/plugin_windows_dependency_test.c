@@ -13,17 +13,17 @@ spec("Salts Plugin Windows private dependency loading") {
         cmeta_plugin_ref found = {0};
 
         check_equal(cmeta_plugin_registry_init(&registry, &config),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(cmeta_plugin_registry_load(
                         &registry, PLUGIN_PRIVATE_DEPENDENCY_PATH, &ref),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_true(cmeta_plugin_ref_valid(ref));
         check_equal(cmeta_plugin_registry_find(
                         &registry, "test.loader.private_dependency", &found),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
         check_equal(found.slot, ref.slot);
         check_equal(found.generation, ref.generation);
         check_equal(cmeta_plugin_registry_destroy(&registry),
-                    SALTS_PLUGIN_OK);
+                    CMETA_PLUGIN_OK);
     }
 }

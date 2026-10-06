@@ -9,5 +9,5 @@ int plugin_generic_graph_probe(plugin_generic_graph_value value) {
     X(function, plugin_generic_graph_probe, "generic.probe", \
       "test.plugin.generic", 1u, 1u)
 
-SALTS_PLUGIN_DECLARE(plugin_generic_graph, "test.loader.generic_graph", (1u,0u,0u),
-    GENERIC_EXPORTS, SALTS_PLUGIN_PASSIVE());
+CMETA_PLUGIN_DECLARE(plugin_generic_graph, "test.loader.generic_graph", (1u,0u,0u),
+    GENERIC_EXPORTS, CMETA_PLUGIN_PASSIVE());

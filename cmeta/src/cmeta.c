@@ -12,45 +12,43 @@
 
 _Static_assert(CMETA_FLOAT_TRAITS_OBJECT_HASH_WIDTHS,
                "floating trait hashes require eight-bit bytes and matching copy widths");
-_Static_assert(sizeof(float) == 4u,
-               "floating trait hashes require a binary32-sized float");
-_Static_assert(sizeof(double) == 8u,
-               "floating trait hashes require a binary64-sized double");
-_Static_assert(FLT_RADIX == 2,
-               "floating trait hashes require a binary radix");
+_Static_assert(sizeof(float) == 4u, "floating trait hashes require a binary32-sized float");
+_Static_assert(sizeof(double) == 8u, "floating trait hashes require a binary64-sized double");
+_Static_assert(FLT_RADIX == 2, "floating trait hashes require a binary radix");
 _Static_assert(FLT_MANT_DIG == 24 && FLT_MIN_EXP == -125 && FLT_MAX_EXP == 128,
                "floating trait hashes require binary32 precision and exponent range");
 _Static_assert(DBL_MANT_DIG == 53 && DBL_MIN_EXP == -1021 && DBL_MAX_EXP == 1024,
                "floating trait hashes require binary64 precision and exponent range");
 
-#define CMETA_TRIVIAL_TRAIT_FLAGS \
-    (CMETA_TRAIT_EQUAL | CMETA_TRAIT_HASH | CMETA_TRAIT_COMPARE | \
-     CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY | \
-     CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY)
+#define CMETA_TRIVIAL_TRAIT_FLAGS                                                                  \
+  (CMETA_TRAIT_EQUAL | CMETA_TRAIT_HASH | CMETA_TRAIT_COMPARE | CMETA_TRAIT_COPY |                 \
+   CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY | CMETA_TRAIT_TRIVIAL_COPY |                             \
+   CMETA_TRAIT_TRIVIAL_DESTROY)
 
-#define CMETA_DEFINE_TRIVIAL_TRAITS(prefix, type) \
-    static bool prefix##_equal(const void *left, const void *right) { \
-        return left != NULL && right != NULL && \
-               *(const type *)left == *(const type *)right; \
-    } \
-    static uint64_t prefix##_hash(const void *value) { \
-        return value == NULL ? 0u : (uint64_t)*(const type *)value; \
-    } \
-    static int prefix##_compare(const void *left, const void *right) { \
-        type lhs; type rhs; \
-        if (left == NULL || right == NULL) return 0; \
-        lhs = *(const type *)left; rhs = *(const type *)right; \
-        return lhs < rhs ? -1 : lhs > rhs; \
-    } \
-    static bool prefix##_copy_construct(void *destination, const void *source) { \
-        if (destination == NULL || source == NULL) return false; \
-        *(type *)destination = *(const type *)source; return true; \
-    } \
-    static void prefix##_move_construct(void *destination, void *source) { \
-        if (destination != NULL && source != NULL) \
-            *(type *)destination = *(type *)source; \
-    } \
-    static void prefix##_destroy(void *value) { (void)value; }
+#define CMETA_DEFINE_TRIVIAL_TRAITS(prefix, type)                                                  \
+  static bool prefix##_equal(const void *left, const void *right) {                                \
+    return left != NULL && right != NULL && *(const type *)left == *(const type *)right;           \
+  }                                                                                                \
+  static uint64_t prefix##_hash(const void *value) {                                               \
+    return value == NULL ? 0u : (uint64_t)*(const type *)value;                                    \
+  }                                                                                                \
+  static int prefix##_compare(const void *left, const void *right) {                               \
+    type lhs;                                                                                      \
+    type rhs;                                                                                      \
+    if (left == NULL || right == NULL) return 0;                                                   \
+    lhs = *(const type *)left;                                                                     \
+    rhs = *(const type *)right;                                                                    \
+    return lhs < rhs ? -1 : lhs > rhs;                                                             \
+  }                                                                                                \
+  static bool prefix##_copy_construct(void *destination, const void *source) {                     \
+    if (destination == NULL || source == NULL) return false;                                       \
+    *(type *)destination = *(const type *)source;                                                  \
+    return true;                                                                                   \
+  }                                                                                                \
+  static void prefix##_move_construct(void *destination, void *source) {                           \
+    if (destination != NULL && source != NULL) *(type *)destination = *(type *)source;             \
+  }                                                                                                \
+  static void prefix##_destroy(void *value) { (void)value; }
 
 CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_bool, _Bool)
 CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_int, int)
@@ -64,23 +62,21 @@ CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_uint32, uint32_t)
 CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_int64, int64_t)
 CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_uint64, uint64_t)
 
-const cmeta_type_traits cmeta_traits_bool = { CMETA_TRIVIAL_TRAIT_FLAGS,
-    cmeta_bool_equal, cmeta_bool_hash, cmeta_bool_compare,
-    cmeta_bool_copy_construct, cmeta_bool_move_construct, cmeta_bool_destroy };
-const cmeta_type_traits cmeta_traits_int = { CMETA_TRIVIAL_TRAIT_FLAGS,
-    cmeta_int_equal, cmeta_int_hash, cmeta_int_compare,
-    cmeta_int_copy_construct, cmeta_int_move_construct, cmeta_int_destroy };
-const cmeta_type_traits cmeta_traits_long = { CMETA_TRIVIAL_TRAIT_FLAGS,
-    cmeta_long_equal, cmeta_long_hash, cmeta_long_compare,
-    cmeta_long_copy_construct, cmeta_long_move_construct, cmeta_long_destroy };
+const cmeta_type_traits cmeta_traits_bool = {
+    CMETA_TRIVIAL_TRAIT_FLAGS, cmeta_bool_equal,          cmeta_bool_hash,   cmeta_bool_compare,
+    cmeta_bool_copy_construct, cmeta_bool_move_construct, cmeta_bool_destroy};
+const cmeta_type_traits cmeta_traits_int = {
+    CMETA_TRIVIAL_TRAIT_FLAGS, cmeta_int_equal,          cmeta_int_hash,   cmeta_int_compare,
+    cmeta_int_copy_construct,  cmeta_int_move_construct, cmeta_int_destroy};
+const cmeta_type_traits cmeta_traits_long = {
+    CMETA_TRIVIAL_TRAIT_FLAGS, cmeta_long_equal,          cmeta_long_hash,   cmeta_long_compare,
+    cmeta_long_copy_construct, cmeta_long_move_construct, cmeta_long_destroy};
 
-#define CMETA_EXACT_INTEGER_TRAITS(name_) \
-    static const cmeta_type_traits cmeta_traits_##name_ = { \
-        CMETA_TRIVIAL_TRAIT_FLAGS, \
-        cmeta_##name_##_equal, cmeta_##name_##_hash, cmeta_##name_##_compare, \
-        cmeta_##name_##_copy_construct, cmeta_##name_##_move_construct, \
-        cmeta_##name_##_destroy \
-    }
+#define CMETA_EXACT_INTEGER_TRAITS(name_)                                                          \
+  static const cmeta_type_traits cmeta_traits_##name_ = {                                          \
+      CMETA_TRIVIAL_TRAIT_FLAGS, cmeta_##name_##_equal,          cmeta_##name_##_hash,             \
+      cmeta_##name_##_compare,   cmeta_##name_##_copy_construct, cmeta_##name_##_move_construct,   \
+      cmeta_##name_##_destroy}
 CMETA_EXACT_INTEGER_TRAITS(int8);
 CMETA_EXACT_INTEGER_TRAITS(uint8);
 CMETA_EXACT_INTEGER_TRAITS(int16);
@@ -91,100 +87,86 @@ CMETA_EXACT_INTEGER_TRAITS(int64);
 CMETA_EXACT_INTEGER_TRAITS(uint64);
 #undef CMETA_EXACT_INTEGER_TRAITS
 
-static const cmeta_type_traits cmeta_traits_size_storage = {
-    .flags = CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY
-};
+static const cmeta_type_traits cmeta_traits_size_storage = {.flags = CMETA_TRAIT_TRIVIAL_COPY |
+                                                                     CMETA_TRAIT_TRIVIAL_DESTROY};
 
-#define CMETA_DEFINE_FLOAT_TRAITS(prefix, type, bits_type, zero, nan_hash) \
-    static bool prefix##_equal(const void *left, const void *right) { \
-        type lhs; type rhs; \
-        if (left == NULL || right == NULL) return false; \
-        lhs = *(const type *)left; rhs = *(const type *)right; \
-        return (isnan(lhs) && isnan(rhs)) || lhs == rhs; \
-    } \
-    static uint64_t prefix##_hash(const void *value) { \
-        type number; bits_type bits; \
-        if (value == NULL) return 0u; \
-        number = *(const type *)value; \
-        if (isnan(number)) return (nan_hash); \
-        if (number == (zero)) return 0u; \
-        memcpy(&bits, &number, sizeof(bits)); return (uint64_t)bits; \
-    } \
-    static int prefix##_compare(const void *left, const void *right) { \
-        type lhs; type rhs; \
-        if (left == NULL || right == NULL) return 0; \
-        lhs = *(const type *)left; rhs = *(const type *)right; \
-        if (isnan(lhs)) return isnan(rhs) ? 0 : 1; \
-        if (isnan(rhs)) return -1; \
-        return lhs < rhs ? -1 : lhs > rhs; \
-    } \
-    static bool prefix##_copy_construct(void *destination, const void *source) { \
-        if (destination == NULL || source == NULL) return false; \
-        *(type *)destination = *(const type *)source; return true; \
-    } \
-    static void prefix##_move_construct(void *destination, void *source) { \
-        if (destination != NULL && source != NULL) \
-            *(type *)destination = *(type *)source; \
-    } \
-    static void prefix##_destroy(void *value) { (void)value; }
+#define CMETA_DEFINE_FLOAT_TRAITS(prefix, type, bits_type, zero, nan_hash)                         \
+  static bool prefix##_equal(const void *left, const void *right) {                                \
+    type lhs;                                                                                      \
+    type rhs;                                                                                      \
+    if (left == NULL || right == NULL) return false;                                               \
+    lhs = *(const type *)left;                                                                     \
+    rhs = *(const type *)right;                                                                    \
+    return (isnan(lhs) && isnan(rhs)) || lhs == rhs;                                               \
+  }                                                                                                \
+  static uint64_t prefix##_hash(const void *value) {                                               \
+    type number;                                                                                   \
+    bits_type bits;                                                                                \
+    if (value == NULL) return 0u;                                                                  \
+    number = *(const type *)value;                                                                 \
+    if (isnan(number)) return (nan_hash);                                                          \
+    if (number == (zero)) return 0u;                                                               \
+    memcpy(&bits, &number, sizeof(bits));                                                          \
+    return (uint64_t)bits;                                                                         \
+  }                                                                                                \
+  static int prefix##_compare(const void *left, const void *right) {                               \
+    type lhs;                                                                                      \
+    type rhs;                                                                                      \
+    if (left == NULL || right == NULL) return 0;                                                   \
+    lhs = *(const type *)left;                                                                     \
+    rhs = *(const type *)right;                                                                    \
+    if (isnan(lhs)) return isnan(rhs) ? 0 : 1;                                                     \
+    if (isnan(rhs)) return -1;                                                                     \
+    return lhs < rhs ? -1 : lhs > rhs;                                                             \
+  }                                                                                                \
+  static bool prefix##_copy_construct(void *destination, const void *source) {                     \
+    if (destination == NULL || source == NULL) return false;                                       \
+    *(type *)destination = *(const type *)source;                                                  \
+    return true;                                                                                   \
+  }                                                                                                \
+  static void prefix##_move_construct(void *destination, void *source) {                           \
+    if (destination != NULL && source != NULL) *(type *)destination = *(type *)source;             \
+  }                                                                                                \
+  static void prefix##_destroy(void *value) { (void)value; }
 
-CMETA_DEFINE_FLOAT_TRAITS(cmeta_float, float, uint32_t, 0.0f,
-                          UINT64_C(0x7fc00000))
-CMETA_DEFINE_FLOAT_TRAITS(cmeta_double, double, uint64_t, 0.0,
-                          UINT64_C(0x7ff8000000000000))
+CMETA_DEFINE_FLOAT_TRAITS(cmeta_float, float, uint32_t, 0.0f, UINT64_C(0x7fc00000))
+CMETA_DEFINE_FLOAT_TRAITS(cmeta_double, double, uint64_t, 0.0, UINT64_C(0x7ff8000000000000))
 
-const cmeta_type_traits cmeta_traits_float = { CMETA_TRIVIAL_TRAIT_FLAGS,
-    cmeta_float_equal, cmeta_float_hash, cmeta_float_compare,
-    cmeta_float_copy_construct, cmeta_float_move_construct, cmeta_float_destroy };
-const cmeta_type_traits cmeta_traits_double = { CMETA_TRIVIAL_TRAIT_FLAGS,
-    cmeta_double_equal, cmeta_double_hash, cmeta_double_compare,
-    cmeta_double_copy_construct, cmeta_double_move_construct, cmeta_double_destroy };
+const cmeta_type_traits cmeta_traits_float = {
+    CMETA_TRIVIAL_TRAIT_FLAGS,  cmeta_float_equal,          cmeta_float_hash,   cmeta_float_compare,
+    cmeta_float_copy_construct, cmeta_float_move_construct, cmeta_float_destroy};
+const cmeta_type_traits cmeta_traits_double = {
+    CMETA_TRIVIAL_TRAIT_FLAGS, cmeta_double_equal,          cmeta_double_hash,
+    cmeta_double_compare,      cmeta_double_copy_construct, cmeta_double_move_construct,
+    cmeta_double_destroy};
 
 #undef CMETA_DEFINE_FLOAT_TRAITS
 #undef CMETA_DEFINE_TRIVIAL_TRAITS
 #undef CMETA_TRIVIAL_TRAIT_FLAGS
 
-static const cmeta_type_identity cmeta_id_void =
-    CMETA_TYPE_ID_ATOM_INIT("cmeta.void");
-static const cmeta_type_identity cmeta_id_char =
-    CMETA_TYPE_ID_ATOM_INIT("cmeta.char");
-static const cmeta_type_identity cmeta_id_descriptor =
-    CMETA_TYPE_ID_ATOM_INIT("cmeta.type_desc");
-static const cmeta_type_identity cmeta_id_bool =
-    CMETA_TYPE_ID_ATOM_INIT("cmeta.bool");
-static const cmeta_type_identity cmeta_id_int =
-    CMETA_TYPE_ID_ATOM_INIT("cmeta.int");
-static const cmeta_type_identity cmeta_id_long =
-    CMETA_TYPE_ID_ATOM_INIT("cmeta.long");
-static const cmeta_type_identity cmeta_id_float =
-    CMETA_TYPE_ID_ATOM_INIT("cmeta.float");
-static const cmeta_type_identity cmeta_id_double =
-    CMETA_TYPE_ID_ATOM_INIT("cmeta.double");
-static const cmeta_type_identity cmeta_id_size =
-    CMETA_TYPE_ID_ATOM_INIT("cmeta.size");
-static const cmeta_type_identity cmeta_id_gen_status =
-    CMETA_TYPE_ID_ATOM_INIT("cmeta.gen_status");
+static const cmeta_type_identity cmeta_id_void = CMETA_TYPE_ID_ATOM_INIT("cmeta.void");
+static const cmeta_type_identity cmeta_id_char = CMETA_TYPE_ID_ATOM_INIT("cmeta.char");
+static const cmeta_type_identity cmeta_id_descriptor = CMETA_TYPE_ID_ATOM_INIT("cmeta.type_desc");
+static const cmeta_type_identity cmeta_id_bool = CMETA_TYPE_ID_ATOM_INIT("cmeta.bool");
+static const cmeta_type_identity cmeta_id_int = CMETA_TYPE_ID_ATOM_INIT("cmeta.int");
+static const cmeta_type_identity cmeta_id_long = CMETA_TYPE_ID_ATOM_INIT("cmeta.long");
+static const cmeta_type_identity cmeta_id_float = CMETA_TYPE_ID_ATOM_INIT("cmeta.float");
+static const cmeta_type_identity cmeta_id_double = CMETA_TYPE_ID_ATOM_INIT("cmeta.double");
+static const cmeta_type_identity cmeta_id_size = CMETA_TYPE_ID_ATOM_INIT("cmeta.size");
+static const cmeta_type_identity cmeta_id_gen_status = CMETA_TYPE_ID_ATOM_INIT("cmeta.gen_status");
 
-static const cmeta_type_identity cmeta_id_void_ptr =
-    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_void);
-static const cmeta_type_identity cmeta_id_char_ptr =
-    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_char);
+static const cmeta_type_identity cmeta_id_void_ptr = CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_void);
+static const cmeta_type_identity cmeta_id_char_ptr = CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_char);
 static const cmeta_type_identity cmeta_id_char_ptr_ptr =
     CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_char_ptr);
 static const cmeta_type_identity cmeta_id_descriptor_ptr =
     CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_descriptor);
-static const cmeta_type_identity cmeta_id_bool_ptr =
-    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_bool);
-static const cmeta_type_identity cmeta_id_int_ptr =
-    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_int);
-static const cmeta_type_identity cmeta_id_long_ptr =
-    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_long);
-static const cmeta_type_identity cmeta_id_float_ptr =
-    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_float);
-static const cmeta_type_identity cmeta_id_double_ptr =
-    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_double);
-static const cmeta_type_identity cmeta_id_size_ptr =
-    CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_size);
+static const cmeta_type_identity cmeta_id_bool_ptr = CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_bool);
+static const cmeta_type_identity cmeta_id_int_ptr = CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_int);
+static const cmeta_type_identity cmeta_id_long_ptr = CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_long);
+static const cmeta_type_identity cmeta_id_float_ptr = CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_float);
+static const cmeta_type_identity cmeta_id_double_ptr = CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_double);
+static const cmeta_type_identity cmeta_id_size_ptr = CMETA_TYPE_ID_POINTER_INIT(&cmeta_id_size);
 
 #define CMETA_BUILTIN_ID_MARK_B CMETA_GENERIC_PROBE()
 #define CMETA_BUILTIN_ID_MARK_I CMETA_GENERIC_PROBE()
@@ -200,11 +182,9 @@ static const cmeta_type_identity cmeta_id_size_ptr =
 #define CMETA_BUILTIN_ATOM_D (&cmeta_id_double)
 #define CMETA_BUILTIN_ATOM_SELECT_1(tok) CMETA_PP_CAT(CMETA_BUILTIN_ATOM_, tok)
 #define CMETA_BUILTIN_ATOM_SELECT_0(tok) NULL
-#define CMETA_BUILTIN_ATOM_SELECT_I(flag, tok) \
-    CMETA_PP_CAT(CMETA_BUILTIN_ATOM_SELECT_, flag)(tok)
-#define CMETA_BUILTIN_ATOM_ID(tok) \
-    CMETA_BUILTIN_ATOM_SELECT_I( \
-        CMETA_GENERIC_IS_PROBE(CMETA_BUILTIN_ID_MARK(tok)), tok)
+#define CMETA_BUILTIN_ATOM_SELECT_I(flag, tok) CMETA_PP_CAT(CMETA_BUILTIN_ATOM_SELECT_, flag)(tok)
+#define CMETA_BUILTIN_ATOM_ID(tok)                                                                 \
+  CMETA_BUILTIN_ATOM_SELECT_I(CMETA_GENERIC_IS_PROBE(CMETA_BUILTIN_ID_MARK(tok)), tok)
 
 #define CMETA_BUILTIN_PTR_B (&cmeta_id_bool_ptr)
 #define CMETA_BUILTIN_PTR_I (&cmeta_id_int_ptr)
@@ -213,11 +193,9 @@ static const cmeta_type_identity cmeta_id_size_ptr =
 #define CMETA_BUILTIN_PTR_D (&cmeta_id_double_ptr)
 #define CMETA_BUILTIN_PTR_SELECT_1(tok) CMETA_PP_CAT(CMETA_BUILTIN_PTR_, tok)
 #define CMETA_BUILTIN_PTR_SELECT_0(tok) NULL
-#define CMETA_BUILTIN_PTR_SELECT_I(flag, tok) \
-    CMETA_PP_CAT(CMETA_BUILTIN_PTR_SELECT_, flag)(tok)
-#define CMETA_BUILTIN_PTR_ID(tok) \
-    CMETA_BUILTIN_PTR_SELECT_I( \
-        CMETA_GENERIC_IS_PROBE(CMETA_BUILTIN_ID_MARK(tok)), tok)
+#define CMETA_BUILTIN_PTR_SELECT_I(flag, tok) CMETA_PP_CAT(CMETA_BUILTIN_PTR_SELECT_, flag)(tok)
+#define CMETA_BUILTIN_PTR_ID(tok)                                                                  \
+  CMETA_BUILTIN_PTR_SELECT_I(CMETA_GENERIC_IS_PROBE(CMETA_BUILTIN_ID_MARK(tok)), tok)
 
 static const cmeta_type_identity cmeta_id_int8 = CMETA_TYPE_ID_ATOM_INIT("cmeta.int8");
 static const cmeta_type_identity cmeta_id_uint8 = CMETA_TYPE_ID_ATOM_INIT("cmeta.uint8");
@@ -228,12 +206,14 @@ static const cmeta_type_identity cmeta_id_uint32 = CMETA_TYPE_ID_ATOM_INIT("cmet
 static const cmeta_type_identity cmeta_id_int64 = CMETA_TYPE_ID_ATOM_INIT("cmeta.int64");
 static const cmeta_type_identity cmeta_id_uint64 = CMETA_TYPE_ID_ATOM_INIT("cmeta.uint64");
 
-#define CMETA_EXACT_INTEGER_TYPE(name_, ctype_, identity_, traits_) \
-const cmeta_type_desc name_ = { \
-    .name = #ctype_, .size = sizeof(ctype_), .align = _Alignof(ctype_), \
-    .kind = CMETA_T_INTEGER, .pointee = NULL, .traits = &(traits_), \
-    .identity = &(identity_) \
-}
+#define CMETA_EXACT_INTEGER_TYPE(name_, ctype_, identity_, traits_)                                \
+  const cmeta_type_desc name_ = {.name = #ctype_,                                                  \
+                                 .size = sizeof(ctype_),                                           \
+                                 .align = _Alignof(ctype_),                                        \
+                                 .kind = CMETA_T_INTEGER,                                          \
+                                 .pointee = NULL,                                                  \
+                                 .traits = &(traits_),                                             \
+                                 .identity = &(identity_)}
 CMETA_EXACT_INTEGER_TYPE(cmeta_type_int8, int8_t, cmeta_id_int8, cmeta_traits_int8);
 CMETA_EXACT_INTEGER_TYPE(cmeta_type_uint8, uint8_t, cmeta_id_uint8, cmeta_traits_uint8);
 CMETA_EXACT_INTEGER_TYPE(cmeta_type_int16, int16_t, cmeta_id_int16, cmeta_traits_int16);
@@ -244,123 +224,131 @@ CMETA_EXACT_INTEGER_TYPE(cmeta_type_int64, int64_t, cmeta_id_int64, cmeta_traits
 CMETA_EXACT_INTEGER_TYPE(cmeta_type_uint64, uint64_t, cmeta_id_uint64, cmeta_traits_uint64);
 #undef CMETA_EXACT_INTEGER_TYPE
 
-const cmeta_type_desc cmeta_type_char = {
-    .name = "char", .size = sizeof(char), .align = _Alignof(char),
-    .kind = CMETA_T_INTEGER, .pointee = NULL, .traits = NULL,
-    .identity = &cmeta_id_char
-};
-const cmeta_type_desc cmeta_type_char_ptr = {
-    .name = "char *", .size = sizeof(char *), .align = _Alignof(char *),
-    .kind = CMETA_T_POINTER, .pointee = &cmeta_type_char,
-    .traits = NULL, .identity = &cmeta_id_char_ptr
-};
-const cmeta_type_desc cmeta_type_char_ptr_ptr = {
-    .name = "char **", .size = sizeof(char **), .align = _Alignof(char **),
-    .kind = CMETA_T_POINTER, .pointee = &cmeta_type_char_ptr,
-    .traits = NULL, .identity = &cmeta_id_char_ptr_ptr
-};
-const cmeta_type_desc cmeta_type_void = {
-    .name = "void", .size = 0, .align = 1, .kind = CMETA_T_VOID,
-    .pointee = NULL, .traits = NULL, .identity = &cmeta_id_void
-};
-const cmeta_type_desc cmeta_type_void_ptr = {
-    .name = "void *", .size = sizeof(void *), .align = _Alignof(void *),
-    .kind = CMETA_T_POINTER, .pointee = &cmeta_type_void,
-    .traits = NULL, .identity = &cmeta_id_void_ptr
-};
-const cmeta_type_desc cmeta_type_descriptor = {
-    .name = "cmeta_type_desc", .size = sizeof(cmeta_type_desc),
-    .align = _Alignof(cmeta_type_desc), .kind = CMETA_T_OBJECT,
-    .pointee = NULL, .traits = NULL, .identity = &cmeta_id_descriptor
-};
-const cmeta_type_desc cmeta_type_descriptor_ptr = {
-    .name = "cmeta_type_desc *", .size = sizeof(cmeta_type_desc *),
-    .align = _Alignof(cmeta_type_desc *), .kind = CMETA_T_POINTER,
-    .pointee = &cmeta_type_descriptor,
-    .traits = NULL, .identity = &cmeta_id_descriptor_ptr
-};
-const cmeta_type_desc cmeta_type_size = {
-    .name = "size_t", .size = sizeof(size_t), .align = _Alignof(size_t),
-    .kind = CMETA_T_INTEGER, .pointee = NULL,
-    .traits = &cmeta_traits_size_storage, .identity = &cmeta_id_size
-};
-const cmeta_type_desc cmeta_type_size_ptr = {
-    .name = "size_t *", .size = sizeof(size_t *), .align = _Alignof(size_t *),
-    .kind = CMETA_T_POINTER, .pointee = &cmeta_type_size,
-    .traits = NULL, .identity = &cmeta_id_size_ptr
-};
-const cmeta_type_desc cmeta_type_gen_status = {
-    .name = "cmeta_gen_status", .size = sizeof(cmeta_gen_status),
-    .align = _Alignof(cmeta_gen_status), .kind = CMETA_T_INTEGER,
-    .pointee = NULL, .traits = NULL, .identity = &cmeta_id_gen_status
-};
+const cmeta_type_desc cmeta_type_char = {.name = "char",
+                                         .size = sizeof(char),
+                                         .align = _Alignof(char),
+                                         .kind = CMETA_T_INTEGER,
+                                         .pointee = NULL,
+                                         .traits = NULL,
+                                         .identity = &cmeta_id_char};
+const cmeta_type_desc cmeta_type_char_ptr = {.name = "char *",
+                                             .size = sizeof(char *),
+                                             .align = _Alignof(char *),
+                                             .kind = CMETA_T_POINTER,
+                                             .pointee = &cmeta_type_char,
+                                             .traits = NULL,
+                                             .identity = &cmeta_id_char_ptr};
+const cmeta_type_desc cmeta_type_char_ptr_ptr = {.name = "char **",
+                                                 .size = sizeof(char **),
+                                                 .align = _Alignof(char **),
+                                                 .kind = CMETA_T_POINTER,
+                                                 .pointee = &cmeta_type_char_ptr,
+                                                 .traits = NULL,
+                                                 .identity = &cmeta_id_char_ptr_ptr};
+const cmeta_type_desc cmeta_type_void = {.name = "void",
+                                         .size = 0,
+                                         .align = 1,
+                                         .kind = CMETA_T_VOID,
+                                         .pointee = NULL,
+                                         .traits = NULL,
+                                         .identity = &cmeta_id_void};
+const cmeta_type_desc cmeta_type_void_ptr = {.name = "void *",
+                                             .size = sizeof(void *),
+                                             .align = _Alignof(void *),
+                                             .kind = CMETA_T_POINTER,
+                                             .pointee = &cmeta_type_void,
+                                             .traits = NULL,
+                                             .identity = &cmeta_id_void_ptr};
+const cmeta_type_desc cmeta_type_descriptor = {.name = "cmeta_type_desc",
+                                               .size = sizeof(cmeta_type_desc),
+                                               .align = _Alignof(cmeta_type_desc),
+                                               .kind = CMETA_T_OBJECT,
+                                               .pointee = NULL,
+                                               .traits = NULL,
+                                               .identity = &cmeta_id_descriptor};
+const cmeta_type_desc cmeta_type_descriptor_ptr = {.name = "cmeta_type_desc *",
+                                                   .size = sizeof(cmeta_type_desc *),
+                                                   .align = _Alignof(cmeta_type_desc *),
+                                                   .kind = CMETA_T_POINTER,
+                                                   .pointee = &cmeta_type_descriptor,
+                                                   .traits = NULL,
+                                                   .identity = &cmeta_id_descriptor_ptr};
+const cmeta_type_desc cmeta_type_size = {.name = "size_t",
+                                         .size = sizeof(size_t),
+                                         .align = _Alignof(size_t),
+                                         .kind = CMETA_T_INTEGER,
+                                         .pointee = NULL,
+                                         .traits = &cmeta_traits_size_storage,
+                                         .identity = &cmeta_id_size};
+const cmeta_type_desc cmeta_type_size_ptr = {.name = "size_t *",
+                                             .size = sizeof(size_t *),
+                                             .align = _Alignof(size_t *),
+                                             .kind = CMETA_T_POINTER,
+                                             .pointee = &cmeta_type_size,
+                                             .traits = NULL,
+                                             .identity = &cmeta_id_size_ptr};
+const cmeta_type_desc cmeta_type_gen_status = {.name = "cmeta_gen_status",
+                                               .size = sizeof(cmeta_gen_status),
+                                               .align = _Alignof(cmeta_gen_status),
+                                               .kind = CMETA_T_INTEGER,
+                                               .pointee = NULL,
+                                               .traits = NULL,
+                                               .identity = &cmeta_id_gen_status};
 
-#define CMETA_DEFINE_TYPE(row, ignored) \
-    const cmeta_type_desc CMETA_TYPE_DESC(row) = { \
-        .name = CMETA_STR(CMETA_TYPE_CTYPE(row)), \
-        .size = sizeof(CMETA_TYPE_CTYPE(row)), \
-        .align = _Alignof(CMETA_TYPE_CTYPE(row)), \
-        .kind = CMETA_TYPE_KIND(row), \
-        .pointee = NULL, \
-        .traits = &CMETA_TYPE_TRAITS(row), \
-        .identity = CMETA_BUILTIN_ATOM_ID(CMETA_TYPE_TOKEN(row)) \
-    }; \
-    const cmeta_type_desc CMETA_DESC_PTR(row) = { \
-        .name = CMETA_STR(CMETA_TYPE_CTYPE(row)) " *", \
-        .size = sizeof(CMETA_TYPE_CTYPE(row) *), \
-        .align = _Alignof(CMETA_TYPE_CTYPE(row) *), \
-        .kind = CMETA_T_POINTER, \
-        .pointee = &CMETA_TYPE_DESC(row), \
-        .traits = NULL, \
-        .identity = CMETA_BUILTIN_PTR_ID(CMETA_TYPE_TOKEN(row)) \
-    };
+#define CMETA_DEFINE_TYPE(row, ignored)                                                            \
+  const cmeta_type_desc CMETA_TYPE_DESC(row) = {.name = CMETA_STR(CMETA_TYPE_CTYPE(row)),          \
+                                                .size = sizeof(CMETA_TYPE_CTYPE(row)),             \
+                                                .align = _Alignof(CMETA_TYPE_CTYPE(row)),          \
+                                                .kind = CMETA_TYPE_KIND(row),                      \
+                                                .pointee = NULL,                                   \
+                                                .traits = &CMETA_TYPE_TRAITS(row),                 \
+                                                .identity =                                        \
+                                                    CMETA_BUILTIN_ATOM_ID(CMETA_TYPE_TOKEN(row))}; \
+  const cmeta_type_desc CMETA_DESC_PTR(row) = {.name = CMETA_STR(CMETA_TYPE_CTYPE(row)) " *",      \
+                                               .size = sizeof(CMETA_TYPE_CTYPE(row) *),            \
+                                               .align = _Alignof(CMETA_TYPE_CTYPE(row) *),         \
+                                               .kind = CMETA_T_POINTER,                            \
+                                               .pointee = &CMETA_TYPE_DESC(row),                   \
+                                               .traits = NULL,                                     \
+                                               .identity =                                         \
+                                                   CMETA_BUILTIN_PTR_ID(CMETA_TYPE_TOKEN(row))};
 CMETA_PP_FOR_EACH_A(CMETA_DEFINE_TYPE, ~, CMETA_KNOWN_TYPE_LIST)
 #undef CMETA_DEFINE_TYPE
 
 const cmeta_type_identity *cmeta_type_identity_of(const cmeta_type_desc *desc) {
-    return desc ? desc->identity : NULL;
+  return desc ? desc->identity : NULL;
 }
 
 bool cmeta_type_desc_valid(const cmeta_type_desc *desc) {
-    if (!desc || !desc->name || desc->name[0] == '\0' || desc->align == 0u)
-        return false;
-    if (!desc->identity)
-        return desc->kind != CMETA_T_POINTER || desc->pointee != NULL;
-    if (!cmeta_type_identity_valid(desc->identity))
-        return false;
-    if (desc->kind == CMETA_T_POINTER) {
-        if (!desc->pointee || !desc->pointee->identity)
-            return false;
-        if (desc->identity->form != CMETA_TYPE_POINTER)
-            return false;
-        return cmeta_type_identity_equal(desc->identity->base,
-                                         desc->pointee->identity);
-    }
-    return desc->identity->form != CMETA_TYPE_POINTER;
+  if (!desc || !desc->name || desc->name[0] == '\0' || desc->align == 0u) return false;
+  if (!desc->identity) return desc->kind != CMETA_T_POINTER || desc->pointee != NULL;
+  if (!cmeta_type_identity_valid(desc->identity)) return false;
+  if (desc->kind == CMETA_T_POINTER) {
+    if (!desc->pointee || !desc->pointee->identity) return false;
+    if (desc->identity->form != CMETA_TYPE_POINTER) return false;
+    return cmeta_type_identity_equal(desc->identity->base, desc->pointee->identity);
+  }
+  return desc->identity->form != CMETA_TYPE_POINTER;
 }
 
 bool cmeta_type_equal(const cmeta_type_desc *a, const cmeta_type_desc *b) {
-    if (a == b) return a != NULL && cmeta_type_desc_valid(a);
-    if (!a || !b || !cmeta_type_desc_valid(a) || !cmeta_type_desc_valid(b))
-        return false;
-    if (a->identity || b->identity) {
-        if (!a->identity || !b->identity)
-            return false;
-        return cmeta_type_identity_equal(a->identity, b->identity);
-    }
-    if (a->kind != b->kind || a->size != b->size || a->align != b->align)
-        return false;
-    if (strcmp(a->name, b->name) != 0) return false;
-    if (a->kind == CMETA_T_POINTER)
-        return cmeta_type_equal(a->pointee, b->pointee);
-    return true;
+  if (a == b) return a != NULL && cmeta_type_desc_valid(a);
+  if (!a || !b || !cmeta_type_desc_valid(a) || !cmeta_type_desc_valid(b)) return false;
+  if (a->identity || b->identity) {
+    if (!a->identity || !b->identity) return false;
+    return cmeta_type_identity_equal(a->identity, b->identity);
+  }
+  if (a->kind != b->kind || a->size != b->size || a->align != b->align) return false;
+  if (strcmp(a->name, b->name) != 0) return false;
+  if (a->kind == CMETA_T_POINTER) return cmeta_type_equal(a->pointee, b->pointee);
+  return true;
 }
 
 static const cmeta_type_desc *const cmeta_builtin_type_catalog[] = {
 #define CMETA_TYPE_REG_ITEM(row, ignored) &CMETA_TYPE_DESC(row),
     CMETA_PP_FOR_EACH_A(CMETA_TYPE_REG_ITEM, ~, CMETA_KNOWN_TYPE_LIST)
 #undef CMETA_TYPE_REG_ITEM
-    &cmeta_type_i8x16,
+        & cmeta_type_i8x16,
     &cmeta_type_u8x16,
     &cmeta_type_i16x8,
     &cmeta_type_u16x8,
@@ -373,47 +361,52 @@ static const cmeta_type_desc *const cmeta_builtin_type_catalog[] = {
     &cmeta_type_b8x16,
     &cmeta_type_b16x8,
     &cmeta_type_b32x4,
-    &cmeta_type_b64x2
-};
+    &cmeta_type_b64x2};
 
 size_t cmeta_builtin_type_count(void) {
-    return sizeof(cmeta_builtin_type_catalog) / sizeof(cmeta_builtin_type_catalog[0]);
+  return sizeof(cmeta_builtin_type_catalog) / sizeof(cmeta_builtin_type_catalog[0]);
 }
 
 const cmeta_type_desc *cmeta_builtin_type_at(size_t index) {
-    return index < cmeta_builtin_type_count() ? cmeta_builtin_type_catalog[index] : NULL;
+  return index < cmeta_builtin_type_count() ? cmeta_builtin_type_catalog[index] : NULL;
 }
 
 const cmeta_type_desc *cmeta_builtin_type_find(const char *name) {
-    size_t i;
-    if (!name) return NULL;
-    for (i = 0; i < cmeta_builtin_type_count(); ++i)
-        if (strcmp(cmeta_builtin_type_catalog[i]->name, name) == 0) return cmeta_builtin_type_catalog[i];
-    return NULL;
+  size_t i;
+  if (!name) return NULL;
+  for (i = 0; i < cmeta_builtin_type_count(); ++i)
+    if (strcmp(cmeta_builtin_type_catalog[i]->name, name) == 0)
+      return cmeta_builtin_type_catalog[i];
+  return NULL;
 }
 
 static const cmeta_sig_desc sigs[CMETA_SIG_COUNT] = {
-#define CMETA_DESC_U(in, ret) \
-    [CMETA_SIG_NAME(CMETA_U_ID(in, ret))] = { \
-        CMETA_SIG_NAME(CMETA_U_ID(in, ret)), \
-        CMETA_STR(CMETA_TYPE_CTYPE(ret)) "(" CMETA_STR(CMETA_TYPE_CTYPE(in)) ")", \
-        &CMETA_TYPE_DESC(ret), { &CMETA_TYPE_DESC(in), NULL, NULL }, \
-        1, CMETA_FN_PROTOCOL_VALUE },
-#define CMETA_DESC_B(a, b, ret) \
-    [CMETA_SIG_NAME(CMETA_B_ID(a, b, ret))] = { \
-        CMETA_SIG_NAME(CMETA_B_ID(a, b, ret)), \
-        CMETA_STR(CMETA_TYPE_CTYPE(ret)) "(" CMETA_STR(CMETA_TYPE_CTYPE(a)) "," \
-            CMETA_STR(CMETA_TYPE_CTYPE(b)) ")", \
-        &CMETA_TYPE_DESC(ret), { &CMETA_TYPE_DESC(a), &CMETA_TYPE_DESC(b), NULL }, \
-        2, CMETA_FN_PROTOCOL_VALUE },
-#define CMETA_DESC_G(in, out) \
-    [CMETA_SIG_NAME(CMETA_G_ID(in, out))] = { \
-        CMETA_SIG_NAME(CMETA_G_ID(in, out)), \
-        "cmeta_gen_status(" CMETA_STR(CMETA_TYPE_CTYPE(in)) "," \
-            CMETA_STR(CMETA_TYPE_CTYPE(out)) "*,size_t*)", \
-        &cmeta_type_gen_status, \
-        { &CMETA_TYPE_DESC(in), &CMETA_DESC_PTR(out), &cmeta_type_size_ptr }, \
-        3, CMETA_FN_PROTOCOL_GENERATOR },
+#define CMETA_DESC_U(in, ret)                                                                      \
+  [CMETA_SIG_NAME(CMETA_U_ID(in, ret))] = {                                                        \
+      CMETA_SIG_NAME(CMETA_U_ID(in, ret)),                                                         \
+      CMETA_STR(CMETA_TYPE_CTYPE(ret)) "(" CMETA_STR(CMETA_TYPE_CTYPE(in)) ")",                    \
+      &CMETA_TYPE_DESC(ret),                                                                       \
+      {&CMETA_TYPE_DESC(in), NULL, NULL},                                                          \
+      1,                                                                                           \
+      CMETA_FN_PROTOCOL_VALUE},
+#define CMETA_DESC_B(a, b, ret)                                                                    \
+  [CMETA_SIG_NAME(CMETA_B_ID(a, b, ret))] = {                                                      \
+      CMETA_SIG_NAME(CMETA_B_ID(a, b, ret)),                                                       \
+      CMETA_STR(CMETA_TYPE_CTYPE(ret)) "(" CMETA_STR(CMETA_TYPE_CTYPE(a)) "," CMETA_STR(           \
+          CMETA_TYPE_CTYPE(b)) ")",                                                                \
+      &CMETA_TYPE_DESC(ret),                                                                       \
+      {&CMETA_TYPE_DESC(a), &CMETA_TYPE_DESC(b), NULL},                                            \
+      2,                                                                                           \
+      CMETA_FN_PROTOCOL_VALUE},
+#define CMETA_DESC_G(in, out)                                                                      \
+  [CMETA_SIG_NAME(CMETA_G_ID(in, out))] = {                                                        \
+      CMETA_SIG_NAME(CMETA_G_ID(in, out)),                                                         \
+      "cmeta_gen_status(" CMETA_STR(CMETA_TYPE_CTYPE(in)) "," CMETA_STR(                           \
+          CMETA_TYPE_CTYPE(out)) "*,size_t*)",                                                     \
+      &cmeta_type_gen_status,                                                                      \
+      {&CMETA_TYPE_DESC(in), &CMETA_DESC_PTR(out), &cmeta_type_size_ptr},                          \
+      3,                                                                                           \
+      CMETA_FN_PROTOCOL_GENERATOR},
     CMETA_ALL_SIGNATURES(CMETA_DESC_U, CMETA_DESC_B, CMETA_DESC_G)
 #undef CMETA_DESC_U
 #undef CMETA_DESC_B
@@ -421,12 +414,12 @@ static const cmeta_sig_desc sigs[CMETA_SIG_COUNT] = {
 };
 
 static const char *const cmeta_sig_symbols[CMETA_SIG_COUNT] = {
-#define CMETA_SIG_SYMBOL_U(in, ret) \
-    [CMETA_SIG_NAME(CMETA_U_ID(in, ret))] = CMETA_STR(CMETA_SIG_NAME(CMETA_U_ID(in, ret))),
-#define CMETA_SIG_SYMBOL_B(a, b, ret) \
-    [CMETA_SIG_NAME(CMETA_B_ID(a, b, ret))] = CMETA_STR(CMETA_SIG_NAME(CMETA_B_ID(a, b, ret))),
-#define CMETA_SIG_SYMBOL_G(in, out) \
-    [CMETA_SIG_NAME(CMETA_G_ID(in, out))] = CMETA_STR(CMETA_SIG_NAME(CMETA_G_ID(in, out))),
+#define CMETA_SIG_SYMBOL_U(in, ret)                                                                \
+  [CMETA_SIG_NAME(CMETA_U_ID(in, ret))] = CMETA_STR(CMETA_SIG_NAME(CMETA_U_ID(in, ret))),
+#define CMETA_SIG_SYMBOL_B(a, b, ret)                                                              \
+  [CMETA_SIG_NAME(CMETA_B_ID(a, b, ret))] = CMETA_STR(CMETA_SIG_NAME(CMETA_B_ID(a, b, ret))),
+#define CMETA_SIG_SYMBOL_G(in, out)                                                                \
+  [CMETA_SIG_NAME(CMETA_G_ID(in, out))] = CMETA_STR(CMETA_SIG_NAME(CMETA_G_ID(in, out))),
     CMETA_ALL_SIGNATURES(CMETA_SIG_SYMBOL_U, CMETA_SIG_SYMBOL_B, CMETA_SIG_SYMBOL_G)
 #undef CMETA_SIG_SYMBOL_U
 #undef CMETA_SIG_SYMBOL_B
@@ -434,220 +427,216 @@ static const char *const cmeta_sig_symbols[CMETA_SIG_COUNT] = {
 };
 
 const cmeta_sig_desc *cmeta_fn_signature(cmeta_fn fn) {
-    if (fn.sig <= CMETA_SIG_INVALID || fn.sig >= CMETA_SIG_COUNT) return NULL;
-    return &sigs[fn.sig];
+  if (fn.sig <= CMETA_SIG_INVALID || fn.sig >= CMETA_SIG_COUNT) return NULL;
+  return &sigs[fn.sig];
 }
 
 const char *cmeta_sig_to_string(cmeta_sig sig) {
-    return (sig > CMETA_SIG_INVALID && sig < CMETA_SIG_COUNT) ? sigs[sig].spelling : NULL;
+  return (sig > CMETA_SIG_INVALID && sig < CMETA_SIG_COUNT) ? sigs[sig].spelling : NULL;
 }
 
 const char *cmeta_sig_to_symbol(cmeta_sig sig) {
-    return (sig > CMETA_SIG_INVALID && sig < CMETA_SIG_COUNT) ? cmeta_sig_symbols[sig] : NULL;
+  return (sig > CMETA_SIG_INVALID && sig < CMETA_SIG_COUNT) ? cmeta_sig_symbols[sig] : NULL;
 }
 
 static bool cmeta_fn_target_valid(cmeta_fn fn) {
-    switch (fn.sig) {
-#define CMETA_TARGET_U(in, ret) \
-        case CMETA_SIG_NAME(CMETA_U_ID(in, ret)): \
-            return fn.call.CMETA_CALL_MEMBER(CMETA_U_ID(in, ret)) != NULL;
-#define CMETA_TARGET_B(a, b, ret) \
-        case CMETA_SIG_NAME(CMETA_B_ID(a, b, ret)): \
-            return fn.call.CMETA_CALL_MEMBER(CMETA_B_ID(a, b, ret)) != NULL;
-#define CMETA_TARGET_G(in, out) \
-        case CMETA_SIG_NAME(CMETA_G_ID(in, out)): \
-            return fn.call.CMETA_CALL_MEMBER(CMETA_G_ID(in, out)) != NULL;
-        CMETA_ALL_SIGNATURES(CMETA_TARGET_U, CMETA_TARGET_B, CMETA_TARGET_G)
+  switch (fn.sig) {
+#define CMETA_TARGET_U(in, ret)                                                                    \
+  case CMETA_SIG_NAME(CMETA_U_ID(in, ret)):                                                        \
+    return fn.call.CMETA_CALL_MEMBER(CMETA_U_ID(in, ret)) != NULL;
+#define CMETA_TARGET_B(a, b, ret)                                                                  \
+  case CMETA_SIG_NAME(CMETA_B_ID(a, b, ret)):                                                      \
+    return fn.call.CMETA_CALL_MEMBER(CMETA_B_ID(a, b, ret)) != NULL;
+#define CMETA_TARGET_G(in, out)                                                                    \
+  case CMETA_SIG_NAME(CMETA_G_ID(in, out)):                                                        \
+    return fn.call.CMETA_CALL_MEMBER(CMETA_G_ID(in, out)) != NULL;
+    CMETA_ALL_SIGNATURES(CMETA_TARGET_U, CMETA_TARGET_B, CMETA_TARGET_G)
 #undef CMETA_TARGET_U
 #undef CMETA_TARGET_B
 #undef CMETA_TARGET_G
-        default:
-            return false;
-    }
+  default:
+    return false;
+  }
 }
 
 static bool cmeta_fn_target_same(cmeta_fn a, cmeta_fn b) {
-    if (a.sig != b.sig) return false;
-    switch (a.sig) {
-#define CMETA_TARGET_SAME_U(in, ret) \
-        case CMETA_SIG_NAME(CMETA_U_ID(in, ret)): \
-            return a.call.CMETA_CALL_MEMBER(CMETA_U_ID(in, ret)) == \
-                   b.call.CMETA_CALL_MEMBER(CMETA_U_ID(in, ret));
-#define CMETA_TARGET_SAME_B(left, right, ret) \
-        case CMETA_SIG_NAME(CMETA_B_ID(left, right, ret)): \
-            return a.call.CMETA_CALL_MEMBER(CMETA_B_ID(left, right, ret)) == \
-                   b.call.CMETA_CALL_MEMBER(CMETA_B_ID(left, right, ret));
-#define CMETA_TARGET_SAME_G(in, out) \
-        case CMETA_SIG_NAME(CMETA_G_ID(in, out)): \
-            return a.call.CMETA_CALL_MEMBER(CMETA_G_ID(in, out)) == \
-                   b.call.CMETA_CALL_MEMBER(CMETA_G_ID(in, out));
-        CMETA_ALL_SIGNATURES(CMETA_TARGET_SAME_U, CMETA_TARGET_SAME_B,
-                             CMETA_TARGET_SAME_G)
+  if (a.sig != b.sig) return false;
+  switch (a.sig) {
+#define CMETA_TARGET_SAME_U(in, ret)                                                               \
+  case CMETA_SIG_NAME(CMETA_U_ID(in, ret)):                                                        \
+    return a.call.CMETA_CALL_MEMBER(CMETA_U_ID(in, ret)) ==                                        \
+           b.call.CMETA_CALL_MEMBER(CMETA_U_ID(in, ret));
+#define CMETA_TARGET_SAME_B(left, right, ret)                                                      \
+  case CMETA_SIG_NAME(CMETA_B_ID(left, right, ret)):                                               \
+    return a.call.CMETA_CALL_MEMBER(CMETA_B_ID(left, right, ret)) ==                               \
+           b.call.CMETA_CALL_MEMBER(CMETA_B_ID(left, right, ret));
+#define CMETA_TARGET_SAME_G(in, out)                                                               \
+  case CMETA_SIG_NAME(CMETA_G_ID(in, out)):                                                        \
+    return a.call.CMETA_CALL_MEMBER(CMETA_G_ID(in, out)) ==                                        \
+           b.call.CMETA_CALL_MEMBER(CMETA_G_ID(in, out));
+    CMETA_ALL_SIGNATURES(CMETA_TARGET_SAME_U, CMETA_TARGET_SAME_B, CMETA_TARGET_SAME_G)
 #undef CMETA_TARGET_SAME_U
 #undef CMETA_TARGET_SAME_B
 #undef CMETA_TARGET_SAME_G
-        default:
-            return false;
-    }
+  default:
+    return false;
+  }
 }
 
 static bool cmeta_fn_semantic_contract_valid(cmeta_fn fn) {
-    const cmeta_sig_desc *sig = cmeta_fn_signature(fn);
-    if (!sig || !cmeta_effect_property_contract_valid(
-                    fn.effects, fn.properties))
-        return false;
-    if (fn.properties & CMETA_PROP_IDEMPOTENT) {
-        if (sig->protocol != CMETA_FN_PROTOCOL_VALUE || sig->param_count != 1u ||
-            !cmeta_type_equal(sig->params[0], sig->return_type))
-            return false;
-    }
-    if (fn.properties & CMETA_PROP_ASSOCIATIVE) {
-        if (sig->protocol != CMETA_FN_PROTOCOL_VALUE || sig->param_count != 2u ||
-            !cmeta_type_equal(sig->params[0], sig->params[1]) ||
-            !cmeta_type_equal(sig->params[0], sig->return_type))
-            return false;
-    }
-    return true;
+  const cmeta_sig_desc *sig = cmeta_fn_signature(fn);
+  if (!sig || !cmeta_effect_property_contract_valid(fn.effects, fn.properties)) return false;
+  if (fn.properties & CMETA_PROP_IDEMPOTENT) {
+    if (sig->protocol != CMETA_FN_PROTOCOL_VALUE || sig->param_count != 1u ||
+        !cmeta_type_equal(sig->params[0], sig->return_type))
+      return false;
+  }
+  if (fn.properties & CMETA_PROP_ASSOCIATIVE) {
+    if (sig->protocol != CMETA_FN_PROTOCOL_VALUE || sig->param_count != 2u ||
+        !cmeta_type_equal(sig->params[0], sig->params[1]) ||
+        !cmeta_type_equal(sig->params[0], sig->return_type))
+      return false;
+  }
+  return true;
 }
 
 bool cmeta_fn_contract_valid(cmeta_fn fn) {
-    return cmeta_fn_semantic_contract_valid(fn) && cmeta_fn_target_valid(fn);
+  return cmeta_fn_semantic_contract_valid(fn) && cmeta_fn_target_valid(fn);
 }
 
 bool cmeta_fn_invoke(cmeta_fn fn, void *out, const void *const *args) {
-    const cmeta_sig_desc *sig = cmeta_fn_signature(fn);
-    if (!sig || sig->protocol != CMETA_FN_PROTOCOL_VALUE ||
-        !cmeta_fn_target_valid(fn) || !args)
-        return false;
-    for (size_t i = 0; i < sig->param_count; ++i)
-        if (!args[i]) return false;
-    switch (fn.sig) {
-#define CMETA_INVOKE_U(in, ret) \
-        case CMETA_SIG_NAME(CMETA_U_ID(in, ret)): { \
-            CMETA_TYPE_CTYPE(in) a0; CMETA_TYPE_CTYPE(ret) r; \
-            memcpy(&a0, args[0], sizeof a0); \
-            r = fn.call.CMETA_CALL_MEMBER(CMETA_U_ID(in, ret))(a0); \
-            if (out) memcpy(out, &r, sizeof r); \
-            return true; \
-        }
-#define CMETA_INVOKE_B(a, b, ret) \
-        case CMETA_SIG_NAME(CMETA_B_ID(a, b, ret)): { \
-            CMETA_TYPE_CTYPE(a) a0; CMETA_TYPE_CTYPE(b) a1; CMETA_TYPE_CTYPE(ret) r; \
-            memcpy(&a0, args[0], sizeof a0); memcpy(&a1, args[1], sizeof a1); \
-            r = fn.call.CMETA_CALL_MEMBER(CMETA_B_ID(a, b, ret))(a0, a1); \
-            if (out) memcpy(out, &r, sizeof r); \
-            return true; \
-        }
-        CMETA_VALUE_SIGNATURES(CMETA_INVOKE_U, CMETA_INVOKE_B)
+  const cmeta_sig_desc *sig = cmeta_fn_signature(fn);
+  if (!sig || sig->protocol != CMETA_FN_PROTOCOL_VALUE || !cmeta_fn_target_valid(fn) || !args)
+    return false;
+  for (size_t i = 0; i < sig->param_count; ++i)
+    if (!args[i]) return false;
+  switch (fn.sig) {
+#define CMETA_INVOKE_U(in, ret)                                                                    \
+  case CMETA_SIG_NAME(CMETA_U_ID(in, ret)): {                                                      \
+    CMETA_TYPE_CTYPE(in) a0;                                                                       \
+    CMETA_TYPE_CTYPE(ret) r;                                                                       \
+    memcpy(&a0, args[0], sizeof a0);                                                               \
+    r = fn.call.CMETA_CALL_MEMBER(CMETA_U_ID(in, ret))(a0);                                        \
+    if (out) memcpy(out, &r, sizeof r);                                                            \
+    return true;                                                                                   \
+  }
+#define CMETA_INVOKE_B(a, b, ret)                                                                  \
+  case CMETA_SIG_NAME(CMETA_B_ID(a, b, ret)): {                                                    \
+    CMETA_TYPE_CTYPE(a) a0;                                                                        \
+    CMETA_TYPE_CTYPE(b) a1;                                                                        \
+    CMETA_TYPE_CTYPE(ret) r;                                                                       \
+    memcpy(&a0, args[0], sizeof a0);                                                               \
+    memcpy(&a1, args[1], sizeof a1);                                                               \
+    r = fn.call.CMETA_CALL_MEMBER(CMETA_B_ID(a, b, ret))(a0, a1);                                  \
+    if (out) memcpy(out, &r, sizeof r);                                                            \
+    return true;                                                                                   \
+  }
+    CMETA_VALUE_SIGNATURES(CMETA_INVOKE_U, CMETA_INVOKE_B)
 #undef CMETA_INVOKE_U
 #undef CMETA_INVOKE_B
-        default:
-            return false;
-    }
+  default:
+    return false;
+  }
 }
 
-cmeta_gen_status cmeta_fn_generate(cmeta_fn fn, const void *input,
-                                   void *out, size_t *cursor) {
-    const cmeta_sig_desc *sig = cmeta_fn_signature(fn);
-    if (!sig || sig->protocol != CMETA_FN_PROTOCOL_GENERATOR ||
-        !cmeta_fn_target_valid(fn) || !input || !out || !cursor)
-        return CMETA_GEN_ERROR;
-    switch (fn.sig) {
-#define CMETA_GENERATE_G(in, out_type) \
-        case CMETA_SIG_NAME(CMETA_G_ID(in, out_type)): { \
-            CMETA_TYPE_CTYPE(in) a0; \
-            memcpy(&a0, input, sizeof a0); \
-            return fn.call.CMETA_CALL_MEMBER(CMETA_G_ID(in, out_type))( \
-                a0, (CMETA_TYPE_CTYPE(out_type) *)out, cursor); \
-        }
-        CMETA_GENERATOR_SIGNATURES(CMETA_GENERATE_G)
+cmeta_gen_status cmeta_fn_generate(cmeta_fn fn, const void *input, void *out, size_t *cursor) {
+  const cmeta_sig_desc *sig = cmeta_fn_signature(fn);
+  if (!sig || sig->protocol != CMETA_FN_PROTOCOL_GENERATOR || !cmeta_fn_target_valid(fn) ||
+      !input || !out || !cursor)
+    return CMETA_GEN_ERROR;
+  switch (fn.sig) {
+#define CMETA_GENERATE_G(in, out_type)                                                             \
+  case CMETA_SIG_NAME(CMETA_G_ID(in, out_type)): {                                                 \
+    CMETA_TYPE_CTYPE(in) a0;                                                                       \
+    memcpy(&a0, input, sizeof a0);                                                                 \
+    return fn.call.CMETA_CALL_MEMBER(CMETA_G_ID(in, out_type))(                                    \
+        a0, (CMETA_TYPE_CTYPE(out_type) *)out, cursor);                                            \
+  }
+    CMETA_GENERATOR_SIGNATURES(CMETA_GENERATE_G)
 #undef CMETA_GENERATE_G
-        default:
-            return CMETA_GEN_ERROR;
-    }
+  default:
+    return CMETA_GEN_ERROR;
+  }
 }
 
 bool cmeta_callable_bind(cmeta_callable in, cmeta_callable *out) {
-    cmeta_fn meta;
-    const cmeta_sig_desc *sig;
-    if (!out || (in.dispatch != CMETA_CALLABLE_DISPATCH_ADAPTER &&
-                 in.dispatch != CMETA_CALLABLE_DISPATCH_CANONICAL_RAW))
-        return false;
-    meta = in.meta;
-    if (meta.sig == CMETA_SIG_INVALID) {
-        if (!in.resolve) return false;
-        meta = in.resolve();
-        /* The callable value is the ownership point for semantic contracts. */
-        meta.effects = in.meta.effects;
-        meta.properties = in.meta.properties;
-    }
-    if (!cmeta_fn_semantic_contract_valid(meta) ||
-        (in.dispatch == CMETA_CALLABLE_DISPATCH_CANONICAL_RAW &&
-         !cmeta_fn_target_valid(meta)))
-        return false;
-    sig = cmeta_fn_signature(meta);
-    if (!sig) return false;
-    if (sig->protocol == CMETA_FN_PROTOCOL_GENERATOR) {
-        if (!in.generate) return false;
-    } else if (!in.invoke) {
-        return false;
-    }
-    if (in.capture_size > CMETA_CAPTURE_INLINE ||
-        (in.dispatch == CMETA_CALLABLE_DISPATCH_CANONICAL_RAW && in.capture_size != 0u))
-        return false;
-    *out = in;
-    out->meta = meta;
-    out->resolve = NULL;
-    return true;
+  cmeta_fn meta;
+  const cmeta_sig_desc *sig;
+  if (!out || (in.dispatch != CMETA_CALLABLE_DISPATCH_ADAPTER &&
+               in.dispatch != CMETA_CALLABLE_DISPATCH_CANONICAL_RAW))
+    return false;
+  meta = in.meta;
+  if (meta.sig == CMETA_SIG_INVALID) {
+    if (!in.resolve) return false;
+    meta = in.resolve();
+    /* The callable value is the ownership point for semantic contracts. */
+    meta.effects = in.meta.effects;
+    meta.properties = in.meta.properties;
+  }
+  if (!cmeta_fn_semantic_contract_valid(meta) ||
+      (in.dispatch == CMETA_CALLABLE_DISPATCH_CANONICAL_RAW && !cmeta_fn_target_valid(meta)))
+    return false;
+  sig = cmeta_fn_signature(meta);
+  if (!sig) return false;
+  if (sig->protocol == CMETA_FN_PROTOCOL_GENERATOR) {
+    if (!in.generate) return false;
+  } else if (!in.invoke) {
+    return false;
+  }
+  if (in.capture_size > CMETA_CAPTURE_INLINE ||
+      (in.dispatch == CMETA_CALLABLE_DISPATCH_CANONICAL_RAW && in.capture_size != 0u))
+    return false;
+  *out = in;
+  out->meta = meta;
+  out->resolve = NULL;
+  return true;
 }
 
 const cmeta_sig_desc *cmeta_callable_signature(cmeta_callable fn) {
-    cmeta_callable bound;
-    if (!cmeta_callable_bind(fn, &bound)) return NULL;
-    return cmeta_fn_signature(bound.meta);
+  cmeta_callable bound;
+  if (!cmeta_callable_bind(fn, &bound)) return NULL;
+  return cmeta_fn_signature(bound.meta);
 }
 
 bool cmeta_callable_contract_valid(cmeta_callable fn) {
-    cmeta_callable bound;
-    return cmeta_callable_bind(fn, &bound);
+  cmeta_callable bound;
+  return cmeta_callable_bind(fn, &bound);
 }
 
 bool cmeta_callable_can_dispatch_canonical_raw(cmeta_callable fn) {
-    cmeta_callable bound;
-    return cmeta_callable_bind(fn, &bound) &&
-           bound.dispatch == CMETA_CALLABLE_DISPATCH_CANONICAL_RAW;
+  cmeta_callable bound;
+  return cmeta_callable_bind(fn, &bound) && bound.dispatch == CMETA_CALLABLE_DISPATCH_CANONICAL_RAW;
 }
 
 bool cmeta_callable_same(cmeta_callable a, cmeta_callable b) {
-    cmeta_callable ba, bb;
-    if (!cmeta_callable_bind(a, &ba) || !cmeta_callable_bind(b, &bb)) return false;
-    if (ba.meta.sig != bb.meta.sig || ba.meta.effects != bb.meta.effects ||
-        ba.meta.properties != bb.meta.properties || ba.dispatch != bb.dispatch ||
-        ba.capture_size != bb.capture_size)
-        return false;
-    if (ba.dispatch == CMETA_CALLABLE_DISPATCH_CANONICAL_RAW)
-        return cmeta_fn_target_same(ba.meta, bb.meta);
-    if (ba.invoke != bb.invoke || ba.generate != bb.generate) return false;
-    if (ba.capture_size && memcmp(ba.capture.bytes, bb.capture.bytes, ba.capture_size) != 0)
-        return false;
-    return true;
+  cmeta_callable ba, bb;
+  if (!cmeta_callable_bind(a, &ba) || !cmeta_callable_bind(b, &bb)) return false;
+  if (ba.meta.sig != bb.meta.sig || ba.meta.effects != bb.meta.effects ||
+      ba.meta.properties != bb.meta.properties || ba.dispatch != bb.dispatch ||
+      ba.capture_size != bb.capture_size)
+    return false;
+  if (ba.dispatch == CMETA_CALLABLE_DISPATCH_CANONICAL_RAW)
+    return cmeta_fn_target_same(ba.meta, bb.meta);
+  if (ba.invoke != bb.invoke || ba.generate != bb.generate) return false;
+  if (ba.capture_size && memcmp(ba.capture.bytes, bb.capture.bytes, ba.capture_size) != 0)
+    return false;
+  return true;
 }
 
 bool cmeta_callable_invoke(const cmeta_callable *fn, void *out, const void *const *args) {
-    cmeta_callable bound;
-    if (!fn) return false;
-    if (fn->meta.sig != CMETA_SIG_INVALID)
-        return fn->invoke ? fn->invoke(fn, out, args) : false;
-    if (!cmeta_callable_bind(*fn, &bound) || !bound.invoke) return false;
-    return bound.invoke(&bound, out, args);
+  cmeta_callable bound;
+  if (!fn) return false;
+  if (fn->meta.sig != CMETA_SIG_INVALID) return fn->invoke ? fn->invoke(fn, out, args) : false;
+  if (!cmeta_callable_bind(*fn, &bound) || !bound.invoke) return false;
+  return bound.invoke(&bound, out, args);
 }
 
-cmeta_gen_status cmeta_callable_generate(const cmeta_callable *fn, const void *input,
-                                         void *out, size_t *cursor) {
-    cmeta_callable bound;
-    if (!fn) return CMETA_GEN_ERROR;
-    if (fn->meta.sig != CMETA_SIG_INVALID)
-        return fn->generate ? fn->generate(fn, input, out, cursor) : CMETA_GEN_ERROR;
-    if (!cmeta_callable_bind(*fn, &bound) || !bound.generate) return CMETA_GEN_ERROR;
-    return bound.generate(&bound, input, out, cursor);
+cmeta_gen_status cmeta_callable_generate(const cmeta_callable *fn, const void *input, void *out,
+                                         size_t *cursor) {
+  cmeta_callable bound;
+  if (!fn) return CMETA_GEN_ERROR;
+  if (fn->meta.sig != CMETA_SIG_INVALID)
+    return fn->generate ? fn->generate(fn, input, out, cursor) : CMETA_GEN_ERROR;
+  if (!cmeta_callable_bind(*fn, &bound) || !bound.generate) return CMETA_GEN_ERROR;
+  return bound.generate(&bound, input, out, cursor);
 }

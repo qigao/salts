@@ -4,7 +4,7 @@ add_library(${TARGET_NAME}
   src/abi.c
   src/cmeta.c
   src/container_type.c
-  src/data_v2.c
+  src/data.c
   src/declared_type.c
   src/enum.c
   src/fingerprint.c
@@ -22,6 +22,7 @@ add_library(${TARGET_NAME}
 
 cmake_config_target(
   ${TARGET_NAME}
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   ALIAS Salts::CMeta
   FOLDER "cmeta"
   EXPORT_NAME CMeta)

@@ -17,7 +17,7 @@ typedef struct cmeta_plugin_registry_slot {
     size_t callbacks_inflight;
     size_t active_leases;
     uint64_t lease_active_mask;
-    uint32_t lease_generations[SALTS_PLUGIN_MAX_LEASES_PER_PLUGIN];
+    uint32_t lease_generations[CMETA_PLUGIN_MAX_LEASES_PER_PLUGIN];
     bool occupied;
     bool unloading;
     bool destroy_called;
@@ -51,7 +51,7 @@ static bool bounded_utf8_path_valid(const char *path) {
     if (path == NULL)
         return false;
 
-    for (length = 0u; length <= SALTS_PLUGIN_PATH_MAX; ++length) {
+    for (length = 0u; length <= CMETA_PLUGIN_PATH_MAX; ++length) {
         if (path[length] == '\0') {
             if (length == 0u)
                 return false;
@@ -64,11 +64,11 @@ static bool bounded_utf8_path_valid(const char *path) {
 static bool plugin_id_equal(const char *left, const char *right) {
     size_t index;
 
-    if (!bounded_cstr_valid(left, SALTS_PLUGIN_ID_MAX) ||
-        !bounded_cstr_valid(right, SALTS_PLUGIN_ID_MAX))
+    if (!bounded_cstr_valid(left, CMETA_PLUGIN_ID_MAX) ||
+        !bounded_cstr_valid(right, CMETA_PLUGIN_ID_MAX))
         return false;
 
-    for (index = 0u; index <= SALTS_PLUGIN_ID_MAX; ++index) {
+    for (index = 0u; index <= CMETA_PLUGIN_ID_MAX; ++index) {
         if (left[index] != right[index])
             return false;
         if (left[index] == '\0')
@@ -86,7 +86,7 @@ static cmeta_plugin_status close_rejected_library(
     cmeta_plugin_library *library,
     cmeta_plugin_status rejection) {
     cmeta_plugin_status close_status = cmeta_plugin_platform_close(library);
-    return close_status == SALTS_PLUGIN_OK ? rejection : close_status;
+    return close_status == CMETA_PLUGIN_OK ? rejection : close_status;
 }
 
 static void release_load_reservation(
@@ -127,21 +127,21 @@ static cmeta_plugin_status slot_for_ref_locked(
         *out_index = SIZE_MAX;
 
     if (impl == NULL || !cmeta_plugin_ref_valid(ref))
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     index = (size_t)ref.slot - 1u;
     if (index >= impl->capacity)
-        return SALTS_PLUGIN_STALE;
+        return CMETA_PLUGIN_STALE;
 
     slot = &impl->slots[index];
     if (!slot->occupied || slot->generation != ref.generation)
-        return SALTS_PLUGIN_STALE;
+        return CMETA_PLUGIN_STALE;
 
     if (out_slot != NULL)
         *out_slot = slot;
     if (out_index != NULL)
         *out_index = index;
-    return SALTS_PLUGIN_OK;
+    return CMETA_PLUGIN_OK;
 }
 
 static void clear_slot_locked(
@@ -154,12 +154,12 @@ static void clear_slot_locked(
     slot->unloading = false;
     slot->destroy_called = false;
     slot->state = (cmeta_plugin_lifecycle_state)0;
-    slot->failure = SALTS_PLUGIN_OK;
+    slot->failure = CMETA_PLUGIN_OK;
     slot->callbacks_inflight = 0u;
     slot->active_leases = 0u;
     slot->lease_active_mask = 0u;
     slot->generation = next_generation(slot->generation);
-    for (index = 0u; index < SALTS_PLUGIN_MAX_LEASES_PER_PLUGIN; ++index)
+    for (index = 0u; index < CMETA_PLUGIN_MAX_LEASES_PER_PLUGIN; ++index)
         slot->lease_generations[index] =
             next_generation(slot->lease_generations[index]);
     if (impl->count != 0u)
@@ -175,41 +175,41 @@ cmeta_plugin_status cmeta_plugin_registry_init(
 
     if (registry == NULL || config == NULL || registry->impl != NULL ||
         config->capacity == 0u)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     if (config->capacity > (size_t)UINT32_MAX ||
         config->capacity > SIZE_MAX / sizeof(cmeta_plugin_registry_slot))
-        return SALTS_PLUGIN_CAPACITY_EXCEEDED;
+        return CMETA_PLUGIN_CAPACITY_EXCEEDED;
 
     impl = (cmeta_plugin_registry_impl *)calloc(1u, sizeof(*impl));
     if (impl == NULL)
-        return SALTS_PLUGIN_ALLOCATION_FAILED;
+        return CMETA_PLUGIN_ALLOCATION_FAILED;
 
     impl->slots = (cmeta_plugin_registry_slot *)calloc(
         config->capacity, sizeof(*impl->slots));
     if (impl->slots == NULL) {
         free(impl);
-        return SALTS_PLUGIN_ALLOCATION_FAILED;
+        return CMETA_PLUGIN_ALLOCATION_FAILED;
     }
 
     cmeta_mutex_init(&impl->lock);
     if (impl->lock == NULL) {
         free(impl->slots);
         free(impl);
-        return SALTS_PLUGIN_ALLOCATION_FAILED;
+        return CMETA_PLUGIN_ALLOCATION_FAILED;
     }
 
     impl->capacity = config->capacity;
     for (slot_index = 0u; slot_index < impl->capacity; ++slot_index) {
         impl->slots[slot_index].generation = 1u;
         for (lease_index = 0u;
-             lease_index < SALTS_PLUGIN_MAX_LEASES_PER_PLUGIN;
+             lease_index < CMETA_PLUGIN_MAX_LEASES_PER_PLUGIN;
              ++lease_index)
             impl->slots[slot_index].lease_generations[lease_index] = 1u;
     }
 
     registry->impl = impl;
-    return SALTS_PLUGIN_OK;
+    return CMETA_PLUGIN_OK;
 }
 
 cmeta_plugin_status cmeta_plugin_registry_load(
@@ -226,12 +226,12 @@ cmeta_plugin_status cmeta_plugin_registry_load(
     size_t index;
 
     if (out_ref == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
     *out_ref = (cmeta_plugin_ref){0};
 
     impl = registry_impl(registry);
     if (impl == NULL || !bounded_utf8_path_valid(path))
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     /*
      * Reserve bounded admission capacity under the registry lock, then execute
@@ -242,32 +242,32 @@ cmeta_plugin_status cmeta_plugin_registry_load(
     cmeta_mutex_lock(&impl->lock);
     if (impl->destroying) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_BUSY;
+        return CMETA_PLUGIN_BUSY;
     }
     if (impl->count >= impl->capacity ||
         impl->loads_inflight >= impl->capacity - impl->count) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_CAPACITY_EXCEEDED;
+        return CMETA_PLUGIN_CAPACITY_EXCEEDED;
     }
     ++impl->loads_inflight;
     cmeta_mutex_unlock(&impl->lock);
 
     status = cmeta_plugin_platform_open(path, &library, &query);
-    if (status != SALTS_PLUGIN_OK) {
+    if (status != CMETA_PLUGIN_OK) {
         cmeta_mutex_lock(&impl->lock);
         --impl->loads_inflight;
         cmeta_mutex_unlock(&impl->lock);
         return status;
     }
 
-    manifest = query(SALTS_PLUGIN_ABI_VERSION);
+    manifest = query(CMETA_PLUGIN_ABI_VERSION);
     if (manifest == NULL) {
         return close_rejected_load(
-            impl, &library, SALTS_PLUGIN_QUERY_REJECTED);
+            impl, &library, CMETA_PLUGIN_QUERY_REJECTED);
     }
 
     status = cmeta_plugin_manifest_validate(manifest);
-    if (status != SALTS_PLUGIN_OK)
+    if (status != CMETA_PLUGIN_OK)
         return close_rejected_load(impl, &library, status);
 
     /*
@@ -278,7 +278,7 @@ cmeta_plugin_status cmeta_plugin_registry_load(
     cmeta_mutex_lock(&impl->lock);
 
     if (impl->destroying) {
-        status = SALTS_PLUGIN_BUSY;
+        status = CMETA_PLUGIN_BUSY;
         goto reject_locked;
     }
 
@@ -287,7 +287,7 @@ cmeta_plugin_status cmeta_plugin_registry_load(
         if (existing->occupied &&
             plugin_id_equal(existing->manifest->plugin_id,
                             manifest->plugin_id)) {
-            status = SALTS_PLUGIN_DUPLICATE_PLUGIN_ID;
+            status = CMETA_PLUGIN_DUPLICATE_PLUGIN_ID;
             goto reject_locked;
         }
     }
@@ -299,14 +299,14 @@ cmeta_plugin_status cmeta_plugin_registry_load(
         }
     }
     if (slot == NULL) {
-        status = SALTS_PLUGIN_CAPACITY_EXCEEDED;
+        status = CMETA_PLUGIN_CAPACITY_EXCEEDED;
         goto reject_locked;
     }
 
     slot->library = library;
     slot->manifest = manifest;
-    slot->state = SALTS_PLUGIN_LIFECYCLE_LOADED;
-    slot->failure = SALTS_PLUGIN_OK;
+    slot->state = CMETA_PLUGIN_LIFECYCLE_LOADED;
+    slot->failure = CMETA_PLUGIN_OK;
     slot->occupied = true;
     slot->unloading = false;
     slot->destroy_called = false;
@@ -319,7 +319,7 @@ cmeta_plugin_status cmeta_plugin_registry_load(
     out_ref->slot = (uint32_t)(slot_index + 1u);
     out_ref->generation = slot->generation;
     cmeta_mutex_unlock(&impl->lock);
-    return SALTS_PLUGIN_OK;
+    return CMETA_PLUGIN_OK;
 
 reject_locked:
     cmeta_mutex_unlock(&impl->lock);
@@ -334,12 +334,12 @@ cmeta_plugin_status cmeta_plugin_registry_find(
     size_t index;
 
     if (out_ref == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
     *out_ref = (cmeta_plugin_ref){0};
 
     if (impl == NULL ||
-        !bounded_cstr_valid(plugin_id, SALTS_PLUGIN_ID_MAX))
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        !bounded_cstr_valid(plugin_id, CMETA_PLUGIN_ID_MAX))
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     cmeta_mutex_lock(&impl->lock);
     for (index = 0u; index < impl->capacity; ++index) {
@@ -349,11 +349,11 @@ cmeta_plugin_status cmeta_plugin_registry_find(
             out_ref->slot = (uint32_t)(index + 1u);
             out_ref->generation = slot->generation;
             cmeta_mutex_unlock(&impl->lock);
-            return SALTS_PLUGIN_OK;
+            return CMETA_PLUGIN_OK;
         }
     }
     cmeta_mutex_unlock(&impl->lock);
-    return SALTS_PLUGIN_UNKNOWN_PLUGIN;
+    return CMETA_PLUGIN_UNKNOWN_PLUGIN;
 }
 
 cmeta_plugin_status cmeta_plugin_registry_start(
@@ -366,40 +366,40 @@ cmeta_plugin_status cmeta_plugin_registry_start(
     cmeta_plugin_status status;
 
     if (impl == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     cmeta_mutex_lock(&impl->lock);
     status = slot_for_ref_locked(impl, ref, &slot, NULL);
-    if (status != SALTS_PLUGIN_OK) {
+    if (status != CMETA_PLUGIN_OK) {
         cmeta_mutex_unlock(&impl->lock);
         return status;
     }
     if (impl->destroying || slot->unloading) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_BUSY;
+        return CMETA_PLUGIN_BUSY;
     }
-    if (slot->state == SALTS_PLUGIN_LIFECYCLE_STARTED) {
+    if (slot->state == CMETA_PLUGIN_LIFECYCLE_STARTED) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_ALREADY;
+        return CMETA_PLUGIN_ALREADY;
     }
-    if (slot->state != SALTS_PLUGIN_LIFECYCLE_LOADED) {
+    if (slot->state != CMETA_PLUGIN_LIFECYCLE_LOADED) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_INVALID_STATE;
+        return CMETA_PLUGIN_INVALID_STATE;
     }
     if (slot->active_leases != 0u || slot->callbacks_inflight != 0u) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_BUSY;
+        return CMETA_PLUGIN_BUSY;
     }
 
     callback = slot->manifest->start;
     self = slot->manifest->self;
     if (callback == NULL) {
-        slot->state = SALTS_PLUGIN_LIFECYCLE_STARTED;
+        slot->state = CMETA_PLUGIN_LIFECYCLE_STARTED;
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_OK;
+        return CMETA_PLUGIN_OK;
     }
 
-    slot->state = SALTS_PLUGIN_LIFECYCLE_STARTING;
+    slot->state = CMETA_PLUGIN_LIFECYCLE_STARTING;
     ++slot->callbacks_inflight;
     cmeta_mutex_unlock(&impl->lock);
 
@@ -407,15 +407,15 @@ cmeta_plugin_status cmeta_plugin_registry_start(
 
     cmeta_mutex_lock(&impl->lock);
     --slot->callbacks_inflight;
-    if (status == SALTS_PLUGIN_OK) {
-        slot->state = SALTS_PLUGIN_LIFECYCLE_STARTED;
+    if (status == CMETA_PLUGIN_OK) {
+        slot->state = CMETA_PLUGIN_LIFECYCLE_STARTED;
     } else {
         /*
          * start() is failure-atomic by contract: a failed start has not
          * published service work and must remain destroyable/unloadable.
          */
-        slot->state = SALTS_PLUGIN_LIFECYCLE_QUIESCENT;
-        if (slot->failure == SALTS_PLUGIN_OK)
+        slot->state = CMETA_PLUGIN_LIFECYCLE_QUIESCENT;
+        if (slot->failure == CMETA_PLUGIN_OK)
             slot->failure = status;
     }
     cmeta_mutex_unlock(&impl->lock);
@@ -433,29 +433,29 @@ cmeta_plugin_status cmeta_plugin_registry_acquire(
     size_t index;
 
     if (out_lease == NULL || out_manifest == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
     *out_lease = (cmeta_plugin_lease){0};
     *out_manifest = NULL;
 
     if (impl == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     cmeta_mutex_lock(&impl->lock);
     status = slot_for_ref_locked(impl, ref, &slot, NULL);
-    if (status != SALTS_PLUGIN_OK) {
+    if (status != CMETA_PLUGIN_OK) {
         cmeta_mutex_unlock(&impl->lock);
         return status;
     }
     if (impl->destroying || slot->unloading) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_BUSY;
+        return CMETA_PLUGIN_BUSY;
     }
-    if (slot->state != SALTS_PLUGIN_LIFECYCLE_STARTED) {
+    if (slot->state != CMETA_PLUGIN_LIFECYCLE_STARTED) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_INVALID_STATE;
+        return CMETA_PLUGIN_INVALID_STATE;
     }
 
-    for (index = 0u; index < SALTS_PLUGIN_MAX_LEASES_PER_PLUGIN; ++index) {
+    for (index = 0u; index < CMETA_PLUGIN_MAX_LEASES_PER_PLUGIN; ++index) {
         const uint64_t bit = UINT64_C(1) << index;
         if ((slot->lease_active_mask & bit) == 0u) {
             slot->lease_active_mask |= bit;
@@ -465,12 +465,12 @@ cmeta_plugin_status cmeta_plugin_registry_acquire(
             out_lease->generation = slot->lease_generations[index];
             *out_manifest = slot->manifest;
             cmeta_mutex_unlock(&impl->lock);
-            return SALTS_PLUGIN_OK;
+            return CMETA_PLUGIN_OK;
         }
     }
 
     cmeta_mutex_unlock(&impl->lock);
-    return SALTS_PLUGIN_CAPACITY_EXCEEDED;
+    return CMETA_PLUGIN_CAPACITY_EXCEEDED;
 }
 
 cmeta_plugin_status cmeta_plugin_registry_release(
@@ -483,26 +483,26 @@ cmeta_plugin_status cmeta_plugin_registry_release(
     uint64_t bit;
 
     if (impl == NULL || lease == NULL || !cmeta_plugin_lease_valid(*lease))
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     cmeta_mutex_lock(&impl->lock);
     status = slot_for_ref_locked(impl, lease->plugin, &slot, NULL);
-    if (status != SALTS_PLUGIN_OK) {
+    if (status != CMETA_PLUGIN_OK) {
         cmeta_mutex_unlock(&impl->lock);
         return status;
     }
 
     index = (size_t)lease->slot - 1u;
-    if (index >= SALTS_PLUGIN_MAX_LEASES_PER_PLUGIN) {
+    if (index >= CMETA_PLUGIN_MAX_LEASES_PER_PLUGIN) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_STALE;
+        return CMETA_PLUGIN_STALE;
     }
 
     bit = UINT64_C(1) << index;
     if ((slot->lease_active_mask & bit) == 0u ||
         slot->lease_generations[index] != lease->generation) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_STALE;
+        return CMETA_PLUGIN_STALE;
     }
 
     slot->lease_active_mask &= ~bit;
@@ -512,7 +512,7 @@ cmeta_plugin_status cmeta_plugin_registry_release(
         --slot->active_leases;
     *lease = (cmeta_plugin_lease){0};
     cmeta_mutex_unlock(&impl->lock);
-    return SALTS_PLUGIN_OK;
+    return CMETA_PLUGIN_OK;
 }
 
 cmeta_plugin_status cmeta_plugin_registry_request_stop(
@@ -525,34 +525,34 @@ cmeta_plugin_status cmeta_plugin_registry_request_stop(
     cmeta_plugin_status status;
 
     if (impl == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     cmeta_mutex_lock(&impl->lock);
     status = slot_for_ref_locked(impl, ref, &slot, NULL);
-    if (status != SALTS_PLUGIN_OK) {
+    if (status != CMETA_PLUGIN_OK) {
         cmeta_mutex_unlock(&impl->lock);
         return status;
     }
     if (impl->destroying || slot->unloading) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_BUSY;
+        return CMETA_PLUGIN_BUSY;
     }
-    if (slot->state == SALTS_PLUGIN_LIFECYCLE_STOPPING ||
-        slot->state == SALTS_PLUGIN_LIFECYCLE_QUIESCENT) {
+    if (slot->state == CMETA_PLUGIN_LIFECYCLE_STOPPING ||
+        slot->state == CMETA_PLUGIN_LIFECYCLE_QUIESCENT) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_ALREADY;
+        return CMETA_PLUGIN_ALREADY;
     }
-    if (slot->state != SALTS_PLUGIN_LIFECYCLE_STARTED) {
+    if (slot->state != CMETA_PLUGIN_LIFECYCLE_STARTED) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_INVALID_STATE;
+        return CMETA_PLUGIN_INVALID_STATE;
     }
 
-    slot->state = SALTS_PLUGIN_LIFECYCLE_STOPPING;
+    slot->state = CMETA_PLUGIN_LIFECYCLE_STOPPING;
     callback = slot->manifest->request_stop;
     self = slot->manifest->self;
     if (callback == NULL) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_OK;
+        return CMETA_PLUGIN_OK;
     }
 
     ++slot->callbacks_inflight;
@@ -562,7 +562,7 @@ cmeta_plugin_status cmeta_plugin_registry_request_stop(
 
     cmeta_mutex_lock(&impl->lock);
     --slot->callbacks_inflight;
-    if (status != SALTS_PLUGIN_OK && slot->failure == SALTS_PLUGIN_OK)
+    if (status != CMETA_PLUGIN_OK && slot->failure == CMETA_PLUGIN_OK)
         slot->failure = status;
     cmeta_mutex_unlock(&impl->lock);
     return status;
@@ -580,42 +580,42 @@ cmeta_plugin_status cmeta_plugin_registry_poll_quiescent(
     bool quiescent;
 
     if (out_quiescent == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
     *out_quiescent = false;
     if (impl == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     cmeta_mutex_lock(&impl->lock);
     status = slot_for_ref_locked(impl, ref, &slot, NULL);
-    if (status != SALTS_PLUGIN_OK) {
+    if (status != CMETA_PLUGIN_OK) {
         cmeta_mutex_unlock(&impl->lock);
         return status;
     }
     if (impl->destroying || slot->unloading) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_BUSY;
+        return CMETA_PLUGIN_BUSY;
     }
-    if (slot->state == SALTS_PLUGIN_LIFECYCLE_QUIESCENT) {
+    if (slot->state == CMETA_PLUGIN_LIFECYCLE_QUIESCENT) {
         *out_quiescent = true;
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_OK;
+        return CMETA_PLUGIN_OK;
     }
-    if (slot->state != SALTS_PLUGIN_LIFECYCLE_STOPPING) {
+    if (slot->state != CMETA_PLUGIN_LIFECYCLE_STOPPING) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_INVALID_STATE;
+        return CMETA_PLUGIN_INVALID_STATE;
     }
     if (slot->active_leases != 0u || slot->callbacks_inflight != 0u) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_OK;
+        return CMETA_PLUGIN_OK;
     }
 
     callback = slot->manifest->is_quiescent;
     self = slot->manifest->self;
     if (callback == NULL) {
-        slot->state = SALTS_PLUGIN_LIFECYCLE_QUIESCENT;
+        slot->state = CMETA_PLUGIN_LIFECYCLE_QUIESCENT;
         *out_quiescent = true;
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_OK;
+        return CMETA_PLUGIN_OK;
     }
 
     ++slot->callbacks_inflight;
@@ -626,10 +626,10 @@ cmeta_plugin_status cmeta_plugin_registry_poll_quiescent(
     cmeta_mutex_lock(&impl->lock);
     --slot->callbacks_inflight;
     if (quiescent)
-        slot->state = SALTS_PLUGIN_LIFECYCLE_QUIESCENT;
+        slot->state = CMETA_PLUGIN_LIFECYCLE_QUIESCENT;
     *out_quiescent = quiescent;
     cmeta_mutex_unlock(&impl->lock);
-    return SALTS_PLUGIN_OK;
+    return CMETA_PLUGIN_OK;
 }
 
 cmeta_plugin_status cmeta_plugin_registry_get_lifecycle(
@@ -641,14 +641,14 @@ cmeta_plugin_status cmeta_plugin_registry_get_lifecycle(
     cmeta_plugin_status status;
 
     if (out_info == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
     *out_info = (cmeta_plugin_lifecycle_info){0};
     if (impl == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     cmeta_mutex_lock(&impl->lock);
     status = slot_for_ref_locked(impl, ref, &slot, NULL);
-    if (status == SALTS_PLUGIN_OK) {
+    if (status == CMETA_PLUGIN_OK) {
         out_info->state = slot->state;
         out_info->active_leases = slot->active_leases;
         out_info->callbacks_inflight = slot->callbacks_inflight;
@@ -668,26 +668,26 @@ cmeta_plugin_status cmeta_plugin_registry_unload(
     cmeta_plugin_status status;
 
     if (impl == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     cmeta_mutex_lock(&impl->lock);
     status = slot_for_ref_locked(impl, ref, &slot, NULL);
-    if (status != SALTS_PLUGIN_OK) {
+    if (status != CMETA_PLUGIN_OK) {
         cmeta_mutex_unlock(&impl->lock);
         return status;
     }
     if (impl->destroying || slot->unloading) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_BUSY;
+        return CMETA_PLUGIN_BUSY;
     }
-    if (slot->state != SALTS_PLUGIN_LIFECYCLE_LOADED &&
-        slot->state != SALTS_PLUGIN_LIFECYCLE_QUIESCENT) {
+    if (slot->state != CMETA_PLUGIN_LIFECYCLE_LOADED &&
+        slot->state != CMETA_PLUGIN_LIFECYCLE_QUIESCENT) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_BUSY;
+        return CMETA_PLUGIN_BUSY;
     }
     if (slot->active_leases != 0u || slot->callbacks_inflight != 0u) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_BUSY;
+        return CMETA_PLUGIN_BUSY;
     }
 
     slot->unloading = true;
@@ -710,14 +710,14 @@ cmeta_plugin_status cmeta_plugin_registry_unload(
          * Keep the slot quiescent so retry may only close the DSO; never permit
          * start/acquire against already-destroyed plugin state.
          */
-        slot->state = SALTS_PLUGIN_LIFECYCLE_QUIESCENT;
+        slot->state = CMETA_PLUGIN_LIFECYCLE_QUIESCENT;
     }
     cmeta_mutex_unlock(&impl->lock);
 
     status = cmeta_plugin_platform_close(&slot->library);
 
     cmeta_mutex_lock(&impl->lock);
-    if (status == SALTS_PLUGIN_OK) {
+    if (status == CMETA_PLUGIN_OK) {
         clear_slot_locked(impl, slot);
     } else {
         slot->unloading = false;
@@ -745,15 +745,15 @@ cmeta_plugin_status cmeta_plugin_registry_destroy(
     size_t index;
 
     if (registry == NULL)
-        return SALTS_PLUGIN_INVALID_ARGUMENT;
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
     if (registry->impl == NULL)
-        return SALTS_PLUGIN_OK;
+        return CMETA_PLUGIN_OK;
 
     impl = (cmeta_plugin_registry_impl *)registry->impl;
     cmeta_mutex_lock(&impl->lock);
     if (impl->destroying || impl->loads_inflight != 0u) {
         cmeta_mutex_unlock(&impl->lock);
-        return SALTS_PLUGIN_BUSY;
+        return CMETA_PLUGIN_BUSY;
     }
 
     for (index = 0u; index < impl->capacity; ++index) {
@@ -763,10 +763,10 @@ cmeta_plugin_status cmeta_plugin_registry_destroy(
         if (slot->unloading ||
             slot->active_leases != 0u ||
             slot->callbacks_inflight != 0u ||
-            (slot->state != SALTS_PLUGIN_LIFECYCLE_LOADED &&
-             slot->state != SALTS_PLUGIN_LIFECYCLE_QUIESCENT)) {
+            (slot->state != CMETA_PLUGIN_LIFECYCLE_LOADED &&
+             slot->state != CMETA_PLUGIN_LIFECYCLE_QUIESCENT)) {
             cmeta_mutex_unlock(&impl->lock);
-            return SALTS_PLUGIN_BUSY;
+            return CMETA_PLUGIN_BUSY;
         }
     }
 
@@ -799,14 +799,14 @@ cmeta_plugin_status cmeta_plugin_registry_destroy(
         if (destroy_callback != NULL) {
             --slot->callbacks_inflight;
             slot->destroy_called = true;
-            slot->state = SALTS_PLUGIN_LIFECYCLE_QUIESCENT;
+            slot->state = CMETA_PLUGIN_LIFECYCLE_QUIESCENT;
         }
         cmeta_mutex_unlock(&impl->lock);
 
         status = cmeta_plugin_platform_close(&slot->library);
 
         cmeta_mutex_lock(&impl->lock);
-        if (status != SALTS_PLUGIN_OK) {
+        if (status != CMETA_PLUGIN_OK) {
             slot->unloading = false;
             impl->destroying = false;
             cmeta_mutex_unlock(&impl->lock);
@@ -823,5 +823,5 @@ cmeta_plugin_status cmeta_plugin_registry_destroy(
     cmeta_mutex_destroy(&impl->lock);
     free(impl->slots);
     free(impl);
-    return SALTS_PLUGIN_OK;
+    return CMETA_PLUGIN_OK;
 }
