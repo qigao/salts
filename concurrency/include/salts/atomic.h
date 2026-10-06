@@ -51,6 +51,49 @@ static inline bool salts_atomic_cas_orders_valid(
  * This is a direct C11 atomic wrapper, not a Reflection/type-metadata facility.
  * Storage must never be copied while live. Callers supply every memory order.
  */
-#define SALTS_ATOMIC_TYPE(name_, type_)     typedef struct name_ { _Atomic(type_) value; } name_;     static inline int name_##_init(name_ *p, type_ value) {         if (p == NULL) return SALTS_EINVAL;         atomic_init(&p->value, value);         return SALTS_OK;     }     static inline int name_##_load(         const name_ *p, memory_order order, type_ *out) {         if (p == NULL || out == NULL ||             !salts_atomic_load_order_valid(order)) return SALTS_EINVAL;         *out = atomic_load_explicit(&p->value, order);         return SALTS_OK;     }     static inline int name_##_store(         name_ *p, type_ value, memory_order order) {         if (p == NULL || !salts_atomic_store_order_valid(order))             return SALTS_EINVAL;         atomic_store_explicit(&p->value, value, order);         return SALTS_OK;     }     static inline int name_##_exchange(         name_ *p, type_ value, memory_order order, type_ *out) {         if (p == NULL || out == NULL || !salts_atomic_order_valid(order))             return SALTS_EINVAL;         *out = atomic_exchange_explicit(&p->value, value, order);         return SALTS_OK;     }     static inline int name_##_compare_exchange(         name_ *p, type_ *expected, type_ desired,         memory_order success, memory_order failure, bool *exchanged) {         if (p == NULL || expected == NULL || exchanged == NULL ||             !salts_atomic_cas_orders_valid(success, failure))             return SALTS_EINVAL;         *exchanged = atomic_compare_exchange_strong_explicit(             &p->value, expected, desired, success, failure);         return SALTS_OK;     }     static inline int name_##_is_lock_free(const name_ *p, bool *out) {         if (p == NULL || out == NULL) return SALTS_EINVAL;         *out = atomic_is_lock_free(&p->value);         return SALTS_OK;     }     typedef type_ name_##_value_type
+#define SALTS_ATOMIC_TYPE(name_, type_) \
+    typedef struct name_ { _Atomic(type_) value; } name_; \
+    static inline int name_##_init(name_ *p, type_ value) { \
+        if (p == NULL) return SALTS_EINVAL; \
+        atomic_init(&p->value, value); \
+        return SALTS_OK; \
+    } \
+    static inline int name_##_load( \
+        const name_ *p, memory_order order, type_ *out) { \
+        if (p == NULL || out == NULL || \
+            !salts_atomic_load_order_valid(order)) return SALTS_EINVAL; \
+        *out = atomic_load_explicit(&p->value, order); \
+        return SALTS_OK; \
+    } \
+    static inline int name_##_store( \
+        name_ *p, type_ value, memory_order order) { \
+        if (p == NULL || !salts_atomic_store_order_valid(order)) \
+            return SALTS_EINVAL; \
+        atomic_store_explicit(&p->value, value, order); \
+        return SALTS_OK; \
+    } \
+    static inline int name_##_exchange( \
+        name_ *p, type_ value, memory_order order, type_ *out) { \
+        if (p == NULL || out == NULL || !salts_atomic_order_valid(order)) \
+            return SALTS_EINVAL; \
+        *out = atomic_exchange_explicit(&p->value, value, order); \
+        return SALTS_OK; \
+    } \
+    static inline int name_##_compare_exchange( \
+        name_ *p, type_ *expected, type_ desired, \
+        memory_order success, memory_order failure, bool *exchanged) { \
+        if (p == NULL || expected == NULL || exchanged == NULL || \
+            !salts_atomic_cas_orders_valid(success, failure)) \
+            return SALTS_EINVAL; \
+        *exchanged = atomic_compare_exchange_strong_explicit( \
+            &p->value, expected, desired, success, failure); \
+        return SALTS_OK; \
+    } \
+    static inline int name_##_is_lock_free(const name_ *p, bool *out) { \
+        if (p == NULL || out == NULL) return SALTS_EINVAL; \
+        *out = atomic_is_lock_free(&p->value); \
+        return SALTS_OK; \
+    } \
+    typedef type_ name_##_value_type
 
 #endif
