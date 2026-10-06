@@ -170,7 +170,9 @@ static inline int object_pool_owner_release(
   if (status != SALTS_OK)
     return status;
   object_pool_free(pool->storage, lease->value);
-  *lease = (object_pool_lease){0};
+  lease->value = NULL;
+  lease->owner = NULL;
+  lease->self = NULL;
   return SALTS_OK;
 }
 
@@ -181,7 +183,10 @@ static inline int object_pool_owner_destroy(object_pool_owner_state *pool) {
   if (object_pool_allocated_count(pool->storage) != 0u)
     return SALTS_EBUSY;
   object_pool_destroy(pool->storage);
-  *pool = (object_pool_owner_state){0};
+  pool->storage = NULL;
+  pool->self = NULL;
+  pool->thread = NULL;
+  pool->busy = false;
   return SALTS_OK;
 }
 
