@@ -1,4 +1,5 @@
 #include <cstl/typed.h>
+#include <cmeta/scope.h>
 #include "tinytest.h"
 
 static vec_t make_int_vec(void) {

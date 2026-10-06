@@ -6,8 +6,6 @@
 #include <cmeta/declared_type.h>
 #include <cmeta/entry.h>
 #include <cmeta/function.h>
-#include <cmeta/fastpath.h>
-#include <cmeta/trace.h>
 #include <cmeta/method.h>
 #include <cmeta/object.h>
 #include <cmeta/infer.h>
@@ -18,7 +16,6 @@
 #include <cmeta/flags.h>
 #include <cmeta/pp.h>
 #include <cmeta/status.h>
-#include <cmeta/scope.h>
 #include <cmeta/struct.h>
 #include <cmeta/type_select.h>
 #include <cmeta/type_traits.h>
