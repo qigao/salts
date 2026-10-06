@@ -20,6 +20,17 @@ static void dso_finalize(void *user) {
     if (probe) atomic_fetch_add(&probe->finalize_count, 1);
 }
 
+const void *cflow_executor_dso_worker_vtable(void) {
+    cflow_executor executor = {0};
+    const void *vtable;
+
+    if (!cflow_executor_worker_init_with_capacity(&executor, 1u, 1u))
+        return NULL;
+    vtable = (const void *)executor.vtable;
+    cflow_executor_destroy(&executor);
+    return vtable;
+}
+
 int cflow_executor_dso_submit(
     cflow_executor *executor, cflow_executor_dso_probe *probe) {
     cflow_executor_control control = {0};

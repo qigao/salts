@@ -8,7 +8,12 @@ spec("CFlow static-library DSO executor dispatch") {
         .executor = &executor,
     };
 
+    const void *dll_worker_vtable;
+
     check_true(cflow_executor_worker_init_with_capacity(&executor, 1u, 4u));
+    dll_worker_vtable = cflow_executor_dso_worker_vtable();
+    check_not_null(dll_worker_vtable);
+    check((const void *)executor.vtable != dll_worker_vtable);
     check_equal(cflow_executor_dso_submit(&executor, &probe), 0);
     check_equal(atomic_load(&probe.run_count), 2);
     check_equal(atomic_load(&probe.cancel_count), 0);

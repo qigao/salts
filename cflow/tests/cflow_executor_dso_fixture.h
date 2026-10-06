@@ -22,6 +22,7 @@ typedef struct cflow_executor_dso_probe {
     atomic_int current_count;
 } cflow_executor_dso_probe;
 
+CFLOW_EXECUTOR_DSO_API const void *cflow_executor_dso_worker_vtable(void);
 CFLOW_EXECUTOR_DSO_API int cflow_executor_dso_submit(
     cflow_executor *executor, cflow_executor_dso_probe *probe);
 
