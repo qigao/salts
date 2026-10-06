@@ -16,7 +16,7 @@ extern "C" {
 #define CMETA_MANIFEST_U64(value_) ((uint64_t)(value_))
 #define CMETA_MANIFEST_U8(value_) ((uint8_t)(value_))
 #define CMETA_MANIFEST_BYTES(value_) ((const uint8_t *)(value_))
-#define CMETA_MANIFEST_VOID_PTR(value_) ((const void *)(value_))
+#define CMETA_MANIFEST_VOID_PTR(value_) (value_)
 #endif
 
 #define CMETA_MANIFEST_FORMAT_VERSION UINT32_C(1)
