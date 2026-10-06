@@ -73,10 +73,12 @@ LIFO cleanup. Scope construction and cleanup use the same canonical DataDesc
 construct ops without runtime Reflection queries or a cleanup registry. See
 [structured scope and migration](LANGUAGE_REFERENCE.md#structured-scope).
 
-Optional execution primitives are declared with `cmeta_type(Rcu, ...)`,
-`cmeta_type(Pool, ...)`, `cmeta_type(Local, ...)` and `cmeta_type(Atomic, ...)`.
-Their headers keep runtime dependencies explicit; see
-[ownership, capacity, suspension and memory-order contracts](EXECUTION_PRIMITIVES.md).
+Execution/runtime ownership is explicit. Atomics and RCU are owned by
+Salts::Concurrency. Pool storage/lease policy is owned by Salts::Core and
+thread-affinity/TLS policy by Salts::Platform. CMeta retains only explicit
+lifecycle adapters where DataDesc semantics add value:
+`cmeta_pool_type(Name, Type)` and `cmeta_local_type(Name, Type)`.
+See [ownership, capacity, suspension and memory-order contracts](EXECUTION_PRIMITIVES.md).
 
 ## Semantic string and byte storage adapters
 
