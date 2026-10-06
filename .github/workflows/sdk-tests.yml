@@ -20,7 +20,8 @@ jobs:
       - name: Restore shared re2c binary
         uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
       - name: Configure shared vcpkg cache
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        # Match the native build's canonical tool setup (vcpkg-cache#186).
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@fafb1efe5ac2440bfd7a08e493988d0459d89e51
         with:
           mode: read
       - name: Prepare build host
