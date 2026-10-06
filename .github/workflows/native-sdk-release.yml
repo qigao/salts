@@ -24,7 +24,7 @@ concurrency:
 jobs:
   metadata:
     name: Release metadata
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -113,7 +113,7 @@ jobs:
     name: Publish package and GitHub Release
     needs: metadata
     if: needs.metadata.outputs.publish == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       packages: write

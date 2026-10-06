@@ -7,10 +7,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifndef SALTS_PLATFORM_NATIVE_FASTPATH
-#define SALTS_PLATFORM_NATIVE_FASTPATH 0
-#endif
-
 typedef struct cmeta_fast_key_state cmeta_fast_key_state;
 
 #ifdef __cplusplus
@@ -22,12 +18,6 @@ int cmeta_fast_key_set(cmeta_fast_key_state *key, bool enabled);
 bool cmeta_fast_key_consume(cmeta_fast_key_state *key);
 int cmeta_fast_enable(cmeta_fast_key_state *key);
 int cmeta_fast_disable(cmeta_fast_key_state *key);
-
-#if SALTS_PLATFORM_NATIVE_FASTPATH
-bool cmeta_fast_key_read_native(const cmeta_fast_key_state *key);
-typedef void (*cmeta_fast_target_type)(void);
-cmeta_fast_target_type cmeta_fast_target_load_native(const void *slot);
-#endif
 
 #ifdef __cplusplus
 }

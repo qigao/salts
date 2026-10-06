@@ -99,11 +99,6 @@ ctest --preset win-dev-user -R "(^(cmeta_(pp|const|flags|layout|interface)_|cmet
   除 `count` 外，参数与 `CMETA_PLUGIN_DECLARE` 相同；`count` 是预期导出总数的整数常量，
   范围为 `1..CMETA_PLUGIN_MAX_EXPORTS`。空 provider 使用 `CMETA_PLUGIN_DECLARE_EMPTY`。
 
-完整可编译示例由 [分片 A](tests/fixture_plugin_linker_a.c)、
-[分片 B](tests/fixture_plugin_linker_b.c) 和 [根声明](tests/fixture_plugin_linker_root.c) 组成。
-[测试构建声明](tests/linker_tests.cmake) 展示 ID/count 配置及链接方式。
-这些 target 只链接 `Salts::PluginABI`，无需宿主 registry runtime。
-
 分片必须作为对象文件直接参与链接，或由构建系统显式抽取所需 archive member；
 section 的保留标记不负责从静态库抽取未引用的成员。根声明保存的预期数是完整性约束，
 query 在返回 manifest 前检查实际区间字节数。ABI 不匹配、缺少分片、计数错误或布局填充
@@ -149,7 +144,6 @@ C 使用 `cmeta_plugin_with_lease(registry,ref,body,context)`：
 空 body 返回 `CMETA_PLUGIN_INVALID_ARGUMENT`；acquire 失败原样返回状态且不调用 body；
 成功时调用 body 一次，释放后返回 body 状态。body 中提前 return 或返回错误均释放，
 但不能通过 `longjmp` 离开作用域，也不能在 body 返回后继续持有借用对象。
-完整使用见 [C 作用域回归](tests/plugin_linker_test.c)。
 
 C++17 使用 `salts::plugin_lease_scope`。默认对象为空；
 `acquire(registry,ref)` 返回既有 acquire 状态，持有 lease 时再次 acquire 返回
@@ -158,7 +152,6 @@ C++17 使用 `salts::plugin_lease_scope`。默认对象为空；
 不提供移动赋值，避免覆盖活跃 lease 时隐藏释放失败。
 `close()` 成功后清空所有权，重复 close 成功；失败保留所有权及 manifest，允许显式处理后重试。
 析构在正常返回、提前返回与异常展开时调用既有 `cmeta_plugin_registry_release`。
-完整的移动、提前返回和异常示例见 [C++ 作用域回归](tests/plugin_scope_cpp_test.cpp)。
 
 核心状态仍由 registry 拥有：scope 只独占一个 lease token 并借用 registry 的固定地址，
 不会转移 registry、增加隐藏引用或将 lease 放入 descriptor。registry 存储必须比 scope 长寿，

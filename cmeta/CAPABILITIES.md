@@ -109,19 +109,3 @@ C++20 designated initializer。旧 variant provider 没有 construct ops 时保�
 `cmeta_data_desc_equal`。跨 TU 必须复用同一声明头文件和稳定 ID，不以指针
 地址或仅 size/alignment 代替类型身份。此次扩展不改变既有对象格式；新 variant
 的内存布局是原生 C 布局，不能直接当作跨平台 wire format。
-
-## 可复验示例
-
-完整声明见 [capabilities fixture](tests/cmeta_capabilities_fixture.h)。
-[C11 示例及所有权测试](tests/cmeta_capabilities_test.c) 包含 trait 回调、字段
-要求、普通 switch、typed flags、跨 TU 身份、深复制和失败清理；
-[C++17 示例](tests/cmeta_capabilities_header_cpp_test.cpp) 是可运行 main，复用
-同一声明头文件。[测试 payload provider](tests/cmeta_capabilities_owned.c)
-提供有 32-byte 硬上限的 owned buffer 及可注入失败的 canonical 生命周期。
-
-使用当前平台 user preset 构建 `cmeta_capabilities_test` 和
-`cmeta_capabilities_header_cpp_test`，然后运行
-`ctest --preset <user-preset> --output-on-failure -R '^cmeta_capabilities'`。
-这同时运行公开示例和 [编译失败资格测试](tests/compile_fail/)。
-CI 通过 GCC、GCC ASan、MSVC、ClangCL、AppleClang 的既有 presets 执行相同
-正式测试，并回归 core/data/enum-bits/C++ aggregate headers。

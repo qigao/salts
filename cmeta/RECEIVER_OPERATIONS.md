@@ -95,5 +95,3 @@ lease 必须活到所有 callable 副本丢弃以后；复制 callable 不延长
 此入口增量提供，不更改 callable 表示或既有 operation/Interface 语义。编译器若已经有
 FunctionData，可用生成的 callable 和 projected metadata 继续走既有 bind_data/provider
 桥接。撤回生成声明时恢复手写 exact thunk 即可；没有运行时状态或持久化数据迁移。
-完整 C11/C++17 示例及正负例见 [binding 回归](tests/cmeta_bind_test.c) 和
-[compile-fail 声明](tests/compile_fail/cmeta_lowering.c)。

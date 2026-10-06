@@ -4,8 +4,7 @@
 
 CMeta 保存 canonical descriptor、type identity、生命周期语义、immutable manifest 与
 address-independent fingerprint。机制独占在既有 owner：Concurrency 管理 Atomic/RCU，
-Core 管理 bounded pool storage/lease，Platform 管理 thread affinity/TLS 与 fast key/native
-acquire-load，Plugin 管理模块与 lease。公开 header 的完整分类只维护在
+Core 管理 bounded pool storage/lease，Platform 管理 thread affinity/TLS 与 C 原子 fast key，Plugin 管理模块与 lease。公开 header 的完整分类只维护在
 [HEADER_LAYERS.md](HEADER_LAYERS.md)。
 
 `Salts::CMeta` 不链接上述 runtime，也不编译 fastpath 汇编；`meta.h` 不包含 optional
@@ -17,9 +16,8 @@ adapter 或 scope。Static-call/trace consumer 显式 include 对应 header 并�
 Atomic/RCU 使用 `SALTS_ATOMIC_TYPE` / `SALTS_RCU_TYPE`；生命周期 adapter 使用
 `cmeta_pool_type` / `cmeta_local_type`。Fast key 与纯 fault 使用 `SALTS_FAST_KEY`、
 `cmeta_fast_enable` / `cmeta_fast_disable` / `cmeta_fast_key_consume`，机制返回 SALTS 状态；
-CMeta typed static-call 与 trace 返回 CMeta 状态。Native 开关是
-`SALTS_PLATFORM_NATIVE_FASTPATH`，默认 OFF。消费者须更新 include、link target、option
-与状态检查；跨模块公开 owner 布局变化要求全量重编译。
+CMeta typed static-call 与 trace 返回 CMeta 状态。Fast key 与 typed static-call
+统一使用 C 原子实现。消费者须更新 include、link target 与状态检查；跨模块公开 owner 布局变化要求全量重编译。
 
 此次整合复用当前主线 owner 布局和 API，新增 Core begin/end 与 external destination
 校验；不引入替代 owner 或 generic kind。Pool/Local adapter 通过 owner command 管理
@@ -52,8 +50,7 @@ COFF 的共同参考；未实现 optional linker aggregation，无需 backend-sp
 
 ## 验证与回滚
 
-正式 TinyTest 覆盖 owner 单独消费、C/C++、跨 TU/DSO 固定 fingerprint 向量、native
-五平台、portable TSan、Pool/Local callback 重入/失败恢复、trace disabled 参数语义，
+正式 TinyTest 覆盖 owner 单独消费、C/C++、跨 TU/DSO 固定 fingerprint 向量、原子 publication 和并发替换、Pool/Local callback 重入/失败恢复、trace disabled 参数语义，
 以及 Plugin 原 lease 的 unload/BUSY。组合测试通过同一 Type/DataDesc 的 manifest
 查询，把 owned payload 从 Pool 移至 Local，检查 source release、析构恰好一次、
 fingerprint 前中后不变，以及资源关闭后 static metadata 仍可查询。

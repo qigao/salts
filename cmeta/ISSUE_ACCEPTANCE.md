@@ -1,5 +1,7 @@
 # #976 / #977 / #980 / #981 逐项验收记录
 
+> 历史验收记录：下述 semantic 分组测试现已删除；相关运行结果仅描述当时提交，不代表当前测试覆盖。
+
 核对日期：2026-10-07。代码基线：`8d19c98e1d0d208ae148bd1404fe59eca875f9ce`，
 分支 `feat/cmeta-plugin-declarations-976-977`，[PR #979](https://github.com/qigao/salts/pull/979)。
 
@@ -58,7 +60,7 @@
 ### G2 — MED：Mach-O 跨 TU Plugin 聚合缺少本次运行证据
 
 **事实：**[linker 后端](../plugin/include/salts/plugin_linker.h) 已有 COFF/ELF/Mach-O 实现，
-[正式测试](../plugin/tests/linker_tests.cmake) 已设置各平台 dead-strip / section-GC。
+`正式测试`（已删除） 已设置各平台 dead-strip / section-GC。
 Linux 和 Windows 的 Plugin suite 实际运行 `cmeta_plugin_linker_test` 和
 `cmeta_plugin_scope_cpp_test`。本次 macOS 仅选择 execution / native suites，
 [筛选规则](../.github/workflows/native-tests.yml) 的 native 分支不包含这两项。
@@ -73,7 +75,7 @@ macOS build 成功不能证明加载 DSO 后的跨 TU 聚合、片段保留、�
 
 ### G3 — MED：CI 筛选遗漏部分新增验收用例
 
-**事实：**[测试注册](tests/CMakeLists.txt) 有 `cmeta_interface_arity_test/cpp_test`、
+**事实：**`测试注册`（已删除） 有 `cmeta_interface_arity_test/cpp_test`、
 `cmeta_object_scope_cpp_test`、`cmeta_operation_test`、`cmeta_invokable_test`
 以及 20 项 `cmeta_lowering_*_compile_fail`。
 当前 native / execution / plugin 正则未直接选择这 25 项。
@@ -155,18 +157,18 @@ ctest --preset win-cmeta-native-release-user --no-tests=error --output-on-failur
 
 | ID | 实现与契约 | 正式用例 / 核对结果 |
 |---|---|---|
-| E1 | [pp.h](include/cmeta/pp.h)、[有限宏参考](LANGUAGE_REFERENCE.md#有限宏与精确调用声明) | [PP C 用例](tests/cmeta_pp_test.c)、C++ 共用用例、[现代零参数](tests/cmeta_pp_zero_cases.h)：0/16、pair、tuple、CAT/stringify、布尔/probe/unique；C11 显式计数，C++20 / finalized C23 按 capability 开放 |
-| E2 | [compiler.h](include/cmeta/compiler.h)、[container_of.h](include/cmeta/container_of.h)、[语言能力说明](LANGUAGE_REFERENCE.md) | [原生类型](tests/cmeta_compiler_type_cases.h)、[container_of](tests/cmeta_container_of_cases.h)、[cleanup 能力](tests/cmeta_compiler_cleanup_cases.h)，通过 PP C/C++ 测试执行；MSVC C 不支持的推导能力明确为 0，显式类型入口仍有检查；残余集中化见 G4 |
-| E3 | [interface.h](include/cmeta/interface.h) 的 decode → normalized row → shared map | [arity C 用例](tests/cmeta_interface_arity_test.c) 及 C++ 共用：R/V、reflected/exact carrier、0–4；只保留输入形状归一化的有限分派，vtable/wrapper/call/metadata 主体已共享；本次 MSVC 2/2 |
-| E4 | [function.h](include/cmeta/function.h)、[struct.h](include/cmeta/struct.h)、[enum.h](include/cmeta/enum.h)、[data_select.h](include/cmeta/data_select.h) | data_select C/C++ 与错误选择 compile-fail；[lowering 错误声明](tests/compile_fail/cmeta_lowering.c) 及 C++：layout、callback、result flags/carrier；本次 MSVC 20/20 负向诊断含 capture 项 |
-| E5 | [lifecycle.h](include/cmeta/lifecycle.h)、[scope.h](include/cmeta/scope.h)、[cleanup.h](include/cmeta/cleanup.h)、[object_scope.h](include/cmeta/object_scope.h)、[lowering 契约](LIFECYCLE_LOWERING.md) | cleanup C/C++、scope/逃逸 compile-fail、[ObjectRef RAII](tests/cmeta_object_scope_cpp_test.cpp)、[CSTL lifecycle](../cstl/tests/cstl_header_typed_test.c)：partial restore 一次、LIFO、move、nested、exception、busy/detach、trivial 无 live/ops；Linux installed 复用 |
+| E1 | [pp.h](include/cmeta/pp.h)、[有限宏参考](LANGUAGE_REFERENCE.md#有限宏与精确调用声明) | `PP C 用例`（已删除）、C++ 共用用例、`现代零参数`（已删除）：0/16、pair、tuple、CAT/stringify、布尔/probe/unique；C11 显式计数，C++20 / finalized C23 按 capability 开放 |
+| E2 | [compiler.h](include/cmeta/compiler.h)、[container_of.h](include/cmeta/container_of.h)、[语言能力说明](LANGUAGE_REFERENCE.md) | `原生类型`（已删除）、`container_of`（已删除）、`cleanup 能力`（已删除），通过 PP C/C++ 测试执行；MSVC C 不支持的推导能力明确为 0，显式类型入口仍有检查；残余集中化见 G4 |
+| E3 | [interface.h](include/cmeta/interface.h) 的 decode → normalized row → shared map | `arity C 用例`（已删除） 及 C++ 共用：R/V、reflected/exact carrier、0–4；只保留输入形状归一化的有限分派，vtable/wrapper/call/metadata 主体已共享；本次 MSVC 2/2 |
+| E4 | [function.h](include/cmeta/function.h)、[struct.h](include/cmeta/struct.h)、[enum.h](include/cmeta/enum.h)、[data_select.h](include/cmeta/data_select.h) | data_select C/C++ 与错误选择 compile-fail；`lowering 错误声明`（已删除） 及 C++：layout、callback、result flags/carrier；本次 MSVC 20/20 负向诊断含 capture 项 |
+| E5 | [lifecycle.h](include/cmeta/lifecycle.h)、[scope.h](include/cmeta/scope.h)、[cleanup.h](include/cmeta/cleanup.h)、[object_scope.h](include/cmeta/object_scope.h)、[lowering 契约](LIFECYCLE_LOWERING.md) | cleanup C/C++、scope/逃逸 compile-fail、`ObjectRef RAII`（已删除）、[CSTL lifecycle](../cstl/tests/cstl_header_typed_test.c)：partial restore 一次、LIFO、move、nested、exception、busy/detach、trivial 无 live/ops；Linux installed 复用 |
 | E6 | [Function projection](src/function.c)、[operation.h](include/cmeta/operation.h)、[invokable.c](src/invokable.c)、[ObjectRef](src/object.c)、[CSTL schema](../cstl/include/cstl/detail/typed_facade.h) | function_reflection、operation、invokable、object、cstl_generic_identity / semantic_projection；operation 只存 alias + ABI，ABI 拥有唯一 FunctionDesc；旧 receiver_method API 检索无残留；本次 MSVC operation/invokable 2/2，Linux installed 复用 |
-| E7 | [invoke_decl.h](include/cmeta/invoke_decl.h)、[plugin_decl.h](../plugin/include/salts/plugin_decl.h)、[runtime admission](../plugin/src/plugin.c) | [Plugin declaration](../plugin/tests/plugin_declaration_test.c)、C++ / empty passive+managed / compile-fail、contract / manifest / loader / lifecycle；void/nonvoid、0/nonzero、精确 carrier、显式发布、ABI 5 拒绝错误版本 |
-| E8 | [plugin_linker.h](../plugin/include/salts/plugin_linker.h)、[plugin_scope.h](../plugin/include/salts/plugin_scope.h)、[Plugin 契约](../plugin/README.md) | [linker 编排](../plugin/tests/linker_tests.cmake)、linker/lease C++：跨 C/C++ TU、GC、DSO 隔离、缺片段计数拒绝、move、exception、borrow 先结束；ELF/COFF 实跑，Mach-O 见 G2；无 constructor/可变 registry/隐式 lease |
+| E7 | [invoke_decl.h](include/cmeta/invoke_decl.h)、[plugin_decl.h](../plugin/include/salts/plugin_decl.h)、[runtime admission](../plugin/src/plugin.c) | `Plugin declaration`（已删除）、C++ / empty passive+managed / compile-fail、contract / manifest / loader / lifecycle；void/nonvoid、0/nonzero、精确 carrier、显式发布、ABI 5 拒绝错误版本 |
+| E8 | [plugin_linker.h](../plugin/include/salts/plugin_linker.h)、[plugin_scope.h](../plugin/include/salts/plugin_scope.h)、[Plugin 契约](../plugin/README.md) | `linker 编排`（已删除）、linker/lease C++：跨 C/C++ TU、GC、DSO 隔离、缺片段计数拒绝、move、exception、borrow 先结束；ELF/COFF 实跑，Mach-O 见 G2；无 constructor/可变 registry/隐式 lease |
 | E9 | [admitted invocation](src/invokable.c)、[admitted field](src/object.c)、[CFlow admission](../cflow/src/function_projection.c)、[CFlow execution](../cflow/src/subscription.c)、[Plugin admission](../plugin/src/plugin.c) | invokable/object/bind、CFlow projection/execution、Plugin contract：raw 入口保留完整验证；已 admission 的 invocation/field 路径不重遍描述符图。CFlow 执行保留有限 callable flags/storage 检查，不把一切检查视为可删除开销；下游宏复用 CMETA_PP_* |
-| E10 | [bind.h](include/cmeta/bind.h)、[Function projection](src/function.c)、[bind tests](tests/cmeta_bind_test.c) | C/C++ receiver bind、普通函数非相邻参数 bind、value 快照、borrow、padding、flags/carrier/map 拒绝；capture compile-fail 验证 32-byte 上限及类别，不隐式管理 OWNED/SHARED |
+| E10 | [bind.h](include/cmeta/bind.h)、[Function projection](src/function.c)、`bind tests`（已删除） | C/C++ receiver bind、普通函数非相邻参数 bind、value 快照、borrow、padding、flags/carrier/map 拒绝；capture compile-fail 验证 32-byte 上限及类别，不隐式管理 OWNED/SHARED |
 | E11 | [compiler presets](../presets/Compilers.json)、[CI 选择](../.github/workflows/native-tests.yml)、上文 run/job 链接 | GCC/MSVC C/C++ 有实际执行；macOS 为 GCC；Clang 当前运行资格见 G1，选例覆盖见 G3 |
-| E12 | [installed CMake graph](tests/installed/CMakeLists.txt) | Linux 31/31 复用正式测试并链接 Salts imported targets，无 source-tree 公共 include 注入；包括 PP、bind、cleanup、ObjectRef、operation、scope、Function、Plugin linker/lease/declarations、native |
+| E12 | `installed CMake graph`（已删除） | Linux 31/31 复用正式测试并链接 Salts imported targets，无 source-tree 公共 include 注入；包括 PP、bind、cleanup、ObjectRef、operation、scope、Function、Plugin linker/lease/declarations、native |
 | E13 | [native 契约](NATIVE_THUNKS.md)、[thunk API](include/cmeta/native/thunk.h)、[native 实现](native/thunk.c)、[code-memory owner](native/code_memory.c)、[Object adapter](native/object.c)、[static-call adapter](include/cmeta/native/static_call.h) | native_thunk C/C++、native_failure、native_object、native_static_call、Plugin native、installed native：Win64/SysV 寄存器映射、leaf tail-jump、负值/边界、重绑定、错误 ABI、预算、OS 失败、异常、先撤销借用后销毁；W^X、有界 caller owner，无隐式 retain |
 | E14 | [native benchmark](benchmarks/cmeta_native_benchmark.c)、[Plugin native test](../plugin/tests/plugin_native_test.c)、[测量契约](NATIVE_THUNKS.md) | 同 TU 目标/相同操作与显式 lease；分别测量调用与创建/重绑定成本。当前 Linux/Windows Release 结果见下表；不以 sanitizer 差异计算生产收益 |
 

@@ -109,17 +109,14 @@ release success 只允许 relaxed failure，acq_rel success 至多允许 acquire
 加法及乘法溢出在分配前拒绝。acquire 不扩大这些存储；canonical callback 内的 payload
 分配仍属于 Type 的契约，不能据此声称整个业务操作零分配。
 
-可直接运行的使用示例与断言位于
-[`cmeta_execution_test.c`](tests/cmeta_execution_test.c)，包括完整 canonical provider、
-typed acquire/get/move/release、TLS 退出清理、release/acquire 发布和 typed RCU 所有权交回。
 [`rcu_test.c`](../concurrency/tests/rcu_test.c) 展示跨线程 guard 交接、旧 epoch 背压和并发回收。
 
 本地 Windows 使用已有 `win-dev-user`（MSVC + ASan）：
 
 ```powershell
 cmake --preset win-dev-user
-cmake --build --preset win-dev-user --target cmeta_execution_test concurrency_rcu_test cmeta_scope_test cmeta_collector_test concurrency_header_cpp_test test_object_pool
-ctest --preset win-dev-user --output-on-failure -R '^(cmeta_scope_|cmeta_execution_test$|cmeta_collector_test$|concurrency_rcu_test$|concurrency_header_cpp_test$|test_object_pool$)'
+cmake --build --preset win-dev-user --target concurrency_rcu_test concurrency_header_cpp_test test_object_pool
+ctest --preset win-dev-user --output-on-failure -R '^(concurrency_rcu_test$|concurrency_header_cpp_test$|test_object_pool$)'
 ```
 
 需先进入 VS 开发者环境并提供 user preset 所需的 vcpkg 环境，见

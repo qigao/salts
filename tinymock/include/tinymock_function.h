@@ -14,8 +14,6 @@
  * In the generating test source, TINYMOCk_FUNCTION_DECLARE must follow the
  * production declarations and rejects functions without generated overrides.
  *
- * See tinymock/test/tinymock_function_auto_mock_test.c for a complete test,
- * and tinymock/test/tinymock_selective_test.c for selective replacement.
  *
  * Reflected wrappers use only CMeta typed history/actions/returns. Call-count
  * verification is derived directly from typed history; reflected functions do
