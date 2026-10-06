@@ -1,5 +1,6 @@
 #include "cflow_executor_dso_fixture.h"
-#include "executor_internal.h"
+
+extern bool cflow_executor_is_current_internal(const cflow_executor *executor);
 
 static void dso_run(void *user) {
     cflow_executor_dso_probe *probe = (cflow_executor_dso_probe *)user;
