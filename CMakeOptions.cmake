@@ -20,6 +20,10 @@ option(CNET_BUILD_BENCHMARKS
        "Build CNet benchmark executables independently" OFF)
 option(CFLOW_ENABLE_MINICORO
        "Build the optional minicoro-backed CFlow Resumable adapter" OFF)
+option(CMETA_NATIVE_FASTPATH
+       "Build explicitly requested native static key/call acquire-load backends" OFF)
+option(CMETA_BUILD_BENCHMARKS
+       "Build CMeta benchmarks independently" OFF)
 
 option(SALTS_ENABLE_EPOLL_READINESS
        "Enable the Linux epoll readiness backend" OFF)

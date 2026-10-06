@@ -32,7 +32,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if(MSVC)
-  add_compile_options(/experimental:c11atomics)
+  add_compile_options("$<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>")
 endif()
 # Enable folder organization in IDEs
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)

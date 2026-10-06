@@ -19,6 +19,10 @@ The authoritative syntax and layering contract is
 inspection follows [`INSPECTION.md`](INSPECTION.md): immutable descriptors plus
 canonical semantic queries, without a second meta object model or runtime RTTI.
 
+[`FASTPATH.md`](FASTPATH.md) specifies bounded C11 static keys and typed static
+calls, their publication/provider lifetimes, and explicitly enabled x86_64 /
+AArch64 assembly backends. Portable atomics remain the default implementation.
+
 ## Public programming model
 
 Application users normally use semantic DSLs:
