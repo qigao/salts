@@ -103,12 +103,30 @@ def collect_io_comparisons(directory):
                         continue
                     result = {"backend": backend, "protocol": protocol,
                               "payload_bytes": payload, "driver": driver, "repeats": IO_REPEATS}
+                    control = [runs.get((protocol, payload, driver, "B", repeat))
+                               for repeat in range(1, IO_REPEATS + 1)]
+                    baseline_control = [runs.get((protocol, payload, "libuv", "B", repeat))
+                                        for repeat in range(1, IO_REPEATS + 1)]
+                    complete_control = all(row is not None for row in control + baseline_control)
                     for metric in COMPARISON_METRICS:
                         result[metric], result[f"{metric}_mad"] = median_mad(
                             [row[metric] for row in candidate])
                         delta = [100 * (cand[metric] / base[metric] - 1)
                                  for cand, base in zip(candidate, baseline)]
                         result[f"{metric}_delta_percent"], result[f"{metric}_delta_mad_pp"] = median_mad(delta)
+                        control_keys = (f"{metric}_b_delta_percent", f"{metric}_b_delta_mad_pp",
+                                        f"{metric}_aa_delta_percent", f"{metric}_aa_delta_mad_pp")
+                        result.update(dict.fromkeys(control_keys))
+                        result[f"{metric}_ab_sign_reversal"] = None
+                        if complete_control:
+                            b_delta = [100 * (cand[metric] / base[metric] - 1)
+                                       for cand, base in zip(control, baseline_control)]
+                            aa_delta = [100 * (b[metric] / a[metric] - 1)
+                                        for a, b in zip(candidate, control)]
+                            result[control_keys[0]], result[control_keys[1]] = median_mad(b_delta)
+                            result[control_keys[2]], result[control_keys[3]] = median_mad(aa_delta)
+                            result[f"{metric}_ab_sign_reversal"] = (
+                                result[f"{metric}_delta_percent"] * result[control_keys[0]] < 0)
                     comparisons.append(result)
     return {"io_comparisons": comparisons, "io_comparison_jobs": jobs}
 
@@ -179,7 +197,7 @@ def render_comparisons(report, output):
                 ax = axes[y, x]
                 ax.axhline(0, color="#697586", linestyle="--", linewidth=1,
                            label="libuv (0% reference)")
-                for offset, driver in ((-.06, "NativeIO direct"), (.06, "CNet")):
+                for offset, driver in ((-.09, "NativeIO direct"), (.09, "CNet")):
                     rows = {row["payload_bytes"]: row for row in selected if row["driver"] == driver}
                     # NaN leaves a visible gap; missing measurements never turn
                     # into zero change or a line interpolated across absent data.
@@ -187,10 +205,20 @@ def render_comparisons(report, output):
                               for p in payloads]
                     errors = [rows[p][f"{metric}_delta_mad_pp"] if p in rows else math.nan
                               for p in payloads]
+                    name = "CNet" if driver == "CNet" else "NativeIO"
                     ax.errorbar([i + offset for i in range(len(payloads))], values,
                                 yerr=errors, color=colors[driver], fmt="o-", capsize=3,
                                 linewidth=1.2, markersize=4,
-                                label="CNet retained/owned" if driver == "CNet" else driver)
+                                label=f"{name} A")
+                    b_values = [rows[p].get(f"{metric}_b_delta_percent") if p in rows else None
+                                for p in payloads]
+                    b_errors = [rows[p].get(f"{metric}_b_delta_mad_pp") if p in rows else None
+                                for p in payloads]
+                    ax.errorbar([i + offset for i in range(len(payloads))],
+                                [v if v is not None else math.nan for v in b_values],
+                                yerr=[v if v is not None else math.nan for v in b_errors],
+                                color=colors[driver], fmt="s--", capsize=2,
+                                linewidth=1, markersize=3, alpha=.65, label=f"{name} B control")
                 if not any(row["driver"] != "libuv" for row in selected):
                     ax.text(.5, .5, "NO DATA: no complete paired samples",
                             ha="center", transform=ax.transAxes, fontsize=9)
@@ -207,15 +235,15 @@ def render_comparisons(report, output):
                      fontsize=19, fontweight="bold", y=.98)
         fig.text(.5, .945,
                  f"{report['head'][:12]} | run {report['run']} | {report['conclusion']}\n"
-                 f"Same-platform libuv = 0%; {IO_REPEATS} paired repeats; error bars = MAD (not confidence intervals)",
+                 f"DIAGNOSTIC | libuv = 0% within each pass; {IO_REPEATS} paired repeats/pass; error bars = MAD",
                  ha="center", va="top", fontsize=10)
         handles, labels = axes[0, 0].get_legend_handles_labels()
-        fig.legend(handles, labels, loc="lower center", ncol=3, frameon=False,
+        fig.legend(handles, labels, loc="lower center", ncol=5, frameon=False,
                    bbox_to_anchor=(.5, .078))
         fig.text(.5, .060,
-                 "Gray dashed = libuv baseline (0%); blue = NativeIO direct; orange = CNet retained/owned.\n"
+                 "Gray = libuv (0%); blue = NativeIO direct; orange = CNet retained/owned. Solid circles = A; dashed squares = B control.\n"
                  "Latency: negative = faster, positive = slower. RT/s: positive = faster, negative = slower.\n"
-                 "Error bars = MAD, not confidence intervals; missing cells are gaps.\n"
+                 "Error bars = within-pass MAD, not confidence intervals; A/B disagreement indicates sensitivity to run conditions. Missing cells are gaps.\n"
                  "Different hosts: no cross-platform backend ranking. Sequential RTT, not saturation throughput.",
                  ha="center", va="top", fontsize=9, color="#526071", linespacing=1.4)
         fig.subplots_adjust(top=.885, bottom=.16, left=.10, right=.98, hspace=.48, wspace=.18)

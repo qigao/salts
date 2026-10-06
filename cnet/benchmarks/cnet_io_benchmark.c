@@ -13,6 +13,9 @@
 #include "cnet_client_internal.h"
 #include "cnet_io_benchmark_config.h"
 #include "tinytest.h"
+#ifdef CNET_IO_BENCHMARK_KQUEUE_TRACE
+  #include "cnet_kqueue_trace.h"
+#endif
 
 #include <uv.h>
 
@@ -1472,6 +1475,9 @@ static uint64_t io_bench_cpu_ns(const uv_rusage_t *usage) {
 }
 
 static bool io_bench_trace_enabled;
+#ifdef CNET_IO_BENCHMARK_KQUEUE_TRACE
+static unsigned io_bench_trace_repeat;
+#endif
 
 static int io_bench_print_host(void) {
   uv_utsname_t host;
@@ -1524,6 +1530,10 @@ static int io_bench_run_counted(io_bench_protocol protocol, io_bench_driver driv
       warmup_exchanges > SIZE_MAX - measure_exchanges)
     return SALTS_EINVAL;
   total_exchanges = warmup_exchanges + measure_exchanges;
+#ifdef CNET_IO_BENCHMARK_KQUEUE_TRACE
+  cnet_kqueue_trace_stats kqueue_stats = {0};
+  bool kqueue_window_active = false;
+#endif
   memset(result, 0, sizeof(*result));
   status = io_bench_fixture_init(&fixture, protocol, driver, payload_size, backend_kind, send_mode,
                                  segment_count, total_exchanges, cnet_enable_nodelay,
@@ -1599,6 +1609,11 @@ static int io_bench_run_counted(io_bench_protocol protocol, io_bench_driver driv
     goto cleanup;
   }
 #endif
+#ifdef CNET_IO_BENCHMARK_KQUEUE_TRACE
+  status = cnet_kqueue_trace_begin();
+  if (status != SALTS_OK) goto cleanup;
+  kqueue_window_active = true;
+#endif
   wall_started = cmeta_hrtime();
   for (size_t exchange = 0u; exchange < measure_exchanges; ++exchange) {
     const io_bench_sample before = profile_stages ? io_bench_snapshot(&fixture, result)
@@ -1628,6 +1643,11 @@ static int io_bench_run_counted(io_bench_protocol protocol, io_bench_driver driv
   result->payload_size = payload_size;
   result->round_trips = latency_count;
   result->wall_ns = cmeta_hrtime() - wall_started;
+#ifdef CNET_IO_BENCHMARK_KQUEUE_TRACE
+  status = cnet_kqueue_trace_take(&kqueue_stats);
+  if (status != SALTS_OK) goto cleanup;
+  kqueue_window_active = false;
+#endif
 #ifdef _WIN32
   if (!QueryThreadCycleTime(GetCurrentThread(), &cycles_after) || cycles_after < cycles_before) {
     status = SALTS_EIO;
@@ -1660,6 +1680,23 @@ static int io_bench_run_counted(io_bench_protocol protocol, io_bench_driver driv
   qsort(latencies, latency_count, sizeof(latencies[0]), io_bench_u64_compare);
   result->p50_ns = latencies[(latency_count - 1u) * 50u / 100u];
   result->p95_ns = latencies[(latency_count - 1u) * 95u / 100u];
+#ifdef CNET_IO_BENCHMARK_KQUEUE_TRACE
+  printf("KQUEUE_TRACE,%s,%u,%zu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",
+         getenv("CNET_IO_BENCHMARK_TRACE"), io_bench_trace_repeat, result->round_trips,
+         (unsigned long long)result->wall_ns, (unsigned long long)result->cpu_ns,
+         (unsigned long long)result->p50_ns, (unsigned long long)result->p95_ns,
+         (unsigned long long)kqueue_stats.changes.calls,
+         (unsigned long long)kqueue_stats.changes.elapsed_ns,
+         (unsigned long long)kqueue_stats.changes.max_ns,
+         (unsigned long long)kqueue_stats.changes.errors,
+         (unsigned long long)kqueue_stats.waits.calls,
+         (unsigned long long)kqueue_stats.waits.elapsed_ns,
+         (unsigned long long)kqueue_stats.waits.max_ns,
+         (unsigned long long)kqueue_stats.waits.errors,
+         (unsigned long long)kqueue_stats.adds, (unsigned long long)kqueue_stats.deletes,
+         (unsigned long long)kqueue_stats.change_items,
+         (unsigned long long)kqueue_stats.returned_events);
+#endif
   if (driver == IO_BENCH_CNET && profile_stages) {
     result->cnet_receive_admission_ns = fixture.cnet.receive_admission_ns;
     result->cnet_send_admission_ns = fixture.cnet.send_admission_ns;
@@ -1677,6 +1714,9 @@ static int io_bench_run_counted(io_bench_protocol protocol, io_bench_driver driv
   status = SALTS_OK;
 
 cleanup:
+#ifdef CNET_IO_BENCHMARK_KQUEUE_TRACE
+  if (kqueue_window_active) (void)cnet_kqueue_trace_take(&kqueue_stats);
+#endif
   free(latencies);
   free(received);
   free(fixture.flatten_buffer);
@@ -2801,6 +2841,11 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
               requested_trace == NULL ? "<unset>" : requested_trace, status);
     check_equal(status, SALTS_OK);
     if (status != SALTS_OK) return;
+#ifdef CNET_IO_BENCHMARK_KQUEUE_TRACE
+    /* Probe timings must never appear as ordinary comparison measurements. */
+    check_true(trace.enabled && backend.kind == NATIVE_IO_BACKEND_KQUEUE);
+    if (!trace.enabled || backend.kind != NATIVE_IO_BACKEND_KQUEUE) return;
+#endif
     if (requested_sg_comparison != NULL) {
       if (strcmp(requested_sg_comparison, "1") != 0 || trace.enabled) {
         fprintf(stderr, "CNET_IO_BENCHMARK_SG_COMPARE must be unset or 1, and cannot combine "
@@ -2834,13 +2879,21 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
       printf("TRACE ONLY: %s backend=%s libuv=%s; not a performance score.\n",
              requested_trace, backend.name, uv_version_string());
       io_bench_trace_enabled = true;
+#ifdef CNET_IO_BENCHMARK_KQUEUE_TRACE
+      for (io_bench_trace_repeat = 1u; io_bench_trace_repeat <= IO_BENCH_REPLICATES;
+           ++io_bench_trace_repeat) {
+#else
       {
+#endif
         const io_bench_driver trace_driver = (io_bench_driver)trace.driver;
         const io_bench_send_mode send_mode =
             trace_driver == IO_BENCH_CNET ? IO_BENCH_SEND_RETAINED : IO_BENCH_SEND_BASELINE;
         status = io_bench_run(trace.udp ? IO_BENCH_UDP : IO_BENCH_TCP,
                               trace_driver, trace.payload_size, false, backend.kind,
                               send_mode, 0u, &traced);
+#ifdef CNET_IO_BENCHMARK_KQUEUE_TRACE
+        if (status != SALTS_OK) break;
+#endif
       }
       io_bench_trace_enabled = false;
       check_equal(status, SALTS_OK);

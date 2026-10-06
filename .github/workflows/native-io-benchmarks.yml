@@ -1268,6 +1268,44 @@ jobs:
         run: |
           ./cnet/benchmarks/summarize_io_trace.ps1 -Directory native-io-results/syscalls |
             Tee-Object -FilePath native-io-results/syscalls/summary.txt
+      - name: Trace macOS client kqueue registration and waits
+        if: matrix.family == 'mac' && fromJSON(inputs.scope).cnet_io == 'true'
+        shell: pwsh
+        env:
+          CNET_IO_BENCHMARK_BACKEND: kqueue
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $traceDir = Join-Path $env:GITHUB_WORKSPACE 'native-io-results/kqueue-trace'
+          New-Item -ItemType Directory -Force -Path $traceDir | Out-Null
+          ctest --test-dir '${{ matrix.build_dir }}' --no-tests=error --output-on-failure -R '^cnet_kqueue_trace_test$'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $rows = [Collections.Generic.List[string]]::new()
+          $rows.Add('workload,repeat,round_trips,wall_ns,client_cpu_ns,p50_ns,p95_ns,change_calls,change_ns,change_max_ns,change_errors,wait_calls,wait_ns,wait_max_ns,wait_errors,adds,deletes,change_items,returned_events')
+          foreach ($workload in @('tcp:1024', 'tcp:32768', 'tcp:65536', 'udp:8192')) {
+            foreach ($driver in @('libuv', 'native', 'coroutine', 'cnet')) {
+              $env:CNET_IO_BENCHMARK_TRACE = "$($driver):$workload"
+              $label = $env:CNET_IO_BENCHMARK_TRACE.Replace(':', '-')
+              $output = ctest --test-dir '${{ matrix.build_dir }}' --no-tests=error -V -R '^cnet_io_benchmark_kqueue_trace$' 2>&1 |
+                ForEach-Object { $_ -replace '^[0-9]+: ', '' } |
+                Tee-Object -FilePath (Join-Path $traceDir "$label.log")
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $measured = @($output | Where-Object { $_ -like 'KQUEUE_TRACE,*' })
+              if ($measured.Count -ne 5) { throw "Expected five measured trace windows: $label" }
+              foreach ($line in $measured) {
+                if ($line.Split(',').Count -ne 20) { throw "Invalid measured trace columns: $label" }
+                $rows.Add($line.Substring('KQUEUE_TRACE,'.Length))
+              }
+            }
+          }
+          $rows | Set-Content -LiteralPath (Join-Path $traceDir 'summary.csv')
+          @(
+            'Client thread only, five independent reruns per workload; setup/warmup/echo peer excluded.'
+            'A separate executable interposes kevent in both libuv and NativeIO; ordinary A/B has no probes.'
+            'change_calls: event capacity zero; wait_calls: event capacity positive, possibly with batched changes.'
+            'adds/deletes count requested change items, including retries; errors are syscall return errors.'
+            'kevent wall durations include kernel wait and scheduling; they are not CPU cost or baseline RTT.'
+            'No CPU stacks or runnable/blocked split is collected. Traces do not explain individual A/B outliers.'
+          ) | Set-Content -LiteralPath (Join-Path $traceDir 'README.txt')
       - name: Prune successful PR forensic artifacts
         if: success() && github.event_name == 'pull_request' && fromJSON(inputs.scope).forensic != 'true'
         shell: pwsh
