@@ -43,7 +43,11 @@ test('first publication creates only an orphan reports branch and an image-only 
   assert.equal(f.calls.find(c => c.name === 'createRef').args.ref, 'refs/heads/benchmark-reports');
   const body = f.calls.find(c => c.name === 'createComment').args.body;
   assert.equal((body.match(/raw.githubusercontent.com/g) || []).length, 2);
-  assert.match(body, /\/new-report\/pr-977\/123-1\/overview.png/);
+  assert.match(body, /\/new-report\/pr-977\/123-1\/tcp-comparison.png/);
+  assert.match(body, /\/new-report\/pr-977\/123-1\/udp-comparison.png/);
+  assert.deepEqual(f.calls.find(c => c.name === 'tree').args.tree.map(entry => entry.path),
+    ['pr-977/123-1/tcp-comparison.png', 'pr-977/123-1/udp-comparison.png']);
+  assert.equal(body.includes('overview.png'), false);
   assert.equal(f.calls.some(c => c.name === 'updateRef'), false);
 });
 

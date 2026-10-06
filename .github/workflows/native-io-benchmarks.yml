@@ -1283,7 +1283,8 @@ jobs:
             -PolicyPath cmake/ci/benchmark-policy.json `
             -EvidenceDir native-io-results `
             -Backend "${{ matrix.backend }}" `
-            -JobStatus "$env:BENCHMARK_JOB_STATUS"
+            -JobStatus "$env:BENCHMARK_JOB_STATUS" `
+            -WriteSummary
       - name: Upload I/O benchmark evidence
         if: always() && fromJSON(inputs.scope).evidence == 'true'
         uses: actions/upload-artifact@v6

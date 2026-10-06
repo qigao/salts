@@ -93,7 +93,7 @@ exports.publish = async ({github, context, core}) => {
   const previous = await previousComment(github, context, pr.number);
   if (isNewer(previous, run)) return;
   const prefix = `pr-${pr.number}/${run.id}-${run.run_attempt}`;
-  const images = ['overview.png', 'performance.png'];
+  const images = ['tcp-comparison.png', 'udp-comparison.png'];
   const tree = [];
   for (const name of images) {
     const content = fs.readFileSync(`benchmark-report/${name}`);
@@ -115,7 +115,7 @@ exports.publish = async ({github, context, core}) => {
   // Immutable commit URLs keep previous reports stable after later branch updates.
   const root = `https://raw.githubusercontent.com/${context.repo.owner}/${context.repo.repo}/${commit}/${prefix}`;
   const body = `${marker}run=${run.id} attempt=${run.run_attempt} head=${run.head_sha} -->\n\n` +
-    images.map(name => `[![Benchmark ${name === 'overview.png' ? 'results' : 'performance'}](${root}/${name})](${run.html_url})`).join('\n\n');
+    images.map(name => `[![${name.split('-')[0].toUpperCase()} NativeIO / libuv / CNet comparison](${root}/${name})](${run.html_url})`).join('\n\n');
   if (previous) {
     await github.rest.issues.updateComment({...context.repo, comment_id: previous.id, body});
   } else {

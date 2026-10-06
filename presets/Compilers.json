@@ -21,7 +21,15 @@
                 "CMAKE_C_COMPILER": "clang",
                 "CMAKE_CXX_COMPILER": "clang++"
             },
-            "description": "Xcode compiler for iOS device and simulator SDKs only"
+            "description": "Xcode compiler for native macOS and iOS SDKs"
+        },
+        {
+            "name": "Clang",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            }
         },
         {
             "name": "Gcc",

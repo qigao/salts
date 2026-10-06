@@ -33,7 +33,7 @@ function Test-Changed([string]$Pattern) {
 $shared = $full -or (Test-Changed '^(CMakeLists\.txt|CMakeOptions\.cmake|CMake(User)?Presets\.json|vcpkg(-configuration)?\.json|presets/|vendor/|\.github/actions/|\.github/workflows/(ci|native-build|native-tests|sdk-package|sdk-tests)\.yml|cmake/(?!ci/)|cmake/ci/select-ci-scope\.ps1)')
 $mobile = $shared -or (Test-Changed '^(tools|tinytest|platform|concurrency|coroutine|native-io|uri|cmeta|plugin|simd|tinymock|cflow|cstl|cnet|cserde|utils)/')
 $contractsChanged = Test-Changed '^\.github/workflows/cmeta-cflow-calculus\.yml$'
-$cmetaRuntime = Test-Changed '^cmeta/(include/|src/|CMakeLists\.txt$|tests/CMakeLists\.txt$)'
+$cmetaRuntime = Test-Changed '^cmeta/(include/|src/|native/|CMakeLists\.txt$|tests/CMakeLists\.txt$)'
 $platformRuntime = Test-Changed '^platform/(include/|src/|arch/|CMakeLists\.txt$)'
 $concurrencyRuntime = Test-Changed '^concurrency/(include/|src/|CMakeLists\.txt$)'
 $coroutineRuntime = Test-Changed '^coroutine/(include/|src/|arch/|CMakeLists\.txt$)'
@@ -124,10 +124,12 @@ if ($env:GITHUB_OUTPUT) { Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "ch
 if ($PrepareRelease -and -not $full) { throw "Release preparation requires a manual CI run" }
 $profiles = @(
   @{ id = 'linux-release'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-release-ci'; build_dir = 'build/linux-gcc-release'; sdk = 'linux-x64' },
+  @{ id = 'linux-clang-release'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-clang-release-ci'; build_dir = 'build/linux-clang-release'; sdk = '' },
   @{ id = 'linux-asan'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-dev-ci'; build_dir = 'build/linux-gcc-debug'; sdk = '' },
   @{ id = 'linux-tsan'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-tsan-ci'; build_dir = 'build/linux-gcc-tsan'; sdk = '' },
   @{ id = 'windows-release'; runner = 'windows-2025'; family = 'windows'; preset = 'win-release-ci'; build_dir = 'build/Msvc-Release'; sdk = 'windows-x64' },
   @{ id = 'macos-release'; runner = 'macos-15'; family = 'mac'; preset = 'mac-arm64-release-ci'; build_dir = 'build/mac-arm64-gcc-release'; sdk = 'macos-arm64' },
+  @{ id = 'macos-clang-release'; runner = 'macos-15'; family = 'mac'; preset = 'mac-arm64-clang-release-ci'; build_dir = 'build/mac-arm64-clang-release'; sdk = '' },
   @{ id = 'android-arm64-v8a-release'; runner = 'ubuntu-24.04'; family = 'android'; preset = 'android-arm64-v8a-release-ci'; build_dir = 'build/android-arm64-v8a-release'; sdk = 'android-arm64-v8a' },
   @{ id = 'ios-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-arm64-release-ci'; build_dir = 'build/ios-arm64'; sdk = 'ios-arm64'; triplet = 'arm64-ios' },
   @{ id = 'ios-simulator-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-simulator-arm64-release-ci'; build_dir = 'build/ios-simulator-arm64'; sdk = 'ios-simulator-arm64'; triplet = 'arm64-ios-simulator' }
@@ -137,16 +139,19 @@ if ($PrepareRelease) {
 }
 $builds = @()
 foreach ($profile in $profiles) {
+  # Clang profiles qualify the same portable/native contracts in isolated trees;
+  # their installed SDKs are test inputs, not additional release packages.
+  $profile.clang = $profile.id -in @('linux-clang-release', 'macos-clang-release')
   $entry = $profile.Clone()
   $entry.cross = $entry.family -in @('android', 'ios')
   $entry.fastpath = 'OFF'
-  $entry.native_thunks = if ($entry.id -in @('linux-release', 'linux-asan', 'windows-release')) { 'ON' } else { 'OFF' }
+  $entry.native_thunks = if ($entry.id -in @('linux-release', 'linux-clang-release', 'linux-asan', 'windows-release')) { 'ON' } else { 'OFF' }
   $entry.native = $false
   $entry.execution = $execution -and -not $entry.cross -and $entry.id -ne 'linux-arm64-release'
   $entry.armheaders = $entry.id -eq 'linux-arm64-release'
   $entry.portable = $native -and $entry.id -eq 'linux-tsan'
-  $entry.plugin = $plugin -and $entry.id -in @('linux-release', 'windows-release')
-  $entry.projection = $projection -and $entry.id -eq 'linux-release'
+  $entry.plugin = $plugin -and $entry.id -in @('linux-release', 'linux-clang-release', 'windows-release', 'macos-release', 'macos-clang-release')
+  $entry.projection = $projection -and $entry.id -in @('linux-release', 'linux-clang-release', 'macos-clang-release')
   $entry.benchmarks = if ($entry.id -in @('linux-release', 'windows-release', 'macos-release')) { 'ON' } else { 'OFF' }
   $entry.package = $PrepareRelease -and [bool]$entry.sdk
   $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
@@ -159,7 +164,7 @@ foreach ($profile in $profiles) {
     $entry.id += '-fastpath'
     $entry.cross = $false
     $entry.fastpath = 'ON'
-    $entry.native_thunks = if ($profile.id -in @('linux-release', 'linux-asan', 'windows-release')) { 'ON' } else { 'OFF' }
+    $entry.native_thunks = if ($profile.id -in @('linux-release', 'linux-clang-release', 'linux-asan', 'windows-release')) { 'ON' } else { 'OFF' }
     $entry.native = $true
     $entry.execution = $false
     $entry.armheaders = $false

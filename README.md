@@ -176,7 +176,8 @@ no `.env` loader or shell wrapper is required. Run Windows commands in a
 Visual Studio developer environment.
 
 CI uses the `win-release-ci`, `linux-dev-ci`, `linux-release-ci`,
-`mac-arm64-release-ci` and `android-arm64-v8a-release-ci` presets. An Intel macOS
+`linux-clang-release-ci`, `mac-arm64-release-ci`, `mac-arm64-clang-release-ci`
+and `android-arm64-v8a-release-ci` presets. An Intel macOS
 runner uses `mac-x64-release-ci`. These replace `mac-release-ci` and preserve
 the cache action's `VCPKG_CACHE_REPOSITORY_ROOT` and `VCPKG_BINARY_SOURCES`
 instead of using local paths. Workflows call the upstream
@@ -193,14 +194,16 @@ The supported project compiler profiles are:
 | Target platform | Compiler |
 |---|---|
 | Windows | MSVC |
-| Linux | GCC |
+| Linux | GCC; Clang with `linux-clang-release-ci` |
 | macOS Intel / Apple Silicon | Homebrew GCC 15 (`gcc-15` / `g++-15`) |
+| macOS Apple Silicon | Xcode AppleClang with `mac-arm64-clang-release-ci` |
 | Android | NDK Clang |
 | iOS device / Simulator | Xcode AppleClang |
 
-Android and iOS retain their SDK compilers; there are no standalone Clang
-profiles. On macOS, install [Homebrew `gcc@15`](https://formulae.brew.sh/formula/gcc@15)
-and expose its versioned executables before invoking a native macOS preset:
+Android and iOS retain their SDK compilers. Linux Clang jobs install the Ubuntu
+`clang` package in both build and test jobs; macOS Clang jobs use Xcode's compiler.
+For a macOS GCC profile, install [Homebrew `gcc@15`](https://formulae.brew.sh/formula/gcc@15)
+and expose its versioned executables before invoking the preset:
 
 ```sh
 brew install gcc@15
@@ -298,11 +301,19 @@ A configuration includes platform, architecture, compiler, build type,
 sanitizer and native-fastpath setting. ASan, TSan and Release cannot share
 binaries. Native-fastpath assembly requires a distinct build from portable
 SDK code and cannot be enabled under TSan. Both TSan suites now consume one
-`linux-tsan-ci` build. With all checks selected, the matrix contains 9 host
-configurations (5 portable/compiler profiles + 4 native-fastpath profiles)
+`linux-tsan-ci` build. With all checks selected, the matrix contains 13 host
+configurations (7 portable/compiler profiles + 6 native-fastpath profiles)
 and 3 mobile configurations (Android ARM64, iOS ARM64 and iOS Simulator ARM64).
-The four fastpath builds remain separate because their build options differ
+The six fastpath builds remain separate because their build options differ
 from SDK configurations.
+
+Linux Clang and macOS AppleClang each run execution, Plugin and projection suites,
+plus the native suite from their separate fastpath build. Their projection jobs
+run the existing installed-package tests against compiler-specific SDK roots;
+these qualification SDKs are not additional release packages. Plugin suites run
+on both macOS compiler profiles, including cross-TU Mach-O aggregation and lease
+cleanup. Interface arity, ObjectRef/Invokable operations and lowering rejection
+tests participate in the execution/native suites across compilers.
 
 Mobile configurations participate in ordinary PR/push CI when native modules
 or shared build inputs change, and in every manual validation run. Documentation

@@ -45,7 +45,7 @@ jobs:
         run: |
           /usr/bin/python3 -m unittest discover -s cmake/ci/tests
           node --test .github/scripts/publish-benchmark-report.test.cjs
-      - name: Organize evidence and render images
+      - name: Render verdict artifacts and TCP/UDP comparison images
         if: steps.source.outputs.publish == 'true'
         env:
           REPORT_HEAD: ${{ github.event.workflow_run.head_sha }}
@@ -63,7 +63,7 @@ jobs:
           path: benchmark-report
           if-no-files-found: error
           retention-days: 30
-      - name: Publish images and update PR comment
+      - name: Publish TCP/UDP images and update PR comment
         if: steps.source.outputs.publish == 'true'
         uses: actions/github-script@v8
         with:
