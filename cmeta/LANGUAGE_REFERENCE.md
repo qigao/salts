@@ -18,19 +18,21 @@ framework generation or runtime APIs.
 
 These declarations are intended for normal application code.
 
-### `Struct(...)`
+### `cmeta_struct(...)` / `cmeta_field(...)`
 
 Declares a C struct and reflection metadata in one statement.
 
 ```c
-Struct(User,
-    (int, id),
-    (double, score),
-    (const char *, name)
+cmeta_struct(User,
+    cmeta_field(int, id)
+    cmeta_field(double, score)
+    cmeta_field(const char *, name)
 );
 ```
 
-Field rows are plain `(type, name)` tuples. There is no `Field(...)` wrapper.
+Fields use `cmeta_field(type, name)` without separating commas. The same
+declaration generates the ordinary C layout and static Reflection metadata.
+Tuple rows remain internal Schema/Replay input, not canonical application syntax.
 The declaration provides the concrete C type plus field metadata helpers such
 as:
 
@@ -41,17 +43,17 @@ FieldMeta(User, 0);
 FieldFind(User, "score");
 ```
 
-Use `Struct(...)` when a type benefits from structural metadata. Ordinary C
+Use `cmeta_struct(...)` when a type benefits from structural metadata. Ordinary C
 `struct` remains valid and should be preferred when metadata is unnecessary.
 
-### `Enum(...)`
+### `cmeta_enum(...)`
 
 Declares an enum and immutable reflection metadata.
 
 Auto-valued rows:
 
 ```c
-Enum(State,
+cmeta_enum(State,
     (READY,   "ready"),
     (RUNNING, "running"),
     (DONE,    "done")
@@ -61,7 +63,7 @@ Enum(State,
 Explicit stable values:
 
 ```c
-Enum(HttpStatus,
+cmeta_enum(HttpStatus,
     (HTTP_OK,        200, "ok"),
     (HTTP_NOT_FOUND, 404, "not_found")
 );
@@ -83,12 +85,12 @@ EnumSymbol(State, value);
 EnumParse(State, text, &out);
 ```
 
-### `Traits(...)`
+### `cmeta_traits(...)`
 
 Declares callable type capabilities from tagged rows.
 
 ```c
-Traits(User,
+cmeta_traits(User,
     (equal, user_equal),
     (hash, user_hash),
     (compare, user_compare),
@@ -114,6 +116,88 @@ same rows. Duplicate, unknown, or malformed rows are compile-time errors.
 
 `TRIVIAL_COPY` and `TRIVIAL_DESTROY` are descriptor properties, not inferred
 callable traits.
+
+### Structured scope
+
+`cmeta_scope(name, status, resources, body)` owns 1 through 16 explicit
+`(Type, local_name)` resource rows. Each type exposes `Type_cmeta_data()` with
+canonical concrete `construct_ops`. The body is one ISO C expression returning
+`cmeta_status`, usually a typed function call borrowing the local values:
+
+```c
+#include <cstl/typed.h>
+
+cmeta_type(List, ScopeList, int);
+
+static cmeta_status fill_values(ScopeList *values) {
+    if (ScopeList_init(values, 2u) != STL_OK) return CMETA_CALLBACK_ERROR;
+    if (ScopeList_add(values, 11) != STL_OK) return CMETA_CALLBACK_ERROR;
+    return CMETA_OK;
+}
+
+int main(void) {
+    cmeta_status status;
+    cmeta_scope(request, status,
+        cmeta_resources((ScopeList, values)),
+        cmeta_body(fill_values(&values)));
+    return status == CMETA_OK ? 0 : 1;
+}
+```
+
+Link this container example with `Salts::CSTL`. Body functions can take typed
+context parameters as well as resource pointers; no closure or erased callback
+registry is needed. Resources belong to the generated scope, and borrowing ends
+when the body returns. They must not escape through a saved pointer or suspended
+operation. Move ownership into caller-owned storage explicitly with `cmeta_move`
+when a value must outlive the scope; moved-from locals still receive cleanup.
+
+The ordinary-C reference expansion has this control flow:
+
+```text
+declare zero storage and live flags
+bind each resource's canonical concrete construct ops
+initialize resources in declaration order
+call body and store its returned status
+cleanup:
+    restore live resources to semantic zero in reverse order
+continue with status
+```
+
+An initialization error restores the failed partial value once, skips the body,
+then cleans earlier initialized resources. A body error follows the same cleanup
+path. The returned body status replaces `status`; cleanup does not overwrite it.
+The same cached canonical ops supply initialization and destruction. The binding
+checks descriptor/ops ABI, callback presence and native size/alignment without
+field-name lookup, recursive Reflection validation or another lifecycle table.
+Descriptors lacking concrete construct ops return `CMETA_TRAIT_MISSING` before
+construction; malformed ABI/callbacks return `CMETA_INVALID_ARGUMENT`, and an
+incompatible native layout returns `CMETA_TYPE_MISMATCH`.
+
+Scope setup/cleanup is O(N) time and O(N) bounded automatic storage for N resource
+rows, excluding provider-owned payloads. No heap allocation, source lowerer,
+cleanup attribute, SEH or assembly backend is required. DataDesc layout and the
+generic checked runtime lifecycle APIs retain their existing contracts.
+
+**Migration and design decision (#920/#929):** the earlier statement-block
+`cmeta_body(...)` could let native exits bypass cleanup. Pure C macros cannot
+intercept arbitrary `return/goto`, and compiler cleanup attributes do not provide
+an equivalent MSVC implementation. Move the block into a typed status-returning
+function and replace `cmeta_scope_exit(...)` with `return status` in that function.
+The old exit macro now fails compilation. Function boundaries prevent jumps to
+an outer scope's cleanup label. Nested body functions return the inner scope's
+status only after inner cleanup, so outer cleanup follows automatically. Only
+code using the earlier scope body/exit syntax needs migration; field layout and
+container APIs are unaffected. Providers formerly using generic-only lifecycle
+dispatch must expose canonical concrete construct ops before joining this
+static scope backend; there is no automatic runtime dispatch fallback.
+
+The tradeoff is an explicit function and explicit borrowed parameters in place
+of implicit captures. This is an intentional source-compatibility change to make
+ordinary-C exits safe on every supported compiler. Qualification covers native
+body returns, goto/break inside body functions, partial initialization, moves,
+nested error propagation and rejection of escaping block syntax. A rollback
+requires reverting the scope header and its migrated callers together; restoring
+only the former block expander would restore the resource-leak paths.
 
 ### `cmeta_type(...)`
 
@@ -479,7 +563,7 @@ Defines or expands parenthesized row data through a mapper.
 
 `Schema(...)` owns row unpacking. It is a finite C-preprocessor code-generation
 kernel, not a runtime data structure. The tuple-list kernel accepts at most 16
-rows per invocation. `Struct(...)`, `Enum(...)`, `Traits(...)`, `Schema(...)`,
+rows per invocation. `cmeta_struct(...)`, `cmeta_enum(...)`, `cmeta_traits(...)`, `Schema(...)`,
 and `Operators(...)` share that row-count limit; `Tuple` accepts 2 through 16
 type arguments. Split larger declarations into separate stable concepts instead
 of depending on an implementation-specific macro expansion failure.
@@ -726,7 +810,7 @@ adapters or switch cases are emitted at an already-validated boundary;
 `cmeta_fn_invoke` and `cmeta_fn_generate` retain their documented rejection
 results for the other protocol.
 
-`Struct(T, ...)` and `Traits(T, ...)` generate structural and callable metadata,
+`cmeta_struct(T, ...)` and `cmeta_traits(T, ...)` generate structural and callable metadata,
 but do not add `T` to either finite type universe. `CMETA_TYPEOF(T)` returns
 `NULL` when no compatible registered type exists. APIs that require a descriptor
 then fail according to their own contract: a container range lookup can return

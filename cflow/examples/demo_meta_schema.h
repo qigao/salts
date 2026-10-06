@@ -3,21 +3,21 @@
 
 #include <cmeta/meta.h>
 
-Enum(demo_color,
+cmeta_enum(demo_color,
     (DEMO_RED,   "red"),
     (DEMO_GREEN, "green"),
     (DEMO_BLUE,  "blue")
 );
 
-Enum(demo_http_status,
+cmeta_enum(demo_http_status,
     (DEMO_HTTP_OK,        200, "ok"),
     (DEMO_HTTP_NOT_FOUND, 404, "not_found"),
     (DEMO_HTTP_ERROR,     500, "error")
 );
 
-Struct(demo_point,
-    (int, x),
-    (int, y)
+cmeta_struct(demo_point,
+    cmeta_field(int, x)
+    cmeta_field(int, y)
 );
 
 #endif

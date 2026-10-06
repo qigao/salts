@@ -3,15 +3,15 @@
 
 #include <cmeta/meta.h>
 
-Enum(color,
+cmeta_enum(color,
     (COLOR_RED,   "red"),
     (COLOR_GREEN, "green"),
     (COLOR_BLUE,  "blue")
 );
 
-Struct(point,
-    (int, x),
-    (int, y)
+cmeta_struct(point,
+    cmeta_field(int, x)
+    cmeta_field(int, y)
 );
 
 #endif

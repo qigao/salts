@@ -47,20 +47,20 @@ jobs:
           - name: GCC
             runner: ubuntu-24.04
             family: linux
-            configure_preset: linux-release-user
-            build_preset: linux-release-user
+            configure_preset: linux-release-ci
+            build_preset: linux-release-ci
             build_dir: build/linux-gcc-release
           - name: MSVC
             runner: windows-2025
             family: windows
-            configure_preset: win-release-user
-            build_preset: win-release-user
+            configure_preset: win-release-ci
+            build_preset: win-release-ci
             build_dir: build/Msvc-Release
           - name: ClangCL
             runner: windows-2025
             family: windows
-            configure_preset: win-clang-release-user
-            build_preset: win-clang-release-user
+            configure_preset: win-clang-release-ci
+            build_preset: win-clang-release-ci
             build_dir: build/Clang-Release
     steps:
       - uses: actions/checkout@v7
@@ -105,17 +105,29 @@ jobs:
         if: matrix.family == 'windows'
         shell: cmd
         run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           cmake --preset "${{ matrix.configure_preset }}" -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
           if errorlevel 1 exit /b 1
           cmake --build --preset "${{ matrix.build_preset }}" --parallel 2
           if errorlevel 1 exit /b 1
 
-      - name: Run structured scope contract
-        shell: pwsh
-        run: ctest --test-dir "${{ matrix.build_dir }}" --output-on-failure -R "^cmeta_scope_test$"
+      - name: Run Linux structured scope contracts
+        if: matrix.family == 'linux'
+        shell: bash
+        run: ctest --preset "${{ matrix.configure_preset }}" --output-on-failure -R "^cmeta_scope_"
+
+      - name: Run Windows structured scope contracts
+        if: matrix.family == 'windows'
+        shell: cmd
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          ctest --preset "${{ matrix.configure_preset }}" --output-on-failure -R "^cmeta_scope_"
 
       - name: Source hygiene
         shell: bash
@@ -141,7 +153,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset linux-release-user \
+          cmake --preset linux-release-ci \
             -DENABLE_TESTS=ON \
             -DBUILD_TESTS=ON \
             -DBUILD_BENCHMARKS=OFF \
@@ -152,7 +164,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build --preset linux-release-user --parallel 2
+          cmake --build --preset linux-release-ci --parallel 2
           ctest --test-dir build/linux-gcc-release \
             --output-on-failure \
             -R '^cflow_function_projection_test$'
