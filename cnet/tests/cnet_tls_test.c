@@ -1570,6 +1570,7 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_client_init(&client, &client_config), SALTS_OK);
     check_equal(cnet_client_init(&server, &server_client_config), SALTS_OK);
     check_equal(cnet_listener_init(&listener, &listener_config), SALTS_OK);
+    check_equal(cnet_listener_tcp_option_set(&listener, CNET_TCP_SOCKET_NODELAY, 1u), SALTS_OK);
     check_equal(cnet_listener_port(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u", (unsigned int)port), 0);
     connect_options = (cnet_connect_options){.uri = uri,
@@ -1596,6 +1597,12 @@ spec("CNet bounded TLS engine") {
     check_true(client_probe.connected);
     check_true(server_probe.connected);
     upgrade.server_name = "localhost";
+    {
+      uint64_t nodelay = 0u;
+      check_equal(cnet_connection_tcp_option_get(
+                      &server, server_probe.connection, CNET_TCP_SOCKET_NODELAY, &nodelay), SALTS_OK);
+      check_equal(nodelay, UINT64_C(1));
+    }
     check_equal(cnet_start_tls(&client, client_connection, &upgrade), SALTS_ENOTSUP);
     check_equal(cnet_start_tls_server(&server, server_probe.connection, &tls_server),
                 SALTS_ENOTSUP);

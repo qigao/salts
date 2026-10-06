@@ -34,7 +34,12 @@ typedef int cnet_listener_socket;
   #define CNET_LISTENER_INVALID_SOCKET (-1)
 #endif
 
-enum { CNET_LISTENER_ADDRESS_CAPACITY = 128 };
+enum {
+  CNET_LISTENER_ADDRESS_CAPACITY = 128,
+  CNET_LISTENER_TCP_OPTION_COUNT = CNET_TCP_SOCKET_NODELAY + 1
+};
+_Static_assert(CNET_LISTENER_TCP_OPTION_COUNT <= sizeof(uint16_t) * CHAR_BIT,
+               "listener TCP option mask must cover every recorded option");
 
 typedef enum cnet_listener_kind {
   CNET_LISTENER_KIND_NONE = 0,
@@ -54,8 +59,8 @@ typedef struct cnet_listener_impl {
   int native_family;
   uint16_t port;
   size_t backlog;
-  uint64_t tcp_option_values[8];
-  uint8_t tcp_option_set_mask;
+  uint64_t tcp_option_values[CNET_LISTENER_TCP_OPTION_COUNT];
+  uint16_t tcp_option_set_mask;
 
   native_io_backend *external_backend;
   native_io_endpoint external_endpoint;
@@ -636,11 +641,11 @@ int cnet_listener_tcp_option_set(cnet_listener *listener,
       option, value);
   if (status == SALTS_OK &&
       option >= CNET_TCP_SOCKET_KEEPALIVE_ENABLED &&
-      option <= CNET_TCP_SOCKET_SEND_BUFFER_BYTES) {
+      (unsigned int)option < CNET_LISTENER_TCP_OPTION_COUNT) {
     impl->tcp_option_values[(unsigned int)option] = value;
     impl->tcp_option_set_mask =
-        (uint8_t)(impl->tcp_option_set_mask |
-                  (uint8_t)(1u << (unsigned int)option));
+        (uint16_t)(impl->tcp_option_set_mask |
+                   (uint16_t)(1u << (unsigned int)option));
   }
   return status;
 }
@@ -651,11 +656,11 @@ static int cnet_listener_apply_tcp_options(
   unsigned int option;
   if (impl == NULL) return SALTS_EINVAL;
   for (option = (unsigned int)CNET_TCP_SOCKET_KEEPALIVE_ENABLED;
-       option <= (unsigned int)CNET_TCP_SOCKET_SEND_BUFFER_BYTES;
+       option < CNET_LISTENER_TCP_OPTION_COUNT;
        ++option) {
     int status;
     if ((impl->tcp_option_set_mask &
-         (uint8_t)(1u << option)) == 0u)
+         (uint16_t)(1u << option)) == 0u)
       continue;
     status = cnet_transport_tcp_native_option_set_family(
         (uintptr_t)socket_value, impl->native_family,
