@@ -1,0 +1,3 @@
+#include <salts/plugin_decl.h>
+#define TOO_WIDE_VERSION (UINT64_C(1) << 32)
+SALTS_PLUGIN_DECLARE_EMPTY(bad,"bad",(0,TOO_WIDE_VERSION,0),SALTS_PLUGIN_PASSIVE());

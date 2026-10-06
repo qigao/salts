@@ -1075,6 +1075,19 @@ interface, or ordinary C function composes cleanly enough.
 `<cmeta/invoke_decl.h>` 在 canonical Function 声明上增加显式选择的精确 thunk。
 现有 `FunctionDecl` 的描述用途、Interface 的源行语法与运行时 ABI 保持不变。
 
+编译器能力统一通过 `CMETA_HAS_BUILTIN(name)`、`CMETA_HAS_ATTRIBUTE(name)`、
+`CMETA_HAS_FEATURE(name)` 查询，结果为 0/1，可用于 `#if`。底层编译器没有相应探测器时
+返回 0，表示未获支持保证，不启用替代实现。`CMETA_UNUSED` 也消费这个统一探测层。
+参数及能力含义沿用编译器自身词汇，见 [Clang 扩展说明](https://clang.llvm.org/docs/LanguageExtensions.html)
+与 [GCC builtin 探测](https://gcc.gnu.org/onlinedocs/cpp/_005f_005fhas_005fbuiltin.html)。
+`CMETA_HAS_COUNTER` 表示唯一名称生成能力；不支持时不提供 `CMETA_PP_UNIQUE`，不会以行号代替。
+唯一编号只用于命名，不定义声明次序、资源顺序或跨 TU 身份；顺序由 schema 和 indexed/reverse replay 决定。
+
+`CMETA_LAYOUT_REQUIRE(condition)` 和 `CMETA_FLAGS_REQUIRE(value,mask)` 均为表达式级编译期约束，
+成功贡献整数零，可放入静态初始化器。前者要求常量条件为真；后者要求非负整数常量的全部
+置位都包含在显式 mask 中。失败必须导致编译错误，运行时值也不能充当条件或 flag 输入。
+两者复用 `CMETA_CONST_REQUIRE`，不进行运行时检查，不从类型拼写推断业务允许位。
+
 | 原语 | 契约 |
 | --- | --- |
 | `CMETA_PP_MAP(M,C,...)` | 1–16 项，调用 `M(item,C)`，不插分隔符 |

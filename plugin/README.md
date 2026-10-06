@@ -36,10 +36,21 @@ Interface instance 必须是静态存储期的可变精确 `{self,vtable}` carri
 同一个 native function 每个列表出现一次；不同导出别名使用显式 wrapper。
 ID、版本、capabilities 均为显式声明，不从 Reflection 推断。
 
+无导出的 provider 使用 `SALTS_PLUGIN_DECLARE_EMPTY(name,id,version,lifecycle)`。
+它复用同一个 manifest/query 生成器，生成 `exports = NULL`、`export_count = 0`，
+不会创建零长数组或占位 export；passive 和 managed provider 都适用。例如独立源文件：
+
+```c
+#include <salts/plugin_decl.h>
+SALTS_PLUGIN_DECLARE_EMPTY(empty_plugin,"example.empty",(1u,0u,0u),SALTS_PLUGIN_PASSIVE());
+```
+
 `SALTS_PLUGIN_PASSIVE()` 将 self 与四个回调设为 NULL。
 Managed provider 使用 `SALTS_PLUGIN_LIFECYCLE(&state,start,request_stop,is_quiescent,destroy)`，
 四个回调填写具有 `SALTS_PLUGIN_CALL` 和现有精确签名的函数标识符。
-生成层检查非零 uint32 contract version、Interface carrier 类型、callback 类型与 export 上限；
+生成层检查非零 uint32 contract version、三段 uint32 semantic version（各段允许零）、
+非负 uint64 capabilities、Interface carrier 类型、callback 类型与 export 上限；
+版本与 capabilities 必须是整数常量表达式，越界、负值和浮点输入均拒绝，避免静默截断。
 缺字段、错误行形状或缺失精确 thunk 也在编译期失败。
 ID 格式、capability admission、重复 ID、state 指针与其余外来数据约束仍由
 `salts_plugin_manifest_validate()` 校验，不能绕过。
@@ -56,7 +67,8 @@ C 使用静态初始化的 const export 表。C++17 使用显式 CMeta `AsAbi` �
 没有 constructor 驱动的注册表、全局可变发现列表或 linker 失败回退。
 可选 linker 聚合和 lease RAII 留到后续阶段，本阶段以显式数组为事实源。
 
-正式验证包含 `salts_plugin_declaration_test`、C++ 同源用例、编译失败用例、已有 loader/lifecycle
+正式验证包含 `salts_plugin_declaration_test`、C++ 同源用例、空导出的 passive/managed 用例、
+C/C++ 编译失败用例、已有 loader/lifecycle
 回归，以及 `cmeta/tests/installed` 内的已安装 SDK 声明测试。
 
 本地复验使用仓库 preset。在 VS x64 开发环境中设置 README 要求的两个 Windows triplet

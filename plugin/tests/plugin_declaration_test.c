@@ -67,7 +67,7 @@ static decl_api decl_instance = {&decl_state,&decl_vtable};
 
 #define DECL_EXPORTS(X) \
     X(function,decl_zero,"zero","decl.math",1u,1u) \
-    X(function,decl_void_zero,"void-zero","decl.math",1u,1u) \
+    X(function,decl_void_zero,"void-zero","decl.math",UINT32_MAX,UINT64_MAX) \
     X(function,decl_void,"void","decl.math",1u,1u) \
     X(function,decl_pointer,"pointer","decl.math",1u,1u) \
     X(function,decl_max,"max","decl.math",1u,1u) \
@@ -84,6 +84,8 @@ suite("Plugin declarations") {
         check_equal(manifest->version.minor,2u);
         check_true(manifest->exports[0].value.function.desc == FunctionMeta(decl_zero));
         check_true(manifest->exports[0].value.function.abi == FunctionAbi(decl_zero));
+        check_equal(manifest->exports[1].contract_version,UINT32_MAX);
+        check_equal(manifest->exports[1].capabilities,UINT64_MAX);
         check_null(salts_plugin_query(SALTS_PLUGIN_ABI_VERSION - 1u));
         check_null(salts_plugin_query(SALTS_PLUGIN_ABI_VERSION + 1u));
         check_null(manifest->self);

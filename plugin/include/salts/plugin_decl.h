@@ -12,6 +12,8 @@
 #define SALTS_PLUGIN_DECL_CHECK(kind,source,id,contract,version,caps) \
     CMETA_STATIC_ASSERT((version) > 0 && (((version) & UINT32_MAX) == (version)), \
         "Plugin contract version must fit a nonzero uint32_t"); \
+    CMETA_STATIC_ASSERT((caps) >= 0 && (((caps) & UINT64_MAX) == (caps)), \
+        "Plugin capabilities must fit a nonnegative uint64_t bit set"); \
     CMETA_PP_CAT(SALTS_PLUGIN_DECL_CHECK_,kind)(source)
 #define SALTS_PLUGIN_DECL_CHECK_function(source) \
     CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(&FunctionInvoke(source),cmeta_exact_invoke_fn), \
@@ -81,22 +83,40 @@ CMETA_INLINE salts_plugin_export_value salts_plugin_decl_function_value(
 #define SALTS_PLUGIN_DECL_LIFE_I(kind,...) \
     CMETA_PP_CAT(SALTS_PLUGIN_DECL_LIFE_,kind)(__VA_ARGS__)
 
+/* Runtime fields are uint32_t. Reject truncation before initializing them;
+ * unlike a contract version, a semantic-version component may be zero. */
+#define SALTS_PLUGIN_DECL_VERSION_PART(part) \
+    CMETA_STATIC_ASSERT((part) >= 0 && (((part) & UINT32_MAX) == (part)), \
+        "Plugin semantic version component must fit uint32_t");
+#define SALTS_PLUGIN_DECL_VERSION(major,minor,patch) \
+    SALTS_PLUGIN_DECL_VERSION_PART(major) \
+    SALTS_PLUGIN_DECL_VERSION_PART(minor) \
+    SALTS_PLUGIN_DECL_VERSION_PART(patch)
+
 /* version is a (major,minor,patch) tuple; exports is a nonempty X-list.
  * The generated query belongs in exactly one TU per DSO. */
 #define SALTS_PLUGIN_DECLARE(...) SALTS_PLUGIN_DECLARE_I(__VA_ARGS__)
 #define SALTS_PLUGIN_DECLARE_I(name,id,version,exports,lifecycle) \
     exports(SALTS_PLUGIN_DECL_CHECK) \
     exports(SALTS_PLUGIN_DECL_BRIDGE) \
-    CMETA_PP_TUPLE_APPLY(SALTS_PLUGIN_DECL_LIFE_CHECK_I,lifecycle) \
     static const salts_plugin_export name##__exports[] = { \
         exports(SALTS_PLUGIN_DECL_ROW) \
     }; \
     CMETA_STATIC_ASSERT(sizeof(name##__exports)/sizeof(name##__exports[0]) \
         <= SALTS_PLUGIN_MAX_EXPORTS, "Plugin export capacity exceeded"); \
+    SALTS_PLUGIN_DECL_MANIFEST(name,id,version,name##__exports, \
+        sizeof(name##__exports)/sizeof(name##__exports[0]),lifecycle)
+
+/* Empty manifests have no export array, including in strict C11/C++17. */
+#define SALTS_PLUGIN_DECLARE_EMPTY(name,id,version,lifecycle) \
+    SALTS_PLUGIN_DECL_MANIFEST(name,id,version,NULL,0u,lifecycle)
+
+#define SALTS_PLUGIN_DECL_MANIFEST(name,id,version,exports,count,lifecycle) \
+    CMETA_PP_TUPLE_APPLY(SALTS_PLUGIN_DECL_VERSION,version) \
+    CMETA_PP_TUPLE_APPLY(SALTS_PLUGIN_DECL_LIFE_CHECK_I,lifecycle) \
     static const salts_plugin_manifest name##__manifest = { \
         SALTS_PLUGIN_MANIFEST_SIZE,SALTS_PLUGIN_ABI_VERSION,(id), \
-        {CMETA_PP_UNPAREN version},name##__exports, \
-        sizeof(name##__exports)/sizeof(name##__exports[0]), \
+        {CMETA_PP_UNPAREN version},(exports),(count), \
         CMETA_PP_TUPLE_APPLY(SALTS_PLUGIN_DECL_LIFE_I,lifecycle) \
     }; \
     SALTS_PLUGIN_QUERY_EXPORT const salts_plugin_manifest *SALTS_PLUGIN_CALL \

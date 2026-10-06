@@ -1,7 +1,25 @@
 #ifndef CMETA_COMPILER_H
 #define CMETA_COMPILER_H
 
-#if defined(__GNUC__) || defined(__clang__)
+/* A missing compiler query reports unsupported; it never enables a substitute
+ * implementation. Keep vendor probes here rather than in declaration DSLs. */
+#ifdef __has_builtin
+#define CMETA_HAS_BUILTIN(name) (__has_builtin(name) != 0)
+#else
+#define CMETA_HAS_BUILTIN(name) 0
+#endif
+#ifdef __has_attribute
+#define CMETA_HAS_ATTRIBUTE(name) (__has_attribute(name) != 0)
+#else
+#define CMETA_HAS_ATTRIBUTE(name) 0
+#endif
+#ifdef __has_feature
+#define CMETA_HAS_FEATURE(name) (__has_feature(name) != 0)
+#else
+#define CMETA_HAS_FEATURE(name) 0
+#endif
+
+#if CMETA_HAS_ATTRIBUTE(unused)
 #define CMETA_UNUSED __attribute__((unused))
 #else
 #define CMETA_UNUSED
@@ -36,8 +54,17 @@
     (0 * (int)sizeof(struct { unsigned cmeta_required : (condition) ? 1 : -1; }))
 #endif
 
+/* Both helpers require constant operands and contribute integer zero. Flags
+ * are nonnegative integer bit sets; the mask is the caller's semantic policy. */
+#define CMETA_LAYOUT_REQUIRE(condition) CMETA_CONST_REQUIRE(condition)
+#define CMETA_FLAGS_REQUIRE(value, mask) \
+    CMETA_CONST_REQUIRE((value) >= 0 && (((value) & (mask)) == (value)))
+
 #if defined(__COUNTER__)
+#define CMETA_HAS_COUNTER 1
 #define CMETA_COMPILER_COUNTER __COUNTER__
+#else
+#define CMETA_HAS_COUNTER 0
 #endif
 
 #endif

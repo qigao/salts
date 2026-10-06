@@ -32,7 +32,7 @@
  * Pair maps require exactly N flat (type,name) pairs. No recursive expansion. */
 #define CMETA_PP_STRINGIFY_I(x) #x
 #define CMETA_PP_STRINGIFY(x) CMETA_PP_STRINGIFY_I(x)
-#ifdef CMETA_COMPILER_COUNTER
+#if CMETA_HAS_COUNTER
 #define CMETA_PP_UNIQUE(prefix) CMETA_PP_CAT(prefix, CMETA_COMPILER_COUNTER)
 #endif
 #define CMETA_PP_ZERO_0 CMETA_PP_PROBE()

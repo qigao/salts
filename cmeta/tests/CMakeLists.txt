@@ -351,6 +351,16 @@ cmeta_add_compile_failure_test(cmeta_pp_pair_count_compile_fail
   compile_fail/cmeta_pp_pair_count.c "CMETA_PP_PAIRS_2")
 cmeta_add_compile_failure_test(cmeta_const_require_compile_fail
   compile_fail/cmeta_const_require.c "cmeta_required")
+foreach(requirement IN ITEMS flags_require flags_negative layout_require const_runtime)
+  cmeta_add_compile_failure_test(cmeta_${requirement}_compile_fail
+    compile_fail/cmeta_${requirement}.c "cmeta_required|constant expression")
+  cmeta_add_compile_failure_test(cmeta_${requirement}_cpp_compile_fail
+    compile_fail/cmeta_requirement_cpp.cpp "negative|constant expression|C2975")
+  target_compile_definitions(cmeta_${requirement}_cpp_compile_fail PRIVATE
+    "CMETA_REQUIREMENT_SOURCE=\"cmeta_${requirement}.c\"")
+  set_target_properties(cmeta_${requirement}_cpp_compile_fail PROPERTIES
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+endforeach()
 cmeta_add_compile_failure_test(cmeta_pp_tuple_width_compile_fail
   compile_fail/cmeta_pp_tuple_width.c "CMETA_PP_TUPLE_GET_4_I")
 

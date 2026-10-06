@@ -68,7 +68,7 @@ jobs:
           cmake --preset "${{ matrix.preset }}" -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 \
-            -R '^salts_plugin_'
+            -R '^(salts_plugin_|cmeta_(pp|const|flags|layout)_.*)'
 
       - name: Configure, build and test Plugin contracts on Windows
         if: matrix.family == 'windows'
@@ -84,5 +84,5 @@ jobs:
           if errorlevel 1 exit /b 1
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
           if errorlevel 1 exit /b 1
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -R "^salts_plugin_"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -R "^(salts_plugin_|cmeta_(pp|const|flags|layout)_.*)"
           if errorlevel 1 exit /b 1

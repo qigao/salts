@@ -33,24 +33,62 @@ set_target_properties(salts_plugin_declaration_test PROPERTIES C_EXTENSIONS OFF)
 set_target_properties(salts_plugin_declaration_cpp_test PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 
+foreach(empty_mode IN ITEMS passive managed)
+  foreach(empty_language IN ITEMS c cpp)
+    set(empty_target "salts_plugin_empty_${empty_mode}_${empty_language}_test")
+    if(empty_language STREQUAL "c")
+      set(empty_source plugin_empty_declaration_test.c)
+    else()
+      set(empty_source plugin_empty_declaration_cpp_test.cpp)
+    endif()
+    cmake_add_test(${empty_target} SOURCES ${empty_source}
+      LIBS Salts::Plugin Salts::TinyTest FOLDER "plugin/tests")
+    set_target_properties(${empty_target} PROPERTIES
+      C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+      CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+    if(empty_mode STREQUAL "managed")
+      target_compile_definitions(${empty_target} PRIVATE PLUGIN_EMPTY_MANAGED=1)
+    endif()
+  endforeach()
+endforeach()
+
 set(plugin_declaration_version_diagnostic "Plugin contract version must fit")
 set(plugin_declaration_carrier_diagnostic "Plugin interface carrier type mismatch")
 set(plugin_declaration_callback_diagnostic "Plugin start callback type mismatch")
 set(plugin_declaration_parameter_diagnostic "CMeta exact invoke requires explicit parameter ABI carriers")
 set(plugin_declaration_result_diagnostic "CMeta exact invoke result carrier mismatch")
 set(plugin_declaration_array_diagnostic "CMeta exact invoke requires an unqualified value parameter carrier")
-foreach(declaration_case IN ITEMS version carrier callback parameter result array)
-  set(declaration_target "salts_plugin_declaration_${declaration_case}_compile_fail")
-  add_executable(${declaration_target} EXCLUDE_FROM_ALL
-    "compile_fail/plugin_declaration_${declaration_case}.c")
-  target_link_libraries(${declaration_target} PRIVATE Salts::PluginABI)
-  set_target_properties(${declaration_target} PROPERTIES
-    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "plugin/tests/compile_fail")
-  add_test(NAME ${declaration_target}
-    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
-      --config $<CONFIG> --target ${declaration_target})
-  set_tests_properties(${declaration_target} PROPERTIES RUN_SERIAL TRUE
-    PASS_REGULAR_EXPRESSION "${plugin_declaration_${declaration_case}_diagnostic}")
+set(plugin_declaration_semver_major_diagnostic "Plugin semantic version component must fit")
+set(plugin_declaration_semver_minor_diagnostic "${plugin_declaration_semver_major_diagnostic}")
+set(plugin_declaration_semver_patch_diagnostic "${plugin_declaration_semver_major_diagnostic}")
+set(plugin_declaration_capabilities_diagnostic "Plugin capabilities must fit")
+foreach(declaration_case IN ITEMS version carrier callback parameter result array
+    semver_major semver_minor semver_patch capabilities)
+  foreach(declaration_language IN ITEMS c cpp)
+    set(declaration_target "salts_plugin_declaration_${declaration_case}")
+    if(declaration_language STREQUAL "cpp")
+      string(APPEND declaration_target "_cpp")
+      set(declaration_source compile_fail/plugin_declaration_cpp.cpp)
+    else()
+      set(declaration_source "compile_fail/plugin_declaration_${declaration_case}.c")
+    endif()
+    string(APPEND declaration_target "_compile_fail")
+    add_executable(${declaration_target} EXCLUDE_FROM_ALL ${declaration_source})
+    target_link_libraries(${declaration_target} PRIVATE Salts::PluginABI)
+    if(declaration_language STREQUAL "cpp")
+      target_compile_definitions(${declaration_target} PRIVATE
+        "PLUGIN_DECLARATION_SOURCE=\"plugin_declaration_${declaration_case}.c\"")
+    endif()
+    set_target_properties(${declaration_target} PROPERTIES
+      C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+      CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF
+      FOLDER "plugin/tests/compile_fail")
+    add_test(NAME ${declaration_target}
+      COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+        --config $<CONFIG> --target ${declaration_target})
+    set_tests_properties(${declaration_target} PROPERTIES RUN_SERIAL TRUE
+      PASS_REGULAR_EXPRESSION "${plugin_declaration_${declaration_case}_diagnostic}")
+  endforeach()
 endforeach()
 
 add_library(salts_plugin_interface_representation_a SHARED

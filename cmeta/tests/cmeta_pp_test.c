@@ -1,4 +1,5 @@
 #include <cmeta/pp.h>
+#include <stdint.h>
 #ifdef __cplusplus
 #include "tinytest.hpp"
 #else
@@ -18,6 +19,24 @@
 #define PP_SUM_PREFIX PP_SUM_
 #define PP_MAX_ITEMS 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
 #define PP_SUM_TUPLE(a,b) ((a)+(b))
+
+#if CMETA_HAS_BUILTIN(cmeta_unregistered_builtin) || \
+    CMETA_HAS_ATTRIBUTE(cmeta_unregistered_attribute) || \
+    CMETA_HAS_FEATURE(cmeta_unregistered_feature)
+#error "Unknown compiler capabilities must be unsupported"
+#endif
+
+enum { PP_READ = 1u, PP_WRITE = 2u, PP_FLAGS = PP_READ | PP_WRITE };
+static const unsigned pp_checked_flags = PP_READ + CMETA_FLAGS_REQUIRE(PP_READ,PP_FLAGS);
+CMETA_STATIC_ASSERT(CMETA_LAYOUT_REQUIRE(sizeof(char) == 1) == 0, "layout requirement");
+CMETA_STATIC_ASSERT(CMETA_FLAGS_REQUIRE(0u,0u) == 0, "empty flag set");
+CMETA_STATIC_ASSERT(CMETA_FLAGS_REQUIRE(UINT64_MAX,UINT64_MAX) == 0, "full flag width");
+CMETA_STATIC_ASSERT(CMETA_HAS_COUNTER == 1, "supported test toolchains provide unique names");
+
+#if CMETA_HAS_FEATURE(cxx_constexpr)
+static constexpr int pp_constexpr_feature = PP_READ;
+CMETA_STATIC_ASSERT(pp_constexpr_feature == PP_READ, "admitted C++ feature");
+#endif
 
 CMETA_STATIC_ASSERT(CMETA_PP_BOOL(0) == 0, "zero is false");
 CMETA_STATIC_ASSERT((0 CMETA_PP_PAIR_MAP_N(16,PP_PAIR_SUM,~,int,1,int,2,int,3,int,4,int,5,int,6,int,7,int,8,int,9,int,10,int,11,int,12,int,13,int,14,int,15,int,16)) == 136,
@@ -43,6 +62,14 @@ static int pp_pair_sum(CMETA_PP_PAIR_MAP_COMMA_N(2,PP_DECL,~,int,a,int,b)) {
 }
 
 suite("CMeta finite preprocessor kernel") {
+    it("uses admitted compiler capabilities and constant initializer requirements") {
+        check_equal(pp_checked_flags,PP_READ);
+#if CMETA_HAS_BUILTIN(__builtin_expect)
+        int evaluations = 0;
+        check_equal(__builtin_expect(++evaluations,1),1);
+        check_equal(evaluations,1);
+#endif
+    }
     it("maps zero items without punctuation or mapper expansion") {
         const int empty[] = { 7 CMETA_PP_MAP_PREFIX_COMMA_N(0,UNDEFINED,~,)
             CMETA_PP_PAIR_MAP_COMMA_N(0,UNDEFINED,~,) };

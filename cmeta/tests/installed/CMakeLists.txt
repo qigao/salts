@@ -31,6 +31,25 @@ set_target_properties(cmeta_installed_pp_test plugin_installed_declaration_test 
 set_target_properties(cmeta_installed_pp_cpp_test plugin_installed_declaration_cpp_test PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 
+foreach(empty_mode IN ITEMS passive managed)
+  foreach(empty_language IN ITEMS c cpp)
+    set(empty_target "plugin_installed_empty_${empty_mode}_${empty_language}_test")
+    if(empty_language STREQUAL "c")
+      set(empty_source ../../../plugin/tests/plugin_empty_declaration_test.c)
+    else()
+      set(empty_source ../../../plugin/tests/plugin_empty_declaration_cpp_test.cpp)
+    endif()
+    cmake_add_test(${empty_target} SOURCES ${empty_source}
+      LIBS Salts::Plugin Salts::TinyTest FOLDER "plugin/tests/installed")
+    set_target_properties(${empty_target} PROPERTIES
+      C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+      CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+    if(empty_mode STREQUAL "managed")
+      target_compile_definitions(${empty_target} PRIVATE PLUGIN_EMPTY_MANAGED=1)
+    endif()
+  endforeach()
+endforeach()
+
 cmake_add_test(cmeta_installed_reflection_test
   SOURCES cmeta_installed_reflection_test.c
   LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests/installed")
