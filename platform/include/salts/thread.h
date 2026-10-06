@@ -77,7 +77,9 @@ static inline int salts_thread_affine_reset(
   int status = salts_thread_affine_check(state, owner);
   if (status != SALTS_OK)
     return status;
-  *state = (salts_thread_affine_state){0};
+  state->owner = NULL;
+  state->thread = NULL;
+  state->busy = false;
   return SALTS_OK;
 }
 
