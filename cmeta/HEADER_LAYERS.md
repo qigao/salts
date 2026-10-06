@@ -82,3 +82,9 @@ consumers must include its explicit header. Do not add forwarding aggregate
 headers or feature aliases solely to preserve accidental transitive inclusion.
 
 Tracked by #957, #959 and #960.
+
+
+Fast-key/native acquire-load runtime is owned by Salts::Platform via
+`<salts/fastpath.h>`. CMeta `<cmeta/fastpath.h>` is only the typed
+FunctionDesc/FunctionAbi static-call projection. Trace/fault metadata consumes
+the Platform gate explicitly.
