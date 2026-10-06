@@ -38,6 +38,9 @@ cmake_config_target(
   EXPORT_NAME Platform)
 
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
+# The public C fastpath header exposes C11 atomics to installed consumers.
+target_compile_options(${TARGET_NAME} PUBLIC
+  "$<$<COMPILE_LANG_AND_ID:C,MSVC>:/experimental:c11atomics>")
 target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

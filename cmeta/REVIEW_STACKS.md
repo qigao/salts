@@ -59,22 +59,21 @@ ObjectRef/admission 的实现没有 diff；从核心分支不应用 E 即可移�
 
 ## CI 门禁
 
-`<profile> / semantic` 在 GCC、Linux Clang、MSVC、macOS GCC、AppleClang 上独立运行
-A–D/G 的 CTest。它只报告语义测试，不混入 CNet、NativeIO、trace/native specialization
-或性能阈值。现有 `native`、`plugin`、`projection`、`execution` 与 benchmark jobs 保留
-各自的资格结论；语义绿灯不能被拿来宣称平台或性能全部通过。
-测试由所属 CMeta、Plugin、TinyMock 目录标记 `cmeta-semantic`，不按全仓库 `cmeta_*`
-前缀猜测归属；CSTL/CFlow consumer 与 TinyTest installed 独立性继续由对应正式测试验收。
+CI 仅保留 Release 构建与运行配置，fastpath 关闭。`<profile> / native` 在 GCC、
+Linux Clang、MSVC、macOS GCC、AppleClang 上统一运行原 native 与 plugin 筛选规则
+的并集，重叠用例只执行一次；不再设置独立的 plugin 或 semantic 矩阵条目，也不再
+注册或选择语义专项 CTest 标签。原专项测试范围不额外并入合并组。
+`projection`、`execution` 与 benchmark jobs 保留各自的资格结论；任一分组通过
+不能被拿来宣称平台或性能全部通过。
 
-核心栈完全没有 native thunk 源码或 configure 入口，fastpath profile 仍验收已有 Platform
-静态 fastpath。E 自己增加 `CMETA_BUILD_NATIVE_THUNKS`：普通非 fastpath PR profile
-默认关闭，支持平台的 fastpath profile 显式打开；release 准备包含原支持平台的 native
-SDK 产物。所有 profile 完整构建各自 configure graph，不通过 `--target` 裁剪 CI
-构建，也不直接执行测试程序。
+核心栈完全没有 native thunk 源码或 configure 入口。E 自己增加
+`CMETA_BUILD_NATIVE_THUNKS`：普通 PR profile 默认关闭；release 准备包含原支持
+平台的 native SDK 产物。所有 profile 完整构建各自 configure graph，不通过
+`--target` 裁剪 CI 构建，也不直接执行测试程序。
 
 每个合并单元需要对应的实际 compiler/平台输出；源码检查、Windows 的通过或 Linux
 Clang 的通过都不能替代 macOS Mach-O qualification。远端 Linux 的单项 NativeIO
-失败应单独追踪，不能修改 CMeta 语义 gate 来掩盖。
+失败应单独追踪，不能以 CMeta 测试通过掩盖。
 
 ## 隔离资格与历史证据
 
@@ -83,7 +82,7 @@ Clang 的通过都不能替代 macOS Mach-O qualification。远端 Linux 的单�
 
 | 合并单元与环境 | 完整构建及实际 CTest 结果 |
 |---|---|
-| Core，Windows MSVC Release，全新 build tree | 全量 405/405；其中 `cmeta-semantic` 190/190 |
+| Core，Windows MSVC Release，全新 build tree | 全量 405/405；当时的语义专项分组 190/190 |
 | Core，root@eu GCC 12.2，fastpath OFF | 完整 build graph 通过；语义 189 通过、1 跳过；消费者 29/29 |
 | Core，root@eu Clang 14.0.6，fastpath OFF | 完整 build graph 通过；语义 189 通过、1 跳过；消费者 29/29；installed SDK 50/50 |
 | E，Windows MSVC，native/fastpath ON | 完整 build graph 通过；native/fastpath 测试及相关 benchmark 17/17 |
@@ -104,12 +103,13 @@ Core 和 E 的 Linux SDK 使用不同的新安装前缀 `stage/issue984-core/cla
 这不是新分支全平台 CI 全部通过的声明。#986 / #987 的 macOS 和其他矩阵仍以各自
 运行结果为准，不得以 Windows/Linux 或原历史提交的通过替代。
 
-复验使用正式 preset，核心不传不存在的 native thunk 开关：
+当前合并组使用正式 preset 复验，核心不传不存在的 native thunk 开关。
+以下筛选对应当前 Unix native/plugin 组，范围与上述历史语义专项分组不同：
 
 ```sh
 cmake --preset linux-clang-release-ci -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DSALTS_PLATFORM_NATIVE_FASTPATH=OFF
 cmake --build --preset linux-clang-release-ci --parallel 2
-ctest --preset linux-clang-release-ci --no-tests=error --output-on-failure -L '^cmeta-semantic$'
+ctest --preset linux-clang-release-ci --no-tests=error --output-on-failure --timeout 60 -R '^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_|cmeta_(pp|const|flags|layout|container)_|cmeta_fingerprint_|cmeta_manifest_)'
 ```
 
 历史事实：原 `b9734108` 的 [CI run 37515892751](https://github.com/qigao/salts/actions/runs/37515892751)

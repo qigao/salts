@@ -671,6 +671,11 @@ public byte API。每个客户端使用独立 blocking loopback echo peer；每�
 报告相对 **libuv** 的 p50、p95、RT/s 差值。MAD 不是置信区间，不自动把大于 5% 的
 单次结果判为回归。A/A 与插桩扰动和差距相当时，应在受控宿主复测。
 
+PR 的 TCP/UDP 对照图保留 A 组实线，同时展示 B 控制组虚线。每组都与同组 libuv
+逐轮配对；不能将 A 的候选除以 B 的参照。报告 CSV/JSON 另保留 B/A 控制漂移及
+A/B 相对差值是否反号。缺少 B 时留空，不能据此声称测量稳定；组内 MAD 较小也
+不能排除组间整体漂移。该图属于诊断证据，不改变已有性能门禁。
+
 诊断报告替代旧的重复 inclusive 宽表和逐轮闭合明细：
 
 - 线程 CPU、wall-CPU 估计、A/A 波动、插桩组相对周围 A/B 的均值偏移。
@@ -756,6 +761,35 @@ CNET_IO_BENCHMARK_BACKEND=epoll CNET_IO_BENCHMARK_TRACE=native:tcp:32768 \
 
 更换驱动重复同一 workload。只有 syscall 次数、CPU/调度证据与未插桩复测相互印证后，
 才把候选原因升级为根因；否则报告保留“未解释”，不凭阶段表直接优化生产路径。
+
+### macOS kqueue 注册与等待证据
+
+macOS 构建另提供 `cnet_io_benchmark_kqueue_trace`，通过独立 Mach-O 动态库
+对 libuv 与 NativeIO 的 `kevent` 入口做同一套插桩。原有 `cnet_io_benchmark`
+不加载这份库，A/B 测量不带该探针。追踪窗口使用线程局部状态，仅覆盖客户端
+512 次往返，排除 setup、32 次预热、cleanup 与 echo 线程。
+
+CI 在主测量之后复跑 TCP 1/32/64 KiB、UDP 8 KiB，每种驱动各五次，保留
+`kqueue-trace/summary.csv` 和每个 workload 的 CTest 日志。输出注册调用数、
+等待调用数、请求的 ADD/DELETE 项数、返回事件数、错误数，以及各类调用的
+累计/最大 wall 耗时；wait 可同时携带批量注册，不能仅比较注册调用数。
+错误计数只统计 `kevent` 返回失败，ADD/DELETE 包含重试请求。
+
+在已用 `mac-arm64-release-user` 构建的宿主执行：
+
+```sh
+ctest --preset mac-arm64-release-user --no-tests=error -R '^cnet_kqueue_trace_test$'
+CNET_IO_BENCHMARK_BACKEND=kqueue CNET_IO_BENCHMARK_TRACE=native:tcp:32768 \
+  ctest --preset mac-arm64-release-user --no-tests=error -V -R '^cnet_io_benchmark_kqueue_trace$'
+```
+
+缺少 trace 配置时该程序失败，不生成普通比较成绩。插桩自测验证实际符号替换、
+errno、线程隔离和窗口生命周期。耗时包含内核等待和调度，不等于 CPU 成本；
+这些独立复跑也不能解释之前 A/B 中某一个慢样本。CPU 栈和 runnable/blocked
+分离需要进一步在 profiling host 采集。本机制依据
+[Apple dyld interposition ABI](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/dyld-interposing.h)，
+libuv 的批量注册/等待入口参见其
+[kqueue 实现](https://github.com/libuv/libuv/blob/v1.51.0/src/unix/kqueue.c)。
 
 ### TLS receive cadence attribution
 

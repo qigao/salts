@@ -110,6 +110,35 @@ class IOComparisonTest(unittest.TestCase):
         self.assertFalse(any(r["protocol"] == "TCP" and r["payload_bytes"] == 1024
                              and r["driver"] == "NativeIO direct" for r in result["io_comparisons"]))
 
+    def test_control_reveals_sign_reversal_even_when_each_pass_has_zero_mad(self):
+        rows = self.runs()
+        for row in rows:
+            if row["protocol"] != "TCP" or row["payload_bytes"] != 65536:
+                continue
+            latency = 100000
+            if row["driver"] == "NativeIO direct":
+                latency = 150000 if row["pass"] == "A" else 80000
+            row.update(p50_ns=latency, p95_ns=latency * 2, wall_ns=latency * 512)
+        self.write_runs(rows)
+        result = report.collect_io_comparisons(self.root)
+        row = next(r for r in result["io_comparisons"] if r["protocol"] == "TCP"
+                   and r["payload_bytes"] == 65536 and r["driver"] == "NativeIO direct")
+        self.assertEqual(row["p50_us_delta_percent"], 50)
+        self.assertAlmostEqual(row["p50_us_b_delta_percent"], -20)
+        self.assertEqual(row["p50_us_delta_mad_pp"], 0)
+        self.assertEqual(row["p50_us_b_delta_mad_pp"], 0)
+        self.assertAlmostEqual(row["p50_us_aa_delta_percent"], -100 * 7 / 15)
+        self.assertTrue(row["p50_us_ab_sign_reversal"])
+
+    def test_missing_control_is_a_gap_and_never_a_stability_claim(self):
+        self.write_runs([r for r in self.runs() if not (r["driver"] == "NativeIO direct"
+                        and r["pass"] == "B" and r["repeat"] == 5)])
+        result = report.collect_io_comparisons(self.root)
+        row = next(r for r in result["io_comparisons"] if r["driver"] == "NativeIO direct")
+        self.assertIsNone(row["p50_us_b_delta_percent"])
+        self.assertIsNone(row["p50_us_aa_delta_percent"])
+        self.assertIsNone(row["p50_us_ab_sign_reversal"])
+
     def test_missing_platforms_retain_missing_status(self):
         result = report.collect_io_comparisons(self.root)
         self.assertEqual(result["io_comparisons"], [])

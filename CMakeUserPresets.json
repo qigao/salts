@@ -516,6 +516,24 @@
             "environment": {
                 "SALTS_ROOT": "${sourceDir}/stage/sdk/ios-simulator-arm64"
             }
+        },
+        {
+            "name": "win-cmeta-native-dev-user",
+            "inherits": "win-dev-user",
+            "binaryDir": "${sourceDir}/build/Msvc-CMetaNative-Debug",
+            "cacheVariables": {
+                "CMETA_BUILD_NATIVE_THUNKS": "ON",
+                "CMETA_BUILD_BENCHMARKS": "ON"
+            }
+        },
+        {
+            "name": "win-cmeta-native-release-user",
+            "inherits": "win-release-user",
+            "binaryDir": "${sourceDir}/build/Msvc-CMetaNative-Release",
+            "cacheVariables": {
+                "CMETA_BUILD_NATIVE_THUNKS": "ON",
+                "CMETA_BUILD_BENCHMARKS": "ON"
+            }
         }
     ],
     "buildPresets": [
@@ -839,6 +857,28 @@
             "targets": [
                 "install"
             ]
+        },
+        {
+            "name": "win-cmeta-native-dev-user",
+            "configurePreset": "win-cmeta-native-dev-user"
+        },
+        {
+            "name": "install-win-cmeta-native-dev-user",
+            "configurePreset": "win-cmeta-native-dev-user",
+            "targets": [
+                "install"
+            ]
+        },
+        {
+            "name": "win-cmeta-native-release-user",
+            "configurePreset": "win-cmeta-native-release-user"
+        },
+        {
+            "name": "install-win-cmeta-native-release-user",
+            "configurePreset": "win-cmeta-native-release-user",
+            "targets": [
+                "install"
+            ]
         }
     ],
     "testPresets": [
@@ -921,6 +961,16 @@
             "name": "linux-arm64-release-ci",
             "inherits": "base-test",
             "configurePreset": "linux-arm64-release-ci"
+        },
+        {
+            "name": "win-cmeta-native-dev-user",
+            "inherits": "base-test",
+            "configurePreset": "win-cmeta-native-dev-user"
+        },
+        {
+            "name": "win-cmeta-native-release-user",
+            "inherits": "base-test",
+            "configurePreset": "win-cmeta-native-release-user"
         }
     ]
 }

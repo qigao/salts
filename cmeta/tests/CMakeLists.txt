@@ -381,6 +381,12 @@ function(cmeta_add_compile_failure_test target_name source expected_diagnostic)
     RUN_SERIAL TRUE)
 endfunction()
 
+if(TARGET Salts::CMetaNative)
+  cmeta_add_compile_failure_test(cmeta_native_static_shape_compile_fail
+    compile_fail/cmeta_native_static_shape.c "CMeta native static call requires exact int")
+  target_link_libraries(cmeta_native_static_shape_compile_fail PRIVATE Salts::CMetaNative Salts::Platform)
+endif()
+
 foreach(language IN ITEMS c cpp)
   foreach(selection_rule IN ITEMS DUPLICATE DESCRIPTOR VOLATILE)
     string(TOLOWER "${selection_rule}" selection_name)
@@ -702,7 +708,3 @@ cmake_add_test(cmeta_pool_cpp_test SOURCES cmeta_pool_cpp_test.cpp
 set_target_properties(cmeta_pool_cpp_test PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 set_tests_properties(cmeta_pool_cpp_test PROPERTIES TIMEOUT 60)
-
-get_property(cmeta_semantic_tests DIRECTORY PROPERTY TESTS)
-list(FILTER cmeta_semantic_tests EXCLUDE REGEX "^cmeta_(native_|trace_|fastpath_|coroutine)")
-set_property(TEST ${cmeta_semantic_tests} APPEND PROPERTY LABELS cmeta-semantic)

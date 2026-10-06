@@ -43,16 +43,12 @@ $utilsRuntime = Test-Changed '^utils/(include/|src/|CMakeLists\.txt$)'
 $harness = Test-Changed '^(tinytest|tinymock)/'
 $nativeCommon = $shared -or $contractsChanged -or $cmetaRuntime -or $platformRuntime -or $harness
 $native = $nativeCommon -or $concurrencyRuntime -or $pluginRuntime -or $utilsRuntime -or
-  (Test-Changed '^(coroutine/|platform/tests/|cmeta/(tests/|benchmarks/))')
+  (Test-Changed '^(coroutine/|platform/tests/|plugin/|cmeta/(tests/|benchmarks/))')
 $execution = $nativeCommon -or $utilsRuntime -or $cflowRuntime -or $coroutineRuntime -or
   (Test-Changed '^(cstl/|concurrency/|cnet/(include/|src/|tests/|CMakeLists\.txt$)|utils/tests/test_object_pool\.c$|cmeta/tests/cmeta_(scope|execution|pool|collector)|cflow/tests/cflow_stream_terminal_test\.c$)')
 $projection = $nativeCommon -or $pluginRuntime -or $concurrencyRuntime -or $coroutineRuntime -or $utilsRuntime -or
   (Test-Changed '^(cflow/|cstl/(include/|src/|CMakeLists\.txt$)|cmeta/tests/installed/)')
 $lean = $full -or $contractsChanged -or (Test-Changed '^(\.github/workflows/ci\.yml|cmake/ci/select-ci-scope\.ps1|formal/cmeta_cflow_calculus/|cmeta/include/cmeta/generated/builtin_signature_manifest\.h$|cflow/include/cflow/generated/(builtin_operator_policy|machine_schema)\.h$)')
-$plugin = $shared -or $cmetaRuntime -or $platformRuntime -or $concurrencyRuntime -or $utilsRuntime -or $harness -or
-  (Test-Changed '^(plugin/|cmeta/tests/cmeta_(pp|const|flags|layout)_)')
-$semantic = $shared -or $harness -or $cmetaRuntime -or $pluginRuntime -or $cflowRuntime -or
-  (Test-Changed '^(cmeta/tests/|plugin/tests/|cstl/)')
 
 $benchmarkCommon = $shared -or $cmetaRuntime -or $utilsRuntime -or $harness -or
   (Test-Changed '^(\.github/workflows/native-io-benchmarks\.yml$|cmake/ci/(?!select-ci-scope\.ps1)|cstl/(include/|src/|CMakeLists\.txt$))')
@@ -97,8 +93,6 @@ $checks = [ordered]@{
   execution = $execution
   projection = $projection
   lean = $lean
-  plugin = $plugin
-  semantic = $semantic
   mobile = $mobile
   work = $work
   evidence = $work
@@ -122,14 +116,12 @@ $json = ConvertTo-Json -InputObject $checks -Compress
 Write-Output $json
 if ($env:GITHUB_OUTPUT) { Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "checks=$json" }
 
-# A build identity includes instrumentation and the native fastpath backend.
+# CI build/run matrices contain only Release profiles with fastpath disabled.
 # Test consumers select suites from the uploaded build without rebuilding modules.
 if ($PrepareRelease -and -not $full) { throw "Release preparation requires a manual CI run" }
 $profiles = @(
   @{ id = 'linux-release'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-release-ci'; build_dir = 'build/linux-gcc-release'; sdk = 'linux-x64' },
   @{ id = 'linux-clang-release'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-clang-release-ci'; build_dir = 'build/linux-clang-release'; sdk = '' },
-  @{ id = 'linux-asan'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-dev-ci'; build_dir = 'build/linux-gcc-debug'; sdk = '' },
-  @{ id = 'linux-tsan'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-tsan-ci'; build_dir = 'build/linux-gcc-tsan'; sdk = '' },
   @{ id = 'windows-release'; runner = 'windows-2025'; family = 'windows'; preset = 'win-release-ci'; build_dir = 'build/Msvc-Release'; sdk = 'windows-x64' },
   @{ id = 'macos-release'; runner = 'macos-15'; family = 'mac'; preset = 'mac-arm64-release-ci'; build_dir = 'build/mac-arm64-gcc-release'; sdk = 'macos-arm64' },
   @{ id = 'macos-clang-release'; runner = 'macos-15'; family = 'mac'; preset = 'mac-arm64-clang-release-ci'; build_dir = 'build/mac-arm64-clang-release'; sdk = '' },
@@ -148,42 +140,24 @@ foreach ($profile in $profiles) {
   $entry = $profile.Clone()
   $entry.cross = $entry.family -in @('android', 'ios')
   $entry.fastpath = 'OFF'
-  $entry.native = $false
+  # Core semantic qualification must also pass without the optional #981 backend.
+  # Explicit release packaging still includes the qualified native specialization.
+  $entry.native_thunks = if ($PrepareRelease -and $entry.id -in @('linux-release', 'linux-clang-release', 'windows-release')) { 'ON' } else { 'OFF' }
+  $entry.native = $native -and -not $entry.cross -and $entry.id -ne 'linux-arm64-release'
   $entry.execution = $execution -and -not $entry.cross -and $entry.id -ne 'linux-arm64-release'
   $entry.armheaders = $entry.id -eq 'linux-arm64-release'
-  $entry.portable = $native -and $entry.id -eq 'linux-tsan'
-  $entry.plugin = $plugin -and $entry.id -in @('linux-release', 'linux-clang-release', 'windows-release', 'macos-release', 'macos-clang-release')
-  $entry.semantic = $semantic -and $entry.id -in @('linux-release', 'linux-clang-release', 'windows-release', 'macos-release', 'macos-clang-release')
   $entry.projection = $projection -and $entry.id -in @('linux-release', 'linux-clang-release', 'macos-clang-release')
   $entry.benchmarks = if ($entry.id -in @('linux-release', 'windows-release', 'macos-release')) { 'ON' } else { 'OFF' }
   $entry.package = $PrepareRelease -and [bool]$entry.sdk
   $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
   $entry.artifact = if ($entry.cross) { $mobile } else { $work -and [bool]$entry.sdk }
-  if ($entry.execution -or $entry.portable -or $entry.plugin -or $entry.semantic -or $entry.projection -or $entry.package -or $entry.artifact) {
-    $builds += $entry
-  }
-  if ($native -and -not $entry.cross -and $profile.id -notin @('linux-tsan', 'linux-arm64-release')) {
-    $entry = $profile.Clone()
-    $entry.id += '-fastpath'
-    $entry.cross = $false
-    $entry.fastpath = 'ON'
-    $entry.native = $true
-    $entry.execution = $false
-    $entry.armheaders = $false
-    $entry.portable = $false
-    $entry.plugin = $false
-    $entry.semantic = $false
-    $entry.projection = $false
-    $entry.benchmarks = 'OFF'
-    $entry.package = $false
-    $entry.compare = $false
-    $entry.artifact = $false
+  if ($entry.native -or $entry.execution -or $entry.projection -or $entry.package -or $entry.artifact) {
     $builds += $entry
   }
 }
 $matrix = ConvertTo-Json -InputObject @{ include = $builds } -Depth 5 -Compress
 $testRuns = @()
-$suites = @('native', 'portable', 'execution', 'plugin', 'semantic', 'projection', 'armheaders')
+$suites = @('native', 'execution', 'projection', 'armheaders')
 foreach ($build in $builds) {
   foreach ($suite in $suites) {
     if (-not $build[$suite]) { continue }

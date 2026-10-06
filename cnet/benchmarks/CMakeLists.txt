@@ -23,6 +23,31 @@ set_target_properties(cnet_io_benchmark PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+if(APPLE)
+  # A separate Mach-O image is necessary to interpose kevent in both libuv and
+  # NativeIO. Only this diagnostic executable loads it; main A/B stays intact.
+  add_library(cnet_kqueue_trace SHARED cnet_kqueue_trace.c)
+  target_link_libraries(cnet_kqueue_trace PRIVATE Salts::Platform)
+  set_target_properties(cnet_kqueue_trace PROPERTIES FOLDER "cnet/benchmarks"
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  cmake_add_benchmark(cnet_io_benchmark_kqueue_trace
+    SOURCES cnet_io_benchmark.c cnet_io_benchmark_config.c cnet_benchmark_stats.c
+    LIBS cnet_profile Salts::TinyTest ${CNET_LIBUV_TARGET} cnet_kqueue_trace
+    DEFS CNET_IO_BENCHMARK_KQUEUE_TRACE=1
+    INCLUDES ../src
+    FOLDER "cnet/benchmarks")
+  set_target_properties(cnet_io_benchmark_kqueue_trace PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  add_test(NAME cnet_io_benchmark_kqueue_trace COMMAND cnet_io_benchmark_kqueue_trace)
+  set_tests_properties(cnet_io_benchmark_kqueue_trace PROPERTIES LABELS "benchmark;trace")
+  cmake_add_test(cnet_kqueue_trace_test
+    SOURCES ../tests/cnet_kqueue_trace_test.c
+    LIBS cnet_kqueue_trace Salts::TinyTest Salts::Platform
+    INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+    FOLDER "cnet/tests")
+  set_tests_properties(cnet_kqueue_trace_test PROPERTIES LABELS "benchmark;trace")
+endif()
+
 cmake_add_benchmark(cnet_tls_sg_benchmark
   SOURCES cnet_tls_sg_benchmark.c
   LIBS cnet_profile Salts::TinyTest

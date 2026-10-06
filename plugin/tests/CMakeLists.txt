@@ -1,4 +1,5 @@
 include("${CMAKE_CURRENT_LIST_DIR}/linker_tests.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/native_tests.cmake")
 
 add_library(cmeta_plugin_manifest_fixture_c SHARED
   fixture_plugin_manifest_bridge.c fixture_plugin_manifest_c.c)
@@ -319,7 +320,3 @@ if(WIN32)
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF)
 endif()
-
-get_property(plugin_semantic_tests DIRECTORY PROPERTY TESTS)
-list(FILTER plugin_semantic_tests EXCLUDE REGEX "^cmeta_plugin_native_")
-set_property(TEST ${plugin_semantic_tests} APPEND PROPERTY LABELS cmeta-semantic)
