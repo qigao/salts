@@ -947,11 +947,20 @@ int cnet_client_adopt_tcp(cnet_client *client, uintptr_t native_socket,
   return status;
 }
 
+static int cnet_client_apply_accepted_stream_policy(
+    cnet_client *client, uintptr_t native_socket) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  if (impl == NULL || native_socket == UINTPTR_MAX) return SALTS_EINVAL;
+  return cnet_transport_apply_stream_socket_options(
+      native_socket, &impl->socket_options);
+}
+
 int cnet_client_adopt_accepted(cnet_client *client,
                                cnet_accepted_stream *accepted,
                                const cnet_observer *observer,
                                cnet_connection *out_connection) {
   uintptr_t native_socket;
+  int status;
   if (accepted == NULL) {
     if (out_connection != NULL) *out_connection = (cnet_connection){0};
     return SALTS_EINVAL;
@@ -963,6 +972,12 @@ int cnet_client_adopt_accepted(cnet_client *client,
   native_socket = accepted->internal_socket;
   accepted->internal_socket = 0u;
   accepted->internal_active = 0u;
+  status = cnet_client_apply_accepted_stream_policy(client, native_socket);
+  if (status != SALTS_OK) {
+    if (out_connection != NULL) *out_connection = (cnet_connection){0};
+    cnet_transport_close_socket(native_socket);
+    return status;
+  }
   return cnet_client_adopt_tcp(client, native_socket, observer,
                                out_connection);
 }
@@ -974,6 +989,7 @@ int cnet_client_adopt_accepted_tls(cnet_client *client,
                                    cnet_connection *out_connection) {
   uintptr_t native_socket;
   cnet_tls_context *context;
+  int status;
   if (accepted == NULL) {
     if (out_connection != NULL) *out_connection = (cnet_connection){0};
     return SALTS_EINVAL;
@@ -985,6 +1001,12 @@ int cnet_client_adopt_accepted_tls(cnet_client *client,
   native_socket = accepted->internal_socket;
   accepted->internal_socket = 0u;
   accepted->internal_active = 0u;
+  status = cnet_client_apply_accepted_stream_policy(client, native_socket);
+  if (status != SALTS_OK) {
+    if (out_connection != NULL) *out_connection = (cnet_connection){0};
+    cnet_transport_close_socket(native_socket);
+    return status;
+  }
   context = cnet_tls_server_context(server);
   return cnet_client_adopt_tls_server(client, native_socket, context, observer,
                                       out_connection);

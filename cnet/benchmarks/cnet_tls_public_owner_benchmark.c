@@ -370,6 +370,7 @@ static int tls_public_pair_init(
   uint16_t port = 0u;
   char uri[64];
   uint64_t deadline;
+  uint64_t applied_nodelay = 0u;
   int status;
 
   memset(pair, 0, sizeof(*pair));
@@ -456,6 +457,21 @@ static int tls_public_pair_init(
       !pair->client_probe.connected ||
       !pair->server_probe.connected)
     return SALTS_ETIMEDOUT;
+
+  if (nodelay != 0) {
+    status = cnet_connection_tcp_option_get(
+        &pair->client, pair->client_probe.connection,
+        CNET_TCP_SOCKET_NODELAY, &applied_nodelay);
+    if (status != SALTS_OK) return status;
+    if (applied_nodelay != 1u) return SALTS_EPROTO;
+
+    applied_nodelay = 0u;
+    status = cnet_connection_tcp_option_get(
+        &pair->server, pair->server_probe.connection,
+        CNET_TCP_SOCKET_NODELAY, &applied_nodelay);
+    if (status != SALTS_OK) return status;
+    if (applied_nodelay != 1u) return SALTS_EPROTO;
+  }
   return SALTS_OK;
 }
 

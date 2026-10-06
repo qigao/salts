@@ -964,6 +964,11 @@ int cnet_transport_tcp_option_get(const cnet_transport *transport,
       *out_value = (uint64_t)(unsigned int)value;
     }
     return status;
+
+  case CNET_TCP_SOCKET_NODELAY:
+    status = cnet_transport_get_socket_int(socket_value, IPPROTO_TCP, TCP_NODELAY, &value);
+    if (status == SALTS_OK) *out_value = value != 0 ? 1u : 0u;
+    return status;
   }
 
   return SALTS_EINVAL;
@@ -1035,6 +1040,11 @@ int cnet_transport_tcp_option_set(cnet_transport *transport,
     if (option_value == 0u || option_value > (uint64_t)INT_MAX) return SALTS_ERANGE;
     return cnet_transport_set_socket_int(
         socket_value, SOL_SOCKET, SO_SNDBUF, (int)option_value);
+
+  case CNET_TCP_SOCKET_NODELAY:
+    if (option_value > 1u) return SALTS_EINVAL;
+    return cnet_transport_set_socket_int(
+        socket_value, IPPROTO_TCP, TCP_NODELAY, (int)option_value);
   }
 
   return SALTS_EINVAL;
