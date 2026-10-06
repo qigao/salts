@@ -60,7 +60,7 @@ permissions:
 
 jobs:
   coroutine:
-    name: CMeta native fastpath and capability contracts / ${{ matrix.name }}
+    name: CMeta native fastpath, capabilities and manifests / ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -112,9 +112,9 @@ jobs:
             cmeta_coroutine_facade_test cmeta_coroutine_header_cpp_test \
             salts_coro_executor_test salts_coro_executor_header_cpp_test \
             cmeta_capabilities_test cmeta_capabilities_header_cpp_test \
-            cmeta_core_test cmeta_data_test cmeta_enum_bits_test cmeta_header_cpp_test cmeta_fastpath_test cmeta_fastpath_cpp_test cmeta_fastpath_coroutine_test cmeta_fastpath_benchmark cmeta_function_reflection_test cmeta_abi_test
+            cmeta_core_test cmeta_data_test cmeta_enum_bits_test cmeta_header_cpp_test cmeta_fastpath_test cmeta_fastpath_cpp_test cmeta_fastpath_coroutine_test cmeta_fastpath_benchmark cmeta_function_reflection_test cmeta_abi_test cmeta_manifest_test
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V \
-            -R '^(cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|salts_coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$)'
+            -R '^(cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|salts_coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_manifest_test$)'
       - name: Configure, build and test Windows native fastpath and capability contracts
         if: matrix.family == 'windows'
         shell: cmd
@@ -127,9 +127,9 @@ jobs:
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           cmake --preset "${{ matrix.preset }}" -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DCMETA_NATIVE_FASTPATH=ON -DCMETA_BUILD_BENCHMARKS=ON
           if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.preset }}" --parallel 2 --target cmeta_coroutine_facade_test cmeta_coroutine_header_cpp_test salts_coro_executor_test salts_coro_executor_header_cpp_test cmeta_capabilities_test cmeta_capabilities_header_cpp_test cmeta_core_test cmeta_data_test cmeta_enum_bits_test cmeta_header_cpp_test cmeta_fastpath_test cmeta_fastpath_cpp_test cmeta_fastpath_coroutine_test cmeta_fastpath_benchmark cmeta_function_reflection_test cmeta_abi_test
+          cmake --build --preset "${{ matrix.preset }}" --parallel 2 --target cmeta_coroutine_facade_test cmeta_coroutine_header_cpp_test salts_coro_executor_test salts_coro_executor_header_cpp_test cmeta_capabilities_test cmeta_capabilities_header_cpp_test cmeta_core_test cmeta_data_test cmeta_enum_bits_test cmeta_header_cpp_test cmeta_fastpath_test cmeta_fastpath_cpp_test cmeta_fastpath_coroutine_test cmeta_fastpath_benchmark cmeta_function_reflection_test cmeta_abi_test cmeta_manifest_test
           if errorlevel 1 exit /b 1
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V -R "^(cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|salts_coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$)"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V -R "^(cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|salts_coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_manifest_test$)"
           if errorlevel 1 exit /b 1
 
 
