@@ -210,6 +210,36 @@ static cmeta_status legacy_tag_assign(void *object, int64_t tag) {
     return CMETA_OK;
 }
 
+typedef struct enum_variant_value {
+    enum_value tag;
+    int payload;
+} enum_variant_value;
+
+static const cmeta_type_identity variant_identity =
+    CMETA_TYPE_ID_ATOM_INIT("test.EnumVariant");
+static const cmeta_type_desc variant_storage = {
+    "enum_variant_value", sizeof(enum_variant_value), _Alignof(enum_variant_value),
+    CMETA_T_OBJECT, NULL, NULL, &variant_identity
+};
+
+static bool variant_is_zero(const void *object) {
+    return value_is_zero(&((const enum_variant_value *)object)->tag);
+}
+
+static cmeta_status variant_read(const void *object, int64_t *out) {
+    return legacy_tag_read(&((const enum_variant_value *)object)->tag, out);
+}
+
+static cmeta_status variant_select(void *object, int64_t tag) {
+    enum_variant_value *value = object;
+    value->payload = 0;
+    return legacy_tag_assign(&value->tag, tag);
+}
+
+static void variant_restore(void *object) {
+    memset(object, 0, sizeof(enum_variant_value));
+}
+
 static void canonical_enum_cannot_tag_legacy_variant(void) {
     static const cmeta_enum_item_desc legacy_items[] = {{1, "ONE", "one"}};
     static const cmeta_enum_desc legacy_meta = {"Legacy", legacy_items, 1u};
@@ -220,19 +250,22 @@ static void canonical_enum_cannot_tag_legacy_variant(void) {
     };
     static const cmeta_data_variant_ops variant_ops = {
         sizeof(cmeta_data_variant_ops), CMETA_DATA_VARIANT_OPS_ABI_VERSION,
-        &storage, value_is_zero, legacy_tag_read, legacy_tag_assign, value_restore
+        &variant_storage, variant_is_zero, variant_read, variant_select, variant_restore
     };
     static const cmeta_data_variant_case cases[] = {
-        {1, "test.Variant.one", "one", 0u, &cmeta_data_int}
+        {1, "test.Variant.one", "one", offsetof(enum_variant_value, payload), &cmeta_data_int}
     };
     cmeta_data_desc legacy_tag = desc;
-    cmeta_data_variant_shape variant_shape = {0u, &legacy_tag, cases, 1u};
+    cmeta_data_variant_shape variant_shape = {
+        offsetof(enum_variant_value, tag), &legacy_tag, cases, 1u
+    };
     cmeta_data_desc variant = desc;
-    enum_value object = {0}, before = object;
+    enum_variant_value object = {0}, before = object;
     legacy_tag.shape = &legacy_shape;
     legacy_tag.enum_ops = &legacy_ops;
     legacy_tag.enum_bits_ops = NULL;
     variant.kind = CMETA_DATA_VARIANT;
+    variant.storage_type = &variant_storage;
     variant.shape = &variant_shape;
     variant.enum_bits_ops = NULL;
     variant.variant_ops = &variant_ops;
@@ -259,7 +292,7 @@ static void canonical_enum_cannot_tag_legacy_variant(void) {
     assert(cmeta_data_desc_valid(&variant));
     assert(cmeta_data_variant_ops_of(&variant) == &variant_ops);
     assert(cmeta_data_variant_select(&variant, &object, 1) == CMETA_OK);
-    assert(object.engaged && object.bits == 1u);
+    assert(object.tag.engaged && object.tag.bits == 1u);
 }
 
 int main(void) {
