@@ -317,15 +317,18 @@ cmeta_add_compile_failure_test(
   cmeta_trace_wrong_backend_compile_fail
   compile_fail/cmeta_trace_wrong_backend.c
   "generic association|compatible type|controlling expression|C11 generic|not compatible with any association")
+target_link_libraries(cmeta_trace_wrong_backend_compile_fail PRIVATE Salts::Platform)
 
 cmeta_add_compile_failure_test(
   cmeta_fastpath_wrong_target_compile_fail
   compile_fail/cmeta_fastpath_wrong_target.c
   "generic association|compatible type|controlling expression|C11 generic|not compatible with any association")
+target_link_libraries(cmeta_fastpath_wrong_target_compile_fail PRIVATE Salts::Platform)
 cmeta_add_compile_failure_test(
   cmeta_fastpath_missing_decl_compile_fail
   compile_fail/cmeta_fastpath_missing_decl.c
   "undeclared_target_function_type|syntax error: identifier 'slot_target_type'")
+target_link_libraries(cmeta_fastpath_missing_decl_compile_fail PRIVATE Salts::Platform)
 
 cmeta_add_compile_failure_test(
   cmeta_compute_missing_type_compile_fail
