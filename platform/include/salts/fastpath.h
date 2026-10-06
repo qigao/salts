@@ -19,6 +19,7 @@ extern "C" {
 
 bool salts_fast_key_read(const salts_fast_key_state *key);
 int salts_fast_key_set(salts_fast_key_state *key, bool enabled);
+bool salts_fast_key_consume(salts_fast_key_state *key);
 
 #if SALTS_PLATFORM_NATIVE_FASTPATH
 bool salts_fast_key_read_native(const salts_fast_key_state *key);
