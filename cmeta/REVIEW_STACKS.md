@@ -1,7 +1,11 @@
 # #979 的语义审查与合并边界（#984）
 
-本分支采用独立提交与独立验收单元，不重写已经发布的历史。以下表格定义审查顺序、
-依赖和通过条件；网络、runner 与 benchmark 的成功不能替代 CMeta 语义验收。
+原组合 PR [#979](https://github.com/qigao/salts/pull/979) 保留原历史。
+核心 PR [#986](https://github.com/qigao/salts/pull/986) 使用新分支
+`review/cmeta-core-984`，通过隔离提交区分 A–D/G、公共命名迁移和 F；它不包含 #981
+的 native thunk 实现、构建选项或 installed native 测试。可选 E 使用其上的
+`review/cmeta-native-981`，单独审查、构建与验收。以下表格定义语义依赖；网络、runner
+与 benchmark 的成功不能替代 CMeta 语义验收。
 
 | 单元 | 契约与主要文件 | 依赖 | 正式验收面 |
 |---|---|---|---|
@@ -16,22 +20,42 @@
 表中 `include/` 和 `src/` 默认相对 `cmeta/`。B/C 共享 ObjectRef 和 Reflection epoch，
 必须一起满足公开契约，不能为了机械拆分恢复 `receiver_method`、旧布局或兼容 alias。
 
-## 可追踪的提交
+## 实际提交隔离
 
-- A：`0c72f4ab`、`e516171b`、`ec56fd27`、`f8d3e731`、`bb6ae9b6`。
-- B/C：`f102cfc9`（receiver cutover）、`d8cdd1ae`（static/checked）、
-  `2e962a33`（admitted capability）、`92b06360`（managed C++ unwind）、
-  `d393f7fb`（no-fail discharge qualification）。
-- D：`cb7e1efe`（跨 TU aggregation 与 lease scope）、`40ed9743`（typed pointer tests）。
-- E：`39d255e1`（native consumer integration）；native target 单独由 configure 开关控制。
-- F：`ec58aa4a`（CNet benchmark）、`8d19c98e`（NODELAY）、`490c15b7`（vcpkg runner）、
-  `b5ce93f4` / `9b07ffa1` / `a6c8f6ba`（Clang/Darwin 构建修复）。
-- G：`dfc8849a`（TinyMock admission、ownership、transactional output）。
+共同基线是 `c9da3ab1`。原 `4be93148` 在新历史中拆为：
 
-`4be93148` 包含跨目录公共前缀切换和 native 工作；它是历史上的整体验收切换，不能按
-文件 cherry-pick 后声称得到独立可发布版本。当前 API 只有 `cmeta_*` 一条路径，Reflection
-epoch 4 / Plugin epoch 5 均为显式 cutover。旧 epoch 必须拒绝，不做协商或恢复兼容布局。
-本表是可审查边界，不把历史混合提交伪称为已经拆开的 stacked PR。
+| 提交 | 审查范围 | 依赖与验证 |
+|---|---|---|
+| `9874fe0b` | 机械 `salts_` → `cmeta_`、`salts_coro` → `coro` 及对应文件名迁移 | 不改算法或布局；消费者同步重建 |
+| `58ee2440` | F：CMake helper/调用点、Windows 版本资源、模块 export/header 整理、CNet 和正式测试迁移 | 完整 build graph 和模块 CTest；不作为语义实现证据 |
+| `b6712237` | B/C/D：Data 合并、类型选择、nofail scope、Plugin 宏迁移及对应回归 | 核心语义门禁和 CSTL/CFlow consumers；无 native 后端 |
+| `review/cmeta-native-981` | E：原 `4be93148` 的 native 部分及 `39d255e1` 的消费者集成 | 仅依赖完整 core；native/fastpath 测试、benchmark、installed SDK |
+
+A 的 `0c72f4ab`、`e516171b`、`ec56fd27`、`f8d3e731`、`bb6ae9b6`，
+C 的 `f102cfc9`，D 的 `cb7e1efe` / `40ed9743` 保留原提交。后续重要语义提交为：
+
+- B：`db43085b`（#982 exception）、`e1fb7676`（#983 no-fail obligations）、
+  `1a5a6a3d` / `015336e8`（#980 canonical lifecycle lowering）。
+- G：`8332ae18`（#985 TinyMock admission 与 ownership）。
+- 收尾：`425fc04b`（#976 编译器条件归属）、`3f28ce9a`（#977 ABI 文档）。
+- F：`4231cbea`（vcpkg）、`f8af504b`（NODELAY）、`cf8e13a0`（Clang/benchmark 报告）、
+  `fe889bfc`（CNet benchmark）、`2d837e80` / `0064fce1` / `a71ad507`（构建可移植性）。
+
+这采用 #984 允许的“隔离提交 + 可选后端 stacked PR”，不声称 A–G 都有独立 PR。
+B/C 与 D 的迁移仍在同一核心合并单元完成，保留唯一 Function/receiver 模型和明确的
+Reflection 4 / Plugin 5 cutover；不存在临时旧布局、别名或 ABI fallback。
+审查核心实现可按上表选取语义提交，不必从 F 的网络/runner diff 推断语义行为。
+
+隔离前后的代码核对使用 Git 文件树，而非读取源码 marker 的 CMake 测试：
+
+```sh
+git diff --stat 3f28ce9a 9d506b96
+git diff --exit-code 9d506b96 review/cmeta-native-981 -- . ':(exclude)cmeta/REVIEW_STACKS.md'
+```
+
+第一条仅列出 34 个 native 实现及集成文件；第二条要求重组后的最终源码、测试、
+build 和 workflow 与原分支完全一致，只有本审查说明更新。E 对 lifecycle/scope/
+ObjectRef/admission 的实现没有 diff；从核心分支不应用 E 即可移除后端。
 
 ## CI 门禁
 
@@ -42,44 +66,45 @@ A–D/G 的 CTest。它只报告语义测试，不混入 CNet、NativeIO、trace
 测试由所属 CMeta、Plugin、TinyMock 目录标记 `cmeta-semantic`，不按全仓库 `cmeta_*`
 前缀猜测归属；CSTL/CFlow consumer 与 TinyTest installed 独立性继续由对应正式测试验收。
 
-普通 PR 的非 fastpath configure 关闭 `CMETA_BUILD_NATIVE_THUNKS`，证明 core 不需要
-E。fastpath configure 显式打开已支持平台的 native 后端，独立验证 E。手工 release
-准备保留原支持平台的 native SDK 产物。所有 profile 仍完整构建各自 configure graph，
-不通过 `--target` 裁剪 CI 构建，也不直接执行测试程序。
+核心栈完全没有 native thunk 源码或 configure 入口，fastpath profile 仍验收已有 Platform
+静态 fastpath。E 自己增加 `CMETA_BUILD_NATIVE_THUNKS`：普通非 fastpath PR profile
+默认关闭，支持平台的 fastpath profile 显式打开；release 准备包含原支持平台的 native
+SDK 产物。所有 profile 完整构建各自 configure graph，不通过 `--target` 裁剪 CI
+构建，也不直接执行测试程序。
 
 每个合并单元需要对应的实际 compiler/平台输出；源码检查、Windows 的通过或 Linux
 Clang 的通过都不能替代 macOS Mach-O qualification。远端 Linux 的单项 NativeIO
 失败应单独追踪，不能修改 CMeta 语义 gate 来掩盖。
 
-## 本轮验收证据（#982/#983/#985）
+## 隔离资格与历史证据
 
-事实：2026-10-07 的实现与测试提交截止 `dec53ce5`，结果如下。最后一个提交仅补充
-普通 mixed scope 异常测试；该测试在 MSVC、GCC 和 Clang 上均重新执行通过。
+事实：核心代码提交 `3f28ce9a` 已在全新 Windows MSVC Release build tree 完整构建，
+`cmeta-semantic` **190/190** 通过；日志为隔离 worktree 下
+`build/issue984-isolated-msvc-{configure,build,semantic}.log`。
+核心 PR #986 记录同一核心文件树的 GCC/Clang、消费者和 installed SDK 复验结果，
+E 的独立 PR 记录 native qualification；不得把原分支或其他平台的通过替代这些验收。
 
-| 环境与 configure | 实际结果 |
-|---|---|
-| Windows MSVC，native ON | `cmeta-semantic` 188/188；TinyMock 17/17 |
-| `root@eu` GCC 12.2，native/fastpath OFF | 完整 build graph 通过；语义 187 通过、1 跳过；消费者回归 11/11 |
-| `root@eu` Clang 14.0.6，native/fastpath OFF | 完整 build graph 通过；语义 187 通过、1 跳过；installed SDK 48/48 |
-| `root@eu` Clang 14.0.6，native/fastpath ON | 相关测试 219 通过、1 跳过；installed SDK 52/52（包含可选 native 测试） |
+复验使用正式 preset，核心不传不存在的 native thunk 开关：
 
-Linux 跳过项均为 `cmeta_pp_zero_c23_test`，由实际编译器 C23 能力检测决定。
-远端使用隔离 worktree `/root/dev/salts-clang-976-977`，未改动原脏工作区。
-复验入口为正式 `linux-release-ci` / `linux-clang-release-ci` configure/build preset，
-语义测试使用 `ctest --preset <preset> --no-tests=error --output-on-failure -L '^cmeta-semantic$'`。
-日志保存在该 worktree 的 `build/issue984-{gcc,clang}-semantic.log`、
-`build/issue984-gcc-consumers.log`、`build/issue984-clang-sdk-tests.log`；Windows 日志为
-`build/issue984-semantic-msvc.log`。
+```sh
+cmake --preset linux-clang-release-ci -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DSALTS_PLATFORM_NATIVE_FASTPATH=OFF
+cmake --build --preset linux-clang-release-ci --parallel 2
+ctest --preset linux-clang-release-ci --no-tests=error --output-on-failure -L '^cmeta-semantic$'
+```
 
-MED／事实：以上不是全平台全量通过。macOS GCC/AppleClang 仍待本轮 CI 输出；此前
-Clang 全量 CTest 的 `native_io_uring_batch_test` 有两个内部用例失败，保留在
-`build/remote-clang-tests.log`，未通过改动或缩减 NativeIO 测试来消除失败。
+历史事实：原 `b9734108` 的 [CI run 37515892751](https://github.com/qigao/salts/actions/runs/37515892751)
+中 macOS GCC / AppleClang 的 semantic 和 Plugin jobs 已通过；总运行含取消的 benchmark
+jobs，不能称整轮 CI 全部通过。该结果属于原提交，新分支以自己的 CI 结果为准。
+此前 Clang 全量测试的 `native_io_uring_batch_test` 两个内部用例失败也仍是独立模块
+问题，不能用 CMeta semantic 通过替代其资格。
 
-## 回滚与后续拆分
+## 合并与回滚
 
-新修复按以上单元提交。撤销 B、C、D 的破坏性切换时必须连同消费者回滚，不能留下
-两个 Reflection 模型。E 可通过 configure 关闭而不改变 scope、Data、ObjectRef、Plugin
-admission 的语义；删除或改进 E 不得触及 B 的 cleanup authority。
+先合并核心栈，再合并 E。原 #979 作为组合版本对照，不能与替代核心 PR 重复合并。
+不强推原共享分支。核心提交中的前缀、Reflection epoch 和 Plugin epoch 迁移要求
+host、provider、SDK 消费者同步重建；回滚这些契约必须一起回滚消费者。
 
-若后续要求真正改写 #979 为 stacked PR，应从共同基线重建并逐个完整构建，保留 B/C
-的 cutover 边界，不在共享分支强推重排，也不靠临时旧 ABI 让中间提交假绿。
+E 只有一个方向的依赖：先完成 canonical admission，再使用可选 native specialization。
+回滚 E 的提交连同其构建入口、tests 和 SDK 注册即可恢复已验证的核心树，不改变 #980
+cleanup authority。F 的独立提交按各模块契约验收，不把其构建或网络结果当作 B/C/D
+语义结论。
