@@ -34,14 +34,14 @@ endif()
 
 # CMeta public API regression tests.
 
-foreach(lowering_case IN ITEMS bind cleanup data_select)
+foreach(lowering_case IN ITEMS bind cleanup data_select scope_nofail_fatal)
   cmake_add_test(cmeta_${lowering_case}_test
     SOURCES cmeta_${lowering_case}_test.c
     LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")
   set_target_properties(cmeta_${lowering_case}_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 endforeach()
-foreach(lowering_case IN ITEMS bind cleanup object_scope data_select)
+foreach(lowering_case IN ITEMS bind cleanup object_scope data_select scope_nofail_fatal)
   cmake_add_test(cmeta_${lowering_case}_cpp_test
     SOURCES cmeta_${lowering_case}_cpp_test.cpp
     LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/tests")

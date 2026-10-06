@@ -81,16 +81,21 @@ the existing checked lifecycle binding; it uses the same cleanup lowering.
 There is no automatic fallback or second lifecycle registry. See
 [structured scope and migration](LANGUAGE_REFERENCE.md#structured-scope).
 
-Explicit lifecycle facts let `(Type, value, trivial)` scope rows omit callback,
-ops-pointer and live-state machinery. Admitted lifecycle/invokable/field bindings
+Canonical lifecycle facts automatically select lowering for `(Type, value)`
+rows: trivial storage has no callbacks or ops/live state; managed nofail storage
+has no partial-init state; fallible storage uses nested rollback control flow.
+Admitted lifecycle/invokable/field bindings
 support repeated use without validating immutable metadata graphs again.
 Data, ObjectRef and Plugin adapters share finite lexical cleanup obligations;
 their existing resource authorities remain separate. See
 [lifetime admission and lowering](LIFECYCLE_LOWERING.md).
 
-`cmeta_scope_nofail` omits per-resource live/ops state for statically declared
-INIT_NOFAIL resource sets, including managed CSTL values. Body failures still
-perform LIFO cleanup; C++ body exceptions clean up before propagating.
+Bindings are caller-trusted validated borrowed records, not unforgeable security
+capabilities. Use only successful, unmodified bind/admit results and keep the
+canonical provider/outer Plugin lease alive through all uses and cleanup.
+`cmeta_scope_nofail` remains an explicit assertion using the same lowering;
+ordinary scope already selects this path for declared INIT_NOFAIL types.
+Body failures and C++ exceptions still perform LIFO cleanup.
 
 `<cmeta/data_select.h>` provides `cmeta_data_of(pointer)` for builtin Data
 descriptors and `cmeta_data_of_in(pointer, schema)` for explicit local schemas.

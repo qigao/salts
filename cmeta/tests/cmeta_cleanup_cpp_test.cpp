@@ -65,7 +65,7 @@ suite("Managed C++ structured scope") {
         auto run = [] {
             cmeta_status status;
             cmeta_scope(status, cmeta_autos((FallibleValue, first),
-                (TrivialInt, middle, trivial), (FallibleValue, last)),
+                (TrivialInt, middle), (FallibleValue, last)),
                 cmeta_body(throw_from_body()));
             return status;
         };
@@ -78,7 +78,7 @@ suite("Managed C++ structured scope") {
         auto run = [] {
             cmeta_status status;
             cmeta_scope_checked(status, cmeta_autos((FallibleValue, first),
-                (TrivialInt, middle, trivial), (FallibleValue, last)),
+                (TrivialInt, middle), (FallibleValue, last)),
                 cmeta_body(throw_from_body()));
             return status;
         };
@@ -122,8 +122,8 @@ suite("Managed C++ structured scope") {
     }
     it("preserves an ordinary body status while cleaning a mixed static scope") {
         cmeta_status status;
-        cmeta_scope(status, cmeta_autos((TrivialInt, first, trivial), (FallibleValue, middle),
-            (TrivialInt, last, trivial)), cmeta_body(CMETA_BUSY));
+        cmeta_scope(status, cmeta_autos((TrivialInt, first), (FallibleValue, middle),
+            (TrivialInt, last)), cmeta_body(CMETA_BUSY));
         check_equal(status, CMETA_BUSY);
         check_equal(restored_count, size_t{1});
         check_equal(restored[0], 1);

@@ -68,6 +68,8 @@ bool cmeta_object_lifecycle_valid(
  */
 struct cmeta_function_data_desc;
 
+/* Borrowed provider output, validated by the invokable bind boundary before
+ * admitted use. This record grants no unforgeability or implicit module lease. */
 typedef struct cmeta_object_operation_binding {
     size_t size;
     const struct cmeta_function_data_desc *data;
@@ -245,9 +247,12 @@ cmeta_status cmeta_object_field_assign(
     cmeta_object_ref *ref, const char *name,
     const cmeta_data_desc *value_data, const void *value);
 
-/** Borrowed field capability admitted once from an ObjectRef. No object or
- * provider is retained. The native object, immutable field/provider metadata
- * and outer lease must outlive use; do not forge or mutate a bound record. */
+/** Validated borrowed binding produced by cmeta_object_field_bind(), not an
+ * unforgeable security capability. Use only a successful, unmodified result;
+ * do not forge or mutate a live record. Canonical descriptors/providers remain
+ * authoritative, not the binding or its address. No object, provider or module
+ * is retained. The native object, immutable field/provider metadata and outer
+ * Plugin/provider lease must outlive every use and dependent cleanup. */
 typedef struct cmeta_object_field_binding {
     void *object;
     const cmeta_data_field_desc *field;
