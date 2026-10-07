@@ -78,6 +78,53 @@ static salts_component_plugin_module *find_module(
     return NULL;
 }
 
+static salts_component_plugin_status preflight_dynamic_sources(
+    const salts_component_plugin_source *sources,
+    size_t source_count,
+    size_t module_capacity,
+    size_t *out_distinct_modules,
+    size_t *out_invalid_source) {
+    size_t distinct = 0u;
+    size_t i;
+
+    if (out_distinct_modules == NULL || out_invalid_source == NULL)
+        return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
+
+    *out_distinct_modules = 0u;
+    *out_invalid_source = SALTS_COMPONENT_PLUGIN_INDEX_NONE;
+
+    for (i = 0u; i < source_count; ++i) {
+        size_t j;
+        bool seen = false;
+
+        if (!cmeta_plugin_ref_valid(sources[i].plugin) ||
+            sources[i].export_id == NULL ||
+            sources[i].export_id[0] == '\0') {
+            *out_invalid_source = i;
+            return SALTS_COMPONENT_PLUGIN_PROVIDER_ERROR;
+        }
+
+        for (j = 0u; j < i; ++j) {
+            if (plugin_ref_equal(sources[i].plugin, sources[j].plugin)) {
+                seen = true;
+                break;
+            }
+        }
+
+        if (!seen) {
+            if (distinct == SIZE_MAX)
+                return SALTS_COMPONENT_PLUGIN_CAPACITY_EXCEEDED;
+            ++distinct;
+        }
+    }
+
+    if (distinct > module_capacity)
+        return SALTS_COMPONENT_PLUGIN_CAPACITY_EXCEEDED;
+
+    *out_distinct_modules = distinct;
+    return SALTS_COMPONENT_PLUGIN_OK;
+}
+
 static salts_component_plugin_status acquire_module(
     salts_component_plugin_generation *generation,
     size_t source_index,
@@ -199,8 +246,11 @@ salts_component_plugin_status salts_component_plugin_generation_build(
     const salts_component_selection *selections,
     size_t selection_count) {
     size_t total;
+    size_t distinct_modules = 0u;
+    size_t invalid_source = SALTS_COMPONENT_PLUGIN_INDEX_NONE;
     size_t i;
     salts_component_status component_status;
+    salts_component_plugin_status preflight_status;
 
     if (generation == NULL || generation_id == 0u ||
         storage == NULL ||
@@ -232,6 +282,21 @@ salts_component_plugin_status salts_component_plugin_generation_build(
         (storage->dependency_capacity != 0u && storage->dependencies == NULL) ||
         (storage->module_capacity != 0u && storage->modules == NULL))
         return SALTS_COMPONENT_PLUGIN_CAPACITY_EXCEEDED;
+
+    preflight_status = preflight_dynamic_sources(
+        dynamic_sources,
+        dynamic_source_count,
+        storage->module_capacity,
+        &distinct_modules,
+        &invalid_source);
+    if (preflight_status != SALTS_COMPONENT_PLUGIN_OK) {
+        if (preflight_status == SALTS_COMPONENT_PLUGIN_PROVIDER_ERROR) {
+            generation->failure = component_plugin_failure_none();
+            generation->failure.source_index = invalid_source;
+        }
+        return preflight_status;
+    }
+    (void)distinct_modules;
 
     memset(&generation->components, 0, sizeof(generation->components));
     generation->id = generation_id;
