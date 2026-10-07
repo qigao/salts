@@ -40,10 +40,6 @@ $contractsChanged = Test-Changed '^\.github/workflows/cmeta-cflow-calculus\.yml$
 $cmetaRuntime = Test-Changed '^cmeta/(include/|src/|native/|CMakeLists\.txt$|tests/CMakeLists\.txt$)'
 $componentRuntime = Test-Changed '^component/(include/|src/|CMakeLists\.txt$|tests/)'
 $componentPluginRuntime = Test-Changed '^component-plugin/(include/|src/|CMakeLists\.txt$|tests/)'
-# Dynamic ComponentPlugin code crosses the native DSO boundary and must retain
-# ordinary multi-platform qualification even on the long-lived integration
-# branch. Linux-only full-tests remain an optimization for other branch work.
-if ($componentPluginRuntime) { $linuxIntegration = $false }
 $platformRuntime = Test-Changed '^platform/(include/|src/|arch/|CMakeLists\.txt$)'
 $concurrencyRuntime = Test-Changed '^concurrency/(include/|src/|CMakeLists\.txt$)'
 $coroutineRuntime = Test-Changed '^coroutine/(include/|src/|arch/|CMakeLists\.txt$)'
