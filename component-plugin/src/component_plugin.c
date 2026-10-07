@@ -293,6 +293,7 @@ salts_component_plugin_status salts_component_plugin_generation_build(
         if (preflight_status == SALTS_COMPONENT_PLUGIN_PROVIDER_ERROR) {
             generation->failure = component_plugin_failure_none();
             generation->failure.source_index = invalid_source;
+            generation->state = SALTS_COMPONENT_PLUGIN_GENERATION_FAILED;
         }
         return preflight_status;
     }
