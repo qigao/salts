@@ -9,7 +9,9 @@
             "hidden": true,
             "toolchainFile": "$env{VCPKG_CACHE_REPOSITORY_ROOT}/cmake/QigaoVcpkgToolchain.cmake",
             "environment": {
-                "VCPKG_BINARY_SOURCES": "clear;default,readwrite;nugettimeout,1800;nugetconfig,${sourceDir}/cmake/vcpkg-cache.nuget.config,read"
+                "VCPKG_BINARY_SOURCES": "clear;default,readwrite;nugettimeout,1800;nugetconfig,${sourceDir}/cmake/vcpkg-cache.nuget.config,read",
+                "RE2C_ROOT": "$penv{RE2C_ROOT}",
+                "PATH": "$env{RE2C_ROOT}/bin${pathListSep}$penv{PATH}"
             }
         },
         {
@@ -20,7 +22,8 @@
                 "VCPKG_HOST_TRIPLET": "x64-windows"
             },
             "environment": {
-                "VCPKG_CACHE_REPOSITORY_ROOT": "$penv{LOCALAPPDATA}/qigao/vcpkg-cache"
+                "VCPKG_CACHE_REPOSITORY_ROOT": "$penv{LOCALAPPDATA}/qigao/vcpkg-cache",
+                "RE2C_ROOT": "$env{PKG_ROOT}/re2c/windows-x64"
             }
         },
         {
@@ -138,7 +141,7 @@
             },
             "environment": {
                 "SALTS_ROOT": "$env{PKG_ROOT}/salts/debug",
-                "PATH": "${sourceDir}/build/Msvc/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
+                "PATH": "$env{RE2C_ROOT}/bin${pathListSep}${sourceDir}/build/Msvc/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
                 "base-win-dev-user",
@@ -153,7 +156,7 @@
             },
             "environment": {
                 "SALTS_ROOT": "$env{PKG_ROOT}/salts/release",
-                "PATH": "${sourceDir}/build/Msvc-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
+                "PATH": "$env{RE2C_ROOT}/bin${pathListSep}${sourceDir}/build/Msvc-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
                 "base-win-release-user",
@@ -169,7 +172,7 @@
             },
             "environment": {
                 "SALTS_ROOT": "$env{PKG_ROOT}/salts/debug",
-                "PATH": "${sourceDir}/build/linux-gcc-debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/debug/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}",
+                "PATH": "$env{RE2C_ROOT}/bin${pathListSep}${sourceDir}/build/linux-gcc-debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/debug/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}",
                 "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/debug/lib${pathListSep}$env{SALTS_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
             },
             "inherits": [
@@ -230,7 +233,7 @@
             },
             "environment": {
                 "SALTS_ROOT": "$env{PKG_ROOT}/salts/release",
-                "PATH": "${sourceDir}/build/linux-gcc-release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}",
+                "PATH": "$env{RE2C_ROOT}/bin${pathListSep}${sourceDir}/build/linux-gcc-release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}",
                 "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/lib${pathListSep}$env{SALTS_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
             },
             "inherits": [
@@ -252,7 +255,7 @@
             },
             "environment": {
                 "SALTS_ROOT": "$env{PKG_ROOT}/salts-linux-arm64/release",
-                "PATH": "${sourceDir}/build/linux-arm64-release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/arm64-linux/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}",
+                "PATH": "$env{RE2C_ROOT}/bin${pathListSep}${sourceDir}/build/linux-arm64-release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/arm64-linux/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}",
                 "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/arm64-linux/lib${pathListSep}$env{SALTS_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
             }
         },
@@ -269,7 +272,7 @@
             },
             "environment": {
                 "SALTS_ROOT": "$env{PKG_ROOT}/salts/release",
-                "PATH": "${sourceDir}/build/linux-gcc-sdk-package/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}",
+                "PATH": "$env{RE2C_ROOT}/bin${pathListSep}${sourceDir}/build/linux-gcc-sdk-package/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}",
                 "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/lib${pathListSep}$env{SALTS_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
             },
             "inherits": [
@@ -393,7 +396,7 @@
             "binaryDir": "${sourceDir}/build/linux-clang-release",
             "environment": {
                 "SALTS_ROOT": "${sourceDir}/stage/sdk/linux-clang-release",
-                "PATH": "${sourceDir}/build/linux-clang-release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
+                "PATH": "$env{RE2C_ROOT}/bin${pathListSep}${sourceDir}/build/linux-clang-release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
             }
         },
         {
@@ -471,7 +474,7 @@
             },
             "environment": {
                 "SALTS_ROOT": "$env{PKG_ROOT}/salts/debug-tsan",
-                "PATH": "${sourceDir}/build/linux-gcc-tsan/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/debug/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
+                "PATH": "$env{RE2C_ROOT}/bin${pathListSep}${sourceDir}/build/linux-gcc-tsan/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/debug/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$penv{PATH}"
             }
         },
         {
@@ -738,7 +741,9 @@
         {
             "name": "install-linux-clang-release-ci",
             "configurePreset": "linux-clang-release-ci",
-            "targets": ["install"]
+            "targets": [
+                "install"
+            ]
         },
         {
             "name": "mac-arm64-clang-release-ci",
@@ -747,7 +752,9 @@
         {
             "name": "install-mac-arm64-clang-release-ci",
             "configurePreset": "mac-arm64-clang-release-ci",
-            "targets": ["install"]
+            "targets": [
+                "install"
+            ]
         },
         {
             "name": "mac-x64-release-ci",
