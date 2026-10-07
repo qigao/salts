@@ -58,9 +58,10 @@ cmeta_status cmeta_contract_fingerprint_function(const cmeta_function_abi_desc *
 cmeta_status cmeta_contract_fingerprint_interface(const cmeta_interface_desc *desc,
     const cmeta_fingerprint_limits *limits, uint64_t *out);
 
-/** Ordered provides/requires membership plus canonical Interface rows, in
- * domain 6. Declaration format/size must match exactly. Diagnostic name and
- * runtime module ID/version are excluded; the owner validates those separately.
+/** Canonical component configuration identity plus ordered provides/requires
+ * membership and canonical Interface rows, in domain 6. Declaration format/size
+ * must match exactly. Component stable_id and runtime module ID/version are
+ * excluded from the shape digest; the owner validates identity separately.
  * Same budgets/errors/output and borrow contract as the queries above. */
 cmeta_status cmeta_contract_fingerprint_component(const cmeta_component_desc *desc,
     const cmeta_fingerprint_limits *limits, uint64_t *out);
