@@ -159,13 +159,13 @@ jobs:
         shell: bash
         run: |
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -R '^(cflow_function_projection_test|cflow_execution_test|cflow_interface_reflection_test)$'
-      - name: Run portable arm64 header tests
-        if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.armheaders }}
+      - name: Run portable arm64 runtime and header tests
+        if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.armcontracts }}
         timeout-minutes: 30
         shell: bash
         run: |
           set -euo pipefail
-          ctest --preset linux-arm64-release-ci --no-tests=error --output-on-failure --timeout 60 -R '^(native_io_header_cpp_test|cmeta_header_cpp_test|cflow_header_cpp_test|cnet_header_cpp_test)$'
+          ctest --preset linux-arm64-release-ci --no-tests=error --output-on-failure --timeout 60 -R '^(native_io_header_cpp_test|cmeta_header_cpp_test|cflow_header_cpp_test|cnet_header_cpp_test|cmeta_coroutine_completion_test|cmeta_coroutine_facade_test|coro_executor_test|coro_executor_header_cpp_test|cnet_api_test|cnet_tls_test)$'
       - name: Compile PR-base modules for the CNet comparison
         if: matrix.compare
         shell: cmd
