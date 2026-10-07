@@ -132,21 +132,16 @@ suite("Salts static Component Configurator") {
         test_provider_state_init(&logger_b, 8, NULL);
         test_provider_state_init(&app, 0, NULL);
 
-        providers[0] = (salts_component_provider_binding){
-            cmeta_component_meta(TestLogger), &logger_a,
-            NULL, NULL, &test_interfaces,
-            test_logger_create, test_activate, test_deactivate
-        };
-        providers[1] = (salts_component_provider_binding){
-            cmeta_component_meta(TestLoggerAlt), &logger_b,
-            NULL, NULL, &test_interfaces,
-            test_logger_create, test_activate, test_deactivate
-        };
-        providers[2] = (salts_component_provider_binding){
-            cmeta_component_meta(TestApp), &app,
-            &cmeta_data_int, &config, &test_interfaces,
-            test_app_create, test_activate, test_deactivate
-        };
+        providers[0] = TEST_PROVIDER_BINDING(
+            TestLogger, &logger_a, test_logger_create);
+        deployments[0] = TEST_DEPLOYMENT(&providers[0], NULL, NULL);
+        providers[1] = TEST_PROVIDER_BINDING(
+            TestLoggerAlt, &logger_b, test_logger_create);
+        deployments[1] = TEST_DEPLOYMENT(&providers[1], NULL, NULL);
+        providers[2] = TEST_PROVIDER_BINDING(
+            TestApp, &app, test_app_create);
+        deployments[2] = TEST_DEPLOYMENT(
+            &providers[2], &cmeta_data_int, &config);
 
         selection = (salts_component_selection){
             "TestApp", test_log_interface(), "TestLoggerAlt"
