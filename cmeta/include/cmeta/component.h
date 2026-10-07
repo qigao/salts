@@ -19,14 +19,16 @@ typedef struct cmeta_component_capability {
 } cmeta_component_capability;
 
 /* Format 1 is exact-size; metadata is borrowed under the provider's negotiated
- * Reflection ABI and lifetime. name is diagnostic, not runtime Plugin identity.
+ * Reflection ABI and lifetime. stable_id is the semantic component/provider
+ * identity used for explicit selection and diagnostics; generated declarations
+ * use the expanded C identifier spelling. Descriptor address is never identity.
  * Manual empty tables and repeated/ordered role rows are preserved. */
 typedef struct cmeta_component_desc {
     size_t size;
     uint32_t format_version;
     const char *stable_id;
     const cmeta_component_capability *capabilities;
-    size_t count;
+    size_t capability_count;
 } cmeta_component_desc;
 
 /* Flat nonempty 1..16 role rows, using the existing PP schema machinery. */
