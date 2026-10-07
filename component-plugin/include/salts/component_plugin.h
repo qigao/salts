@@ -20,12 +20,16 @@ typedef enum salts_component_plugin_status {
     SALTS_COMPONENT_PLUGIN_PLUGIN_ERROR,
     SALTS_COMPONENT_PLUGIN_PROVIDER_ERROR,
     SALTS_COMPONENT_PLUGIN_COMPONENT_ERROR,
+    SALTS_COMPONENT_PLUGIN_BUSY,
     SALTS_COMPONENT_PLUGIN_INVALID_STATE
 } salts_component_plugin_status;
 
 typedef enum salts_component_plugin_generation_state {
     SALTS_COMPONENT_PLUGIN_GENERATION_ZERO = 0,
     SALTS_COMPONENT_PLUGIN_GENERATION_BUILT,
+    SALTS_COMPONENT_PLUGIN_GENERATION_PUBLISHED,
+    SALTS_COMPONENT_PLUGIN_GENERATION_DRAINING,
+    SALTS_COMPONENT_PLUGIN_GENERATION_STOPPING,
     SALTS_COMPONENT_PLUGIN_GENERATION_FAILED,
     SALTS_COMPONENT_PLUGIN_GENERATION_DRAINED
 } salts_component_plugin_generation_state;
@@ -66,6 +70,8 @@ typedef struct salts_component_plugin_failure {
     salts_component_status component_status;
 } salts_component_plugin_failure;
 
+typedef struct salts_component_plugin_runtime salts_component_plugin_runtime;
+
 typedef struct salts_component_plugin_generation {
     uint64_t id;
     cmeta_plugin_registry *registry;
@@ -75,9 +81,27 @@ typedef struct salts_component_plugin_generation {
     size_t deployment_count;
     size_t module_count;
 
+    salts_component_plugin_runtime *runtime_owner;
+    size_t active_scopes;
+
     salts_component_plugin_generation_state state;
     salts_component_plugin_failure failure;
 } salts_component_plugin_generation;
+
+typedef struct salts_component_plugin_scope {
+    salts_component_plugin_runtime *runtime;
+    salts_component_plugin_generation *generation;
+    uint64_t generation_id;
+    bool live;
+} salts_component_plugin_scope;
+
+struct salts_component_plugin_runtime {
+    void *lock;
+    salts_component_plugin_generation *current;
+    size_t active_scopes;
+    size_t attached_generations;
+    bool initialized;
+};
 
 const char *salts_component_plugin_status_string(
     salts_component_plugin_status status);
@@ -95,6 +119,46 @@ salts_component_plugin_status salts_component_plugin_generation_build(
     size_t selection_count);
 
 salts_component_plugin_status salts_component_plugin_generation_discard(
+    salts_component_plugin_generation *generation);
+
+salts_component_plugin_status salts_component_plugin_runtime_init(
+    salts_component_plugin_runtime *runtime);
+
+salts_component_plugin_status salts_component_plugin_runtime_destroy(
+    salts_component_plugin_runtime *runtime);
+
+salts_component_plugin_status salts_component_plugin_runtime_publish(
+    salts_component_plugin_runtime *runtime,
+    salts_component_plugin_generation *generation,
+    salts_component_plugin_generation **out_previous);
+
+salts_component_plugin_status salts_component_plugin_runtime_close(
+    salts_component_plugin_runtime *runtime,
+    salts_component_plugin_generation **out_previous);
+
+salts_component_plugin_status salts_component_plugin_scope_acquire(
+    salts_component_plugin_runtime *runtime,
+    salts_component_plugin_scope *scope);
+
+salts_component_plugin_status salts_component_plugin_scope_release(
+    salts_component_plugin_scope *scope);
+
+uint64_t salts_component_plugin_scope_generation_id(
+    const salts_component_plugin_scope *scope);
+
+salts_component_plugin_status salts_component_plugin_scope_find_service(
+    const salts_component_plugin_scope *scope,
+    const cmeta_interface_desc *interface_desc,
+    salts_component_service *out_service);
+
+salts_component_plugin_status salts_component_plugin_scope_find_service_from(
+    const salts_component_plugin_scope *scope,
+    const char *provider_component_id,
+    const cmeta_interface_desc *interface_desc,
+    salts_component_service *out_service);
+
+salts_component_plugin_status salts_component_plugin_generation_drain(
+    salts_component_plugin_runtime *runtime,
     salts_component_plugin_generation *generation);
 
 const salts_component_plugin_failure *salts_component_plugin_generation_failure(
