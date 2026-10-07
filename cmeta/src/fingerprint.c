@@ -271,7 +271,8 @@ static bool component_contract(fingerprint_state *state, const cmeta_component_d
         number(state, (uint64_t)row->role);
         if (!interface_contract(state, row->interface_desc, depth + 1u)) return false;
     }
-    return true;
+    return cmeta_component_desc_valid(desc) ||
+        fail(state, CMETA_INVALID_ARGUMENT);
 }
 
 static bool begin(fingerprint_state *state, const cmeta_fingerprint_limits *limits,
