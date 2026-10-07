@@ -357,6 +357,7 @@ salts_component_plugin_status salts_component_plugin_runtime_publish(
     if (generation->state != SALTS_COMPONENT_PLUGIN_GENERATION_BUILT ||
         generation->runtime_owner != NULL ||
         generation->active_scopes != 0u ||
+        generation->id <= runtime->last_generation_id ||
         runtime->attached_generations == SIZE_MAX) {
         cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
         return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
@@ -374,6 +375,7 @@ salts_component_plugin_status salts_component_plugin_runtime_publish(
     ++runtime->attached_generations;
 
     runtime->current = generation;
+    runtime->last_generation_id = generation->id;
 
     if (previous != NULL)
         previous->state = SALTS_COMPONENT_PLUGIN_GENERATION_DRAINING;
