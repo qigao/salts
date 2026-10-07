@@ -1028,9 +1028,11 @@ Specify these linearization and ownership rules:
 
 1. Reservation checks the open gate and atomically obtains admission credit plus
    ticket storage. The ticket identifies this endpoint incarnation and a unique
-   generation. Producer cancel is valid only for its unsubmitted ticket and
+   generation. Producer cancel is valid only for its RESERVED ticket and
    returns those resources once; stale/double cancel cannot affect a reused ticket.
 2. Submission acquires an in-flight qualification atomically with the seal check.
+   It also exclusively claims the RESERVED ticket as SUBMITTING. Cancellation or
+   another submission cannot claim that ticket until this attempt settles.
    Merely holding a reservation is not permission to publish after seal. The
    qualification covers publication and the last backend wake access.
 3. Successful publication moves the descriptor, ticket, and explicitly owned or
@@ -1049,6 +1051,34 @@ Specify these linearization and ownership rules:
    starting new adoption. Drain remains incomplete while qualified publishers can
    still enqueue; continue canceling late publications after they finish. Already
    bound connections follow the host's protocol close policy.
+
+Ticket transitions describe helper obligations, independently of CNet state:
+
+| Transition | Owner and resource effect |
+| --- | --- |
+| FREE -> RESERVED | Reserve obtains entry storage and admission credit; descriptor remains producer-owned |
+| RESERVED -> FREE | Cancel returns entry and credit once; it does not close a producer-owned descriptor |
+| RESERVED -> SUBMITTING | Submit exclusively claims the ticket and enters the seal/wake protection interval |
+| SUBMITTING -> RESERVED | Failure before publication restores the reservation and producer ownership; release the in-flight qualification before returning |
+| SUBMITTING -> PUBLISHED | Publication transfers descriptor/configuration ownership and credit obligation to the destination |
+| PUBLISHED -> FREE | Destination releases the entry after cancellation or transfer into an attachment record; cancellation returns credit, successful admission keeps it until terminal |
+
+Generation validation, ticket claim, and cancellation must serialize so that a
+stale handle cannot cancel an entry reused between validation and mutation. Use
+the endpoint's synchronized control state for these transitions; an atomic
+occupancy counter alone is insufficient. Concurrent use of the same move-owned
+descriptor is never permitted, even if competing ticket operations are rejected.
+After seal, a submit attempt that fails before publication restores a reservation
+that can only be canceled. A failed consuming adopt closes no descriptor twice
+and returns its admission credit and attachment reservation exactly once.
+
+The consumer may drain and reuse a published entry before the producer returns
+from wake. After publication the producer must not access that entry or its moved
+descriptor/configuration again. It uses the protected endpoint association and
+call-local accepted/notification result only. Entry reuse is independent of the
+in-flight qualification, which still blocks backend detachment until the last
+wake access returns. Test this interleaving explicitly rather than assuming that
+a nonempty queue keeps the producer's resources alive.
 
 Seal and adoption/binding are serialized on the destination owner. Local
 reservations not yet admitted at seal are rolled back through the controlled
@@ -1165,8 +1195,8 @@ unimplemented component.
 | Observer bridge | Binding before first callback, original affinity/order/errors, callback-issued close, forbidden recursive progress/destroy, slot reuse, and delayed context release |
 | Independent budgets | Transport terminal returns credit while context stays retained; bounded queued admission waits for context, full storage rejects, and the existing CHTTP deferred behavior remains stable |
 | Subset isolation | Closing one set leaves unmanaged or other-set neighbors on the same client/backend usable |
-| Handoff and seal | Multiple producers, reservation before seal, qualification before seal with late publication, publication before seal with delayed wake, queued cancellation, adopt/TLS failure, and exactly-once descriptor/credit release |
-| Endpoint lifetime | Inject wake failure after accepted publication, pause an in-flight wake during shutdown, reject through a retained endpoint after detach, and delay final reference release without touching a destroyed backend |
+| Handoff and seal | Multiple producers, cancel versus submit on one ticket, stale cancel versus entry reuse, pre-publication failure restoring a cancelable reservation, reservation before seal, qualification before seal with late publication, queued cancellation, adopt/TLS failure, and exactly-once descriptor/credit release |
+| Endpoint lifetime | Inject wake failure after accepted publication, drain/reuse the entry before its producer's wake returns, pause an in-flight wake during shutdown, reject through a retained endpoint after detach, and delay final reference release without touching a destroyed backend |
 | Real terminals | Observed-but-unrouted stop, malformed completion followed by valid batch terminals, partial write, timeout with continued drain, and business completion after admission closes |
 | Strategies | Validate every delivered policy, failure accounting, bounded retries, stale placement snapshots, strict affinity, monotonic deadline boundaries, eligibility, and disabled-policy overhead |
 | Consumers | Actual HTTP threaded and FlowMQ caller-driven integrations; preserve MQTT transport/session separation in examples |
