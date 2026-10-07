@@ -111,6 +111,77 @@ static bool cmeta_data_struct_shape_valid(const cmeta_data_struct_shape *shape) 
   return true;
 }
 
+static bool cmeta_data_reflection_field_valid(const cmeta_data_desc *owner,
+                                             const cmeta_data_field_desc *field,
+                                             const cmeta_field_desc *layout) {
+  const cmeta_data_desc *value = field->value;
+  const cmeta_type_desc *storage;
+  if (!cmeta_data_nonempty(field->stable_id) || !cmeta_data_nonempty(field->name) ||
+      !cmeta_data_nonempty(layout->name) || value == NULL ||
+      value->struct_size < CMETA_DATA_DESC_PREFIX_SIZE ||
+      !cmeta_type_desc_valid(layout->type) || !cmeta_type_desc_valid(value->storage_type))
+    return false;
+  storage = value->storage_type;
+  return strcmp(field->name, layout->name) == 0 && field->offset == layout->offset &&
+         layout->size == storage->size && layout->align == storage->align &&
+         layout->type->size == storage->size && layout->type->align == storage->align &&
+         cmeta_type_equal(layout->type, storage) &&
+         field->offset <= owner->storage_type->size &&
+         storage->size <= owner->storage_type->size - field->offset &&
+         field->offset % storage->align == 0u &&
+         owner->storage_type->align >= storage->align;
+}
+
+/* V2 is a bounded, positional schema. O(n^2) comparisons (n <= 16) check
+ * identity uniqueness and disjoint value storage without a mutable registry.
+ * Child shapes are validated by their own consumer, avoiding recursive schema
+ * validation here; the storage contracts are checked before any object access. */
+static bool cmeta_data_reflection_valid(const cmeta_data_desc *desc) {
+  const cmeta_data_reflection_shape *reflection;
+  const cmeta_data_struct_shape *shape;
+  const cmeta_struct_desc *layout;
+  size_t i, j;
+  if (desc->kind != CMETA_DATA_STRUCT || desc->struct_size < sizeof(cmeta_data_desc) ||
+      !cmeta_type_desc_valid(desc->storage_type) || desc->shape == NULL ||
+      desc->buffer_ops != NULL || desc->enum_ops != NULL || desc->variant_ops != NULL ||
+      desc->fixed_ops != NULL || desc->enum_bits_ops != NULL || desc->collection_ops != NULL ||
+      desc->map_ops != NULL || desc->construct_ops != NULL)
+    return false;
+  reflection = (const cmeta_data_reflection_shape *)desc->shape;
+  shape = &reflection->structure;
+  layout = shape->layout;
+  if (reflection->struct_size < sizeof(*reflection) ||
+      (reflection->mode != CMETA_DATA_REFLECTION_VIEW &&
+       reflection->mode != CMETA_DATA_REFLECTION_VALUE) ||
+      layout == NULL || !cmeta_data_nonempty(layout->name) ||
+      shape->field_count == 0u || shape->field_count > CMETA_DATA_REFLECTION_MAX_FIELDS ||
+      shape->fields == NULL || layout->fields == NULL ||
+      layout->field_count != shape->field_count || layout->size != desc->storage_type->size ||
+      layout->align != desc->storage_type->align)
+    return false;
+  for (i = 0u; i < shape->field_count; ++i) {
+    const cmeta_data_field_desc *field = &shape->fields[i];
+    if (!cmeta_data_reflection_field_valid(desc, field, &layout->fields[i])) return false;
+    for (j = 0u; j < i; ++j) {
+      const cmeta_data_field_desc *previous = &shape->fields[j];
+      if (strcmp(field->stable_id, previous->stable_id) == 0 ||
+          strcmp(field->name, previous->name) == 0)
+        return false;
+      if (reflection->mode == CMETA_DATA_REFLECTION_VALUE &&
+          field->offset < previous->offset + layout->fields[j].size &&
+          previous->offset < field->offset + layout->fields[i].size)
+        return false;
+    }
+  }
+  return true;
+}
+
+/* Call only after descriptor validation. V1 retains its existing authority. */
+static bool cmeta_data_reflection_is_view(const cmeta_data_desc *desc) {
+  return desc->abi_version == CMETA_DATA_DESC_REFLECTION_ABI_VERSION &&
+         ((const cmeta_data_reflection_shape *)desc->shape)->mode == CMETA_DATA_REFLECTION_VIEW;
+}
+
 static bool cmeta_data_variant_tag_kind_valid(const cmeta_data_desc *tag) {
   if (tag == NULL || (tag->kind != CMETA_DATA_SINT && tag->kind != CMETA_DATA_UINT &&
                       tag->kind != CMETA_DATA_ENUM))
@@ -202,10 +273,14 @@ static bool cmeta_data_variant_shape_valid(const cmeta_data_desc *owner,
 
 bool cmeta_data_desc_valid(const cmeta_data_desc *desc) {
   if (desc == NULL || desc->struct_size < CMETA_DATA_DESC_PREFIX_SIZE ||
-      desc->abi_version != CMETA_DATA_DESC_ABI_VERSION || !cmeta_data_nonempty(desc->stable_id) ||
+      (desc->abi_version != CMETA_DATA_DESC_ABI_VERSION &&
+       desc->abi_version != CMETA_DATA_DESC_REFLECTION_ABI_VERSION) ||
+      !cmeta_data_nonempty(desc->stable_id) ||
       !cmeta_data_nonempty(desc->display_name) || !cmeta_data_kind_valid(desc->kind))
     return false;
 
+  if (desc->abi_version == CMETA_DATA_DESC_REFLECTION_ABI_VERSION)
+    return cmeta_data_reflection_valid(desc);
   if (cmeta_data_kind_is_container(desc->kind)) {
     if (desc->shape != NULL) return false;
     /* Kind-only semantic descriptors remain valid. A concrete native
@@ -1527,6 +1602,7 @@ static cmeta_status cmeta_data_struct_move(const cmeta_data_desc *desc, void *de
 cmeta_status cmeta_data_value_init_zero(const cmeta_data_desc *desc, void *object) {
   if (!cmeta_data_desc_valid(desc) || object == NULL || desc->storage_type == NULL)
     return CMETA_INVALID_ARGUMENT;
+  if (cmeta_data_reflection_is_view(desc)) return CMETA_TRAIT_MISSING;
   if (desc->fixed_ops != NULL) return cmeta_data_fixed_restore_zero(desc, object);
   if (desc->variant_ops != NULL) {
     /* A tagged provider must initialize raw storage without inspecting an
@@ -1562,6 +1638,7 @@ cmeta_status cmeta_data_value_init_zero(const cmeta_data_desc *desc, void *objec
 cmeta_status cmeta_data_value_restore_zero(const cmeta_data_desc *desc, void *object) {
   if (!cmeta_data_desc_valid(desc) || object == NULL || desc->storage_type == NULL)
     return CMETA_INVALID_ARGUMENT;
+  if (cmeta_data_reflection_is_view(desc)) return CMETA_TRAIT_MISSING;
   if (desc->fixed_ops != NULL) return cmeta_data_fixed_restore_zero(desc, object);
   if (desc->variant_ops != NULL) return cmeta_data_variant_restore_zero(desc, object);
   switch (desc->kind) {
@@ -1617,6 +1694,7 @@ static cmeta_status cmeta_data_value_is_zero_depth(const cmeta_data_desc *desc, 
   if (depth > CMETA_DATA_ZERO_MAX_DEPTH || !cmeta_data_desc_valid(desc) ||
       desc->storage_type == NULL || object == NULL)
     return CMETA_INVALID_ARGUMENT;
+  if (cmeta_data_reflection_is_view(desc)) return CMETA_TRAIT_MISSING;
   if (desc->struct_size >= offsetof(cmeta_data_desc, fixed_ops) + sizeof(desc->fixed_ops) &&
       desc->fixed_ops != NULL)
     return cmeta_data_fixed_is_zero(desc, object, out);
@@ -1704,6 +1782,7 @@ static bool cmeta_data_value_move_supported_depth(const cmeta_data_desc *desc, u
   const cmeta_data_struct_shape *shape;
   size_t i;
   if (depth > 64u || !cmeta_data_desc_valid(desc) || desc->storage_type == NULL) return false;
+  if (cmeta_data_reflection_is_view(desc)) return false;
   switch (desc->kind) {
   case CMETA_DATA_BOOL:
   case CMETA_DATA_SINT:
@@ -1865,6 +1944,7 @@ static bool cmeta_data_value_copy_supported_depth(const cmeta_data_desc *desc, u
   const cmeta_data_struct_shape *shape;
   size_t i;
   if (depth > 64u || !cmeta_data_desc_valid(desc) || desc->storage_type == NULL) return false;
+  if (cmeta_data_reflection_is_view(desc)) return false;
   if (cmeta_data_fixed_ops_of(desc) != NULL) return true;
   switch (desc->kind) {
   case CMETA_DATA_BOOL:
@@ -2243,6 +2323,7 @@ cmeta_status cmeta_data_temp_open(const cmeta_data_desc *desc, size_t max_bytes,
   if (out == NULL || !cmeta_data_desc_valid(desc) || desc->storage_type == NULL)
     return CMETA_INVALID_ARGUMENT;
   *out = (cmeta_data_temp){0};
+  if (cmeta_data_reflection_is_view(desc)) return CMETA_TRAIT_MISSING;
   extent = desc->storage_type->size;
   alignment = desc->storage_type->align;
   if (extent == 0u || alignment == 0u || extent > max_bytes)

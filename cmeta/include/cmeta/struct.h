@@ -175,10 +175,19 @@ cmeta_struct_find_field(const cmeta_struct_desc *desc, const char *name) {
     typedef struct type { \
         Schema(CMETA_STRUCT_FIELD_DECL, __VA_ARGS__) \
     } type; \
+    CMETA_STRUCT_METADATA(type, __VA_ARGS__)
+
+/* Shared replay for newly declared and externally reflected native records. */
+#define CMETA_STRUCT_METADATA(type, ...) \
     CMETA_SCHEMA_ROWS(CMETA_STRUCT_FIELD_PROOF, type, __VA_ARGS__) \
     CMETA_SCHEMA_ROWS(CMETA_STRUCT_FIELD_DECLARED, type, __VA_ARGS__) \
+    CMETA_STRUCT_METADATA_DEFINE(type, \
+        CMETA_SCHEMA_ROWS(CMETA_STRUCT_FIELD_DESC, type, __VA_ARGS__))
+
+/* The caller owns native field proofs and supplies canonical field rows. */
+#define CMETA_STRUCT_METADATA_DEFINE(type, ...) \
     CMETA_LOCAL const cmeta_field_desc type##__struct_fields[] = { \
-        CMETA_SCHEMA_ROWS(CMETA_STRUCT_FIELD_DESC, type, __VA_ARGS__) \
+        __VA_ARGS__ \
     }; \
     CMETA_LOCAL const cmeta_struct_desc type##__struct_meta = { \
         CMETA_PP_STRINGIFY(type), sizeof(type), CMETA_ALIGNOF(type), type##__struct_fields, \

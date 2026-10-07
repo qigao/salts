@@ -120,6 +120,12 @@
   tinymock_cmeta_history_count_equal_typed_name( \
       TINYMOCk_FUNCTION_HISTORY(name), (param_name), &(expected_lvalue))
 
+#define TINYMOCk_FUNCTION_ARG_MATCH_DATA( \
+    name, call_index, param_name, data, expected_lvalue, result) \
+  tinymock_cmeta_history_arg_match_data_name( \
+      TINYMOCk_FUNCTION_HISTORY(name), (call_index), (param_name), \
+      (data), &(expected_lvalue), NULL, (result))
+
 #define TINYMOCk_FUNCTION_ARG_POINTER_EQUAL( \
     name, call_index, param_name, expected_pointer) \
   tinymock_cmeta_history_arg_pointer_equal_name( \

@@ -3,6 +3,7 @@
 
 #include "tinymock_support.h"
 #include "tinymock_value.h"
+#include "tinymock_reflect.h"
 
 #include <cmeta/function.h>
 

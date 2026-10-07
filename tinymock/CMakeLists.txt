@@ -8,6 +8,7 @@
 add_library(tinymock STATIC
   src/tinymock_value.c
   src/tinymock_history.c
+  src/tinymock_reflect.c
   src/tinymock_actions.c
   src/tinymock_return.c)
 
@@ -45,7 +46,12 @@ install(
     include/tinymock_value.h
     include/tinymock_function.h
     include/tinymock_history.h
+    include/tinymock_reflect.h
     include/tinymock_actions.h
     include/tinymock_return.h
   DESTINATION include
   COMPONENT TinyMock)
+
+if(BUILD_TESTS)
+  add_subdirectory(tests)
+endif()
