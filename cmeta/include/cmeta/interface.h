@@ -71,10 +71,12 @@ typedef uint32_t cmeta_interface_method_flags;
 
 #ifdef __cplusplus
 #define CMETA_IFACE_SIZE_CAST(value) static_cast<size_t>(value)
+#define CMETA_IFACE_U64_CAST(value) static_cast<uint64_t>(value)
 #define CMETA_IFACE_METHOD_FLAGS_CAST(value) \
     static_cast<cmeta_interface_method_flags>(value)
 #else
 #define CMETA_IFACE_SIZE_CAST(value) ((size_t)(value))
+#define CMETA_IFACE_U64_CAST(value) ((uint64_t)(value))
 #define CMETA_IFACE_METHOD_FLAGS_CAST(value) \
     ((cmeta_interface_method_flags)(value))
 #endif
@@ -375,7 +377,7 @@ cmeta_interface_desc_has_owning_method(const cmeta_interface_desc *desc) {
 #define CMETA_IMPLEMENTS(I, NAME, CAPS, ...) \
     CMETA_LOCAL const I##_vtable NAME##_vtable = { \
         .implementation = #NAME, \
-        .capabilities = (uint64_t)(CAPS), \
+        .capabilities = CMETA_IFACE_U64_CAST(CAPS), \
         __VA_ARGS__ \
     }; \
     static I NAME##_as_##I(void *self) { return I##_bind(self, &NAME##_vtable); } \
