@@ -31,3 +31,14 @@ add_dependencies(
   cmeta_component_plugin_provider_fixture)
 set_target_properties(cmeta_native_component_plugin_dso_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
+cmake_add_test(cmeta_native_component_plugin_generation_test
+  SOURCES component_plugin_generation_test.c
+  LIBS Salts::ComponentPlugin Salts::TinyTest
+  DEFS "COMPONENT_PROVIDER_PLUGIN_PATH=\"$<TARGET_FILE:cmeta_component_plugin_provider_fixture>\""
+  FOLDER "component-plugin/tests")
+add_dependencies(
+  cmeta_native_component_plugin_generation_test
+  cmeta_component_plugin_provider_fixture)
+set_target_properties(cmeta_native_component_plugin_generation_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
