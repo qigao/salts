@@ -211,7 +211,12 @@ salts_component_plugin_status salts_component_plugin_generation_build(
         return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
 
     if (generation->state != SALTS_COMPONENT_PLUGIN_GENERATION_ZERO &&
-        generation->state != SALTS_COMPONENT_PLUGIN_GENERATION_DRAINED)
+        generation->state != SALTS_COMPONENT_PLUGIN_GENERATION_DRAINED &&
+        !(generation->state == SALTS_COMPONENT_PLUGIN_GENERATION_FAILED &&
+          generation->runtime_owner == NULL &&
+          generation->active_scopes == 0u &&
+          generation->module_count == 0u &&
+          generation->components.state != SALTS_COMPONENT_CONTEXT_ACTIVE))
         return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
 
     if (static_deployment_count > SIZE_MAX - dynamic_source_count)
@@ -418,13 +423,14 @@ salts_component_plugin_status salts_component_plugin_scope_acquire(
     cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
     generation = runtime->current;
     if (generation == NULL ||
-        generation->state != SALTS_COMPONENT_PLUGIN_GENERATION_PUBLISHED ||
-        generation->active_scopes == SIZE_MAX ||
+        generation->state != SALTS_COMPONENT_PLUGIN_GENERATION_PUBLISHED) {
+        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
+    }
+    if (generation->active_scopes == SIZE_MAX ||
         runtime->active_scopes == SIZE_MAX) {
         cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
-        return generation == NULL
-            ? SALTS_COMPONENT_PLUGIN_INVALID_STATE
-            : SALTS_COMPONENT_PLUGIN_CAPACITY_EXCEEDED;
+        return SALTS_COMPONENT_PLUGIN_CAPACITY_EXCEEDED;
     }
 
     ++generation->active_scopes;
