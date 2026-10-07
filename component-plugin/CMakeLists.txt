@@ -30,7 +30,7 @@ target_compile_features(salts_component_plugin PRIVATE c_std_11)
 target_link_libraries(
   salts_component_plugin
   PUBLIC salts_component_plugin_abi
-  PRIVATE Salts::Component Salts::Plugin)
+  PRIVATE Salts::Component Salts::Plugin Salts::Platform)
 
 install(
   TARGETS salts_component_plugin_abi salts_component_plugin
