@@ -4,5 +4,12 @@
 #include <salts/component_plugin_abi.h>
 
 #define COMPONENT_PROVIDER_EXPORT_ID "component-provider"
+#define COMPONENT_PROVIDER_VALUE 37
+
+#define COMPONENT_PLUGIN_VALUE_METHODS(X, I) \
+    X(I, R0, int, get, _)
+
+CMETA_INTERFACE(component_plugin_value, COMPONENT_PLUGIN_VALUE_METHODS);
+CMETA_OBJECT_INTERFACE_ADAPTER(component_plugin_value);
 
 #endif
