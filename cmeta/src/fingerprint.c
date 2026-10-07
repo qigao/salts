@@ -172,7 +172,7 @@ static bool enumeration(fingerprint_state *state, const cmeta_enum_domain *desc,
     number(state, (uint64_t)desc->kind);
     number(state, desc->declared_mask);
     if (!rows(state, desc->count, desc->items, sizeof(*desc->items))) return false;
-    for (size_t i = 0u; i < desc->capability_count; ++i) {
+    for (size_t i = 0u; i < desc->count; ++i) {
         number(state, desc->items[i].bits);
         if (!string(state, desc->items[i].symbol, true) ||
             !string(state, desc->items[i].text, false)) return false;
@@ -244,7 +244,7 @@ static bool component_contract(fingerprint_state *state, const cmeta_component_d
     if (!node(state, depth) || !string(state, desc->stable_id, false) ||
         !rows(state, desc->capability_count, desc->capabilities,
               sizeof(*desc->capabilities))) return false;
-    for (size_t i = 0u; i < desc->count; ++i) {
+    for (size_t i = 0u; i < desc->capability_count; ++i) {
         const cmeta_component_capability *row = &desc->capabilities[i];
         if (row->role != CMETA_COMPONENT_PROVIDES && row->role != CMETA_COMPONENT_REQUIRES)
             return fail(state, CMETA_INVALID_ARGUMENT);
