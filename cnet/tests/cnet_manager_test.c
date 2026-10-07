@@ -1,4 +1,5 @@
 #include <cnet/manager.h>
+#include <cnet/handoff.h>
 #include <fmt.h>
 #include <salts/clock.h>
 #include <salts/thread.h>
@@ -14,6 +15,8 @@ typedef struct probe {
 static cnet_client client, peer;
 static cnet_listener listener;
 static cnet_manager manager;
+static cnet_handoff handoff;
+static cnet_handoff_ticket ticket;
 static cnet_accepted_stream accepted;
 static tstr uri;
 static probe probes[4];
@@ -178,6 +181,10 @@ spec("CNet owner-local connection manager") {
     }
     tstr_free(uri);
     uri = NULL;
+    if (handoff.impl) {
+      (void)cnet_handoff_release(&handoff, ticket);
+      check_equal(cnet_handoff_destroy(&handoff), SALTS_OK);
+    }
   }
   it("rejects invalid and overflow capacities before publishing storage") {
     cnet_manager_config config = {sizeof(config), CNET_MANAGER_VERSION, &client, 0, 1};
@@ -360,5 +367,47 @@ spec("CNet owner-local connection manager") {
     mem_set_used(buffer, bytes);
     check_equal(cnet_send_buffer(&peer, connections[1], buffer), SALTS_OK);
     wait_count(&probes[0].bytes, 1);
+  }
+  it("adopts a handed-off stream and retains owner credit through real terminal") {
+    const cnet_handoff_config config = {sizeof(config), CNET_HANDOFF_VERSION, 1, 1};
+    check_equal(cnet_handoff_init(&handoff, &config), SALTS_OK);
+    init_manager(1, 1);
+    connect_raw(&peer, 1);
+    detach();
+    check_equal(cnet_handoff_reserve(&handoff, &ticket), SALTS_OK);
+    check_equal(cnet_handoff_publish(&handoff, ticket, &accepted), SALTS_OK);
+    check_equal(cnet_handoff_take(&handoff, &ticket, &accepted), SALTS_OK);
+    reserve(0, false);
+    check_equal(cnet_manager_adopt(&manager, probes[0].managed, &accepted, NULL, &connections[0]),
+                SALTS_OK);
+    wait_count(&probes[0].connected, 1);
+    cnet_handoff_ticket rejected;
+    check_equal(cnet_handoff_reserve(&handoff, &rejected), SALTS_ENOBUFS);
+    check_equal(cnet_close(&client, connections[0]), SALTS_OK);
+    wait_count(&probes[0].terminal, 1);
+    check_equal(cnet_handoff_release(&handoff, ticket), SALTS_OK);
+    cnet_handoff_snapshot snapshot;
+    check_equal(cnet_handoff_get_snapshot(&handoff, &snapshot), SALTS_OK);
+    check_true(snapshot.drained);
+  }
+  it("returns handoff credit and retires context after invalid TLS adoption consumes the stream") {
+    const cnet_handoff_config config = {sizeof(config), CNET_HANDOFF_VERSION, 1, 1};
+    const cnet_tls_server unavailable_tls = {0};
+    check_equal(cnet_handoff_init(&handoff, &config), SALTS_OK);
+    init_manager(1, 1);
+    connect_raw(&peer, 1);
+    detach();
+    check_equal(cnet_handoff_reserve(&handoff, &ticket), SALTS_OK);
+    check_equal(cnet_handoff_publish(&handoff, ticket, &accepted), SALTS_OK);
+    check_equal(cnet_handoff_take(&handoff, &ticket, &accepted), SALTS_OK);
+    reserve(0, false);
+    check_equal(cnet_manager_adopt(&manager, probes[0].managed, &accepted, &unavailable_tls,
+                                  &connections[0]), SALTS_EINVAL);
+    check_equal(accepted.internal_active, 0u);
+    check_equal(cnet_handoff_release(&handoff, ticket), SALTS_OK);
+    size_t work;
+    check_equal(cnet_manager_advance(&manager, 1, &work), SALTS_OK);
+    check_equal(probes[0].terminal, 0u);
+    check_equal(probes[0].recycled, 1u);
   }
 }

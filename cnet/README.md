@@ -21,7 +21,7 @@ connection placement, bounded handoff, cross-owner commands, and shutdown.
 
 ## Owner-local connection management
 
-Stage one of [#1001](https://github.com/qigao/salts/issues/1001) is available
+The owner-local slice of [#1001](https://github.com/qigao/salts/issues/1001) is available
 through `<cnet/manager.h>` and the optional `Salts::CNetManager` shared library.
 The architecture proposal is [PR #1002](https://github.com/qigao/salts/pull/1002).
 CNet does not link back to the helper. The shared library keeps identity epochs
@@ -78,8 +78,8 @@ snapshot reports runnable work separately from drained obligations. Destroy is
 owner-only and returns EBUSY until drained; it never stops the borrowed client.
 Keep that client initialized through manager destruction.
 
-CHTTP maps one manager to each existing owner lane, retaining its admission
-queue and connection leases. HTTP/1 deferred responses and HTTP/2 deferred
+CHTTP maps one manager and one optional admission inbox to each existing owner
+lane. HTTP/1 deferred responses and HTTP/2 deferred
 streams delay context release. FlowMQ maps one manager to each socket client;
 queued parts delay peer context release, and external owners drive explicit
 close progress. These integrations retain protocol state in their consumers.
@@ -88,13 +88,90 @@ This additive stage changes no wire format or base CNet ABI and adds no external
 dependency. It trades one bounded record per managed context for explicit
 lifetime accounting; no performance gain is claimed. Rollback removes the
 consumer's helper adapter and link dependency while retaining raw CNet calls.
-Cross-owner handoff, placement policies and retention policies remain later
-stages; this helper creates no worker, timer or cross-thread queue.
+Placement and retention policies remain later stages. The owner-local manager
+creates no worker, timer or cross-thread queue; handoff is a separate opt-in helper.
 
 The formal `cnet_manager_test` covers full capacities, immediate admission
 failure, real TCP terminal/owned receive callbacks, detached ownership, stale
 identities, owner affinity, callback reentrancy, explicit holds and subset close.
 Downstream suites cover HTTP deferred work and TCP/TLS messaging integration.
+
+### Optional final-owner handoff
+
+`<cnet/handoff.h>` in the same `Salts::CNetManager` library supplies a bounded
+MPSC admission inbox. It extracts CHTTP's detached-stream queue and final-owner
+credits without moving the listener, owner threads, backend, protocol state or
+service stop machinery into CNet. FlowMQ's caller-driven single-owner path does
+not need this queue. A host chooses a destination before reserving its credit;
+no established connection moves between owners.
+
+Each inbox preallocates `connection_capacity` generation-checked records and
+`queue_capacity + 1` index entries (the extra ring entry distinguishes full from
+empty). Queue capacity must be positive and no greater than connection capacity;
+all size arithmetic is checked. Credits cover RESERVED + QUEUED + TAKEN, while
+the queue limit covers only QUEUED. They are independent of the manager's
+owner-local record/context budget and the raw client's transport capacity.
+
+The lifecycle is `reserve -> publish -> take -> release`, or `reserve -> release`.
+Publication copies the peer endpoint and moves the descriptor only on success.
+Every rejected publication leaves both descriptor and reservation with the
+producer. Taking an item returns queue space but keeps its credit until the
+owner releases the ticket; in CHTTP that is transport terminal. A taken stream
+must be adopted or closed exactly once. Adoption through `cnet_manager_adopt`
+consumes the detached stream on any valid reserved attempt, including immediate
+TCP/TLS failure. The host then returns handoff credit on failure and continues
+manager context retirement. The final owner retains its immutable TLS policy;
+no borrowed TLS/configuration pointer is stored in an inbox entry.
+
+For example, on a producer with an active `accepted` stream and initialized inbox:
+
+```c
+cnet_handoff_ticket ticket = {0};
+int status = cnet_handoff_reserve(&inbox, &ticket);
+if (status == SALTS_OK) {
+  status = cnet_handoff_publish(&inbox, ticket, &accepted);
+  if (status != SALTS_OK) {
+    int release_status = cnet_handoff_release(&inbox, ticket);
+    if (release_status != SALTS_OK) return release_status;
+  }
+}
+if (status != SALTS_OK) {
+  /* accepted is still owned here: close it or retry per host policy. */
+  return status;
+}
+/* accepted is empty. Wake the final owner using the host's existing mechanism.
+ * Even if that wake fails, do not republish, close or release this ticket.
+ * Arrange bounded owner progress or service shutdown to drain the inbox. */
+```
+
+The owner uses `cnet_handoff_take` to obtain a ticket and detached stream, then
+its existing TCP/TLS adoption and real terminal path. `seal` atomically rejects
+new reserves/publications but permits take/release so all old obligations can
+finish. It neither revokes outstanding producer reservations nor closes sockets.
+The snapshot reports the three credit states coherently in O(1). All operations
+are allocation-free after init, with one mutex protecting the lifecycle table
+and the existing Core byte ring; no ring view escapes that critical section.
+This deliberately favors a small admission-only critical section over an extra
+lock-free publication protocol. No throughput or latency improvement is claimed.
+The helper does not participate in steady send/receive data paths.
+
+**Shutdown requires explicit producer quiescence.** Seal admission, arrange
+completion/join of all producer calls **including their publish-to-wake tails**,
+drain/cancel queued entries, and finish taken connections and credits before
+destroying the inbox or any wake target. `snapshot.drained` proves only that
+credits are returned, not that a producer cannot still issue a wake. Tickets
+are values, not retained references: no ticket/raw pointer may be used after
+inbox destruction. CHTTP enforces this with its existing `listener_done` barrier
+before owner backend teardown, then joins all threads before storage destruction.
+
+The formal `cnet_handoff_test` covers capacity one/full/overflow, foreign and
+stale tickets, FIFO wrapping, rejected publication ownership, each sealed state,
+MPSC publication, seal races, failed wake and delayed wake-tail shutdown.
+`cnet_manager_test` also verifies adoption and invalid TLS adoption after handoff.
+CHTTP's existing topology, stalled-owner, TLS, HTTP/2 and deferred suites exercise
+the real consumer. This additive helper changes no wire format or raw CNet ABI.
+Rollback drains active work, restores the consumer's old admission adapter and
+removes its optional helper use; live inbox/backend replacement is unsupported.
 
 ## Base API
 

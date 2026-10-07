@@ -93,7 +93,7 @@ if(BUILD_TESTS)
 endif()
 
 install(TARGETS ${TARGET_NAME} EXPORT SaltsTargets)
-add_library(cnet_manager SHARED src/cnet_manager.c)
+add_library(cnet_manager SHARED src/cnet_manager.c src/cnet_handoff.c)
 cmake_config_target(cnet_manager
   ALIAS Salts::CNetManager FOLDER "cnet" EXPORT_NAME CNetManager
   VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}")
