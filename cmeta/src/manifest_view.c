@@ -138,29 +138,26 @@ static cmeta_status enum_valid(const cmeta_enum_domain *desc, manifest_budget *b
     return cmeta_enum_domain_valid(desc) ? CMETA_OK : CMETA_INVALID_ARGUMENT;
 }
 
-static cmeta_status component_valid(const cmeta_component_desc *desc, manifest_budget *budget) {
-    if (desc == NULL || desc->size != sizeof(*desc) || desc->stable_id == NULL ||
-        desc->stable_id[0] == '\0') return CMETA_INVALID_ARGUMENT;
-    if (desc->format_version != CMETA_COMPONENT_DECLARATION_VERSION) return CMETA_TYPE_MISMATCH;
-    if (desc->config != NULL) {
-        cmeta_status status;
-        if (!cmeta_data_desc_valid(desc->config)) return CMETA_INVALID_ARGUMENT;
-        if (desc->config->storage_type != NULL) {
-            status = type_valid(desc->config->storage_type, budget);
-            if (status != CMETA_OK) return status;
-        }
-    }
-    if (desc->capability_count > budget->limits->max_items) return CMETA_CAPACITY_EXCEEDED;
-    if ((desc->capability_count != 0u && desc->capabilities == NULL) ||
-        desc->capability_count > SIZE_MAX / sizeof(*desc->capabilities)) return CMETA_INVALID_ARGUMENT;
-    for (size_t i = 0u; i < desc->capability_count; ++i) {
-        const cmeta_component_capability *row = &desc->capabilities[i];
-        if ((row->role != CMETA_COMPONENT_PROVIDES && row->role != CMETA_COMPONENT_REQUIRES) ||
-            row->interface_desc == NULL) return CMETA_INVALID_ARGUMENT;
-        cmeta_status status = interface_valid(row->interface_desc, budget);
+static cmeta_status component_valid(const cmeta_component_desc *desc,
+    manifest_budget *budget) {
+    if (desc == NULL || desc->size != sizeof(*desc))
+        return CMETA_INVALID_ARGUMENT;
+    if (desc->format_version != CMETA_COMPONENT_DECLARATION_VERSION)
+        return CMETA_TYPE_MISMATCH;
+    if (desc->capability_count > budget->limits->max_items)
+        return CMETA_CAPACITY_EXCEEDED;
+    if (desc->config != NULL && desc->config->storage_type != NULL) {
+        cmeta_status status = type_valid(desc->config->storage_type, budget);
         if (status != CMETA_OK) return status;
     }
-    return CMETA_OK;
+    for (size_t i = 0u; i < desc->capability_count; ++i) {
+        cmeta_status status =
+            interface_valid(desc->capabilities[i].interface_desc, budget);
+        if (status != CMETA_OK) return status;
+    }
+    return cmeta_component_desc_valid(desc)
+        ? CMETA_OK
+        : CMETA_INVALID_ARGUMENT;
 }
 
 cmeta_status cmeta_component_get_capability(const cmeta_component_desc *desc, size_t index,
