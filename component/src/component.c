@@ -738,36 +738,6 @@ salts_component_status salts_component_context_find_service(
     return SALTS_COMPONENT_OK;
 }
 
-salts_component_status salts_component_dependency_find(
-    const salts_component_dependency *dependencies,
-    size_t dependency_count,
-    const cmeta_interface_desc *interface_desc,
-    const salts_component_dependency **out_dependency) {
-    const salts_component_dependency *candidate = NULL;
-    size_t candidate_count = 0u;
-    size_t i;
-
-    if (out_dependency == NULL || !cmeta_interface_desc_valid(interface_desc) ||
-        (dependency_count != 0u && dependencies == NULL))
-        return SALTS_COMPONENT_INVALID_ARGUMENT;
-
-    for (i = 0u; i < dependency_count; ++i) {
-        if (cmeta_interface_desc_equal(
-                dependencies[i].interface_desc, interface_desc)) {
-            candidate = &dependencies[i];
-            ++candidate_count;
-        }
-    }
-
-    if (candidate_count == 0u)
-        return SALTS_COMPONENT_MISSING_PROVIDER;
-    if (candidate_count != 1u)
-        return SALTS_COMPONENT_AMBIGUOUS_PROVIDER;
-
-    *out_dependency = candidate;
-    return SALTS_COMPONENT_OK;
-}
-
 const salts_component_failure *salts_component_context_failure(
     const salts_component_context *context) {
     return context == NULL ? NULL : &context->failure;
