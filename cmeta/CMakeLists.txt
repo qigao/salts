@@ -3,6 +3,7 @@ set(TARGET_NAME cmeta_cmeta)
 add_library(${TARGET_NAME}
   src/abi.c
   src/cmeta.c
+  src/component.c
   src/container_type.c
   src/data.c
   src/declared_type.c
