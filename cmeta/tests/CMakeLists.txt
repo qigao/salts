@@ -8,20 +8,20 @@ cmake_add_test(cmeta_data_reflect_cpp_test
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_fastpath_pattern_test
-  SOURCES cmeta_fastpath_pattern_test.c
+  SOURCES cmeta_pattern_test.c
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_pattern_cpp_test
-  SOURCES cmeta_fastpath_pattern_cpp_test.cpp
+  SOURCES cmeta_pattern_cpp_test.cpp
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_fastpath_component_test
-  SOURCES cmeta_fastpath_component_test.c
+  SOURCES cmeta_component_test.c
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_component_cpp_test
-  SOURCES cmeta_fastpath_component_cpp_test.cpp
+  SOURCES cmeta_component_cpp_test.cpp
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 set_target_properties(cmeta_fastpath_pattern_test cmeta_fastpath_component_test PROPERTIES
