@@ -99,6 +99,27 @@ suite("ComponentPlugin generation publication") {
             SALTS_COMPONENT_PLUGIN_OK);
         check_null(previous);
 
+        {
+            salts_component_plugin_generation stale =
+                SALTS_COMPONENT_PLUGIN_GENERATION_INIT;
+            const salts_component_plugin_generation_storage empty_storage = {0};
+
+            check_equal(salts_component_plugin_generation_build(
+                &stale,
+                UINT64_C(1),
+                NULL,
+                &empty_storage,
+                NULL, 0u,
+                NULL, 0u,
+                NULL, 0u),
+                SALTS_COMPONENT_PLUGIN_OK);
+            check_equal(salts_component_plugin_runtime_publish(
+                &runtime, &stale, &previous),
+                SALTS_COMPONENT_PLUGIN_INVALID_STATE);
+            check_equal(salts_component_plugin_generation_discard(
+                &stale), SALTS_COMPONENT_PLUGIN_OK);
+        }
+
         check_equal(salts_component_plugin_scope_acquire(
             &runtime, &scope1), SALTS_COMPONENT_PLUGIN_OK);
         check_equal(salts_component_plugin_scope_generation_id(&scope1),
