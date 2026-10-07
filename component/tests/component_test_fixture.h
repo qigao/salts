@@ -201,6 +201,17 @@ static void test_deactivate(
     ++state->deactivates;
 }
 
+#define TEST_PROVIDER_BINDING(component_, state_, create_) \
+    ((salts_component_provider_binding){ \
+        sizeof(salts_component_provider_binding), \
+        SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION, \
+        cmeta_component_meta(component_), (state_), &test_interfaces, \
+        (create_), test_activate, test_deactivate })
+
+#define TEST_DEPLOYMENT(provider_, config_data_, config_value_) \
+    ((salts_component_deployment){ \
+        (provider_), (config_data_), (config_value_) })
+
 static cmeta_status test_cycle_create(
     void *provider_context,
     const cmeta_data_desc *config_data,
