@@ -592,17 +592,6 @@ salts_component_status salts_component_context_start(
                 SALTS_COMPONENT_INDEX_NONE, CMETA_CALLBACK_ERROR);
         }
 
-        provider_status =
-            salts_component_preflight_provides(binding, &instance->object);
-        if (provider_status != CMETA_OK) {
-            cmeta_object_release(&instance->object);
-            salts_component_rollback(context, order_index);
-            return salts_component_fail(
-                context, SALTS_COMPONENT_INTERFACE_UNAVAILABLE,
-                SALTS_COMPONENT_PHASE_PROVIDE, component_index,
-                SALTS_COMPONENT_INDEX_NONE, provider_status);
-        }
-
         if (binding->activate != NULL) {
             provider_status =
                 binding->activate(binding->provider_context, &instance->object);
@@ -614,6 +603,20 @@ salts_component_status salts_component_context_start(
                     SALTS_COMPONENT_PHASE_ACTIVATE, component_index,
                     SALTS_COMPONENT_INDEX_NONE, provider_status);
             }
+        }
+
+        provider_status =
+            salts_component_preflight_provides(binding, &instance->object);
+        if (provider_status != CMETA_OK) {
+            if (binding->deactivate != NULL)
+                binding->deactivate(
+                    binding->provider_context, &instance->object);
+            cmeta_object_release(&instance->object);
+            salts_component_rollback(context, order_index);
+            return salts_component_fail(
+                context, SALTS_COMPONENT_INTERFACE_UNAVAILABLE,
+                SALTS_COMPONENT_PHASE_PROVIDE, component_index,
+                SALTS_COMPONENT_INDEX_NONE, provider_status);
         }
 
         instance->active = true;
