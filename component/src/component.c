@@ -28,18 +28,6 @@ static salts_component_status salts_component_fail(
     return status;
 }
 
-static bool salts_component_role_present(
-    const cmeta_component_desc *component,
-    cmeta_component_role role) {
-    size_t i;
-    if (!cmeta_component_desc_valid(component))
-        return false;
-    for (i = 0u; i < component->capability_count; ++i)
-        if (component->capabilities[i].role == role)
-            return true;
-    return false;
-}
-
 static bool salts_component_provides(
     const cmeta_component_desc *component,
     const cmeta_interface_desc *expected) {
@@ -66,44 +54,14 @@ static size_t salts_component_requirement_count(
     return count;
 }
 
-static salts_component_status salts_component_binding_status(
-    const salts_component_provider_binding *binding) {
-    const cmeta_component_desc *component;
-
-    if (binding == NULL ||
-        binding->struct_size != sizeof(*binding) ||
-        binding->abi_version != SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION ||
-        !cmeta_component_desc_valid(binding->component) ||
-        binding->create == NULL)
-        return SALTS_COMPONENT_INVALID_COMPONENT;
-
-    component = binding->component;
-
-    if ((binding->activate == NULL) != (binding->deactivate == NULL))
-        return SALTS_COMPONENT_INVALID_COMPONENT;
-
-    if (binding->interfaces != NULL &&
-        !cmeta_object_interface_provider_valid(binding->interfaces))
-        return SALTS_COMPONENT_INVALID_COMPONENT;
-
-    if (salts_component_role_present(component, CMETA_COMPONENT_PROVIDES) &&
-        !cmeta_object_interface_provider_valid(binding->interfaces))
-        return SALTS_COMPONENT_INVALID_COMPONENT;
-
-    return SALTS_COMPONENT_OK;
-}
-
 static salts_component_status salts_component_deployment_status(
     const salts_component_deployment *deployment) {
     const cmeta_component_desc *component;
-    salts_component_status status;
-
     if (deployment == NULL || deployment->provider == NULL)
         return SALTS_COMPONENT_INVALID_COMPONENT;
 
-    status = salts_component_binding_status(deployment->provider);
-    if (status != SALTS_COMPONENT_OK)
-        return status;
+    if (!salts_component_provider_binding_valid(deployment->provider))
+        return SALTS_COMPONENT_INVALID_COMPONENT;
 
     component = deployment->provider->component;
     if (component->config == NULL) {
