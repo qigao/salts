@@ -83,7 +83,7 @@ static cmeta_status function_valid(const cmeta_function_abi_desc *abi,
 
 static cmeta_status struct_valid(const cmeta_struct_desc *desc,
     manifest_budget *budget) {
-    if (desc->stable_id == NULL || desc->stable_id[0] == '\0' || desc->size == 0u ||
+    if (desc->name == NULL || desc->name[0] == '\0' || desc->size == 0u ||
         desc->align == 0u || (desc->field_count != 0u && desc->fields == NULL))
         return CMETA_INVALID_ARGUMENT;
     if (desc->field_count > budget->limits->max_items) return CMETA_CAPACITY_EXCEEDED;
