@@ -88,6 +88,30 @@ suite("ComponentPlugin candidate generation") {
             salts_component_plugin_generation_failure(&generation)
                 ->plugin_status,
             CMETA_PLUGIN_UNKNOWN_EXPORT);
+
+        {
+            const salts_component_plugin_source retry = {
+                ref,
+                COMPONENT_PROVIDER_EXPORT_ID,
+                NULL,
+                NULL
+            };
+            check_equal(salts_component_plugin_generation_build(
+                &generation,
+                UINT64_C(2),
+                &registry,
+                &storage,
+                NULL, 0u,
+                &retry, 1u,
+                NULL, 0u),
+                SALTS_COMPONENT_PLUGIN_OK);
+            check_equal(salts_component_plugin_generation_discard(
+                &generation), SALTS_COMPONENT_PLUGIN_OK);
+        }
+
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)0u);
     }
 
     it("builds one typed Component graph under one Plugin lease") {
