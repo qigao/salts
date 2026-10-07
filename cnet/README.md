@@ -12,6 +12,10 @@ CNet is built unconditionally. Its source-tree target is `cmeta_cnet`; installed
 consumers link `Salts::CNet` and include `<cnet/cnet.h>`. The independent
 WebSocket session API is declared by `<cnet/websocket.h>`.
 
+The proposed [connection management helpers](#connection-management-design)
+describe optional admission, context retirement, and owner handoff for stream
+consumers. This design does not declare an available SDK capability.
+
 ## Base API
 
 Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
@@ -862,3 +866,354 @@ requires a concrete consumer and paired evidence before it can change this bound
 
 Cross-owner work remains explicit and bounded. CNet never hides live connection migration,
 work-stealing, or an implicit worker-pool hop behind its public send/receive APIs.
+
+## Connection management design
+
+Status: proposal for [#1001](https://github.com/qigao/salts/issues/1001), recorded
+2026-10-07. This section specifies implementation and integration requirements;
+no manager API, target, implementation, benchmark result, or SDK capability is
+introduced by this documentation change. Names below describe roles rather than
+final C signatures. The UDP and WS/IPC work in
+[#999](https://github.com/qigao/salts/issues/999) and
+[#1000](https://github.com/qigao/salts/issues/1000) remains separate.
+
+### Purpose, evidence, and ownership
+
+Provide an optional connection manager and a separately enabled accepted-stream
+handoff helper for HTTP Server, FlowMQ, and subsequent MQTT consumers. The host
+owns threads, owner placement, clients, backends, protocol sessions, and graceful
+shutdown policy. CNet remains authoritative for transport state, TLS, I/O,
+transport deadlines, and terminal callbacks. Raw CNet remains independently usable.
+
+The [public contract](include/cnet/cnet.h) and
+[client implementation](src/cnet_client.c) provide the implementation boundary:
+connect/adopt registers the observer during admission, immediate connect failure
+has no callback, detached adoption consumes a valid descriptor even on admission
+failure, and terminal dispatch clears the client record after the observer returns.
+[NativeIO wake](../native-io/include/salts/native_io.h) requires callers to stop
+using the backend before its destruction. These are existing contracts, not
+evidence that a retained helper endpoint already exists.
+
+Consumer evidence and integration targets:
+
+- CHTTP's [listener/data owner work](https://github.com/qigao/chttp/issues/220)
+  and [implementation PR](https://github.com/qigao/chttp/pull/222) motivate
+  admission credits and descriptor handoff. The pinned
+  [server runtime](https://github.com/qigao/chttp/blob/5d0819262fcd410601c8d5c4da1d98b39768fb31/http_server/src/chttp_server.c)
+  uses `chttp_server_admission_progress`, `chttp_server_on_state`, and
+  `chttp_server_free_connection`. It returns an owner lease at transport terminal
+  while deferred H1/H2 work can still prevent context reuse. Preserve these
+  separate boundaries when replacing the admission and attachment paths.
+- FlowMQ's pinned
+  [owner](https://github.com/qigao/flowmq/blob/c2e21825851861643758061f9c1d86a94f0266bb/flowmq/src/runtime/flowmq_owner.c)
+  and [socket runtime](https://github.com/qigao/flowmq/blob/c2e21825851861643758061f9c1d86a94f0266bb/flowmq/src/runtime/flowmq_socket.c)
+  supply caller-driven shared-backend progress and peer acquire/connect/release
+  boundaries. The helper must preserve that progress model and leave protocol
+  state, ACKs, subscriptions, reconnect, and application queues with FlowMQ.
+- MQTT is a later consumer: persistent sessions, client IDs, QoS state, takeover,
+  and keepalive belong to the protocol host and can outlive a transport connection.
+
+The manager owns bounded management records and explicit reservations. It borrows
+one client and binds to one fixed progress owner. It never polls, stops, or destroys
+that client implicitly. Managing a subset closes only that subset's connections.
+Identity includes the manager incarnation, borrowed-client association, and CNet
+slot/generation; a slot/generation pair alone is not portable across clients.
+One connection enters at most one set in the host's management relationship.
+
+### Owner-local manager and controlled admission
+
+The first stage supports fixed capacity, host-selected owner, explicit close, and
+bounded management work. Its opaque implementation owns the following flow:
+
+```text
+reserve local record and admission credit
+  -> host prepares context
+  -> controlled CNet connect/adopt with observer bridge
+  -> bind returned connection before another progress turn
+  -> forward callbacks on the original owner
+  -> observe real terminal
+  -> retire attachment
+  -> recycle record after callback and context obligations end
+```
+
+Reserve/cancel, lookup, bounded enumeration, binding, close requests, terminal
+observation, and record retirement are owner-local. They do not take a global lock
+or send ordinary network data through a mailbox. Managed connections must enter
+through the controlled path; there is no retrospective registration of arbitrary
+live connections and no public requirement to manually replay terminal notifications.
+
+Before invoking CNet, prepare a stable observer bridge and its context attachment.
+After successful admission, binding uses already reserved storage and cannot fail
+due to an allocation or policy decision. Do not allow an intervening host progress
+turn before binding. Forward observer callbacks with the existing thread, ordering,
+borrow, and error semantics. Receive-slice delivery, if used, must also participate
+in callback-borrow accounting without changing slice ownership.
+
+Immediate rejection unwinds the reservation and prepared context exactly once.
+For connect, no later callback is expected after immediate failure. For detached
+adopt, distinguish rejection before calling the consuming API from failure after
+calling it: the latter must never close or retry the descriptor a second time.
+Asynchronous connection/TLS failure is an admitted connection's terminal path.
+
+The bridge observes terminal state, forwards the application callback, and defers
+record recycling until that callback and all helper borrows have returned. A
+callback may request supported owner-local operations such as close; recursive
+progress, helper destruction, and reuse of the record currently being dispatched
+are rejected. Enumeration and cleanup hooks need the same explicit reentrancy
+rules. Hooks cannot block or recursively drive the event loop.
+
+Borrowed application context is the default. The host must explicitly signal when
+post-transport business use has ended, or transfer that use to separate bounded
+operation/session storage. Cleanup/recycle notification runs once on the owner.
+Transport terminal alone never frees an outstanding business session. Management
+states describe reservation, binding, and retirement; they do not mirror TCP/TLS
+CONNECTED, WRITING, or handshake state machines.
+
+### Three independent capacity obligations
+
+An admission reservation guarantees only the helper resources named by its API.
+It does not reserve CNet's internal connection/command capacity, a native request,
+or TLS resources. Unmanaged neighbors or other managed sets on the same client
+can exhaust those resources before connect/adopt. Such failure remains normal,
+explicit, and subject to the consuming-adopt ownership rule.
+
+| Resource | Occupancy and release boundary |
+| --- | --- |
+| Admission credit | Held by reserved, queued, adopting, live, and closing connections; returned on pre-admission rollback or actual transport terminal |
+| Handoff ticket/entry | Fixed bounded storage reserved before publication; released after cancellation or destination consumption |
+| Attachment record/context | Local reservation or destination binding through callback completion and any explicitly retained post-terminal business obligations |
+
+Each resource has its own checked capacity, current occupancy, and drain count.
+No counter is treated as proof that the other two resources are available. A local
+reserve obtains both a record and admission credit. A cross-owner handoff reserve
+obtains a ticket/entry and admission credit; it does not promise an available
+application context or attachment record on the destination.
+
+Only the destination owner allocates/binds attachment records. If delayed context
+retirement exhausts them, queued children stay in bounded handoff storage and
+adoption waits for actual availability. Report whether work can run now, rather
+than busy-spinning on a nonempty queue whose context dependency is blocked. The
+host must wake the owner when a deferred operation becomes releasable. At a full
+entry or credit bound, reject explicitly without moving the producer's descriptor.
+
+This separation permits CHTTP to retain its terminal-time lease return while a
+deferred response still holds context storage. Combining admission credit with
+record recycling would change which subsequent connections are accepted or
+rejected. The integration must test that behavior before replacing existing
+counters; a stricter policy requires an explicit host choice, not an incidental
+side effect of adopting the helper.
+
+Count reserved but unpublished tickets, detached queued children, owner records,
+retired contexts, and temporary owned configuration references in their respective
+budgets. Check size multiplication, sums, counter overflow, and generation
+exhaustion. Initialization fails without publishing a partially usable component.
+No saturation arithmetic, unbounded allocation, or implicit alternate queue hides
+resource exhaustion. Helper credit is not a promise of successful network admission.
+
+### Optional handoff: reservation, publication, and seal
+
+The handoff helper owns one bounded queue and its ticket storage, reusing existing
+Concurrency primitives. The host provides the owner/backend and retains control
+of progress. It does not keep a second admission queue after integration. Multiple
+producers may reserve and submit through a retained endpoint; only the destination
+owner consumes the queue or mutates connection records.
+
+Choose a stable retained control block for this interface. Retaining an endpoint
+must start from an already valid reference. A generation number never permits
+access through a freed raw pointer. The control block protects admission state,
+ticket identity, in-flight submitters, and the borrowed wake association; it is
+not a global registry or another transport state machine.
+
+Specify these linearization and ownership rules:
+
+1. Reservation checks the open gate and atomically obtains admission credit plus
+   ticket storage. The ticket identifies this endpoint incarnation and a unique
+   generation. Producer cancel is valid only for its RESERVED ticket and
+   returns those resources once; stale/double cancel cannot affect a reused ticket.
+2. Submission acquires an in-flight qualification atomically with the seal check.
+   It also exclusively claims the RESERVED ticket as SUBMITTING. Cancellation or
+   another submission cannot claim that ticket until this attempt settles.
+   Merely holding a reservation is not permission to publish after seal. The
+   qualification covers publication and the last backend wake access.
+3. Successful publication moves the descriptor, ticket, and explicitly owned or
+   retained immutable configuration references to the destination path. Clear the
+   producer's moved descriptor. Failure before publication leaves it with the
+   producer, which must cancel the reservation or use an explicitly permitted retry.
+4. Wake occurs after publication. A wake error is an accepted notification fault,
+   distinct from rejection. The result must expose accepted ownership separately
+   from notification status; producer retry or descriptor reclamation is forbidden.
+   Preserve the queued work and expose the fault to host recovery/drain coordination.
+5. Seal rejects new reservations and new submit qualifications. A producer already
+   qualified before seal may finish publication/wake. A reserved but unqualified
+   ticket cannot publish and must be canceled by its holder. Seal alone does not
+   destroy its storage or authorize reclaiming producer-owned descriptors.
+6. Once sealed, the destination cancels unadopted queued children instead of
+   starting new adoption. Drain remains incomplete while qualified publishers can
+   still enqueue; continue canceling late publications after they finish. Already
+   bound connections follow the host's protocol close policy.
+
+Ticket transitions describe helper obligations, independently of CNet state:
+
+| Transition | Owner and resource effect |
+| --- | --- |
+| FREE -> RESERVED | Reserve obtains entry storage and admission credit; descriptor remains producer-owned |
+| RESERVED -> FREE | Cancel returns entry and credit once; it does not close a producer-owned descriptor |
+| RESERVED -> SUBMITTING | Submit exclusively claims the ticket and enters the seal/wake protection interval |
+| SUBMITTING -> RESERVED | Failure before publication restores the reservation and producer ownership; release the in-flight qualification before returning |
+| SUBMITTING -> PUBLISHED | Publication transfers descriptor/configuration ownership and credit obligation to the destination |
+| PUBLISHED -> FREE | Destination releases the entry after cancellation or transfer into an attachment record; cancellation returns credit, successful admission keeps it until terminal |
+
+Generation validation, ticket claim, and cancellation must serialize so that a
+stale handle cannot cancel an entry reused between validation and mutation. Use
+the endpoint's synchronized control state for these transitions; an atomic
+occupancy counter alone is insufficient. Concurrent use of the same move-owned
+descriptor is never permitted, even if competing ticket operations are rejected.
+After seal, a submit attempt that fails before publication restores a reservation
+that can only be canceled. A failed consuming adopt closes no descriptor twice
+and returns its admission credit and attachment reservation exactly once.
+
+The consumer may drain and reuse a published entry before the producer returns
+from wake. After publication the producer must not access that entry or its moved
+descriptor/configuration again. It uses the protected endpoint association and
+call-local accepted/notification result only. Entry reuse is independent of the
+in-flight qualification, which still blocks backend detachment until the last
+wake access returns. Test this interleaving explicitly rather than assuming that
+a nonempty queue keeps the producer's resources alive.
+
+Seal and adoption/binding are serialized on the destination owner. Local
+reservations not yet admitted at seal are rolled back through the controlled
+path. A cross-thread stop request must reach that owner through a defined control
+entry; it cannot race a raw owner-local set mutation.
+
+Before detaching the borrowed client/backend wake association, require no active
+submitters, outstanding reservations, queued children, or managed callback/context
+obligations. Remaining retained endpoint references may safely reject calls after
+detach, without dereferencing the old client/backend. The control block is freed
+only after the final endpoint reference is released. A producer that never
+cancels a reservation prevents drain; timeout reports incompleteness and never
+authorizes forced reclamation. Host quiescence of unrelated raw wake callers is
+still required by NativeIO.
+
+### Strategies and bounded progress
+
+Use explicit composition and narrow decision points. Lifecycle commit, rollback,
+terminal observation, and cleanup are fixed ordinary C control flow. Built-in
+policy kinds use versioned configuration validated at initialization; unsupported
+choices fail explicitly. Final header/target names require implementation review.
+The core does not depend on the optional helper or on HTTP, FlowMQ, or CFlow.
+
+| Dimension | First stage | Later candidates, only with a consumer and tests |
+| --- | --- | --- |
+| Admission | Fixed capacity and explicit rejection | Quotas and bounded rate limiting |
+| Placement | Host specifies destination owner | Round-robin with credit, occupancy-based choice, stable-key affinity |
+| Retention | Explicit host-requested close | Idle deadline and maximum lifetime with protocol eligibility |
+| Work budget | Bounded enumerate/adopt/close with runnable reporting | Measured batch and fairness policies |
+| Notification | Immediate host wake after publication | Coalescing already-ready work with a proven lost-wakeup protocol |
+
+Capacity, timeout, and batch size are parameters, not separate strategy objects.
+Do not introduce a lifecycle-wide vtable, automatic workload classification,
+runtime strategy replacement, hidden batching delay, or a new worker pool.
+If a real consumer needs a custom decision hook, specify its copied/borrowed ops
+storage, context lifetime, owner affinity, allowed reentrancy, and error propagation.
+A hook proposes an action; only the manager commits resources and invokes CNet.
+
+Placement snapshots are advisory. Bound candidate retries; strict key affinity
+does not silently move to another owner when full. Rate policy must define whether
+tokens are charged on attempt or successful admission and how rollback works.
+No strategy may change connection ordering, TLS verification, callback affinity,
+or ownership. Select strategies at initialization; replacement requires seal/drain
+and reconstruction, never mutation of in-flight semantics.
+
+Idle/lifetime policy, when implemented, uses monotonic time and a bounded deadline
+structure. The host explicitly chooses transport or business activity and supplies
+eligibility for outstanding requests, H2 streams, or transactions. Expiration
+requests close; it does not recycle storage. Report the helper's next deadline and
+runnable work for the host to combine with CNet/protocol deadlines. Do not create
+a timer thread, duplicate connect/TLS/send deadlines, scan all idle connections
+every turn, or add activity hooks to every message when the policy is disabled.
+
+High-connection-count, connection-churn, low-latency, and streaming configurations
+are documented combinations of delivered policies and explicit budgets. They are
+not implicit profiles or performance guarantees. Data-plane fairness and protocol
+backpressure remain with the actual transport/protocol scheduler.
+
+### Shutdown, integration, and rollback
+
+The host seals admission and quiesces producers, then drives bounded cancellation
+of queued children and reservation settlement. Protocol graceful shutdown occurs
+before helper close requests as required by the application. Continue normal
+poll or external observe/route through real transport terminals; preserve every
+completion already observed, including the rest of a batch after one routing error.
+Business completion paths remain available until their retained obligations end.
+
+Drain snapshots distinguish reservations, submitters/wake use, queued children,
+bound/closing connections, callbacks, and retired contexts. Operational errors and
+safe quiescence are separate outputs. Empty queues or zero live connections alone
+do not permit destroy. Keep observer bridges alive through any client stop that
+can call them; the host stops/destroys its client/backend and joins its own threads
+only after all relevant participants satisfy their lifetime contracts.
+
+Implementation proceeds in consumer-backed stages:
+
+1. Add the complete owner-local manager with fixed capacity, explicit close, and
+   bounded work. Prove subset isolation, callback integration, immediate rollback,
+   and delayed context retirement using existing CNet formal tests as references.
+2. Integrate FlowMQ peer admission/retirement and the CHTTP attachment boundary.
+   Preserve their protocol objects and existing progress/cleanup ordering. Pin
+   the consumer revisions used for acceptance and distinguish local experiments.
+3. Add the complete retained handoff endpoint and integrate CHTTP's listener/data
+   owner path, replacing its admission queue and accounting as one coherent change.
+   Keep parser, H2 streams/credit, deferred replies, and graceful policy in CHTTP.
+4. Add other strategies individually with dedicated failure-path tests and workload
+   measurements. Publish capability detection only for complete implemented surfaces.
+
+Alternatives considered: leaving all helpers in each host preserves flexibility
+but duplicates reservation/retirement and shutdown rules; a central owner runtime
+would own topology and route data unnecessarily; a universal strategy framework
+would expand ABI before consumer needs are known. The selected two-helper design
+keeps raw CNet compatibility but adds bounded metadata and an observer bridge.
+Those costs must be measured, not assumed to improve performance.
+
+Migration is opt-in on stopped instances. Roll back by sealing, draining all
+helper obligations, and reconstructing the original host admission path; never
+transfer active connections between implementations. Preserve current raw API,
+unversioned struct layouts, errors, URI/wire formats, and callback order. No new
+external library is required. UDP peers, KCP sessions, reconnect, persistent
+business sessions, live connection migration, and owner resizing are outside the
+first stream-manager implementation.
+
+### Acceptance evidence required before implementation release
+
+All entries below are pending. Documentation review does not satisfy runtime or
+performance acceptance, and previous #999/#1000 verification does not cover this
+unimplemented component.
+
+| Area | Required deterministic behavior and evidence |
+| --- | --- |
+| Reservation | Capacity 0/1/full/overflow, partial init, repeated cancel, stale ticket/incarnation, cross-client identity, and exact rollback |
+| CNet capacity | Reserve successfully, exhaust the shared client through an unmanaged neighbor, then fail connect/adopt without a leak or double close |
+| Observer bridge | Binding before first callback, original affinity/order/errors, callback-issued close, forbidden recursive progress/destroy, slot reuse, and delayed context release |
+| Independent budgets | Transport terminal returns credit while context stays retained; bounded queued admission waits for context, full storage rejects, and the existing CHTTP deferred behavior remains stable |
+| Subset isolation | Closing one set leaves unmanaged or other-set neighbors on the same client/backend usable |
+| Handoff and seal | Multiple producers, cancel versus submit on one ticket, stale cancel versus entry reuse, pre-publication failure restoring a cancelable reservation, reservation before seal, qualification before seal with late publication, queued cancellation, adopt/TLS failure, and exactly-once descriptor/credit release |
+| Endpoint lifetime | Inject wake failure after accepted publication, drain/reuse the entry before its producer's wake returns, pause an in-flight wake during shutdown, reject through a retained endpoint after detach, and delay final reference release without touching a destroyed backend |
+| Real terminals | Observed-but-unrouted stop, malformed completion followed by valid batch terminals, partial write, timeout with continued drain, and business completion after admission closes |
+| Strategies | Validate every delivered policy, failure accounting, bounded retries, stale placement snapshots, strict affinity, monotonic deadline boundaries, eligibility, and disabled-policy overhead |
+| Consumers | Actual HTTP threaded and FlowMQ caller-driven integrations; preserve MQTT transport/session separation in examples |
+| Platforms | Formal CMake presets and CTest on applicable Windows/Linux/macOS backends, C/C++ header and ABI regression, applicable sanitizers, and explicit unsupported combinations |
+| Performance | Separately measure many idle connections, TCP churn, TLS handshake churn, small messages, large payloads, and slow peers with fixed total work and 1/2/4 owners where applicable |
+
+Record backend, TLS configuration, topology, total/active connection counts,
+payload/message budgets, CPU/message, throughput, P50/P95/P99 (P99.9 for latency
+claims), allocation/bytes per connection, queue/context watermarks, rejections,
+wake/hop counts, and drain time. Separate setup/handshake churn from steady-state
+data. There is no assumed linear scaling or universal batch size. Minimal
+single-owner and optional handoff examples must document errors, ownership,
+capacity, shutdown, and rollback using the final implemented API.
+
+**HIGH design risks:** double descriptor/credit release, mutation of owner-local
+records by producers, premature callback/context recycling, or wake through a
+destroyed association. **MED design risks:** changing admission behavior while
+conflating context and connection credit, per-message indirection, whole-set scans,
+and unmeasured batching latency. These are requirements for implementation review,
+not claims of reproduced defects in existing CNet.
