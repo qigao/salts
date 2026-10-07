@@ -26,8 +26,6 @@ jobs:
       builds: ${{ steps.select.outputs.builds }}
       has_builds: ${{ steps.select.outputs.has_builds }}
       version: ${{ steps.version.outputs.version }}
-      tests: ${{ steps.select.outputs.tests }}
-      has_tests: ${{ steps.select.outputs.has_tests }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -56,14 +54,6 @@ jobs:
       builds: ${{ needs.scope.outputs.builds }}
       version: ${{ needs.scope.outputs.version }}
     secrets: inherit
-  tests:
-    needs:
-      - scope
-      - native
-    if: needs.scope.outputs.has_tests == 'true'
-    uses: ./.github/workflows/native-tests.yml
-    with:
-      tests: ${{ needs.scope.outputs.tests }}
   formal:
     needs: scope
     if: fromJSON(needs.scope.outputs.checks).lean == 'true'
@@ -94,7 +84,6 @@ jobs:
     needs:
       - scope
       - native
-      - tests
       - formal
       - benchmarks
       - package

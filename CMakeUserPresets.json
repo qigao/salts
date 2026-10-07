@@ -501,29 +501,6 @@
             }
         },
         {
-            "name": "ios-simulator-arm64-release-ci",
-            "inherits": [
-                "AppleClang",
-                "mac-arm64-release-ci"
-            ],
-            "binaryDir": "${sourceDir}/build/ios-simulator-arm64",
-            "cacheVariables": {
-                "CMAKE_SYSTEM_NAME": "iOS",
-                "CMAKE_OSX_SYSROOT": "iphonesimulator",
-                "CMAKE_OSX_ARCHITECTURES": "arm64",
-                "VCPKG_TARGET_TRIPLET": "arm64-ios-simulator",
-                "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/arm64-ios-simulator",
-                "VCPKG_INSTALL_OPTIONS": "--only-binarycaching",
-                "ENABLE_TESTS": "OFF",
-                "BUILD_TESTS": "OFF",
-                "BUILD_BENCHMARKS": "OFF",
-                "BUILD_EXAMPLES": "OFF"
-            },
-            "environment": {
-                "SALTS_ROOT": "${sourceDir}/stage/sdk/ios-simulator-arm64"
-            }
-        },
-        {
             "name": "win-cmeta-native-dev-user",
             "inherits": "win-dev-user",
             "binaryDir": "${sourceDir}/build/Msvc-CMetaNative-Debug",
@@ -839,24 +816,6 @@
         {
             "name": "install-strip-ios-arm64-release-ci",
             "configurePreset": "ios-arm64-release-ci",
-            "targets": [
-                "install/strip"
-            ]
-        },
-        {
-            "name": "ios-simulator-arm64-release-ci",
-            "configurePreset": "ios-simulator-arm64-release-ci"
-        },
-        {
-            "name": "install-ios-simulator-arm64-release-ci",
-            "configurePreset": "ios-simulator-arm64-release-ci",
-            "targets": [
-                "install"
-            ]
-        },
-        {
-            "name": "install-strip-ios-simulator-arm64-release-ci",
-            "configurePreset": "ios-simulator-arm64-release-ci",
             "targets": [
                 "install/strip"
             ]

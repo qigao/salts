@@ -30,7 +30,7 @@ function Test-Changed([string]$Pattern) {
 
 # Shared build inputs invalidate all native suites. Formal checks only depend
 # on the Lean package, checked-in generated outputs, and their workflow.
-$shared = $full -or (Test-Changed '^(CMakeLists\.txt|CMakeOptions\.cmake|CMake(User)?Presets\.json|vcpkg(-configuration)?\.json|presets/|vendor/|\.github/actions/|\.github/workflows/(ci|native-build|native-tests|sdk-package|sdk-tests)\.yml|cmake/(?!ci/)|cmake/ci/select-ci-scope\.ps1)')
+$shared = $full -or (Test-Changed '^(CMakeLists\.txt|CMakeOptions\.cmake|CMake(User)?Presets\.json|vcpkg(-configuration)?\.json|presets/|vendor/|\.github/actions/|\.github/workflows/(ci|native-build|sdk-package|sdk-tests)\.yml|cmake/(?!ci/)|cmake/ci/select-ci-scope\.ps1)')
 $mobile = $shared -or (Test-Changed '^(tools|tinytest|platform|concurrency|coroutine|native-io|uri|cmeta|plugin|simd|tinymock|cflow|cstl|cnet|cserde|utils)/')
 $contractsChanged = Test-Changed '^\.github/workflows/cmeta-cflow-calculus\.yml$'
 $cmetaRuntime = Test-Changed '^cmeta/(include/|src/|native/|CMakeLists\.txt$|tests/CMakeLists\.txt$)'
@@ -117,7 +117,7 @@ Write-Output $json
 if ($env:GITHUB_OUTPUT) { Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "checks=$json" }
 
 # CI build/run matrices contain only Release profiles.
-# Test consumers select suites from the uploaded build without rebuilding modules.
+# Each host job runs its selected suites directly after building the profile.
 if ($PrepareRelease -and -not $full) { throw "Release preparation requires a manual CI run" }
 $profiles = @(
   @{ id = 'linux-release'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-release-ci'; build_dir = 'build/linux-gcc-release'; sdk = 'linux-x64' },
@@ -126,8 +126,7 @@ $profiles = @(
   @{ id = 'macos-release'; runner = 'macos-15'; family = 'mac'; preset = 'mac-arm64-release-ci'; build_dir = 'build/mac-arm64-gcc-release'; sdk = 'macos-arm64' },
   @{ id = 'macos-clang-release'; runner = 'macos-15'; family = 'mac'; preset = 'mac-arm64-clang-release-ci'; build_dir = 'build/mac-arm64-clang-release'; sdk = '' },
   @{ id = 'android-arm64-v8a-release'; runner = 'ubuntu-24.04'; family = 'android'; preset = 'android-arm64-v8a-release-ci'; build_dir = 'build/android-arm64-v8a-release'; sdk = 'android-arm64-v8a' },
-  @{ id = 'ios-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-arm64-release-ci'; build_dir = 'build/ios-arm64'; sdk = 'ios-arm64'; triplet = 'arm64-ios' },
-  @{ id = 'ios-simulator-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-simulator-arm64-release-ci'; build_dir = 'build/ios-simulator-arm64'; sdk = 'ios-simulator-arm64'; triplet = 'arm64-ios-simulator' }
+  @{ id = 'ios-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-arm64-release-ci'; build_dir = 'build/ios-arm64'; sdk = 'ios-arm64'; triplet = 'arm64-ios' }
 )
 if ($PrepareRelease) {
   $profiles += @{ id = 'linux-arm64-release'; runner = 'ubuntu-24.04-arm'; family = 'linux'; preset = 'linux-arm64-release-ci'; build_dir = 'build/linux-arm64-release'; sdk = 'linux-arm64' }
@@ -135,7 +134,7 @@ if ($PrepareRelease) {
 $builds = @()
 foreach ($profile in $profiles) {
   # Clang profiles qualify the same portable/native contracts in isolated trees;
-  # their build artifacts are test inputs, not additional release packages.
+  # they do not produce additional release packages.
   $profile.clang = $profile.id -in @('linux-clang-release', 'macos-clang-release')
   $entry = $profile.Clone()
   $entry.cross = $entry.family -in @('android', 'ios')
@@ -155,26 +154,10 @@ foreach ($profile in $profiles) {
   }
 }
 $matrix = ConvertTo-Json -InputObject @{ include = $builds } -Depth 5 -Compress
-$testRuns = @()
-$suites = @('native', 'execution', 'projection', 'armheaders')
-foreach ($build in $builds) {
-  foreach ($suite in $suites) {
-    if (-not $build[$suite]) { continue }
-    $testRun = $build.Clone()
-    foreach ($selection in $suites) {
-      $testRun[$selection] = $selection -eq $suite
-    }
-    $testRun.suite = $suite
-    $testRuns += $testRun
-  }
-}
-$testMatrix = ConvertTo-Json -InputObject @{ include = $testRuns } -Depth 5 -Compress
 Write-Output $matrix
 if ($env:GITHUB_OUTPUT) {
   Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "builds=$matrix"
   Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "has_builds=$($builds.Count -gt 0)".ToLowerInvariant()
-  Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "tests=$testMatrix"
-  Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "has_tests=$($testRuns.Count -gt 0)".ToLowerInvariant()
 }
 if ($env:GITHUB_STEP_SUMMARY) {
   Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "| Check | Selected |`n|---|---|"

@@ -285,32 +285,31 @@ Documentation-only changes run scope/result jobs. PRs use the full
 merge-base-to-head diff; a documentation follow-up still validates preceding
 code changes. Invalid comparison bases fail explicitly.
 
-`native-build.yml` owns native and cross compilation. Each selected configuration
-builds all platform-supported modules once, then uploads the complete build.
-Host configurations also compile all tests; Android/iOS keep their existing
-SDK-only configure profiles because no device/emulator test runner is configured.
-`native-tests.yml` downloads host builds in separate jobs for each
-selected CTest suite (execution, Plugin, projection, fastpath, or ARM headers).
-No native test runs before the build artifacts have been uploaded. Production Release
+`native-build.yml` owns compilation and the selected CTest suites. Each host
+configuration builds all platform-supported modules and tests once, then runs
+its selected native/Plugin, execution, projection or ARM header suites as steps
+in the same job. A platform starts testing immediately after its own build,
+without waiting for other platforms, another runner or an artifact transfer.
+After a successful build, a failed suite does not skip the remaining selected
+suites; the job still fails and does not install or upload SDKs. Cancellation
+stops further suites. Android/iOS keep their existing SDK-only configure profiles
+because no device/emulator test runner is configured. Production Release
 configurations also compile the NativeIO/CNet/Coroutine benchmarks. CNet
 fault-injection tests use a separate private static library, so enabling tests
 does not change benchmark instrumentation or the installed shared library.
 No workflow selects individual module build targets.
 
 A configuration includes platform, architecture, compiler, build type,
-sanitizer and native-fastpath setting. ASan, TSan and Release cannot share
-binaries. Native-fastpath assembly requires a distinct build from portable
-SDK code and cannot be enabled under TSan. Both TSan suites now consume one
-`linux-tsan-ci` build. With all checks selected, the matrix contains 13 host
-configurations (7 portable/compiler profiles + 6 native-fastpath profiles)
-and 3 mobile configurations (Android ARM64, iOS ARM64 and iOS Simulator ARM64).
-The six fastpath builds remain separate because their build options differ
-from SDK configurations.
+sanitizer and native-fastpath setting; incompatible configurations cannot share
+binaries. The selected CI matrix uses Release profiles. With all checks selected,
+it contains five host configurations (Linux GCC/Clang, Windows MSVC and macOS
+GCC/AppleClang) and two mobile configurations (Android ARM64 and iOS ARM64).
+Release preparation adds Linux ARM64 and enables native
+thunks in the Linux x64 and Windows profiles selected by the scope script.
 
-Linux Clang and macOS AppleClang each run execution, Plugin and projection suites,
-plus the native suite from their separate fastpath build. Their projection jobs
-run the existing installed-package tests against compiler-specific SDK roots;
-these qualification SDKs are not additional release packages. Plugin suites run
+Linux Clang and macOS AppleClang each run the selected native/Plugin, execution
+and projection suites against their own build trees. These compiler profiles
+do not produce additional release packages. Plugin suites run
 on both macOS compiler profiles, including cross-TU Mach-O aggregation and lease
 cleanup. Interface arity, ObjectRef/Invokable operations and lowering rejection
 tests participate in the execution/native suites across compilers.
@@ -322,8 +321,10 @@ presets and upload SDK artifacts in the build stage, independently of
 `prepare_release`. The package workflow consumes those artifacts without
 compiling platform modules.
 
-Test and benchmark jobs download the build tree, matching vcpkg dependencies,
-and source snapshot. Linux epoll and io_uring consume the same `native-linux-release`
+Only profiles selected for benchmark execution archive the complete build tree,
+matching vcpkg dependencies and source snapshot for downstream jobs. Tests use
+the existing workspace directly; SDK artifacts remain separate. Linux epoll
+and io_uring consume the same `native-linux-release`
 artifact. Benchmark execution is eligible only when the PR/push diff contains
 non-documentation changes under `native-io/` or `cnet/`; shared build files and
 other modules alone do not trigger it. Manual validation has no change range
@@ -332,10 +333,7 @@ permissions and symlinks. Consumers require the same commit, workspace path
 and runner image because generated build files contain absolute paths and
 compiler locations. They do not reconfigure or rebuild the candidate modules.
 Compiler-rejection CTest cases still invoke the compiler on intentionally
-invalid test sources; preserving object files and source timestamps, with
-CMake regeneration disabled for these CI builds, avoids recompiling their
-module dependencies. Installed-package test binaries are also compiled before
-upload and executed by the projection consumer.
+invalid test sources in the build job, reusing its compiler and dependencies.
 The PR-base CNet comparison compiles the different base commit in the producer
 and includes its isolated DSO runtime in the same Windows artifact.
 Benchmark executables are registered with CTest under the `benchmark` label;
@@ -352,11 +350,9 @@ Release preparation and publication are separate:
 
 1. Run **Salts CI** on the default branch with `prepare_release=true`.
    This runs native and formal checks, installs the existing Linux x64/Windows/macOS Release
-   builds, adds Linux ARM64 to the same producer/consumer matrix, and packages
-   the seven SDK variants uploaded by that matrix as `salts-native-nuget`.
-   Linux ARM64 tests and SDK installation use one module build; installed
-   package qualification runs separately in `sdk-tests.yml`, building and
-   executing the existing CMeta/Plugin consumer tests through CTest.
+   builds, adds Linux ARM64 to the same build/test matrix, and packages
+   the six SDK variants uploaded by that matrix as `salts-native-nuget`.
+   Linux ARM64 header tests and SDK installation use one module build and job.
 2. Wait for the entire CI run to succeed. Create the matching immutable
    version tag, then manually run **Salts native SDK release** with `ci_run_id`,
    exact `release_sha`, and `tag`.
@@ -366,7 +362,7 @@ Release preparation and publication are separate:
    manifests, and publishes the unchanged package. It does not compile or pack.
 
 Ordinary pushes, tag pushes, and manual CI with `prepare_release=false` never
-publish. Manual CI with `prepare_release=false` includes the three mobile builds
+publish. Manual CI with `prepare_release=false` includes the two mobile builds
 but skips Linux ARM64 release preparation and NuGet packaging. Existing
 release callers must supply the new `ci_run_id`; runs without the prepared
 package cannot be promoted. Release preparation has its own concurrency group
@@ -376,8 +372,8 @@ aggregate check; selecting checks affects execution, not module compilation.
 The workflows own artifact production and validation; only the manual release
 workflow owns publication permissions. Compilation, tests or qualification
 failure leaves an unpublishable CI run. Package formats and installed APIs are
-unchanged. To roll back, restore the dispatcher, producer/consumer workflows
-and presets together; do not mix old and new artifact contracts. Validate with
+unchanged. To roll back the build/test consolidation, restore the dispatcher,
+native build/test workflows and scope selector together. Validate with
 `actionlint`, CMake presets, full builds and related CTest selections;
 runner-specific execution still requires CI.
 
