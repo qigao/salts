@@ -49,6 +49,37 @@ suite("ComponentPlugin candidate generation") {
         check_equal(cmeta_plugin_registry_destroy(&registry), CMETA_PLUGIN_OK);
     }
 
+    it("rejects module capacity before acquiring any Plugin lease") {
+        const salts_component_plugin_generation_storage storage = {
+            deployments, 1u,
+            instances, 1u,
+            dependencies, 1u,
+            activation_order, 1u,
+            NULL, 0u
+        };
+        const salts_component_plugin_source source = {
+            ref,
+            COMPONENT_PROVIDER_EXPORT_ID,
+            NULL,
+            NULL
+        };
+        cmeta_plugin_lifecycle_info info;
+
+        check_equal(salts_component_plugin_generation_build(
+            &generation,
+            UINT64_C(1),
+            &registry,
+            &storage,
+            NULL, 0u,
+            &source, 1u,
+            NULL, 0u),
+            SALTS_COMPONENT_PLUGIN_CAPACITY_EXCEEDED);
+
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)0u);
+    }
+
     it("releases candidate leases when provider admission fails") {
         const salts_component_plugin_generation_storage storage = {
             deployments, 1u,
