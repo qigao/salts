@@ -2,6 +2,7 @@
 #define SALTS_COMPONENT_PLUGIN_H
 
 #include <salts/component_plugin_abi.h>
+#include <salts/component.h>
 #include <salts/plugin.h>
 
 #include <stddef.h>
