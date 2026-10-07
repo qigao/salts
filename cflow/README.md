@@ -1389,6 +1389,7 @@ and reopen gates are recorded in the
 | poll | POSIX | readiness, O(registration capacity) snapshot scan | TCP/UDP plus accept/connect | nonblocking byte read/write | unsupported | explicit only |
 | IOCP | Windows | completion | TCP/UDP plus accept/connect | overlapped named byte-pipe read/write | overlapped `READ_AT`/`WRITE_AT`; flush unsupported | Windows |
 | io_uring | Linux | completion | TCP/UDP plus accept/connect | native byte read/write | `READ_AT`/`WRITE_AT`/`FLUSH` | explicit only |
+| Darwin AIO | macOS | completion, bounded observer | unsupported | unsupported | `READ_AT`/`WRITE_AT`/`FLUSH` | explicit only |
 
 Pipe payload I/O has one CFlow integration path: use
 `native_io_operation` with `cflow_io_native_adapter_actor_ops()` and attach
@@ -1453,7 +1454,68 @@ supports overlapped read/write on disk handles opened with
 `IORING_OP_READ`/`IORING_OP_WRITE` and full `IORING_OP_FSYNC`; it validates that
 the descriptor is a regular file. epoll, kqueue, and poll reject all regular-
 file operations rather than blocking their readiness worker or hiding a
-thread-pool fallback.
+thread-pool fallback. macOS consumers can explicitly select
+`CFLOW_IO_NATIVE_DARWIN_AIO` for regular-file operations, independently of the
+kqueue socket backend. This additive enum value preserves all existing backend
+values and public structure layouts; it is unavailable on iOS and other hosts.
+
+#### macOS file backend design
+
+CHTTP's upload, download, and static-file paths need the same bounded native file
+contract on macOS as on Windows and Linux. The implementation belongs to the
+existing CFlow native file adapter; NativeIO socket/pipe routing does not change.
+Darwin `aio_read`, `aio_write`, and `aio_fsync(O_SYNC)` submit explicit-offset
+regular-file work. No third-party dependency or process-wide signal handler is
+introduced. Readiness remains unsupported for files. A blocking file worker pool
+would change the existing cancellation and execution contract; dispatch I/O would
+require a separate channel and buffer ownership integration. Explicit Darwin AIO
+fits the existing operation and completion interface.
+
+The backend allocates exactly `request_capacity` stable control blocks and a wait
+snapshot of that many pointers at initialization, with checked allocation sizes
+and an `INT_MAX` wait-count limit. Records are the only request state authority.
+A mutex serializes admission, cancellation, native result collection, and stats.
+Native submission failure leaves the record free and propagates the native error;
+local capacity exhaustion returns `SALTS_ENOBUFS`. Darwin's process/system AIO
+limits can reject a request independently of the local capacity, with no retry or
+alternate backend. Existing stats expose active/submitted/completed requests,
+capacity rejection, native submission/cancellation failures, and stale delivery.
+
+Each runtime owns one completion observer, which performs no synchronous payload
+read/write. It scans at most the fixed record capacity per pass and publishes at
+most `completion_batch_capacity` results per batch, using a rotating cursor.
+When idle it sleeps on a condition variable. With pending requests it waits in
+`aio_suspend` for up to 10 ms: requests admitted after a wait snapshot may wait
+until that interval ends before observation. This bounds metadata and threads,
+but adds a latency/scan-cost tradeoff; no throughput claim is made. A wait error
+only delays the next status scan and never fabricates an I/O completion.
+
+The state transition is free → submitted → native terminal → reaped → free.
+Only the observer calls `aio_return`, exactly once per accepted native request,
+before reusing its control-block address. The caller keeps the handle and payload
+alive through Actor terminal delivery; the Actor retains the operation token
+through acknowledgement. Cancel requests invoke `aio_cancel`, but a running or
+already-completed operation may still succeed. Only the native terminal result
+determines cancellation, EOF, partial bytes, or failure. External wake callbacks
+run outside the backend gate; business callbacks still run on the owner's driver.
+Shutdown closes admission, reports busy while native requests remain, and joins
+the observer including its publication tail before destruction. It never closes
+or flushes caller-owned files.
+
+CHTTP selects this backend only on macOS; Windows IOCP and Linux io_uring retain
+their selections. Deployment requires rebuilding consumers against this SDK.
+Rollback is to the prior SDK and consumer selection together, restoring explicit
+unsupported file operations on macOS. Formal native and facade tests cover file
+type validation, offset independence, partial reads/EOF, flush, cancellation,
+bounded slot reuse, shared runtime ownership, and close/drain. Host integration
+also exercises CHTTP H1/H2, S3, downloads, and static assets.
+
+Platform contract references: [Apple AIO read](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/aio_read.2.html),
+[cancel](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/aio_cancel.2.html),
+[return](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/aio_return.2.html),
+and [suspend](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/aio_suspend.2.html).
+
+#### File ownership and facade
 
 The operation, handle, and buffer remain caller-owned through terminal callback
 return. Reads borrow exclusive mutable buffer access; writes borrow immutable

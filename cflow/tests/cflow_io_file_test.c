@@ -6,6 +6,10 @@
 
 #include "tinytest.h"
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -68,6 +72,8 @@ static cflow_io_native_backend_kind file_test_backend(void) {
   return CFLOW_IO_NATIVE_IOCP;
 #elif defined(__linux__)
   return CFLOW_IO_NATIVE_IO_URING;
+#elif defined(__APPLE__) && TARGET_OS_OSX
+  return CFLOW_IO_NATIVE_DARWIN_AIO;
 #else
   return CFLOW_IO_NATIVE_POLL;
 #endif
@@ -158,7 +164,7 @@ spec("CFlow async file facade") {
     check_not_null(first_path);
     check_not_null(second_path);
     status = cflow_io_file_runtime_init(&runtime, &runtime_config);
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !(defined(__APPLE__) && TARGET_OS_OSX)
     if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(first_path), 0);
@@ -225,7 +231,7 @@ spec("CFlow async file facade") {
     check_not_null(second_path);
     runtime_config.file_capacity = 1u;
     status = cflow_io_file_runtime_init(&runtime, &runtime_config);
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !(defined(__APPLE__) && TARGET_OS_OSX)
     if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(first_path), 0);
@@ -275,7 +281,7 @@ spec("CFlow async file facade") {
     runtime_config.wake = file_test_runtime_wake;
     runtime_config.wake_user = &wake_count;
     status = cflow_io_file_runtime_init(&runtime, &runtime_config);
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !(defined(__APPLE__) && TARGET_OS_OSX)
     if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
@@ -425,7 +431,7 @@ spec("CFlow async file facade") {
 
     check_not_null(path);
     status = cflow_io_file_open(&file, path, &config);
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !(defined(__APPLE__) && TARGET_OS_OSX)
     if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
@@ -473,7 +479,7 @@ spec("CFlow async file facade") {
     check_not_null(path);
     config.completion_user = &probe;
     status = cflow_io_file_open(&file, path, &config);
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !(defined(__APPLE__) && TARGET_OS_OSX)
     if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
@@ -524,7 +530,7 @@ spec("CFlow async file facade") {
     check_not_null(path);
     config.completion_user = &probe;
     status = cflow_io_file_open(&file, path, &config);
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !(defined(__APPLE__) && TARGET_OS_OSX)
     if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
@@ -561,7 +567,7 @@ spec("CFlow async file facade") {
     check_not_null(path);
     config.completion_user = &probe;
     status = cflow_io_file_open(&file, path, &config);
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !(defined(__APPLE__) && TARGET_OS_OSX)
     if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
@@ -614,7 +620,7 @@ spec("CFlow async file facade") {
     config.completion_batch_capacity = 1u;
     config.completion_user = &probe;
     status = cflow_io_file_open(&file, path, &config);
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !(defined(__APPLE__) && TARGET_OS_OSX)
     if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
@@ -648,7 +654,7 @@ spec("CFlow async file facade") {
     check_not_null(path);
     config.completion_user = &probe;
     status = cflow_io_file_open(&file, path, &config);
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !(defined(__APPLE__) && TARGET_OS_OSX)
     if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
@@ -682,7 +688,7 @@ spec("CFlow async file facade") {
     check_not_null(path);
     config.completion_user = &probe;
     status = cflow_io_file_open(&file, path, &config);
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !(defined(__APPLE__) && TARGET_OS_OSX)
     if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
