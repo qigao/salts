@@ -1293,8 +1293,10 @@ __asm__(
   "_mco_wrap_main:\n"
 #endif
   "  mov x0, x19\n"
-  "  mov x30, x21\n"
-  "  br x20\n"
+  /* A real call supplies a canonical return address for PAC authentication
+     when _mco_main tail-calls _mco_jumpout after the user function returns. */
+  "  blr x20\n"
+  "  brk #0\n" /* A completed coroutine must switch out, never return here. */
 #ifndef __APPLE__
   ".size _mco_wrap_main, .-_mco_wrap_main\n"
 #endif
@@ -1303,7 +1305,6 @@ __asm__(
 static mco_result _mco_makectx(mco_coro* co, _mco_ctxbuf* ctx, void* stack_base, size_t stack_size) {
   ctx->x[0] = (void*)(co);
   ctx->x[1] = (void*)(_mco_main);
-  ctx->x[2] = (void*)(0xdeaddeaddeaddead); /* Dummy return address. */
   ctx->sp = (void*)((size_t)stack_base + stack_size);
   ctx->lr = (void*)(_mco_wrap_main);
   return MCO_SUCCESS;

@@ -15,3 +15,10 @@ The components below retain their upstream license terms.
 
 Dependencies downloaded by vcpkg or another package manager are not relicensed
 by Salts and remain governed by their respective upstream licenses.
+
+The local [minicoro](https://github.com/edubart/minicoro) ARM64 entry trampoline
+uses a real call return address instead of the non-canonical `deaddead` sentinel.
+This allows compiler-generated pointer authentication when a completed coroutine
+switches back to its caller, including an optimized tail call. PAC/BTI compiler
+settings remain enabled. The public coroutine completion, reset and nested-return
+contracts are covered by `cmeta_coroutine_completion_test`.
