@@ -1,7 +1,7 @@
 #ifndef SALTS_COMPONENT_PLUGIN_ABI_H
 #define SALTS_COMPONENT_PLUGIN_ABI_H
 
-#include <salts/component.h>
+#include <salts/component_abi.h>
 
 #ifdef __cplusplus
 extern "C" {
