@@ -14,16 +14,22 @@
 #define PATTERN_OWNING_METHODS(X, I) \
     X(I, D0, void, destroy, _)
 
+#ifdef __cplusplus
+#define PATTERN_INT_PTR(value_) static_cast<int *>(value_)
+#else
+#define PATTERN_INT_PTR(value_) ((int *)(value_))
+#endif
+
 CMETA_INTERFACE(pattern_counter, PATTERN_COUNTER_METHODS);
 CMETA_INTERFACE(pattern_reset, PATTERN_RESET_METHODS);
 CMETA_INTERFACE(pattern_owning, PATTERN_OWNING_METHODS);
 
 static int pattern_counter_get_impl(void *self) {
-    return *(int *)self;
+    return *PATTERN_INT_PTR(self);
 }
 
 static void pattern_reset_reset_impl(void *self) {
-    *(int *)self = 0;
+    *PATTERN_INT_PTR(self) = 0;
 }
 
 CMETA_IMPLEMENTS(pattern_counter, pattern_counter_impl, 0u,
@@ -83,5 +89,7 @@ static const cmeta_object_interface_provider pattern_extension_provider = {
     NULL,
     pattern_extension_project
 };
+
+#undef PATTERN_INT_PTR
 
 #endif /* CMETA_PATTERN_FIXTURE_H */
