@@ -35,6 +35,16 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     FOLDER "cnet/tests")
 endif()
 
+cmake_add_test(cnet_tls_handshake_framing_test
+  SOURCES cnet_tls_handshake_framing_test.c
+  LIBS Salts::TinyTest GmSSL::GmSSL
+  FOLDER "cnet/tests")
+
+cmake_add_test(cnet_tls_signature_test
+  SOURCES cnet_tls_signature_test.c
+  LIBS Salts::TinyTest GmSSL::GmSSL
+  FOLDER "cnet/tests")
+
 cmake_add_test(
   cnet_websocket_parser_test
   SOURCES
