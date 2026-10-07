@@ -10,6 +10,7 @@ suite("Salts static Component Configurator") {
         test_provider_state logger;
         test_provider_state app;
         salts_component_provider_binding providers[2];
+        salts_component_deployment deployments[2];
         salts_component_instance instances[2];
         salts_component_dependency dependencies[2];
         size_t order[2];
@@ -20,19 +21,16 @@ suite("Salts static Component Configurator") {
         test_provider_state_init(&logger, 7, &clock);
         test_provider_state_init(&app, 0, &clock);
 
-        providers[0] = (salts_component_provider_binding){
-            cmeta_component_meta(TestLogger), &logger,
-            NULL, NULL, &test_interfaces,
-            test_logger_create, test_activate, test_deactivate
-        };
-        providers[1] = (salts_component_provider_binding){
-            cmeta_component_meta(TestApp), &app,
-            &cmeta_data_int, &app_config, &test_interfaces,
-            test_app_create, test_activate, test_deactivate
-        };
+        providers[0] = TEST_PROVIDER_BINDING(
+            TestLogger, &logger, test_logger_create);
+        deployments[0] = TEST_DEPLOYMENT(&providers[0], NULL, NULL);
+        providers[1] = TEST_PROVIDER_BINDING(
+            TestApp, &app, test_app_create);
+        deployments[1] = TEST_DEPLOYMENT(
+            &providers[1], &cmeta_data_int, &app_config);
 
         check_equal(salts_component_context_init(
-            &context, providers, 2u, NULL, 0u, instances, 2u,
+            &context, deployments, 2u, NULL, 0u, instances, 2u,
             dependencies, 2u, order, 2u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&context), SALTS_COMPONENT_OK);
         check_equal(order[0], (size_t)0u);
@@ -62,20 +60,19 @@ suite("Salts static Component Configurator") {
         int config = 1;
         test_provider_state app;
         salts_component_provider_binding provider;
+        salts_component_deployment deployment;
         salts_component_instance instance;
         salts_component_dependency dependency;
         size_t order;
         salts_component_context context;
 
         test_provider_state_init(&app, 0, NULL);
-        provider = (salts_component_provider_binding){
-            cmeta_component_meta(TestApp), &app,
-            &cmeta_data_int, &config, &test_interfaces,
-            test_app_create, test_activate, test_deactivate
-        };
+        provider = TEST_PROVIDER_BINDING(TestApp, &app, test_app_create);
+        deployment = TEST_DEPLOYMENT(
+            &provider, &cmeta_data_int, &config);
 
         check_equal(salts_component_context_init(
-            &context, &provider, 1u, NULL, 0u, &instance, 1u,
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
             &dependency, 1u, &order, 1u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&context),
                     SALTS_COMPONENT_MISSING_PROVIDER);
@@ -88,6 +85,7 @@ suite("Salts static Component Configurator") {
         test_provider_state logger_b;
         test_provider_state app;
         salts_component_provider_binding providers[3];
+        salts_component_deployment deployments[3];
         salts_component_instance instances[3];
         salts_component_dependency dependencies[2];
         size_t order[3];
@@ -97,24 +95,19 @@ suite("Salts static Component Configurator") {
         test_provider_state_init(&logger_b, 2, NULL);
         test_provider_state_init(&app, 0, NULL);
 
-        providers[0] = (salts_component_provider_binding){
-            cmeta_component_meta(TestLogger), &logger_a,
-            NULL, NULL, &test_interfaces,
-            test_logger_create, test_activate, test_deactivate
-        };
-        providers[1] = (salts_component_provider_binding){
-            cmeta_component_meta(TestLoggerAlt), &logger_b,
-            NULL, NULL, &test_interfaces,
-            test_logger_create, test_activate, test_deactivate
-        };
-        providers[2] = (salts_component_provider_binding){
-            cmeta_component_meta(TestApp), &app,
-            &cmeta_data_int, &config, &test_interfaces,
-            test_app_create, test_activate, test_deactivate
-        };
+        providers[0] = TEST_PROVIDER_BINDING(
+            TestLogger, &logger_a, test_logger_create);
+        deployments[0] = TEST_DEPLOYMENT(&providers[0], NULL, NULL);
+        providers[1] = TEST_PROVIDER_BINDING(
+            TestLoggerAlt, &logger_b, test_logger_create);
+        deployments[1] = TEST_DEPLOYMENT(&providers[1], NULL, NULL);
+        providers[2] = TEST_PROVIDER_BINDING(
+            TestApp, &app, test_app_create);
+        deployments[2] = TEST_DEPLOYMENT(
+            &providers[2], &cmeta_data_int, &config);
 
         check_equal(salts_component_context_init(
-            &context, providers, 3u, NULL, 0u, instances, 3u,
+            &context, deployments, 3u, NULL, 0u, instances, 3u,
             dependencies, 2u, order, 3u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&context),
                     SALTS_COMPONENT_AMBIGUOUS_PROVIDER);
@@ -126,6 +119,7 @@ suite("Salts static Component Configurator") {
         test_provider_state logger_b;
         test_provider_state app;
         salts_component_provider_binding providers[3];
+        salts_component_deployment deployments[3];
         salts_component_selection selection;
         salts_component_instance instances[3];
         salts_component_dependency dependencies[2];
@@ -159,7 +153,7 @@ suite("Salts static Component Configurator") {
         };
 
         check_equal(salts_component_context_init(
-            &context, providers, 3u, &selection, 1u,
+            &context, deployments, 3u, &selection, 1u,
             instances, 3u, dependencies, 2u, order, 3u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&context), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_start(&context), SALTS_COMPONENT_OK);
@@ -187,6 +181,7 @@ suite("Salts static Component Configurator") {
         test_provider_state a;
         test_provider_state b;
         salts_component_provider_binding providers[2];
+        salts_component_deployment deployments[2];
         salts_component_instance instances[2];
         salts_component_dependency dependencies[2];
         size_t order[2];
@@ -195,19 +190,15 @@ suite("Salts static Component Configurator") {
         test_provider_state_init(&a, 1, NULL);
         test_provider_state_init(&b, 2, NULL);
 
-        providers[0] = (salts_component_provider_binding){
-            cmeta_component_meta(TestCycleA), &a,
-            NULL, NULL, &test_interfaces,
-            test_cycle_create, test_activate, test_deactivate
-        };
-        providers[1] = (salts_component_provider_binding){
-            cmeta_component_meta(TestCycleB), &b,
-            NULL, NULL, &test_interfaces,
-            test_cycle_create, test_activate, test_deactivate
-        };
+        providers[0] = TEST_PROVIDER_BINDING(
+            TestCycleA, &a, test_cycle_create);
+        deployments[0] = TEST_DEPLOYMENT(&providers[0], NULL, NULL);
+        providers[1] = TEST_PROVIDER_BINDING(
+            TestCycleB, &b, test_cycle_create);
+        deployments[1] = TEST_DEPLOYMENT(&providers[1], NULL, NULL);
 
         check_equal(salts_component_context_init(
-            &context, providers, 2u, NULL, 0u, instances, 2u,
+            &context, deployments, 2u, NULL, 0u, instances, 2u,
             dependencies, 2u, order, 2u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&context),
                     SALTS_COMPONENT_DEPENDENCY_CYCLE);
@@ -219,20 +210,19 @@ suite("Salts static Component Configurator") {
         bool wrong_config = true;
         test_provider_state app;
         salts_component_provider_binding provider;
+        salts_component_deployment deployment;
         salts_component_instance instance;
         salts_component_dependency dependency;
         size_t order;
         salts_component_context context;
 
         test_provider_state_init(&app, 0, NULL);
-        provider = (salts_component_provider_binding){
-            cmeta_component_meta(TestApp), &app,
-            &cmeta_data_bool, &wrong_config, &test_interfaces,
-            test_app_create, test_activate, test_deactivate
-        };
+        provider = TEST_PROVIDER_BINDING(TestApp, &app, test_app_create);
+        deployment = TEST_DEPLOYMENT(
+            &provider, &cmeta_data_bool, &wrong_config);
 
         check_equal(salts_component_context_init(
-            &context, &provider, 1u, NULL, 0u, &instance, 1u,
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
             &dependency, 1u, &order, 1u), SALTS_COMPONENT_CONFIG_MISMATCH);
         check_equal(app.creates, 0u);
     }
@@ -240,19 +230,18 @@ suite("Salts static Component Configurator") {
     it("rejects a provider that cannot project its declared service") {
         test_provider_state broken;
         salts_component_provider_binding provider;
+        salts_component_deployment deployment;
         salts_component_instance instance;
         size_t order;
         salts_component_context context;
 
         test_provider_state_init(&broken, 9, NULL);
-        provider = (salts_component_provider_binding){
-            cmeta_component_meta(TestBrokenProvider), &broken,
-            NULL, NULL, &test_interfaces,
-            test_cycle_create, test_activate, test_deactivate
-        };
+        provider = TEST_PROVIDER_BINDING(
+            TestBrokenProvider, &broken, test_cycle_create);
+        deployment = TEST_DEPLOYMENT(&provider, NULL, NULL);
 
         check_equal(salts_component_context_init(
-            &context, &provider, 1u, NULL, 0u, &instance, 1u,
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
             NULL, 0u, &order, 1u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&context), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_start(&context),
@@ -269,6 +258,8 @@ suite("Salts static Component Configurator") {
         test_provider_state right;
         salts_component_provider_binding left_provider;
         salts_component_provider_binding right_provider;
+        salts_component_deployment left_deployment;
+        salts_component_deployment right_deployment;
         salts_component_instance left_instance;
         salts_component_instance right_instance;
         size_t left_order;
@@ -283,22 +274,18 @@ suite("Salts static Component Configurator") {
         test_provider_state_init(&left, 11, NULL);
         test_provider_state_init(&right, 22, NULL);
 
-        left_provider = (salts_component_provider_binding){
-            cmeta_component_meta(TestLogger), &left,
-            NULL, NULL, &test_interfaces,
-            test_logger_create, test_activate, test_deactivate
-        };
-        right_provider = (salts_component_provider_binding){
-            cmeta_component_meta(TestLogger), &right,
-            NULL, NULL, &test_interfaces,
-            test_logger_create, test_activate, test_deactivate
-        };
+        left_provider = TEST_PROVIDER_BINDING(
+            TestLogger, &left, test_logger_create);
+        left_deployment = TEST_DEPLOYMENT(&left_provider, NULL, NULL);
+        right_provider = TEST_PROVIDER_BINDING(
+            TestLogger, &right, test_logger_create);
+        right_deployment = TEST_DEPLOYMENT(&right_provider, NULL, NULL);
 
         check_equal(salts_component_context_init(
-            &left_context, &left_provider, 1u, NULL, 0u, &left_instance, 1u,
+            &left_context, &left_deployment, 1u, NULL, 0u, &left_instance, 1u,
             NULL, 0u, &left_order, 1u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_init(
-            &right_context, &right_provider, 1u, NULL, 0u, &right_instance, 1u,
+            &right_context, &right_deployment, 1u, NULL, 0u, &right_instance, 1u,
             NULL, 0u, &right_order, 1u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&left_context), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&right_context), SALTS_COMPONENT_OK);
@@ -325,6 +312,7 @@ suite("Salts static Component Configurator") {
         test_provider_state logger;
         test_provider_state app;
         salts_component_provider_binding providers[2];
+        salts_component_deployment deployments[2];
         salts_component_instance instances[2];
         salts_component_dependency dependencies[2];
         size_t order[2];
@@ -334,19 +322,16 @@ suite("Salts static Component Configurator") {
         test_provider_state_init(&app, 0, NULL);
         app.fail_activate = true;
 
-        providers[0] = (salts_component_provider_binding){
-            cmeta_component_meta(TestLogger), &logger,
-            NULL, NULL, &test_interfaces,
-            test_logger_create, test_activate, test_deactivate
-        };
-        providers[1] = (salts_component_provider_binding){
-            cmeta_component_meta(TestApp), &app,
-            &cmeta_data_int, &config, &test_interfaces,
-            test_app_create, test_activate, test_deactivate
-        };
+        providers[0] = TEST_PROVIDER_BINDING(
+            TestLogger, &logger, test_logger_create);
+        deployments[0] = TEST_DEPLOYMENT(&providers[0], NULL, NULL);
+        providers[1] = TEST_PROVIDER_BINDING(
+            TestApp, &app, test_app_create);
+        deployments[1] = TEST_DEPLOYMENT(
+            &providers[1], &cmeta_data_int, &config);
 
         check_equal(salts_component_context_init(
-            &context, providers, 2u, NULL, 0u, instances, 2u,
+            &context, deployments, 2u, NULL, 0u, instances, 2u,
             dependencies, 2u, order, 2u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&context), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_start(&context),
