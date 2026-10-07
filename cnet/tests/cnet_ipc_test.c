@@ -42,7 +42,9 @@ typedef struct ipc_worker {
 static ipc_worker workers[2];
 
 static native_io_backend_kind backend_kind(void) {
-#if defined(_WIN32)
+#if defined(CNET_TEST_IO_URING)
+  return NATIVE_IO_BACKEND_IO_URING;
+#elif defined(_WIN32)
   return NATIVE_IO_BACKEND_IOCP;
 #elif defined(__APPLE__)
   return NATIVE_IO_BACKEND_KQUEUE;

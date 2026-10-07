@@ -17,6 +17,20 @@ cmake_add_test(cnet_websocket_tagged_test
   LIBS cnet Salts::Core Salts::TinyTest
   FOLDER "cnet/tests")
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  cmake_add_test(cnet_ipc_io_uring_test
+    SOURCES cnet_ipc_test.c
+    LIBS cnet Salts::Core Salts::TinyTest
+    DEFS CNET_TEST_IO_URING=1
+    FOLDER "cnet/tests")
+  cmake_add_test(cnet_datagram_external_io_uring_test
+    SOURCES cnet_datagram_external_test.c
+    LIBS cnet_test_profile Salts::Core Salts::TinyTest
+    INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
+    DEFS CNET_TEST_IO_URING=1
+    FOLDER "cnet/tests")
+endif()
+
 cmake_add_test(
   cnet_websocket_parser_test
   SOURCES
