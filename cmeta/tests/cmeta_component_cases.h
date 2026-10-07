@@ -136,6 +136,32 @@ suite("CMeta component declarations") {
         check_not_equal(plain, configured);
     }
 
+    it("rejects duplicate capability rows in validation and fingerprint") {
+        const cmeta_fingerprint_limits limits = {
+            CMETA_FINGERPRINT_DEFAULT_DEPTH,
+            CMETA_FINGERPRINT_DEFAULT_NODES,
+            CMETA_FINGERPRINT_DEFAULT_ROWS,
+            CMETA_FINGERPRINT_DEFAULT_STRING_BYTES
+        };
+        const cmeta_component_capability capabilities[2] = {
+            { CMETA_COMPONENT_PROVIDES, component_storage_interface() },
+            { CMETA_COMPONENT_PROVIDES, component_storage_interface() }
+        };
+        cmeta_component_desc duplicate = {
+            sizeof(cmeta_component_desc),
+            CMETA_COMPONENT_DECLARATION_VERSION,
+            "test.duplicate",
+            NULL,
+            capabilities,
+            COMPONENT_SIZE(2u)
+        };
+        uint64_t fingerprint = UINT64_C(0);
+
+        check_false(cmeta_component_desc_valid(&duplicate));
+        check_equal(cmeta_contract_fingerprint_component(
+            &duplicate, &limits, &fingerprint), CMETA_INVALID_ARGUMENT);
+    }
+
     it("represents an explicit empty component without sentinel capabilities") {
         const cmeta_manifest_limits limits = {
             CMETA_MANIFEST_DEFAULT_ITEMS,
