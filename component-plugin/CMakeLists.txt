@@ -16,8 +16,24 @@ target_link_libraries(
   salts_component_plugin_abi
   INTERFACE Salts::ComponentABI Salts::PluginABI)
 
+add_library(salts_component_plugin STATIC
+  src/component_plugin.c)
+
+cmake_config_target(
+  salts_component_plugin
+  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
+  ALIAS Salts::ComponentPlugin
+  FOLDER "component-plugin"
+  EXPORT_NAME ComponentPlugin)
+
+target_compile_features(salts_component_plugin PRIVATE c_std_11)
+target_link_libraries(
+  salts_component_plugin
+  PUBLIC salts_component_plugin_abi
+  PRIVATE Salts::Component Salts::Plugin)
+
 install(
-  TARGETS salts_component_plugin_abi
+  TARGETS salts_component_plugin_abi salts_component_plugin
   EXPORT SaltsTargets)
 
 install(
