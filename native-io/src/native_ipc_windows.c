@@ -254,13 +254,38 @@ int cmeta_ipc_platform_server_observe(cmeta_ipc_pipe_server *server, size_t max_
 int cmeta_ipc_platform_server_close(cmeta_ipc_pipe_server *server) {
   cmeta_ipc_server_impl *impl = (cmeta_ipc_server_impl *)server->impl;
   size_t index;
-  if (impl->close_requested) return SALTS_OK;
+  int first_status = SALTS_OK;
+  if (impl->driver_active) return SALTS_EBUSY;
   impl->close_requested = true;
   for (index = 0u; index < impl->capacity; ++index) {
     cmeta_ipc_slot *slot = &impl->slots[index];
     cmeta_ipc_slot_poll(slot);
-    if (slot->phase == SALTS_IPC_SLOT_PENDING)
-      (void)CancelIoEx((HANDLE)slot->handle, &slot->overlapped);
+    if (slot->phase == SALTS_IPC_SLOT_PENDING) {
+      const int status = cmeta_ipc_platform_server_cancel(server, slot->request_id);
+      if (status != SALTS_OK && status != SALTS_EALREADY && first_status == SALTS_OK)
+        first_status = status;
+    }
+  }
+  return first_status;
+}
+
+int cmeta_ipc_platform_server_wait_sources(const cmeta_ipc_pipe_server *server,
+                                           uintptr_t *out_handles, size_t capacity,
+                                           size_t *out_count, bool *out_ready) {
+  const cmeta_ipc_server_impl *impl = (const cmeta_ipc_server_impl *)server->impl;
+  size_t count = 0u;
+  if (impl->driver_active) return SALTS_EBUSY;
+  for (size_t index = 0u; index < impl->capacity; ++index) {
+    const cmeta_ipc_slot *slot = &impl->slots[index];
+    if (slot->phase == SALTS_IPC_SLOT_PENDING) ++count;
+    else if (slot->phase != SALTS_IPC_SLOT_FREE) *out_ready = true;
+  }
+  *out_count = count;
+  if (count > capacity) return SALTS_ENOBUFS;
+  count = 0u;
+  for (size_t index = 0u; index < impl->capacity; ++index) {
+    const cmeta_ipc_slot *slot = &impl->slots[index];
+    if (slot->phase == SALTS_IPC_SLOT_PENDING) out_handles[count++] = (uintptr_t)slot->event;
   }
   return SALTS_OK;
 }

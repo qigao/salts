@@ -1,10 +1,16 @@
 #include <cnet/cnet.h>
+#include <cnet/ipc.h>
 #include <cnet/websocket.h>
 #include <tinytest.hpp>
 
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
+
+static_assert(std::is_standard_layout<cnet_ipc_accepted>::value,
+              "IPC handoff must remain typed C ABI data");
+static_assert(CNET_IPC_VERSION == 1u && CNET_DATAGRAM_EXTERNAL_PROGRESS_VERSION == 1u &&
+              CNET_WEBSOCKET_TAGGED_SEND_VERSION == 1u, "optional transport capabilities");
 
 static_assert(std::is_standard_layout<cnet_client>::value, "client must be a C value wrapper");
 static_assert(std::is_standard_layout<cnet_connection>::value,

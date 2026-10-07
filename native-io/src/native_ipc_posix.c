@@ -51,6 +51,17 @@ int cmeta_ipc_platform_server_close(cmeta_ipc_pipe_server *server) {
   return SALTS_ENOTSUP;
 }
 
+int cmeta_ipc_platform_server_wait_sources(const cmeta_ipc_pipe_server *server,
+                                           uintptr_t *out_handles, size_t capacity,
+                                           size_t *out_count, bool *out_ready) {
+  (void)server;
+  (void)out_handles;
+  (void)capacity;
+  (void)out_count;
+  (void)out_ready;
+  return SALTS_ENOTSUP;
+}
+
 bool cmeta_ipc_platform_server_is_quiescent(const cmeta_ipc_pipe_server *server) {
   (void)server;
   return false;

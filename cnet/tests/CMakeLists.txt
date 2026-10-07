@@ -1,6 +1,22 @@
 set(CNET_TEST_PRIVATE_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 set(CNET_WSPARSER_INCLUDE ${CMAKE_SOURCE_DIR}/tools/wsparser)
 
+cmake_add_test(cnet_ipc_test
+  SOURCES cnet_ipc_test.c
+  LIBS cnet Salts::Core Salts::TinyTest
+  FOLDER "cnet/tests")
+
+cmake_add_test(cnet_datagram_external_test
+  SOURCES cnet_datagram_external_test.c
+  LIBS cnet_test_profile Salts::Core Salts::TinyTest
+  INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
+  FOLDER "cnet/tests")
+
+cmake_add_test(cnet_websocket_tagged_test
+  SOURCES cnet_websocket_tagged_test.c
+  LIBS cnet Salts::Core Salts::TinyTest
+  FOLDER "cnet/tests")
+
 cmake_add_test(
   cnet_websocket_parser_test
   SOURCES

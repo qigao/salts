@@ -15,6 +15,9 @@ int cmeta_ipc_platform_server_cancel(cmeta_ipc_pipe_server *server,
                                      cmeta_ipc_request_id request_id);
 int cmeta_ipc_platform_server_observe(cmeta_ipc_pipe_server *server, size_t max_events,
                                       size_t *out_count);
+int cmeta_ipc_platform_server_wait_sources(const cmeta_ipc_pipe_server *server,
+                                           uintptr_t *out_handles, size_t capacity,
+                                           size_t *out_count, bool *out_ready);
 int cmeta_ipc_platform_server_close(cmeta_ipc_pipe_server *server);
 bool cmeta_ipc_platform_server_is_quiescent(const cmeta_ipc_pipe_server *server);
 bool cmeta_ipc_platform_server_get_stats(const cmeta_ipc_pipe_server *server,
@@ -94,6 +97,16 @@ int cmeta_ipc_pipe_server_observe(cmeta_ipc_pipe_server *server, size_t max_even
 int cmeta_ipc_pipe_server_close(cmeta_ipc_pipe_server *server) {
   if (server == NULL || server->impl == NULL) return SALTS_EINVAL;
   return cmeta_ipc_platform_server_close(server);
+}
+
+int cmeta_ipc_pipe_server_wait_sources(const cmeta_ipc_pipe_server *server,
+                                       uintptr_t *out_handles, size_t capacity,
+                                       size_t *out_count, bool *out_ready) {
+  if (out_count != NULL) *out_count = 0u;
+  if (out_ready != NULL) *out_ready = false;
+  if (server == NULL || server->impl == NULL || out_count == NULL || out_ready == NULL ||
+      (capacity != 0u && out_handles == NULL)) return SALTS_EINVAL;
+  return cmeta_ipc_platform_server_wait_sources(server, out_handles, capacity, out_count, out_ready);
 }
 
 bool cmeta_ipc_pipe_server_is_quiescent(const cmeta_ipc_pipe_server *server) {

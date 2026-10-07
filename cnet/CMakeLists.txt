@@ -31,6 +31,8 @@ set(CNET_SOURCE_FILES
   src/cnet_tls.c
   src/cnet_transport.c
   src/cnet_transport_pipe.c
+  src/cnet_transport_ipc.c
+  src/cnet_ipc.c
   src/cnet_transport_vsock.c
   src/cnet_uri.c
   src/cnet_write_queue.c
