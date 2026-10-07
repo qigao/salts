@@ -85,7 +85,8 @@ $coroutine = $benchmarkChanged -and $coroutine
 $nativeUring = $benchmarkChanged -and $nativeUring
 $forensic = $benchmarkChanged -and $forensic
 $compare = $benchmarkChanged -and $compare
-$work = $nativeOwner -or $nativeStyle -or $cnetOwner -or $cnetIo -or $cnetSg -or $coroutine -or $nativeUring -or $forensic
+$transportOwner = $PrepareRelease -or (Test-Changed '^(cnet|native-io)/')
+$work = $nativeOwner -or $nativeStyle -or $cnetOwner -or $cnetIo -or $cnetSg -or $coroutine -or $nativeUring -or $forensic -or $transportOwner
 
 $checks = [ordered]@{
   contracts = $native -or $execution -or $projection -or $lean
@@ -95,6 +96,7 @@ $checks = [ordered]@{
   lean = $lean
   mobile = $mobile
   work = $work
+  transport_owner = $transportOwner
   evidence = $work
   cnet_compare = $compare
   native_owner = $nativeOwner
