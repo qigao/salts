@@ -102,6 +102,7 @@ typedef struct salts_component_plugin_scope {
 struct salts_component_plugin_runtime {
     void *lock;
     salts_component_plugin_generation *current;
+    uint64_t last_generation_id;
     size_t active_scopes;
     size_t attached_generations;
     bool initialized;
