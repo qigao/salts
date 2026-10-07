@@ -24,11 +24,17 @@ cmeta_component(PatternStorage,
     cmeta_provides(component_storage)
     cmeta_requires(component_logger));
 
+cmeta_component_configured(PatternConfiguredStorage, &cmeta_data_int,
+    cmeta_provides(component_storage)
+    cmeta_requires(component_logger));
+
 cmeta_component_empty(PatternEmpty);
 
 cmeta_registry(pattern_components,
     cmeta_manifest_component_entry(
         "storage", cmeta_component_meta(PatternStorage))
+    cmeta_manifest_component_entry(
+        "configured-storage", cmeta_component_meta(PatternConfiguredStorage))
     cmeta_manifest_component_entry(
         "empty", cmeta_component_meta(PatternEmpty)));
 
@@ -98,7 +104,7 @@ suite("CMeta component declarations") {
         check_equal(original, renamed);
     }
 
-    it("represents an explicit empty component without sentinel capabilities") {
+    it("binds typed configuration through canonical DataDesc identity") {
         const cmeta_manifest_limits limits = {
             CMETA_MANIFEST_DEFAULT_ITEMS,
             CMETA_MANIFEST_DEFAULT_DEPTH,
@@ -108,6 +114,38 @@ suite("CMeta component declarations") {
 
         check_equal(cmeta_manifest_get_component(
             &pattern_components, 1u, &limits, &component), CMETA_OK);
+        check_not_null(component);
+        check_not_null(component->config);
+        check_true(cmeta_data_desc_equal(component->config, &cmeta_data_int));
+    }
+
+    it("includes typed config contract in the component fingerprint") {
+        const cmeta_fingerprint_limits limits = {
+            CMETA_FINGERPRINT_DEFAULT_DEPTH,
+            CMETA_FINGERPRINT_DEFAULT_NODES,
+            CMETA_FINGERPRINT_DEFAULT_ROWS,
+            CMETA_FINGERPRINT_DEFAULT_STRING_BYTES
+        };
+        uint64_t plain = 0u;
+        uint64_t configured = 0u;
+
+        check_equal(cmeta_contract_fingerprint_component(
+            cmeta_component_meta(PatternStorage), &limits, &plain), CMETA_OK);
+        check_equal(cmeta_contract_fingerprint_component(
+            cmeta_component_meta(PatternConfiguredStorage), &limits, &configured), CMETA_OK);
+        check_not_equal(plain, configured);
+    }
+
+    it("represents an explicit empty component without sentinel capabilities") {
+        const cmeta_manifest_limits limits = {
+            CMETA_MANIFEST_DEFAULT_ITEMS,
+            CMETA_MANIFEST_DEFAULT_DEPTH,
+            CMETA_MANIFEST_DEFAULT_NODES
+        };
+        const cmeta_component_desc *component = NULL;
+
+        check_equal(cmeta_manifest_get_component(
+            &pattern_components, 2u, &limits, &component), CMETA_OK);
         check_not_null(component);
         check_equal(component->capability_count, COMPONENT_SIZE(0u));
         check_null(component->capabilities);
