@@ -134,7 +134,7 @@ static cmeta_status interface_valid(const cmeta_interface_desc *desc,
 static cmeta_status enum_valid(const cmeta_enum_domain *desc, manifest_budget *budget) {
     if (desc->struct_size < sizeof(*desc)) return CMETA_INVALID_ARGUMENT;
     if (desc->abi_version != CMETA_ENUM_DOMAIN_ABI_VERSION) return CMETA_TYPE_MISMATCH;
-    if (desc->capability_count > budget->limits->max_items) return CMETA_CAPACITY_EXCEEDED;
+    if (desc->count > budget->limits->max_items) return CMETA_CAPACITY_EXCEEDED;
     return cmeta_enum_domain_valid(desc) ? CMETA_OK : CMETA_INVALID_ARGUMENT;
 }
 
