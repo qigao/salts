@@ -19,7 +19,7 @@ typedef struct cmeta_component_capability {
     const cmeta_interface_desc *interface_desc;
 } cmeta_component_capability;
 
-/* Format 1 is exact-size; metadata is borrowed under the provider's negotiated
+/* Format 2 is exact-size; metadata is borrowed under the provider's negotiated
  * Reflection ABI and lifetime. stable_id is the semantic component/provider
  * identity used for explicit selection and diagnostics; generated declarations
  * use the expanded C identifier spelling. Descriptor address is never identity.
