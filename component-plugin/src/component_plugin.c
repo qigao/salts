@@ -1,4 +1,5 @@
 #include <salts/component_plugin.h>
+#include <salts/thread.h>
 
 #include <string.h>
 
@@ -180,6 +181,7 @@ const char *salts_component_plugin_status_string(
     case SALTS_COMPONENT_PLUGIN_PLUGIN_ERROR: return "plugin error";
     case SALTS_COMPONENT_PLUGIN_PROVIDER_ERROR: return "provider error";
     case SALTS_COMPONENT_PLUGIN_COMPONENT_ERROR: return "component error";
+    case SALTS_COMPONENT_PLUGIN_BUSY: return "busy";
     case SALTS_COMPONENT_PLUGIN_INVALID_STATE: return "invalid state";
     }
     return "unknown component-plugin status";
@@ -231,6 +233,8 @@ salts_component_plugin_status salts_component_plugin_generation_build(
     generation->storage = *storage;
     generation->deployment_count = total;
     generation->module_count = 0u;
+    generation->runtime_owner = NULL;
+    generation->active_scopes = 0u;
     generation->failure = component_plugin_failure_none();
     generation->state = SALTS_COMPONENT_PLUGIN_GENERATION_ZERO;
 
@@ -297,6 +301,273 @@ salts_component_plugin_status salts_component_plugin_generation_discard(
             generation, SALTS_COMPONENT_PLUGIN_INDEX_NONE, plugin_status);
 
     generation->state = SALTS_COMPONENT_PLUGIN_GENERATION_DRAINED;
+    generation_clear(generation);
+    generation->state = SALTS_COMPONENT_PLUGIN_GENERATION_DRAINED;
+    return SALTS_COMPONENT_PLUGIN_OK;
+}
+
+salts_component_plugin_status salts_component_plugin_runtime_init(
+    salts_component_plugin_runtime *runtime) {
+    if (runtime == NULL || runtime->initialized)
+        return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
+
+    memset(runtime, 0, sizeof(*runtime));
+    cmeta_mutex_init((cmeta_mutex_t *)&runtime->lock);
+    runtime->initialized = true;
+    return SALTS_COMPONENT_PLUGIN_OK;
+}
+
+salts_component_plugin_status salts_component_plugin_runtime_destroy(
+    salts_component_plugin_runtime *runtime) {
+    if (runtime == NULL || !runtime->initialized)
+        return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
+
+    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+    if (runtime->current != NULL ||
+        runtime->active_scopes != 0u ||
+        runtime->attached_generations != 0u) {
+        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        return SALTS_COMPONENT_PLUGIN_BUSY;
+    }
+    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+
+    cmeta_mutex_destroy((cmeta_mutex_t *)&runtime->lock);
+    memset(runtime, 0, sizeof(*runtime));
+    return SALTS_COMPONENT_PLUGIN_OK;
+}
+
+salts_component_plugin_status salts_component_plugin_runtime_publish(
+    salts_component_plugin_runtime *runtime,
+    salts_component_plugin_generation *generation,
+    salts_component_plugin_generation **out_previous) {
+    salts_component_plugin_generation *previous;
+
+    if (runtime == NULL || generation == NULL || out_previous == NULL ||
+        !runtime->initialized)
+        return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
+
+    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+
+    if (generation->state != SALTS_COMPONENT_PLUGIN_GENERATION_BUILT ||
+        generation->runtime_owner != NULL ||
+        generation->active_scopes != 0u) {
+        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
+    }
+
+    previous = runtime->current;
+    if (previous != NULL &&
+        previous->state != SALTS_COMPONENT_PLUGIN_GENERATION_PUBLISHED) {
+        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
+    }
+
+    generation->runtime_owner = runtime;
+    generation->state = SALTS_COMPONENT_PLUGIN_GENERATION_PUBLISHED;
+    ++runtime->attached_generations;
+
+    runtime->current = generation;
+
+    if (previous != NULL)
+        previous->state = SALTS_COMPONENT_PLUGIN_GENERATION_DRAINING;
+
+    *out_previous = previous;
+    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+    return SALTS_COMPONENT_PLUGIN_OK;
+}
+
+salts_component_plugin_status salts_component_plugin_runtime_close(
+    salts_component_plugin_runtime *runtime,
+    salts_component_plugin_generation **out_previous) {
+    salts_component_plugin_generation *previous;
+
+    if (runtime == NULL || out_previous == NULL || !runtime->initialized)
+        return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
+
+    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+    previous = runtime->current;
+    if (previous == NULL) {
+        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
+    }
+    if (previous->state != SALTS_COMPONENT_PLUGIN_GENERATION_PUBLISHED) {
+        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
+    }
+
+    runtime->current = NULL;
+    previous->state = SALTS_COMPONENT_PLUGIN_GENERATION_DRAINING;
+    *out_previous = previous;
+
+    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+    return SALTS_COMPONENT_PLUGIN_OK;
+}
+
+salts_component_plugin_status salts_component_plugin_scope_acquire(
+    salts_component_plugin_runtime *runtime,
+    salts_component_plugin_scope *scope) {
+    salts_component_plugin_generation *generation;
+
+    if (runtime == NULL || scope == NULL || !runtime->initialized)
+        return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
+    if (scope->live)
+        return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
+
+    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+    generation = runtime->current;
+    if (generation == NULL ||
+        generation->state != SALTS_COMPONENT_PLUGIN_GENERATION_PUBLISHED ||
+        generation->active_scopes == SIZE_MAX ||
+        runtime->active_scopes == SIZE_MAX) {
+        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        return generation == NULL
+            ? SALTS_COMPONENT_PLUGIN_INVALID_STATE
+            : SALTS_COMPONENT_PLUGIN_CAPACITY_EXCEEDED;
+    }
+
+    ++generation->active_scopes;
+    ++runtime->active_scopes;
+
+    scope->runtime = runtime;
+    scope->generation = generation;
+    scope->generation_id = generation->id;
+    scope->live = true;
+
+    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+    return SALTS_COMPONENT_PLUGIN_OK;
+}
+
+salts_component_plugin_status salts_component_plugin_scope_release(
+    salts_component_plugin_scope *scope) {
+    salts_component_plugin_runtime *runtime;
+    salts_component_plugin_generation *generation;
+
+    if (scope == NULL || !scope->live ||
+        scope->runtime == NULL || scope->generation == NULL)
+        return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
+
+    runtime = scope->runtime;
+    generation = scope->generation;
+
+    if (!runtime->initialized)
+        return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
+
+    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+    if (generation->runtime_owner != runtime ||
+        generation->id != scope->generation_id ||
+        generation->active_scopes == 0u ||
+        runtime->active_scopes == 0u) {
+        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
+    }
+
+    --generation->active_scopes;
+    --runtime->active_scopes;
+    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+
+    memset(scope, 0, sizeof(*scope));
+    return SALTS_COMPONENT_PLUGIN_OK;
+}
+
+uint64_t salts_component_plugin_scope_generation_id(
+    const salts_component_plugin_scope *scope) {
+    return scope != NULL && scope->live ? scope->generation_id : UINT64_C(0);
+}
+
+salts_component_plugin_status salts_component_plugin_scope_find_service(
+    const salts_component_plugin_scope *scope,
+    const cmeta_interface_desc *interface_desc,
+    salts_component_service *out_service) {
+    salts_component_status status;
+
+    if (scope == NULL || !scope->live || scope->generation == NULL)
+        return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
+
+    status = salts_component_context_find_service(
+        &scope->generation->components, interface_desc, out_service);
+    return status == SALTS_COMPONENT_OK
+        ? SALTS_COMPONENT_PLUGIN_OK
+        : SALTS_COMPONENT_PLUGIN_COMPONENT_ERROR;
+}
+
+salts_component_plugin_status salts_component_plugin_scope_find_service_from(
+    const salts_component_plugin_scope *scope,
+    const char *provider_component_id,
+    const cmeta_interface_desc *interface_desc,
+    salts_component_service *out_service) {
+    salts_component_status status;
+
+    if (scope == NULL || !scope->live || scope->generation == NULL)
+        return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
+
+    status = salts_component_context_find_service_from(
+        &scope->generation->components,
+        provider_component_id,
+        interface_desc,
+        out_service);
+    return status == SALTS_COMPONENT_OK
+        ? SALTS_COMPONENT_PLUGIN_OK
+        : SALTS_COMPONENT_PLUGIN_COMPONENT_ERROR;
+}
+
+salts_component_plugin_status salts_component_plugin_generation_drain(
+    salts_component_plugin_runtime *runtime,
+    salts_component_plugin_generation *generation) {
+    salts_component_status component_status = SALTS_COMPONENT_OK;
+    cmeta_plugin_status plugin_status;
+
+    if (runtime == NULL || generation == NULL || !runtime->initialized)
+        return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
+
+    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+
+    if (generation->runtime_owner != runtime ||
+        (generation->state != SALTS_COMPONENT_PLUGIN_GENERATION_DRAINING &&
+         !(generation->state == SALTS_COMPONENT_PLUGIN_GENERATION_FAILED &&
+           generation->components.state == SALTS_COMPONENT_CONTEXT_STOPPED))) {
+        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
+    }
+
+    if (generation->active_scopes != 0u) {
+        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        return SALTS_COMPONENT_PLUGIN_BUSY;
+    }
+
+    generation->state = SALTS_COMPONENT_PLUGIN_GENERATION_STOPPING;
+    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+
+    if (generation->components.state == SALTS_COMPONENT_CONTEXT_ACTIVE)
+        component_status =
+            salts_component_context_stop(&generation->components);
+
+    if (component_status != SALTS_COMPONENT_OK) {
+        generation->failure.component_status = component_status;
+        cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+        generation->state = SALTS_COMPONENT_PLUGIN_GENERATION_FAILED;
+        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        return SALTS_COMPONENT_PLUGIN_COMPONENT_ERROR;
+    }
+
+    plugin_status = release_modules(generation);
+    if (plugin_status != CMETA_PLUGIN_OK) {
+        generation->failure.plugin_status = plugin_status;
+        cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+        generation->state = SALTS_COMPONENT_PLUGIN_GENERATION_FAILED;
+        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        return SALTS_COMPONENT_PLUGIN_PLUGIN_ERROR;
+    }
+
+    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+    generation->state = SALTS_COMPONENT_PLUGIN_GENERATION_DRAINED;
+    generation->runtime_owner = NULL;
+    if (runtime->attached_generations == 0u) {
+        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
+    }
+    --runtime->attached_generations;
+    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+
     generation_clear(generation);
     generation->state = SALTS_COMPONENT_PLUGIN_GENERATION_DRAINED;
     return SALTS_COMPONENT_PLUGIN_OK;
