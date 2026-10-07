@@ -142,6 +142,14 @@ static cmeta_status component_valid(const cmeta_component_desc *desc, manifest_b
     if (desc == NULL || desc->size != sizeof(*desc) || desc->stable_id == NULL ||
         desc->stable_id[0] == '\0') return CMETA_INVALID_ARGUMENT;
     if (desc->format_version != CMETA_COMPONENT_DECLARATION_VERSION) return CMETA_TYPE_MISMATCH;
+    if (desc->config != NULL) {
+        cmeta_status status;
+        if (!cmeta_data_desc_valid(desc->config)) return CMETA_INVALID_ARGUMENT;
+        if (desc->config->storage_type != NULL) {
+            status = type_valid(desc->config->storage_type, budget);
+            if (status != CMETA_OK) return status;
+        }
+    }
     if (desc->capability_count > budget->limits->max_items) return CMETA_CAPACITY_EXCEEDED;
     if ((desc->capability_count != 0u && desc->capabilities == NULL) ||
         desc->capability_count > SIZE_MAX / sizeof(*desc->capabilities)) return CMETA_INVALID_ARGUMENT;
