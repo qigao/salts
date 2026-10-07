@@ -129,9 +129,9 @@ linker     = optional private aggregation backend
 Do not introduce constructor registration or a process-global mutable CMeta
 registry.
 
-## Existing cmeta/plugin.h
+## Canonical cmeta/component.h
 
-The current `<cmeta/plugin.h>` declaration is static metadata only:
+The canonical `<cmeta/component.h>` declaration is static metadata only:
 
 ```text
 name
@@ -142,15 +142,7 @@ name
 It does not load modules, resolve dependencies, select providers, own leases, or
 advance lifecycle.
 
-Architecturally this is closer to a static component/provider capability
-declaration than to host-side `Salts::Plugin` runtime state.
-
-#1007 must decide whether this descriptor is:
-
-1. generalized into the canonical component descriptor; or
-2. replaced on the integration branch by that canonical descriptor.
-
-Do not keep two long-term provides/requires semantic authorities.
+This metadata is the canonical component/provider capability declaration. Dynamic module publication and lease ownership remain under `Salts::Plugin`. There is no second static plugin declaration vocabulary on the integration branch.
 
 ## Patterns that do not belong in CMeta runtime
 
