@@ -187,6 +187,16 @@ salts_component_status salts_component_context_find_service(
     const cmeta_interface_desc *interface_desc,
     salts_component_service *out_service);
 
+/*
+ * Explicit root/service selection for contexts that intentionally contain
+ * multiple providers of the same Interface. No ranking or fallback occurs.
+ */
+salts_component_status salts_component_context_find_service_from(
+    const salts_component_context *context,
+    const char *provider_component_id,
+    const cmeta_interface_desc *interface_desc,
+    salts_component_service *out_service);
+
 /* Factory helper for one already-resolved dependency slice. */
 salts_component_status salts_component_dependency_find(
     const salts_component_dependency *dependencies,
