@@ -513,7 +513,12 @@ after success. Queue exhaustion is reported immediately, and the existing
 client TLS buffer and handshake-timeout bounds apply unchanged.
 
 Each TLS session owns bounded ciphertext input/output rings plus fixed-capacity
-I/O scratch buffers. GmSSL consumes and emits ciphertext only through CNet's
+transport receive/send and plaintext scratch buffers. The transport receive
+buffer remains reserved until its NativeIO completion is consumed; ordinary
+TLS reads, no-demand probes, and partially consumed plaintext use separate
+storage. The plaintext buffer adds `tls_io_buffer_bytes` per TLS session inside
+the existing engine allocation, with no allocation in the receive hot path.
+GmSSL consumes and emits ciphertext only through CNet's
 external-I/O callbacks; NativeIO remains the sole transport/socket authority.
 Handshake, encrypted reads/writes, ALPN, cancellation, and `close_notify`
 stay on the CNet progress owner; TLS creates no worker thread. Handshake timeout is reported with stage `handshake`, malformed or
