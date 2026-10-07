@@ -1,6 +1,7 @@
 if(NOT DEFINED SALTS_BINARY_DIR OR
    NOT DEFINED CONSUMER_SOURCE_DIR OR
-   NOT DEFINED WORK_DIR)
+   NOT DEFINED WORK_DIR OR
+   NOT DEFINED CTEST_COMMAND)
   message(FATAL_ERROR "installed component test arguments are required")
 endif()
 
@@ -37,7 +38,7 @@ if(NOT build_result EQUAL 0)
 endif()
 
 execute_process(
-  COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${build}" --output-on-failure
+  COMMAND "${CTEST_COMMAND}" --test-dir "${build}" --output-on-failure
   RESULT_VARIABLE test_result)
 if(NOT test_result EQUAL 0)
   message(FATAL_ERROR "installed Component consumer test failed: ${test_result}")
