@@ -114,6 +114,73 @@ suite("ComponentPlugin candidate generation") {
         check_equal(info.active_leases, (size_t)0u);
     }
 
+    it("shares one Plugin lease across two provider exports") {
+        salts_component_plugin_generation multi = {0};
+        salts_component_deployment multi_deployments[2];
+        salts_component_instance multi_instances[2];
+        salts_component_dependency multi_dependencies[2];
+        size_t multi_order[2];
+        salts_component_plugin_module multi_modules[1];
+        const salts_component_plugin_generation_storage storage = {
+            multi_deployments, 2u,
+            multi_instances, 2u,
+            multi_dependencies, 2u,
+            multi_order, 2u,
+            multi_modules, 1u
+        };
+        const salts_component_plugin_source sources[2] = {
+            { ref, COMPONENT_PROVIDER_EXPORT_ID, NULL, NULL },
+            { ref, COMPONENT_PROVIDER_AUX_EXPORT_ID, NULL, NULL }
+        };
+        salts_component_service service;
+        component_plugin_value value =
+            component_plugin_value_bind(NULL, NULL);
+        component_plugin_aux aux =
+            component_plugin_aux_bind(NULL, NULL);
+        cmeta_plugin_lifecycle_info info;
+
+        check_equal(salts_component_plugin_generation_build(
+            &multi,
+            UINT64_C(3),
+            &registry,
+            &storage,
+            NULL, 0u,
+            sources, 2u,
+            NULL, 0u),
+            SALTS_COMPONENT_PLUGIN_OK);
+
+        check_equal(multi.deployment_count, (size_t)2u);
+        check_equal(multi.module_count, (size_t)1u);
+
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)1u);
+
+        check_equal(salts_component_context_find_service(
+            &multi.components,
+            component_plugin_value_interface(),
+            &service), SALTS_COMPONENT_OK);
+        check_equal(component_plugin_value_borrow_from_object(
+            service.object, service.interfaces, &value), CMETA_OK);
+        check_equal(component_plugin_value_get(&value),
+                    COMPONENT_PROVIDER_VALUE);
+
+        check_equal(salts_component_context_find_service(
+            &multi.components,
+            component_plugin_aux_interface(),
+            &service), SALTS_COMPONENT_OK);
+        check_equal(component_plugin_aux_borrow_from_object(
+            service.object, service.interfaces, &aux), CMETA_OK);
+        check_equal(component_plugin_aux_get(&aux),
+                    COMPONENT_PROVIDER_AUX_VALUE);
+
+        check_equal(salts_component_plugin_generation_discard(
+            &multi), SALTS_COMPONENT_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)0u);
+    }
+
     it("builds one typed Component graph under one Plugin lease") {
         const salts_component_plugin_generation_storage storage = {
             deployments, 1u,
