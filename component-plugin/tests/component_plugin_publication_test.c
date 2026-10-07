@@ -61,7 +61,7 @@ static int scope_value(salts_component_plugin_scope *scope) {
 suite("ComponentPlugin generation publication") {
     it("publishes N+1 atomically while admitted N drains") {
         const cmeta_plugin_registry_config registry_config = {1};
-        cmeta_plugin_registry registry;
+        cmeta_plugin_registry registry = {0};
         cmeta_plugin_ref ref;
         cmeta_plugin_lifecycle_info info;
         publication_generation_fixture g1 = {0};
