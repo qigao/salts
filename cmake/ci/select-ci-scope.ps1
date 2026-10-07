@@ -47,7 +47,7 @@ $native = $nativeCommon -or $concurrencyRuntime -or $pluginRuntime -or $utilsRun
 $execution = $nativeCommon -or $utilsRuntime -or $cflowRuntime -or $coroutineRuntime -or
   (Test-Changed '^(cstl/|concurrency/|cnet/(include/|src/|tests/|CMakeLists\.txt$)|utils/tests/test_object_pool\.c$|cflow/tests/cflow_stream_terminal_test\.c$)')
 $projection = $nativeCommon -or $pluginRuntime -or $concurrencyRuntime -or $coroutineRuntime -or $utilsRuntime -or
-  (Test-Changed '^(cflow/|cstl/(include/|src/|CMakeLists\.txt$)|cmeta/tests/installed/)')
+  (Test-Changed '^(cflow/|cstl/(include/|src/|CMakeLists\.txt$))')
 $lean = $full -or $contractsChanged -or (Test-Changed '^(\.github/workflows/ci\.yml|cmake/ci/select-ci-scope\.ps1|formal/cmeta_cflow_calculus/|cmeta/include/cmeta/generated/builtin_signature_manifest\.h$|cflow/include/cflow/generated/(builtin_operator_policy|machine_schema)\.h$)')
 
 $benchmarkCommon = $shared -or $cmetaRuntime -or $utilsRuntime -or $harness -or
@@ -135,7 +135,7 @@ if ($PrepareRelease) {
 $builds = @()
 foreach ($profile in $profiles) {
   # Clang profiles qualify the same portable/native contracts in isolated trees;
-  # their installed SDKs are test inputs, not additional release packages.
+  # their build artifacts are test inputs, not additional release packages.
   $profile.clang = $profile.id -in @('linux-clang-release', 'macos-clang-release')
   $entry = $profile.Clone()
   $entry.cross = $entry.family -in @('android', 'ios')

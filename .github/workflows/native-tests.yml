@@ -68,7 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V \
-            -R '^(platform_fastpath_|cmeta_trace_|cmeta_fastpath_|cmeta_coroutine|coro_executor|cmeta_native_|cmeta_plugin_native_)'
+            -R '^(platform_fastpath_|cmeta_trace_|cmeta_fastpath_|cmeta_data_reflect_|tinymock_reflect_|cmeta_coroutine|coro_executor|cmeta_native_|cmeta_plugin_native_)'
       - name: Run Windows native and plugin contracts
         if: matrix.family == 'windows' && matrix.native
         shell: cmd
@@ -77,7 +77,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V -R "^(platform_fastpath_|cmeta_trace_|cmeta_fastpath_|cmeta_coroutine|coro_executor|cmeta_native_|cmeta_plugin_native_|cflow_execution_test$|cflow_interface_reflection_test$|cflow_executor_dso_test$)"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V -R "^(platform_fastpath_|cmeta_trace_|cmeta_fastpath_|cmeta_data_reflect_|tinymock_reflect_|cmeta_coroutine|coro_executor|cmeta_native_|cmeta_plugin_native_|cflow_execution_test$|cflow_interface_reflection_test$|cflow_executor_dso_test$)"
           if errorlevel 1 exit /b 1
       - name: Run POSIX execution and nested CSTL contracts
         if: matrix.family != 'windows' && matrix.execution
@@ -97,16 +97,6 @@ jobs:
         shell: bash
         run: |
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -R '^(cflow_function_projection_test|cflow_execution_test|cflow_interface_reflection_test)$'
-      - name: Run installed-package tests
-        shell: bash
-        env:
-          PROJECT_ROOT: ${{ github.workspace }}
-        run: |
-          set -euo pipefail
-          export CMETA_PACKAGE_ROOT="$PROJECT_ROOT/stage/sdk/${{ matrix.sdk || matrix.id }}"
-          cd cmeta/tests/installed
-          ctest --preset "installed-${{ matrix.id }}" --no-tests=error --output-on-failure --timeout 60
-        if: matrix.projection
       - name: Run portable arm64 header tests
         shell: bash
         run: |

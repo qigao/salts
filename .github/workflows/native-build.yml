@@ -147,18 +147,6 @@ jobs:
           $triplet = ($triplets[0] -split '=', 2)[1]
           # LOAD_WITH_ALTERED_SEARCH_PATH must resolve each revision's own dependencies.
           Copy-Item -Path (Join-Path $baseline "vcpkg_installed/$triplet/bin/*.dll") -Destination $binary
-      - name: Compile installed-package tests
-        shell: bash
-        env:
-          PROJECT_ROOT: ${{ github.workspace }}
-        run: |
-          set -euo pipefail
-          cmake --build --preset "install-${{ matrix.preset }}"
-          export CMETA_PACKAGE_ROOT="$PROJECT_ROOT/stage/sdk/${{ matrix.sdk || matrix.id }}"
-          cd cmeta/tests/installed
-          cmake --preset "installed-${{ matrix.id }}" -DCMAKE_SUPPRESS_REGENERATION=ON
-          cmake --build --preset "installed-${{ matrix.id }}" --parallel 2
-        if: matrix.projection
       - name: Install SDK
         shell: bash
         run: |
@@ -449,8 +437,6 @@ jobs:
           paths=("${{ matrix.build_dir }}" vcpkg_installed)
           if [ -d stage ]; then paths+=(stage); fi
           if [ -d build/pr-base ]; then paths+=(build/pr-base/build/Msvc-Release/bin); fi
-          if [ -d cmeta/tests/installed/build ]; then paths+=(cmeta/tests/installed/build); fi
-          if [ -d cmeta/tests/installed/vcpkg_installed ]; then paths+=(cmeta/tests/installed/vcpkg_installed); fi
           tar --format=pax -cf native-build.tar --null -T native-build-sources.txt \
             native-build-commit.txt native-build-workspace.txt native-build-image.txt \
             native-build-platform.txt native-build-profile.txt "${paths[@]}"
