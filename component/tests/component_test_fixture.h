@@ -50,19 +50,19 @@ typedef struct test_provider_state {
     cmeta_object_lifecycle lifecycle;
 } test_provider_state;
 
-static int test_log_get(void *self) {
+static int test_log_get_impl(void *self) {
     return *(int *)self;
 }
 
-static int test_app_value(void *self) {
+static int test_app_value_impl(void *self) {
     return *(int *)self;
 }
 
 CMETA_IMPLEMENTS(test_log, test_log_impl, 0u,
-    .get = test_log_get);
+    .get = test_log_get_impl);
 
 CMETA_IMPLEMENTS(test_app, test_app_impl, 0u,
-    .value = test_app_value);
+    .value = test_app_value_impl);
 
 static cmeta_status test_interface_project(
     void *context,
