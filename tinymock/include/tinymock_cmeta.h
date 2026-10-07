@@ -524,6 +524,11 @@
   tinymock_cmeta_captor_capture_name( \
       (captor), TINYMOCk_INTERFACE_METHOD_HISTORY((mock), method), \
       (call_index), (param_name))
+#define TINYMOCk_INTERFACE_ARG_MATCH_DATA( \
+    mock, method, call_index, param_name, data, expected_lvalue, result) \
+  tinymock_cmeta_history_arg_match_data_name( \
+      TINYMOCk_INTERFACE_METHOD_HISTORY((mock), method), (call_index), \
+      (param_name), (data), &(expected_lvalue), NULL, (result))
 #define TINYMOCk_INTERFACE_SET_OUT(mock, method, param_name, value_lvalue) \
   tinymock_cmeta_actions_set_output_name( \
       TINYMOCk_INTERFACE_METHOD_ACTIONS((mock), method), \

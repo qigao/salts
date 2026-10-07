@@ -72,6 +72,95 @@ header.
 one declaration. Tuple rows remain framework machinery, not the canonical
 application field syntax.
 
+已有 C/C++ 类型可通过 `<cmeta/data_reflect.h>` 外部声明字段，原生头文件无需
+包含 CMeta。`cmeta_reflect_data` 复用 Struct 的布局验证与元数据生成器，并从
+同一字段列表生成布局、字段数据语义和 DataDesc：
+
+```c
+#include <cmeta/data_reflect.h>
+
+typedef struct Account { int id; double balance; } Account;
+cmeta_reflect_data(Account, "app.Account",
+    cmeta_field(int, id)
+    cmeta_field(double, balance)
+);
+
+/* StructMeta(Account): layout; cmeta_reflected_data(Account): DataDesc. */
+```
+
+参数依次为原生类型的单一标识符（带命名空间或复杂类型先用 typedef/using
+取别名）、非空 stable ID 字符串字面量，以及 1–16 个字段声明；宏用于文件或
+命名空间作用域，没有运行时返回值。它不重新定义原生类型。每个类型在同一 TU
+只能生成一份布局，不与该类型已有的
+`cmeta_struct` 声明叠加；头文件可被多个 TU 引用，描述符按语义比较。
+
+- `cmeta_field(type, member)` 自动选择已有 `CMETA_DATAOF` 基础类型：bool、int、
+  long、float、double 及其兼容 typedef。名称与偏移来自真实成员，默认字段 ID
+  为 `"类型 stable ID.成员名"`。
+- `cmeta_data_field(type, member, descriptor[, storage])` 显式指定数据语义和
+  canonical storage descriptor。省略 storage 时使用 `CMETA_TYPEOF(type)`；
+  自定义类型必须提供 storage，不能以 NULL 布局元数据代替。例如嵌套字段使用
+  `cmeta_data_field(Child, child, cmeta_reflected_data(Child), cmeta_reflected_storage(Child))`。
+  字符串/容器使用同一 provider 的 DataDesc 和 storage descriptor。两者必须是
+  静态对象地址；C11 静态初始化不允许通过 `descriptor->storage_type` 求值。
+- `cmeta_data_field_id(type, member, stable_id, descriptor[, storage])` 保留历史
+  字段 ID；反射字段名仍为当前成员名，ID 必须在该视图内唯一。
+
+未知基础类型、声明与真实成员类型不符、重复成员及 C++ 非标准布局类型在
+编译期拒绝。位域不能取地址/偏移，也不能用于此入口。显式 descriptor 必须是
+具有静态存储期的不可变 `const cmeta_data_desc` 对象地址，并准确描述该成员的
+存储和语义；指针不自动解释为字符串、借用或所有权。生成的视图不会授予字段
+写权限，也不会接管 Plugin/provider 生命周期。字段与对象的借用有效期和线程
+同步责任仍由调用方承担；非标准布局类走既有成员访问器。volatile 字段拒绝
+编译；const 字段可通过显式 descriptor 和 storage 纳入只读视图。
+
+`cmeta_reflect_data` 默认是只读投影视图，允许省略字段；即使存储是 POD，也不
+授予 semantic init/copy/move/restore/is_zero 能力，对应查询返回 false，操作
+返回 `CMETA_TRAIT_MISSING`。读取仍通过 `cmeta_object_borrow` 和
+`cmeta_object_field_read`；资源生命周期、锁和对象不变量仍归原生 owner。
+
+确需字段级值生命周期时，使用同参数的 `cmeta_reflect_value`。这是调用方对
+**完整字段列表和字段级零值/复制/移动/清理语义**的显式承诺，C11 无法自动发现
+未声明字段。它拒绝 const/volatile 字段，C++ 还要求 trivial、standard-layout、
+非 union 类型；带构造/析构不变量的类使用只读视图和原生 provider。
+字段仍使用各自 provider 的复制、转移和清理协议，声明本身不分配资源。
+目标存储须处于语义零值，访问默认单线程或由调用方外部同步。嵌套只读视图不会
+被父记录升级为可构造值；缺少所需能力时返回 `CMETA_TRAIT_MISSING`。
+
+**设计与兼容性决策。** 单凭 standard-layout 不能推导生命周期授权；仅将
+操作指针置空也不能关闭既有 v1 STRUCT 的字段级生命周期。为保持手写 v1
+描述符行为，新增反射使用 DataDesc 版本 2，仅用于 STRUCT；其 shape 为
+`cmeta_data_reflection_shape`，首成员保留既有 `cmeta_data_struct_shape` 读取视图，
+尾部显式记录 VIEW/VALUE 模式。既有描述符布局与 Reflection ABI epoch 不变。
+旧运行时拒绝版本 2，不会忽略只读限制；运行时和生成头文件需一起更新。
+
+相较运行时注册表，该方案无元数据分配、无可变缓存、无初始化顺序依赖。
+在既有 descriptor/object admission 边界交叉校验布局与数据字段的大小、对齐、
+canonical 类型和偏移，拒绝重复 ID；VALUE 还拒绝字段重叠。非法元数据使
+`cmeta_data_desc_valid` 返回 false、`cmeta_object_borrow` 返回
+`CMETA_INVALID_ARGUMENT`，不会产生对象副作用。验证成本 O(n²)、辅助空间 O(1)，
+n 上限 16；不以未经测量的缓存增加状态归属复杂度。
+
+高频重复读取可先调用 `cmeta_object_field_bind`，检查成功后复用
+`cmeta_object_field_read_admitted`，避免每次进行完整元数据校验。binding 不保留
+对象、描述符或 provider lease；这些对象必须在使用期间有效，且 binding 不可
+篡改。需要读取动态字段时仍由既有 provider 每次提供当前借用视图。
+[读取基准](benchmarks/cmeta_data_reflect_benchmark.c) 对同一 16 字段记录比较 v1、
+v2 校验读取和 v2 绑定后读取；绑定准备放在计时外，结果不代表端到端吞吐。
+Windows VS 开发环境中可复验：
+
+```sh
+cmake --build --preset win-release-user --target cmeta_data_reflect_benchmark
+ctest --preset win-release-user -R "^cmeta_data_reflect_benchmark$" -LE "^$" -V
+```
+
+迁移时保留 stable ID、原生对象布局和 provider，只读声明保持原入口；原先依赖
+该新增宏隐式生命周期的代码需审计字段完整性后改为 `cmeta_reflect_value`，并为
+自定义字段提供 storage。回滚时还原相应声明及匹配运行时，不将只读描述符强制
+改为 v1。C11/C++17 的 [运行测试](tests/cmeta_data_reflect_cases.h) 覆盖只读能力、
+嵌套指纹、非法元数据及跨 TU 一致性；[provider 测试](tests/cmeta_data_reflect_provider_cases.h)
+覆盖字符串资源、固定数组、失败回滚和释放计数。
+
 `cmeta_scope` owns an explicit finite resource set and runs a status-returning
 body function. Native early returns from that function still reach generated
 LIFO cleanup. Scope construction and cleanup use the same canonical DataDesc

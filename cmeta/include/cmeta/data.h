@@ -30,7 +30,10 @@ typedef enum cmeta_data_kind {
 } cmeta_data_kind;
 
 enum {
-    CMETA_DATA_DESC_ABI_VERSION = 1u
+    CMETA_DATA_DESC_ABI_VERSION = 1u,
+    /* V2 is restricted to explicit native record reflection. V1 runtimes
+     * reject it rather than silently deriving lifecycle authority. */
+    CMETA_DATA_DESC_REFLECTION_ABI_VERSION = 2u
 };
 
 enum { CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION = 1u };
@@ -481,6 +484,23 @@ typedef struct cmeta_data_struct_shape {
     const cmeta_data_field_desc *fields;
     size_t field_count;
 } cmeta_data_struct_shape;
+
+typedef enum cmeta_data_reflection_mode {
+    CMETA_DATA_REFLECTION_VIEW,
+    CMETA_DATA_REFLECTION_VALUE
+} cmeta_data_reflection_mode;
+
+enum { CMETA_DATA_REFLECTION_MAX_FIELDS = 16u };
+
+/* Only V2 STRUCT descriptors use this shape. The first member preserves
+ * read-only struct inspection. VALUE attests that every native value field
+ * is listed and that fieldwise zero/copy/move/cleanup is the native contract.
+ * VIEW grants no semantic lifecycle, even for an otherwise trivial record. */
+typedef struct cmeta_data_reflection_shape {
+    cmeta_data_struct_shape structure;
+    size_t struct_size;
+    cmeta_data_reflection_mode mode;
+} cmeta_data_reflection_shape;
 
 /*
  * Provider-neutral collection reflection.

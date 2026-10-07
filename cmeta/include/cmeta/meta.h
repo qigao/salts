@@ -6,6 +6,7 @@
 #include <cmeta/compute.h>
 #include <cmeta/data.h>
 #include <cmeta/data_select.h>
+#include <cmeta/data_reflect.h>
 #include <cmeta/declared_type.h>
 #include <cmeta/entry.h>
 #include <cmeta/enum.h>

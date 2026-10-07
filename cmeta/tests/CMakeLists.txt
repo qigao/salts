@@ -1,3 +1,12 @@
+cmake_add_test(cmeta_data_reflect_test
+  SOURCES cmeta_data_reflect_test.c cmeta_data_reflect_peer.c
+  LIBS Salts::CMeta Salts::TinyTest
+  FOLDER "cmeta/tests")
+cmake_add_test(cmeta_data_reflect_cpp_test
+  SOURCES cmeta_data_reflect_cpp_test.cpp cmeta_data_reflect_peer.c
+  LIBS Salts::CMeta Salts::TinyTest
+  FOLDER "cmeta/tests")
+
 cmake_add_test(cmeta_trace_test
   SOURCES cmeta_trace_test.c
   LIBS Salts::CMeta Salts::TinyTest Salts::Platform

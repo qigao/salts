@@ -1,3 +1,11 @@
+cmake_add_benchmark(cmeta_data_reflect_benchmark
+  SOURCES cmeta_data_reflect_benchmark.c
+  LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/benchmarks")
+if(BUILD_TESTS)
+  add_test(NAME cmeta_data_reflect_benchmark COMMAND cmeta_data_reflect_benchmark)
+  set_tests_properties(cmeta_data_reflect_benchmark PROPERTIES LABELS "benchmark")
+endif()
+
 cmake_add_benchmark(cmeta_binding_benchmark
   SOURCES cmeta_binding_benchmark.c cmeta_binding_benchmark_target.c
   LIBS Salts::CMeta Salts::TinyTest FOLDER "cmeta/benchmarks")
