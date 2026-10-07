@@ -49,6 +49,47 @@ suite("ComponentPlugin candidate generation") {
         check_equal(cmeta_plugin_registry_destroy(&registry), CMETA_PLUGIN_OK);
     }
 
+    it("releases candidate leases when provider admission fails") {
+        const salts_component_plugin_generation_storage storage = {
+            deployments, 1u,
+            instances, 1u,
+            dependencies, 1u,
+            activation_order, 1u,
+            modules, 1u
+        };
+        const salts_component_plugin_source source = {
+            ref,
+            "missing-provider-export",
+            NULL,
+            NULL
+        };
+        cmeta_plugin_lifecycle_info info;
+
+        check_equal(salts_component_plugin_generation_build(
+            &generation,
+            UINT64_C(1),
+            &registry,
+            &storage,
+            NULL, 0u,
+            &source, 1u,
+            NULL, 0u),
+            SALTS_COMPONENT_PLUGIN_PLUGIN_ERROR);
+        check_equal(generation.state,
+                    SALTS_COMPONENT_PLUGIN_GENERATION_FAILED);
+
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)0u);
+        check_equal(
+            salts_component_plugin_generation_failure(&generation)
+                ->source_index,
+            (size_t)0u);
+        check_equal(
+            salts_component_plugin_generation_failure(&generation)
+                ->plugin_status,
+            CMETA_PLUGIN_UNKNOWN_EXPORT);
+    }
+
     it("builds one typed Component graph under one Plugin lease") {
         const salts_component_plugin_generation_storage storage = {
             deployments, 1u,
