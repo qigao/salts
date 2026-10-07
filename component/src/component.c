@@ -70,7 +70,10 @@ static salts_component_status salts_component_binding_status(
     const salts_component_provider_binding *binding) {
     const cmeta_component_desc *component;
 
-    if (binding == NULL || !cmeta_component_desc_valid(binding->component) ||
+    if (binding == NULL ||
+        binding->struct_size != sizeof(*binding) ||
+        binding->abi_version != SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION ||
+        !cmeta_component_desc_valid(binding->component) ||
         binding->create == NULL)
         return SALTS_COMPONENT_INVALID_COMPONENT;
 
@@ -78,16 +81,6 @@ static salts_component_status salts_component_binding_status(
 
     if ((binding->activate == NULL) != (binding->deactivate == NULL))
         return SALTS_COMPONENT_INVALID_COMPONENT;
-
-    if (component->config == NULL) {
-        if (binding->config_data != NULL || binding->config_value != NULL)
-            return SALTS_COMPONENT_CONFIG_MISMATCH;
-    } else {
-        if (binding->config_data == NULL || binding->config_value == NULL ||
-            !cmeta_data_desc_valid(binding->config_data) ||
-            !cmeta_data_desc_equal(component->config, binding->config_data))
-            return SALTS_COMPONENT_CONFIG_MISMATCH;
-    }
 
     if (binding->interfaces != NULL &&
         !cmeta_object_interface_provider_valid(binding->interfaces))
@@ -98,6 +91,42 @@ static salts_component_status salts_component_binding_status(
         return SALTS_COMPONENT_INVALID_COMPONENT;
 
     return SALTS_COMPONENT_OK;
+}
+
+static salts_component_status salts_component_deployment_status(
+    const salts_component_deployment *deployment) {
+    const cmeta_component_desc *component;
+    salts_component_status status;
+
+    if (deployment == NULL || deployment->provider == NULL)
+        return SALTS_COMPONENT_INVALID_COMPONENT;
+
+    status = salts_component_binding_status(deployment->provider);
+    if (status != SALTS_COMPONENT_OK)
+        return status;
+
+    component = deployment->provider->component;
+    if (component->config == NULL) {
+        if (deployment->config_data != NULL || deployment->config_value != NULL)
+            return SALTS_COMPONENT_CONFIG_MISMATCH;
+    } else {
+        if (deployment->config_data == NULL ||
+            deployment->config_value == NULL ||
+            !cmeta_data_desc_valid(deployment->config_data) ||
+            !cmeta_data_desc_equal(component->config, deployment->config_data))
+            return SALTS_COMPONENT_CONFIG_MISMATCH;
+    }
+
+    return SALTS_COMPONENT_OK;
+}
+
+static const salts_component_provider_binding *salts_component_provider_at(
+    const salts_component_context *context,
+    size_t index) {
+    if (context == NULL || index >= context->deployment_count ||
+        context->deployments[index].provider == NULL)
+        return NULL;
+    return context->deployments[index].provider;
 }
 
 static void salts_component_instance_reset(salts_component_instance *instance) {
@@ -142,8 +171,8 @@ static size_t salts_component_find_id(
     size_t i;
     if (context == NULL || stable_id == NULL)
         return SALTS_COMPONENT_INDEX_NONE;
-    for (i = 0u; i < context->provider_count; ++i)
-        if (strcmp(context->providers[i].component->stable_id, stable_id) == 0)
+    for (i = 0u; i < context->deployment_count; ++i)
+        if (strcmp(salts_component_provider_at(context, i)->component->stable_id, stable_id) == 0)
             return i;
     return SALTS_COMPONENT_INDEX_NONE;
 }
@@ -160,11 +189,11 @@ static salts_component_status salts_component_select_provider(
     size_t provider_matches = 0u;
     size_t i;
 
-    if (context == NULL || consumer_index >= context->provider_count ||
+    if (context == NULL || consumer_index >= context->deployment_count ||
         !cmeta_interface_desc_valid(requirement) || out_provider == NULL)
         return SALTS_COMPONENT_INVALID_ARGUMENT;
 
-    consumer_id = context->providers[consumer_index].component->stable_id;
+    consumer_id = salts_component_provider_at(context, consumer_index)->component->stable_id;
 
     for (i = 0u; i < context->selection_count; ++i) {
         const salts_component_selection *row = &context->selections[i];
@@ -183,15 +212,15 @@ static salts_component_status salts_component_select_provider(
             salts_component_find_id(context, selection->provider_component_id);
         if (provider_candidate == SALTS_COMPONENT_INDEX_NONE ||
             !salts_component_provides(
-                context->providers[provider_candidate].component, requirement))
+                salts_component_provider_at(context, provider_candidate)->component, requirement))
             return SALTS_COMPONENT_INVALID_SELECTION;
         *out_provider = provider_candidate;
         return SALTS_COMPONENT_OK;
     }
 
-    for (i = 0u; i < context->provider_count; ++i) {
+    for (i = 0u; i < context->deployment_count; ++i) {
         if (salts_component_provides(
-                context->providers[i].component, requirement)) {
+                salts_component_provider_at(context, i)->component, requirement)) {
             provider_candidate = i;
             ++provider_matches;
         }
@@ -260,7 +289,7 @@ static void salts_component_rollback(
         --activated_count;
         component_index = context->activation_order[activated_count];
         instance = &context->instances[component_index];
-        binding = &context->providers[component_index];
+        binding = salts_component_provider_at(context, component_index);
 
         if (!instance->active)
             continue;
@@ -295,8 +324,8 @@ const char *salts_component_status_string(salts_component_status status) {
 
 salts_component_status salts_component_context_init(
     salts_component_context *context,
-    const salts_component_provider_binding *providers,
-    size_t provider_count,
+    const salts_component_deployment *deployments,
+    size_t deployment_count,
     const salts_component_selection *selections,
     size_t selection_count,
     salts_component_instance *instances,
@@ -314,8 +343,8 @@ salts_component_status salts_component_context_init(
     memset(context, 0, sizeof(*context));
     context->failure = salts_component_failure_none();
 
-    if ((provider_count != 0u &&
-         (providers == NULL || instances == NULL || activation_order == NULL)) ||
+    if ((deployment_count != 0u &&
+         (deployments == NULL || instances == NULL || activation_order == NULL)) ||
         (selection_count != 0u && selections == NULL) ||
         (dependency_capacity != 0u && dependencies == NULL))
         return salts_component_fail(
@@ -323,15 +352,15 @@ salts_component_status salts_component_context_init(
             SALTS_COMPONENT_PHASE_INIT, SALTS_COMPONENT_INDEX_NONE,
             SALTS_COMPONENT_INDEX_NONE, CMETA_OK);
 
-    if (provider_count > instance_capacity ||
-        provider_count > activation_capacity)
+    if (deployment_count > instance_capacity ||
+        deployment_count > activation_capacity)
         return salts_component_fail(
             context, SALTS_COMPONENT_CAPACITY_EXCEEDED,
             SALTS_COMPONENT_PHASE_INIT, SALTS_COMPONENT_INDEX_NONE,
             SALTS_COMPONENT_INDEX_NONE, CMETA_OK);
 
-    context->providers = providers;
-    context->provider_count = provider_count;
+    context->deployments = deployments;
+    context->deployment_count = deployment_count;
     context->selections = selections;
     context->selection_count = selection_count;
     context->instances = instances;
@@ -341,9 +370,9 @@ salts_component_status salts_component_context_init(
     context->activation_order = activation_order;
     context->activation_capacity = activation_capacity;
 
-    for (i = 0u; i < provider_count; ++i) {
+    for (i = 0u; i < deployment_count; ++i) {
         salts_component_status status =
-            salts_component_binding_status(&providers[i]);
+            salts_component_deployment_status(&deployments[i]);
         if (status != SALTS_COMPONENT_OK)
             return salts_component_fail(
                 context, status, SALTS_COMPONENT_PHASE_INIT, i,
@@ -351,8 +380,8 @@ salts_component_status salts_component_context_init(
 
         for (j = 0u; j < i; ++j) {
             if (strcmp(
-                    providers[i].component->stable_id,
-                    providers[j].component->stable_id) == 0)
+                    deployments[i].provider->component->stable_id,
+                    deployments[j].provider->component->stable_id) == 0)
                 return salts_component_fail(
                     context, SALTS_COMPONENT_DUPLICATE_COMPONENT_ID,
                     SALTS_COMPONENT_PHASE_INIT, i,
@@ -385,9 +414,9 @@ salts_component_status salts_component_context_init(
         if (consumer_index == SALTS_COMPONENT_INDEX_NONE ||
             provider_index == SALTS_COMPONENT_INDEX_NONE ||
             !salts_component_requires(
-                providers[consumer_index].component, selection->requirement) ||
+                deployments[consumer_index].provider->component, selection->requirement) ||
             !salts_component_provides(
-                providers[provider_index].component, selection->requirement))
+                deployments[provider_index].provider->component, selection->requirement))
             return salts_component_fail(
                 context, SALTS_COMPONENT_INVALID_SELECTION,
                 SALTS_COMPONENT_PHASE_INIT,
@@ -425,9 +454,9 @@ salts_component_status salts_component_context_resolve(
     context->dependency_count = 0u;
     context->activation_count = 0u;
 
-    for (i = 0u; i < context->provider_count; ++i) {
+    for (i = 0u; i < context->deployment_count; ++i) {
         size_t count =
-            salts_component_requirement_count(context->providers[i].component);
+            salts_component_requirement_count(salts_component_provider_at(context, i)->component);
         if (required_total > SIZE_MAX - count)
             return salts_component_fail(
                 context, SALTS_COMPONENT_CAPACITY_EXCEEDED,
@@ -443,8 +472,8 @@ salts_component_status salts_component_context_resolve(
             SALTS_COMPONENT_PHASE_RESOLVE, SALTS_COMPONENT_INDEX_NONE,
             SALTS_COMPONENT_INDEX_NONE, CMETA_OK);
 
-    for (i = 0u; i < context->provider_count; ++i) {
-        const cmeta_component_desc *consumer = context->providers[i].component;
+    for (i = 0u; i < context->deployment_count; ++i) {
+        const cmeta_component_desc *consumer = salts_component_provider_at(context, i)->component;
         salts_component_instance *instance = &context->instances[i];
         size_t capability_index;
 
@@ -475,11 +504,11 @@ salts_component_status salts_component_context_resolve(
             context->dependencies[dependency_count].interface_desc =
                 requirement->interface_desc;
             context->dependencies[dependency_count].provider_component =
-                context->providers[candidate].component;
+                salts_component_provider_at(context, candidate)->component;
             context->dependencies[dependency_count].provider_instance =
                 &context->instances[candidate].object;
             context->dependencies[dependency_count].provider_interfaces =
-                context->providers[candidate].interfaces;
+                salts_component_provider_at(context, candidate)->interfaces;
             ++dependency_count;
             ++instance->dependency_count;
         }
@@ -487,12 +516,12 @@ salts_component_status salts_component_context_resolve(
 
     context->dependency_count = dependency_count;
 
-    for (i = 0u; i < context->provider_count; ++i) {
+    for (i = 0u; i < context->deployment_count; ++i) {
         size_t candidate;
         size_t selected = SALTS_COMPONENT_INDEX_NONE;
 
         for (candidate = 0u;
-             candidate < context->provider_count;
+             candidate < context->deployment_count;
              ++candidate) {
             if (salts_component_order_contains(context, i, candidate))
                 continue;
@@ -511,7 +540,7 @@ salts_component_status salts_component_context_resolve(
         context->activation_order[i] = selected;
     }
 
-    context->activation_count = context->provider_count;
+    context->activation_count = context->deployment_count;
     context->state = SALTS_COMPONENT_CONTEXT_RESOLVED;
     return SALTS_COMPONENT_OK;
 }
@@ -532,7 +561,7 @@ salts_component_status salts_component_context_start(
          ++order_index) {
         const size_t component_index = context->activation_order[order_index];
         const salts_component_provider_binding *binding =
-            &context->providers[component_index];
+            salts_component_provider_at(context, component_index);
         salts_component_instance *instance =
             &context->instances[component_index];
         const salts_component_dependency *dependencies =
@@ -568,8 +597,8 @@ salts_component_status salts_component_context_start(
         instance->object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
         provider_status = binding->create(
             binding->provider_context,
-            binding->config_data,
-            binding->config_value,
+            context->deployments[component_index].config_data,
+            context->deployments[component_index].config_value,
             dependencies,
             instance->dependency_count,
             &instance->object);
@@ -644,7 +673,7 @@ salts_component_status salts_component_context_stop(
         --order_index;
         component_index = context->activation_order[order_index];
         instance = &context->instances[component_index];
-        binding = &context->providers[component_index];
+        binding = salts_component_provider_at(context, component_index);
 
         if (!instance->active)
             continue;
@@ -681,22 +710,22 @@ salts_component_status salts_component_context_find_service_from(
     if (candidate == SALTS_COMPONENT_INDEX_NONE)
         return SALTS_COMPONENT_MISSING_PROVIDER;
     if (!salts_component_provides(
-            context->providers[candidate].component, interface_desc))
+            salts_component_provider_at(context, candidate)->component, interface_desc))
         return SALTS_COMPONENT_INTERFACE_UNAVAILABLE;
     if (!context->instances[candidate].active)
         return SALTS_COMPONENT_INVALID_STATE;
 
     status = cmeta_object_interface_project_borrowed(
         &context->instances[candidate].object,
-        context->providers[candidate].interfaces,
+        salts_component_provider_at(context, candidate)->interfaces,
         interface_desc,
         &projection);
     if (status != CMETA_OK)
         return SALTS_COMPONENT_INTERFACE_UNAVAILABLE;
 
-    candidate_service.component = context->providers[candidate].component;
+    candidate_service.component = salts_component_provider_at(context, candidate)->component;
     candidate_service.object = &context->instances[candidate].object;
-    candidate_service.interfaces = context->providers[candidate].interfaces;
+    candidate_service.interfaces = salts_component_provider_at(context, candidate)->interfaces;
     *out_service = candidate_service;
     return SALTS_COMPONENT_OK;
 }
@@ -716,9 +745,9 @@ salts_component_status salts_component_context_find_service(
     if (context->state != SALTS_COMPONENT_CONTEXT_ACTIVE)
         return SALTS_COMPONENT_INVALID_STATE;
 
-    for (i = 0u; i < context->provider_count; ++i) {
+    for (i = 0u; i < context->deployment_count; ++i) {
         if (salts_component_provides(
-                context->providers[i].component, interface_desc)) {
+                salts_component_provider_at(context, i)->component, interface_desc)) {
             candidate = i;
             ++candidate_count;
         }
@@ -737,16 +766,16 @@ salts_component_status salts_component_context_find_service(
             CMETA_INTERFACE_PROJECTION_INIT;
         cmeta_status status = cmeta_object_interface_project_borrowed(
             &context->instances[candidate].object,
-            context->providers[candidate].interfaces,
+            salts_component_provider_at(context, candidate)->interfaces,
             interface_desc,
             &projection);
         if (status != CMETA_OK)
             return SALTS_COMPONENT_INTERFACE_UNAVAILABLE;
     }
 
-    candidate_service.component = context->providers[candidate].component;
+    candidate_service.component = salts_component_provider_at(context, candidate)->component;
     candidate_service.object = &context->instances[candidate].object;
-    candidate_service.interfaces = context->providers[candidate].interfaces;
+    candidate_service.interfaces = salts_component_provider_at(context, candidate)->interfaces;
     *out_service = candidate_service;
     return SALTS_COMPONENT_OK;
 }
