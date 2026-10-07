@@ -6,7 +6,7 @@ typedef enum fingerprint_domain {
     FINGERPRINT_ENUM = 3,
     FINGERPRINT_FUNCTION = 4,
     FINGERPRINT_INTERFACE = 5,
-    FINGERPRINT_PLUGIN = 6
+    FINGERPRINT_COMPONENT = 6
 } fingerprint_domain;
 
 typedef struct fingerprint_state {
@@ -172,7 +172,7 @@ static bool enumeration(fingerprint_state *state, const cmeta_enum_domain *desc,
     number(state, (uint64_t)desc->kind);
     number(state, desc->declared_mask);
     if (!rows(state, desc->count, desc->items, sizeof(*desc->items))) return false;
-    for (size_t i = 0u; i < desc->count; ++i) {
+    for (size_t i = 0u; i < desc->capability_count; ++i) {
         number(state, desc->items[i].bits);
         if (!string(state, desc->items[i].symbol, true) ||
             !string(state, desc->items[i].text, false)) return false;
@@ -234,17 +234,19 @@ static bool interface_contract(fingerprint_state *state, const cmeta_interface_d
     return cmeta_interface_desc_valid(desc) || fail(state, CMETA_INVALID_ARGUMENT);
 }
 
-static bool plugin_contract(fingerprint_state *state, const cmeta_plugin_desc *desc,
+static bool component_contract(fingerprint_state *state, const cmeta_component_desc *desc,
     size_t depth) {
     if (desc == NULL || desc->size != sizeof(*desc))
         return fail(state, CMETA_INVALID_ARGUMENT);
-    if (desc->format_version != CMETA_PLUGIN_DECLARATION_VERSION)
+    if (desc->format_version != CMETA_COMPONENT_DECLARATION_VERSION)
         return fail(state, CMETA_TYPE_MISMATCH);
-    if (!node(state, depth) || !string(state, desc->name, false) ||
-        !rows(state, desc->count, desc->capabilities, sizeof(*desc->capabilities))) return false;
+    /* Component identity is validated separately from the shape fingerprint. */
+    if (!node(state, depth) || !string(state, desc->stable_id, false) ||
+        !rows(state, desc->capability_count, desc->capabilities,
+              sizeof(*desc->capabilities))) return false;
     for (size_t i = 0u; i < desc->count; ++i) {
-        const cmeta_plugin_capability *row = &desc->capabilities[i];
-        if (row->role != CMETA_PLUGIN_PROVIDES && row->role != CMETA_PLUGIN_REQUIRES)
+        const cmeta_component_capability *row = &desc->capabilities[i];
+        if (row->role != CMETA_COMPONENT_PROVIDES && row->role != CMETA_COMPONENT_REQUIRES)
             return fail(state, CMETA_INVALID_ARGUMENT);
         number(state, (uint64_t)row->role);
         if (!interface_contract(state, row->interface_desc, depth + 1u)) return false;
@@ -287,4 +289,4 @@ FINGERPRINT_QUERY(struct, cmeta_struct_desc, FINGERPRINT_STRUCT, structure)
 FINGERPRINT_QUERY(enum, cmeta_enum_domain, FINGERPRINT_ENUM, enumeration)
 FINGERPRINT_QUERY(function, cmeta_function_abi_desc, FINGERPRINT_FUNCTION, function)
 FINGERPRINT_QUERY(interface, cmeta_interface_desc, FINGERPRINT_INTERFACE, interface_contract)
-FINGERPRINT_QUERY(plugin, cmeta_plugin_desc, FINGERPRINT_PLUGIN, plugin_contract)
+FINGERPRINT_QUERY(component, cmeta_component_desc, FINGERPRINT_COMPONENT, component_contract)
