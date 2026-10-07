@@ -450,6 +450,13 @@ exports that target in CNet's public CMake link interface. The overlay packages
 GmSSL statically, so the Windows native SDK ships no private TLS-provider DLL
 beside `cnet.dll`.
 
+The pinned provider includes bounded encrypted TLS 1.3 handshake reassembly and
+variable-width ECDSA DER scalar decoding fixes (GmSSL 3.2.0 port revision 4).
+Rebuild the SDK with matching provider headers and libraries; the connection
+layout changed internally. `cnet_tls_handshake_framing_test` and
+`cnet_tls_signature_test` cover record boundaries, transcript progression,
+malformed records, and valid short-scalar CertificateVerify signatures.
+
 `cnet_connect()` accepts either a one-shot `cnet_tls_client_config` or a reusable
 `cnet_tls_client`; the two fields are mutually exclusive. NULL uses the platform
 trust store and the URI host as the verified identity. An explicit configuration

@@ -1,6 +1,16 @@
 set(CNET_TEST_PRIVATE_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 set(CNET_WSPARSER_INCLUDE ${CMAKE_SOURCE_DIR}/tools/wsparser)
 
+cmake_add_test(cnet_tls_handshake_framing_test
+  SOURCES cnet_tls_handshake_framing_test.c
+  LIBS Salts::TinyTest GmSSL::GmSSL
+  FOLDER "cnet/tests")
+
+cmake_add_test(cnet_tls_signature_test
+  SOURCES cnet_tls_signature_test.c
+  LIBS Salts::TinyTest GmSSL::GmSSL
+  FOLDER "cnet/tests")
+
 cmake_add_test(
   cnet_websocket_parser_test
   SOURCES
