@@ -659,6 +659,48 @@ salts_component_status salts_component_context_stop(
     return SALTS_COMPONENT_OK;
 }
 
+salts_component_status salts_component_context_find_service_from(
+    const salts_component_context *context,
+    const char *provider_component_id,
+    const cmeta_interface_desc *interface_desc,
+    salts_component_service *out_service) {
+    salts_component_service candidate_service;
+    cmeta_interface_projection projection =
+        CMETA_INTERFACE_PROJECTION_INIT;
+    size_t candidate;
+    cmeta_status status;
+
+    if (context == NULL || out_service == NULL ||
+        provider_component_id == NULL || provider_component_id[0] == '\0' ||
+        !cmeta_interface_desc_valid(interface_desc))
+        return SALTS_COMPONENT_INVALID_ARGUMENT;
+    if (context->state != SALTS_COMPONENT_CONTEXT_ACTIVE)
+        return SALTS_COMPONENT_INVALID_STATE;
+
+    candidate = salts_component_find_id(context, provider_component_id);
+    if (candidate == SALTS_COMPONENT_INDEX_NONE)
+        return SALTS_COMPONENT_MISSING_PROVIDER;
+    if (!salts_component_provides(
+            context->providers[candidate].component, interface_desc))
+        return SALTS_COMPONENT_INTERFACE_UNAVAILABLE;
+    if (!context->instances[candidate].active)
+        return SALTS_COMPONENT_INVALID_STATE;
+
+    status = cmeta_object_interface_project_borrowed(
+        &context->instances[candidate].object,
+        context->providers[candidate].interfaces,
+        interface_desc,
+        &projection);
+    if (status != CMETA_OK)
+        return SALTS_COMPONENT_INTERFACE_UNAVAILABLE;
+
+    candidate_service.component = context->providers[candidate].component;
+    candidate_service.object = &context->instances[candidate].object;
+    candidate_service.interfaces = context->providers[candidate].interfaces;
+    *out_service = candidate_service;
+    return SALTS_COMPONENT_OK;
+}
+
 salts_component_status salts_component_context_find_service(
     const salts_component_context *context,
     const cmeta_interface_desc *interface_desc,
