@@ -1,4 +1,6 @@
 set(CNET_TEST_PRIVATE_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+cmake_add_test(cnet_manager_test SOURCES cnet_manager_test.c
+  LIBS Salts::CNetManager Salts::TinyTest FOLDER "cnet/tests")
 set(CNET_WSPARSER_INCLUDE ${CMAKE_SOURCE_DIR}/tools/wsparser)
 
 cmake_add_test(cnet_ipc_test
