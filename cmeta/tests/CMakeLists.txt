@@ -29,7 +29,9 @@ set_target_properties(cmeta_pattern_test cmeta_component_test PROPERTIES
 set_target_properties(cmeta_pattern_cpp_test cmeta_component_cpp_test PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  target_compile_options(cmeta_pattern_cpp_test cmeta_component_cpp_test PRIVATE
+  target_compile_options(cmeta_pattern_cpp_test PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:-Werror=old-style-cast>")
+  target_compile_options(cmeta_component_cpp_test PRIVATE
     "$<$<COMPILE_LANGUAGE:CXX>:-Werror=old-style-cast>")
 endif()
 
