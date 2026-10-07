@@ -51,6 +51,7 @@ struct transport_lane {
   uint64_t latency[PAIRS * SAMPLES];
   uint64_t setup_ns;
   uint64_t cpu_ns;
+  uint64_t cpu_cycles;
   uint64_t wall_ns;
   uint64_t began_ns;
   uint64_t ended_ns;
@@ -248,6 +249,9 @@ static void run_lane(void *arg) {
   transport_lane *lane = arg;
   uint64_t began = cmeta_hrtime();
   uv_rusage_t before, after;
+#if defined(_WIN32)
+  ULONG64 cycles_before = 0, cycles_after = 0;
+#endif
   native_io_backend_config native = {selected.kind, lane->pairs * 4, REQUESTS, REQUESTS};
   lane->token = cmeta_thread_current_token();
   lane->phase = "setup";
@@ -313,6 +317,9 @@ static void run_lane(void *arg) {
     cmeta_thread_yield();
   }
   REQUIRE(uv_getrusage_thread(&before));
+#if defined(_WIN32)
+  REQUIRE(QueryThreadCycleTime(GetCurrentThread(), &cycles_before) ? SALTS_OK : SALTS_EIO);
+#endif
   lane->phase = "steady";
   began = cmeta_hrtime();
   lane->began_ns = began;
@@ -321,6 +328,10 @@ static void run_lane(void *arg) {
   lane->ended_ns = cmeta_hrtime();
   lane->wall_ns = lane->ended_ns - began;
   REQUIRE(uv_getrusage_thread(&after));
+#if defined(_WIN32)
+  REQUIRE(QueryThreadCycleTime(GetCurrentThread(), &cycles_after) ? SALTS_OK : SALTS_EIO);
+  lane->cpu_cycles = cycles_after - cycles_before;
+#endif
   lane->cpu_ns = cpu_time(&after) - cpu_time(&before);
 drain:
   if (lane->status != SALTS_OK) {
@@ -383,6 +394,7 @@ static int measure(bool ipc, size_t owners) {
   atomic_bool start = false, abort = false;
   uint64_t wall = 0, cpu = 0, setup = 0, drain = 0;
   uint64_t first_start = UINT64_MAX, last_end = 0;
+  uint64_t cycles = 0;
   size_t started = 0, rejected = 0, resident = 0;
   int result = SALTS_OK;
   for (size_t i = 0; i < owners; ++i) {
@@ -417,6 +429,7 @@ static int measure(bool ipc, size_t owners) {
     if (lanes[i].setup_ns > setup) setup = lanes[i].setup_ns;
     if (lanes[i].drain_ns > drain) drain = lanes[i].drain_ns;
     cpu += lanes[i].cpu_ns;
+    cycles += lanes[i].cpu_cycles;
     rejected += lanes[i].rejected;
     memcpy(latency + offset, lanes[i].latency, SAMPLES * lanes[i].pairs * sizeof(uint64_t));
     offset += SAMPLES * lanes[i].pairs;
@@ -438,6 +451,12 @@ static int measure(bool ipc, size_t owners) {
           : (size_t)(CHANNELS * PAYLOAD * 2),
       resident, setup, drain);
   if (report == NULL) return SALTS_ENOMEM;
+  tstr complete = tstr_append_format(report, " cpu_cycles={}", cycles);
+  if (complete == NULL) {
+    tstr_free(report);
+    return SALTS_ENOMEM;
+  }
+  report = complete;
   puts(report);
   tstr_free(report);
   return SALTS_OK;

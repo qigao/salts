@@ -22,6 +22,10 @@ static datagram_probe probes[2];
 /* Observed terminals survive a fatal assertion until fixture teardown routes them. */
 static native_io_completion held[TEST_BATCH];
 static size_t held_count;
+#if defined(__linux__)
+static cnet_datagram flow_source;
+static datagram_probe flow_probe;
+#endif
 
 static native_io_backend_kind backend_kind(void) {
 #if defined(CNET_TEST_IO_URING)
@@ -141,6 +145,12 @@ spec("CNet external datagram progress") {
   }
 
   after_each() {
+#if defined(__linux__)
+    if (flow_source.impl != NULL) {
+      check_warn(cnet_datagram_stop(&flow_source, TEST_TIMEOUT_MS) == SALTS_OK);
+      check_warn(cnet_datagram_destroy(&flow_source) == SALTS_OK);
+    }
+#endif
     const uint64_t deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
     bool all_stopped = false;
     while (!all_stopped && cmeta_monotonic_ms() < deadline) {
@@ -164,6 +174,45 @@ spec("CNet external datagram progress") {
       check_warn(native_io_backend_destroy(&backend) == SALTS_OK);
     }
   }
+
+#if defined(__linux__)
+  it("distributes distinct source flows across a shared concrete reuseport bind") {
+    enum { FLOWS = 64 };
+    cnet_datagram_peer destination = {0};
+    for (size_t i = 0; i < 2; ++i) {
+      bool stopped = false;
+      check_equal(cnet_datagram_stop_external(&datagrams[i], &stopped), SALTS_OK);
+      check_true(stopped);
+      check_equal(cnet_datagram_destroy(&datagrams[i]), SALTS_OK);
+      cnet_datagram_config config = config_for(i);
+      config.reuse_port = 1;
+      if (i != 0) config.port = destination.port;
+      check_equal(cnet_datagram_init_external(&datagrams[i], &config, &backend), SALTS_OK);
+      if (i == 0) destination = peer_for(0);
+      check_equal(cnet_datagram_receive(&datagrams[i], FLOWS), SALTS_OK);
+    }
+    for (size_t flow = 0; flow < FLOWS; ++flow) {
+      cnet_datagram_config config = config_for(0);
+      config.observer = (cnet_datagram_observer){received, sent, &flow_probe};
+      memset(&flow_probe, 0, sizeof(flow_probe));
+      check_equal(cnet_datagram_init(&flow_source, &config), SALTS_OK);
+      check_equal(cnet_datagram_send(&flow_source, &destination, "flow", 4, flow), SALTS_OK);
+      uint64_t deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
+      while (flow_probe.sends == 0) {
+        size_t events;
+        check_equal(cnet_datagram_poll(&flow_source, 1, &events), SALTS_OK);
+        check(cmeta_monotonic_ms() < deadline);
+      }
+      check_equal(flow_probe.status, SALTS_OK);
+      drain_until(0, flow + 1);
+      check_equal(cnet_datagram_stop(&flow_source, TEST_TIMEOUT_MS), SALTS_OK);
+      check_equal(cnet_datagram_destroy(&flow_source), SALTS_OK);
+    }
+    check_equal(probes[0].receives + probes[1].receives, (size_t)FLOWS);
+    check_greater(probes[0].receives, 0u);
+    check_greater(probes[1].receives, 0u);
+  }
+#endif
 
   it("routes colliding local tags and preserves copied sends and callback views") {
     const unsigned char expected[] = {1u, 3u, 5u, 7u};

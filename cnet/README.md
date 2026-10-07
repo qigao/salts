@@ -136,8 +136,8 @@ In particular, H2 stream backpressure must retain bounded stream DATA/credit whi
 continuing connection reads and control-frame processing; do not pause the whole
 connection while waiting for a blocked WS write. HTTP policy does not enter CNet.
 
-Validation on Windows IOCP: Debug/ASan tests cover these capabilities and adjacent
-CNet/NativeIPC behavior (17 CTest targets passed). In an x64 VS developer shell,
+Validation on Windows IOCP: Debug/ASan and Release each passed all 40 selected
+CNet/NativeIPC regression targets. In an x64 VS developer shell,
 the focused capability checks can be repeated with:
 
 ```powershell
@@ -145,9 +145,43 @@ cmake --build --preset win-dev-user --target cnet_datagram_external_test cnet_ip
 ctest --preset win-dev-user -R '^(cnet_(datagram_external|ipc|websocket_tagged)|native_ipc)_test$' --output-on-failure
 ```
 
-POSIX implementation is included, but Linux epoll/io_uring,
-macOS kqueue, downstream CHTTP integration and performance measurements still
-require their respective validation hosts. No multicore speedup is claimed.
+Linux epoll and explicit io_uring variants, macOS kqueue (GCC and AppleClang),
+Windows Release, and the six-platform SDK package passed
+[the cross-platform acceptance run](https://github.com/qigao/salts/actions/runs/37628231430).
+Android and iOS evidence is cross-compilation/packaging, not device execution.
+That preliminary package used 2.1.2; the additive release candidate is 2.2.0 and
+must be rebuilt from its own exact commit before publication. Existing CHTTP
+Windows Debug/ASan regression passed 93/93 tests against the installed SDK;
+this proves compatibility, not completion of the downstream tagged adapter.
+
+`cnet_transport_owner_benchmark` measures four independent duplex pairs on
+1/2/4 owners with a fixed total of 4096 measured 1024-byte messages per run.
+Each owner owns its backend and both ends of its assigned pairs. IPC rendezvous
+is performed before warmup, then the listener is stopped before payload timing;
+this measures established connections, not a central acceptor's saturation or
+handoff throughput. A separate dual-owner IPC test covers detached handoff.
+The benchmark uses 32 warmup exchanges and three independent lifecycle samples.
+Steady wall time spans the earliest owner start through the latest owner finish;
+CPU sums owner-thread usage. Windows also reports thread cycles because CPU time
+has coarse resolution. P95/P99 measure complete bidirectional pair exchanges,
+including byte validation. Setup and drain durations are reported separately.
+Zero loss is reported only after all expected receive bytes and send terminals
+are verified; timeout, corruption or rejected admission fails the measurement.
+Configured payload budgets exclude allocator/native metadata; `rss_at_ready` is
+a process RSS sample, not a peak or a hard memory limit. Owner count increases
+per-owner metadata and command capacity even though traffic is fixed.
+
+Run from the matching developer environment (the preset normally excludes the
+benchmark label, hence the explicit empty exclusion):
+
+```powershell
+cmake --build --preset win-release-user --target cnet_transport_owner_benchmark
+ctest --preset win-release-user -LE '^$' -R '^cnet_transport_owner_benchmark$' -V
+```
+
+Release preparation runs this same CTest workload on IOCP, epoll, io_uring and
+kqueue and retains its raw output in `io-benchmark-*` artifacts. No multicore
+speedup or production capacity is inferred from this loopback workload.
 
 ## Execution ownership and multicore composition
 
