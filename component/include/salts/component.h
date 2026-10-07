@@ -25,6 +25,7 @@ typedef enum salts_component_status {
     SALTS_COMPONENT_INVALID_ARGUMENT,
     SALTS_COMPONENT_INVALID_COMPONENT,
     SALTS_COMPONENT_DUPLICATE_COMPONENT_ID,
+    SALTS_COMPONENT_INVALID_SELECTION,
     SALTS_COMPONENT_CONFIG_MISMATCH,
     SALTS_COMPONENT_CAPACITY_EXCEEDED,
     SALTS_COMPONENT_MISSING_PROVIDER,
@@ -56,6 +57,12 @@ typedef enum salts_component_context_state {
 } salts_component_context_state;
 
 typedef struct salts_component_dependency salts_component_dependency;
+
+typedef struct salts_component_selection {
+    const char *consumer_component_id;
+    const cmeta_interface_desc *requirement;
+    const char *provider_component_id;
+} salts_component_selection;
 
 typedef cmeta_status (SALTS_COMPONENT_CALL *salts_component_create_fn)(
     void *provider_context,
@@ -128,6 +135,9 @@ typedef struct salts_component_context {
     const salts_component_provider_binding *providers;
     size_t provider_count;
 
+    const salts_component_selection *selections;
+    size_t selection_count;
+
     salts_component_instance *instances;
     size_t instance_capacity;
 
@@ -149,6 +159,8 @@ salts_component_status salts_component_context_init(
     salts_component_context *context,
     const salts_component_provider_binding *providers,
     size_t provider_count,
+    const salts_component_selection *selections,
+    size_t selection_count,
     salts_component_instance *instances,
     size_t instance_capacity,
     salts_component_dependency *dependencies,

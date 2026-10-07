@@ -120,6 +120,92 @@ static bool salts_component_order_contains(
     return false;
 }
 
+static bool salts_component_requires(
+    const cmeta_component_desc *component,
+    const cmeta_interface_desc *expected) {
+    size_t i;
+    if (!cmeta_component_desc_valid(component) ||
+        !cmeta_interface_desc_valid(expected))
+        return false;
+    for (i = 0u; i < component->capability_count; ++i) {
+        const cmeta_component_capability *row = &component->capabilities[i];
+        if (row->role == CMETA_COMPONENT_REQUIRES &&
+            cmeta_interface_desc_equal(row->interface_desc, expected))
+            return true;
+    }
+    return false;
+}
+
+static size_t salts_component_find_id(
+    const salts_component_context *context,
+    const char *stable_id) {
+    size_t i;
+    if (context == NULL || stable_id == NULL)
+        return SALTS_COMPONENT_INDEX_NONE;
+    for (i = 0u; i < context->provider_count; ++i)
+        if (strcmp(context->providers[i].component->stable_id, stable_id) == 0)
+            return i;
+    return SALTS_COMPONENT_INDEX_NONE;
+}
+
+static salts_component_status salts_component_select_provider(
+    const salts_component_context *context,
+    size_t consumer_index,
+    const cmeta_interface_desc *requirement,
+    size_t *out_provider) {
+    const char *consumer_id;
+    const salts_component_selection *selection = NULL;
+    size_t selection_matches = 0u;
+    size_t provider_candidate = SALTS_COMPONENT_INDEX_NONE;
+    size_t provider_matches = 0u;
+    size_t i;
+
+    if (context == NULL || consumer_index >= context->provider_count ||
+        !cmeta_interface_desc_valid(requirement) || out_provider == NULL)
+        return SALTS_COMPONENT_INVALID_ARGUMENT;
+
+    consumer_id = context->providers[consumer_index].component->stable_id;
+
+    for (i = 0u; i < context->selection_count; ++i) {
+        const salts_component_selection *row = &context->selections[i];
+        if (strcmp(row->consumer_component_id, consumer_id) == 0 &&
+            cmeta_interface_desc_equal(row->requirement, requirement)) {
+            selection = row;
+            ++selection_matches;
+        }
+    }
+
+    if (selection_matches > 1u)
+        return SALTS_COMPONENT_INVALID_SELECTION;
+
+    if (selection_matches == 1u) {
+        provider_candidate =
+            salts_component_find_id(context, selection->provider_component_id);
+        if (provider_candidate == SALTS_COMPONENT_INDEX_NONE ||
+            !salts_component_provides(
+                context->providers[provider_candidate].component, requirement))
+            return SALTS_COMPONENT_INVALID_SELECTION;
+        *out_provider = provider_candidate;
+        return SALTS_COMPONENT_OK;
+    }
+
+    for (i = 0u; i < context->provider_count; ++i) {
+        if (salts_component_provides(
+                context->providers[i].component, requirement)) {
+            provider_candidate = i;
+            ++provider_matches;
+        }
+    }
+
+    if (provider_matches == 0u)
+        return SALTS_COMPONENT_MISSING_PROVIDER;
+    if (provider_matches != 1u)
+        return SALTS_COMPONENT_AMBIGUOUS_PROVIDER;
+
+    *out_provider = provider_candidate;
+    return SALTS_COMPONENT_OK;
+}
+
 static bool salts_component_dependencies_ready(
     const salts_component_context *context,
     size_t component_index,
@@ -193,6 +279,7 @@ const char *salts_component_status_string(salts_component_status status) {
     case SALTS_COMPONENT_INVALID_ARGUMENT: return "invalid argument";
     case SALTS_COMPONENT_INVALID_COMPONENT: return "invalid component";
     case SALTS_COMPONENT_DUPLICATE_COMPONENT_ID: return "duplicate component id";
+    case SALTS_COMPONENT_INVALID_SELECTION: return "invalid provider selection";
     case SALTS_COMPONENT_CONFIG_MISMATCH: return "configuration mismatch";
     case SALTS_COMPONENT_CAPACITY_EXCEEDED: return "capacity exceeded";
     case SALTS_COMPONENT_MISSING_PROVIDER: return "missing provider";
@@ -210,6 +297,8 @@ salts_component_status salts_component_context_init(
     salts_component_context *context,
     const salts_component_provider_binding *providers,
     size_t provider_count,
+    const salts_component_selection *selections,
+    size_t selection_count,
     salts_component_instance *instances,
     size_t instance_capacity,
     salts_component_dependency *dependencies,
@@ -227,6 +316,7 @@ salts_component_status salts_component_context_init(
 
     if ((provider_count != 0u &&
          (providers == NULL || instances == NULL || activation_order == NULL)) ||
+        (selection_count != 0u && selections == NULL) ||
         (dependency_capacity != 0u && dependencies == NULL))
         return salts_component_fail(
             context, SALTS_COMPONENT_INVALID_ARGUMENT,
@@ -242,6 +332,8 @@ salts_component_status salts_component_context_init(
 
     context->providers = providers;
     context->provider_count = provider_count;
+    context->selections = selections;
+    context->selection_count = selection_count;
     context->instances = instances;
     context->instance_capacity = instance_capacity;
     context->dependencies = dependencies;
@@ -268,6 +360,50 @@ salts_component_status salts_component_context_init(
         }
 
         salts_component_instance_reset(&instances[i]);
+    }
+
+    for (i = 0u; i < selection_count; ++i) {
+        const salts_component_selection *selection = &selections[i];
+        size_t consumer_index;
+        size_t provider_index;
+
+        if (selection->consumer_component_id == NULL ||
+            selection->consumer_component_id[0] == '\0' ||
+            selection->provider_component_id == NULL ||
+            selection->provider_component_id[0] == '\0' ||
+            !cmeta_interface_desc_valid(selection->requirement))
+            return salts_component_fail(
+                context, SALTS_COMPONENT_INVALID_SELECTION,
+                SALTS_COMPONENT_PHASE_INIT, SALTS_COMPONENT_INDEX_NONE,
+                i, CMETA_OK);
+
+        consumer_index =
+            salts_component_find_id(context, selection->consumer_component_id);
+        provider_index =
+            salts_component_find_id(context, selection->provider_component_id);
+
+        if (consumer_index == SALTS_COMPONENT_INDEX_NONE ||
+            provider_index == SALTS_COMPONENT_INDEX_NONE ||
+            !salts_component_requires(
+                providers[consumer_index].component, selection->requirement) ||
+            !salts_component_provides(
+                providers[provider_index].component, selection->requirement))
+            return salts_component_fail(
+                context, SALTS_COMPONENT_INVALID_SELECTION,
+                SALTS_COMPONENT_PHASE_INIT,
+                consumer_index, i, CMETA_OK);
+
+        for (j = 0u; j < i; ++j) {
+            if (strcmp(
+                    selections[j].consumer_component_id,
+                    selection->consumer_component_id) == 0 &&
+                cmeta_interface_desc_equal(
+                    selections[j].requirement, selection->requirement))
+                return salts_component_fail(
+                    context, SALTS_COMPONENT_INVALID_SELECTION,
+                    SALTS_COMPONENT_PHASE_INIT,
+                    consumer_index, i, CMETA_OK);
+        }
     }
 
     context->state = SALTS_COMPONENT_CONTEXT_READY;
@@ -321,31 +457,16 @@ salts_component_status salts_component_context_resolve(
             const cmeta_component_capability *requirement =
                 &consumer->capabilities[capability_index];
             size_t candidate = SALTS_COMPONENT_INDEX_NONE;
-            size_t candidate_count = 0u;
-            size_t provider_index;
+            salts_component_status selection_status;
 
             if (requirement->role != CMETA_COMPONENT_REQUIRES)
                 continue;
 
-            for (provider_index = 0u;
-                 provider_index < context->provider_count;
-                 ++provider_index) {
-                if (salts_component_provides(
-                        context->providers[provider_index].component,
-                        requirement->interface_desc)) {
-                    candidate = provider_index;
-                    ++candidate_count;
-                }
-            }
-
-            if (candidate_count == 0u)
+            selection_status = salts_component_select_provider(
+                context, i, requirement->interface_desc, &candidate);
+            if (selection_status != SALTS_COMPONENT_OK)
                 return salts_component_fail(
-                    context, SALTS_COMPONENT_MISSING_PROVIDER,
-                    SALTS_COMPONENT_PHASE_RESOLVE, i, dependency_count,
-                    CMETA_OK);
-            if (candidate_count != 1u)
-                return salts_component_fail(
-                    context, SALTS_COMPONENT_AMBIGUOUS_PROVIDER,
+                    context, selection_status,
                     SALTS_COMPONENT_PHASE_RESOLVE, i, dependency_count,
                     CMETA_OK);
 

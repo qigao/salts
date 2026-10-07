@@ -32,7 +32,7 @@ suite("Salts static Component Configurator") {
         };
 
         check_equal(salts_component_context_init(
-            &context, providers, 2u, instances, 2u,
+            &context, providers, 2u, NULL, 0u, instances, 2u,
             dependencies, 2u, order, 2u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&context), SALTS_COMPONENT_OK);
         check_equal(order[0], (size_t)0u);
@@ -75,7 +75,7 @@ suite("Salts static Component Configurator") {
         };
 
         check_equal(salts_component_context_init(
-            &context, &provider, 1u, &instance, 1u,
+            &context, &provider, 1u, NULL, 0u, &instance, 1u,
             &dependency, 1u, &order, 1u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&context),
                     SALTS_COMPONENT_MISSING_PROVIDER);
@@ -114,10 +114,63 @@ suite("Salts static Component Configurator") {
         };
 
         check_equal(salts_component_context_init(
-            &context, providers, 3u, instances, 3u,
+            &context, providers, 3u, NULL, 0u, instances, 3u,
             dependencies, 2u, order, 3u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&context),
                     SALTS_COMPONENT_AMBIGUOUS_PROVIDER);
+    }
+
+    it("uses an explicit provider selection when multiple providers match") {
+        int config = 10;
+        test_provider_state logger_a;
+        test_provider_state logger_b;
+        test_provider_state app;
+        salts_component_provider_binding providers[3];
+        salts_component_selection selection;
+        salts_component_instance instances[3];
+        salts_component_dependency dependencies[2];
+        size_t order[3];
+        salts_component_context context;
+        salts_component_service service;
+        test_app app_interface = test_app_bind(NULL, NULL);
+
+        test_provider_state_init(&logger_a, 1, NULL);
+        test_provider_state_init(&logger_b, 8, NULL);
+        test_provider_state_init(&app, 0, NULL);
+
+        providers[0] = (salts_component_provider_binding){
+            cmeta_component_meta(TestLogger), &logger_a,
+            NULL, NULL, &test_interfaces,
+            test_logger_create, test_activate, test_deactivate
+        };
+        providers[1] = (salts_component_provider_binding){
+            cmeta_component_meta(TestLoggerAlt), &logger_b,
+            NULL, NULL, &test_interfaces,
+            test_logger_create, test_activate, test_deactivate
+        };
+        providers[2] = (salts_component_provider_binding){
+            cmeta_component_meta(TestApp), &app,
+            &cmeta_data_int, &config, &test_interfaces,
+            test_app_create, test_activate, test_deactivate
+        };
+
+        selection = (salts_component_selection){
+            "TestApp", test_log_interface(), "TestLoggerAlt"
+        };
+
+        check_equal(salts_component_context_init(
+            &context, providers, 3u, &selection, 1u,
+            instances, 3u, dependencies, 2u, order, 3u), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_resolve(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_start(&context), SALTS_COMPONENT_OK);
+
+        check_equal(salts_component_context_find_service(
+            &context, test_app_interface(), &service), SALTS_COMPONENT_OK);
+        check_equal(test_app_borrow_from_object(
+            service.object, service.interfaces, &app_interface), CMETA_OK);
+        check_equal(test_app_value(&app_interface), 18);
+
+        check_equal(salts_component_context_stop(&context), SALTS_COMPONENT_OK);
     }
 
     it("detects dependency cycles before any create callback") {
@@ -144,7 +197,7 @@ suite("Salts static Component Configurator") {
         };
 
         check_equal(salts_component_context_init(
-            &context, providers, 2u, instances, 2u,
+            &context, providers, 2u, NULL, 0u, instances, 2u,
             dependencies, 2u, order, 2u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&context),
                     SALTS_COMPONENT_DEPENDENCY_CYCLE);
@@ -169,7 +222,7 @@ suite("Salts static Component Configurator") {
         };
 
         check_equal(salts_component_context_init(
-            &context, &provider, 1u, &instance, 1u,
+            &context, &provider, 1u, NULL, 0u, &instance, 1u,
             &dependency, 1u, &order, 1u), SALTS_COMPONENT_CONFIG_MISMATCH);
         check_equal(app.creates, 0u);
     }
@@ -189,7 +242,7 @@ suite("Salts static Component Configurator") {
         };
 
         check_equal(salts_component_context_init(
-            &context, &provider, 1u, &instance, 1u,
+            &context, &provider, 1u, NULL, 0u, &instance, 1u,
             NULL, 0u, &order, 1u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&context), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_start(&context),
@@ -231,10 +284,10 @@ suite("Salts static Component Configurator") {
         };
 
         check_equal(salts_component_context_init(
-            &left_context, &left_provider, 1u, &left_instance, 1u,
+            &left_context, &left_provider, 1u, NULL, 0u, &left_instance, 1u,
             NULL, 0u, &left_order, 1u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_init(
-            &right_context, &right_provider, 1u, &right_instance, 1u,
+            &right_context, &right_provider, 1u, NULL, 0u, &right_instance, 1u,
             NULL, 0u, &right_order, 1u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&left_context), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&right_context), SALTS_COMPONENT_OK);
@@ -282,7 +335,7 @@ suite("Salts static Component Configurator") {
         };
 
         check_equal(salts_component_context_init(
-            &context, providers, 2u, instances, 2u,
+            &context, providers, 2u, NULL, 0u, instances, 2u,
             dependencies, 2u, order, 2u), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_resolve(&context), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_start(&context),
