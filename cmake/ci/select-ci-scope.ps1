@@ -3,6 +3,7 @@ param(
   [string]$EventName,
   [AllowEmptyString()][string]$BaseRef,
   [Parameter(Mandatory)][string]$HeadRef,
+  [AllowEmptyString()][string]$HeadBranch = "",
   [bool]$PrepareRelease = $false
 )
 $ErrorActionPreference = "Stop"
@@ -11,6 +12,9 @@ Set-StrictMode -Version Latest
 # PR coverage follows the whole proposed change; push coverage follows the
 # delivered commit range. Never skip unqualified code using only the last commit.
 $full = $EventName -eq "workflow_dispatch"
+# This long-lived integration branch qualifies its complete test graph on one
+# Linux host. Explicit SDK release preparation still requires every SDK profile.
+$linuxIntegration = $HeadBranch -eq 'feature/cmeta-pattern-component-runtime' -and -not $PrepareRelease
 $changed = @()
 if (-not $full) {
   if ([string]::IsNullOrWhiteSpace($BaseRef)) { throw "Missing comparison base for $EventName" }
@@ -107,6 +111,15 @@ $checks = [ordered]@{
   coroutine = $coroutine
   native_uring = $nativeUring
   forensic = $forensic
+  full_tests = $linuxIntegration
+}
+if ($linuxIntegration) {
+  $checks.contracts = $true
+  foreach ($key in @('native', 'execution', 'projection', 'lean', 'mobile', 'work', 'evidence',
+                     'cnet_compare', 'native_owner', 'native_style', 'cnet_owner', 'cnet_io',
+                     'cnet_sg', 'coroutine', 'native_uring', 'forensic')) {
+    $checks[$key] = $false
+  }
 }
 foreach ($key in @($checks.Keys)) {
   $checks[$key] = $checks[$key].ToString().ToLowerInvariant()
@@ -133,6 +146,7 @@ $profiles = @(
 )
 $builds = @()
 foreach ($profile in $profiles) {
+  if ($linuxIntegration -and $profile.id -ne 'linux-release') { continue }
   # Clang profiles qualify the same portable/native contracts in isolated trees;
   # they do not produce additional release packages.
   $profile.clang = $profile.id -in @('linux-clang-release', 'macos-clang-release')
@@ -149,7 +163,16 @@ foreach ($profile in $profiles) {
   $entry.package = $PrepareRelease -and [bool]$entry.sdk
   $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
   $entry.artifact = if ($entry.cross) { $mobile } else { $work -and [bool]$entry.sdk }
-  if ($entry.native -or $entry.execution -or $entry.projection -or $entry.armcontracts -or $entry.package -or $entry.artifact) {
+  $entry.full_tests = $linuxIntegration
+  if ($linuxIntegration) {
+    $entry.native = $false
+    $entry.execution = $false
+    $entry.projection = $false
+    $entry.benchmarks = 'OFF'
+    $entry.compare = $false
+    $entry.artifact = $false
+  }
+  if ($entry.full_tests -or $entry.native -or $entry.execution -or $entry.projection -or $entry.armcontracts -or $entry.package -or $entry.artifact) {
     $builds += $entry
   }
 }
