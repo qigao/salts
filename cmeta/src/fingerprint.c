@@ -234,6 +234,20 @@ static bool interface_contract(fingerprint_state *state, const cmeta_interface_d
     return cmeta_interface_desc_valid(desc) || fail(state, CMETA_INVALID_ARGUMENT);
 }
 
+static bool data_contract_identity(fingerprint_state *state,
+    const cmeta_data_desc *desc, size_t depth) {
+    if (desc == NULL || !cmeta_data_desc_valid(desc))
+        return fail(state, CMETA_INVALID_ARGUMENT);
+    if (!node(state, depth) || !string(state, desc->stable_id, true))
+        return false;
+    number(state, (uint64_t)desc->kind);
+    number(state, desc->storage_type != NULL);
+    if (desc->storage_type != NULL &&
+        !type(state, desc->storage_type, depth + 1u))
+        return false;
+    return true;
+}
+
 static bool component_contract(fingerprint_state *state, const cmeta_component_desc *desc,
     size_t depth) {
     if (desc == NULL || desc->size != sizeof(*desc))
@@ -241,8 +255,14 @@ static bool component_contract(fingerprint_state *state, const cmeta_component_d
     if (desc->format_version != CMETA_COMPONENT_DECLARATION_VERSION)
         return fail(state, CMETA_TYPE_MISMATCH);
     /* Component identity is validated separately from the shape fingerprint. */
-    if (!node(state, depth) || !string(state, desc->stable_id, false) ||
-        !rows(state, desc->capability_count, desc->capabilities,
+    if (!node(state, depth) || !string(state, desc->stable_id, false))
+        return false;
+    number(state, desc->format_version);
+    number(state, desc->config != NULL);
+    if (desc->config != NULL &&
+        !data_contract_identity(state, desc->config, depth + 1u))
+        return false;
+    if (!rows(state, desc->capability_count, desc->capabilities,
               sizeof(*desc->capabilities))) return false;
     for (size_t i = 0u; i < desc->capability_count; ++i) {
         const cmeta_component_capability *row = &desc->capabilities[i];
