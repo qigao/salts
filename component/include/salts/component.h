@@ -13,6 +13,7 @@ extern "C" {
 #endif
 
 #define SALTS_COMPONENT_INDEX_NONE SIZE_MAX
+#define SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION UINT32_C(1)
 
 #if defined(_WIN32)
 #define SALTS_COMPONENT_CALL __cdecl
@@ -81,19 +82,16 @@ typedef void (SALTS_COMPONENT_CALL *salts_component_deactivate_fn)(
     const cmeta_object_ref *instance);
 
 typedef struct salts_component_provider_binding {
+    size_t struct_size;
+    uint32_t abi_version;
+
     const cmeta_component_desc *component;
     void *provider_context;
 
     /*
-     * Deployment configuration is borrowed until create() returns. A provider
-     * that needs it afterwards must copy/retain it under its own semantics.
-     */
-    const cmeta_data_desc *config_data;
-    const void *config_value;
-
-    /*
      * Provider-authorized Interface projection. Required when component
-     * publishes at least one Interface; borrowed for the context lifetime.
+     * publishes at least one Interface. Dynamic bindings and everything
+     * reachable from them remain borrowed under the enclosing module lease.
      */
     const cmeta_object_interface_provider *interfaces;
 
@@ -101,6 +99,17 @@ typedef struct salts_component_provider_binding {
     salts_component_activate_fn activate;
     salts_component_deactivate_fn deactivate;
 } salts_component_provider_binding;
+
+/*
+ * Host/deployment-owned configuration. Configuration is borrowed until
+ * create() returns; providers that need it afterwards must copy/retain it
+ * under their own semantics.
+ */
+typedef struct salts_component_deployment {
+    const salts_component_provider_binding *provider;
+    const cmeta_data_desc *config_data;
+    const void *config_value;
+} salts_component_deployment;
 
 struct salts_component_dependency {
     size_t consumer_index;
@@ -132,8 +141,8 @@ typedef struct salts_component_service {
 } salts_component_service;
 
 typedef struct salts_component_context {
-    const salts_component_provider_binding *providers;
-    size_t provider_count;
+    const salts_component_deployment *deployments;
+    size_t deployment_count;
 
     const salts_component_selection *selections;
     size_t selection_count;
@@ -157,8 +166,8 @@ const char *salts_component_status_string(salts_component_status status);
 
 salts_component_status salts_component_context_init(
     salts_component_context *context,
-    const salts_component_provider_binding *providers,
-    size_t provider_count,
+    const salts_component_deployment *deployments,
+    size_t deployment_count,
     const salts_component_selection *selections,
     size_t selection_count,
     salts_component_instance *instances,
