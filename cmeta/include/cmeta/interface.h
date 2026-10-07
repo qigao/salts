@@ -374,6 +374,20 @@ cmeta_interface_desc_has_owning_method(const cmeta_interface_desc *desc) {
 /* Bind a conventional C implementation to an interface.  Method functions use
  * the interface ABI directly: first parameter is void *self.  Implementations
  * cast self to their concrete state type internally. */
+#ifdef __cplusplus
+#define CMETA_IMPLEMENTS_CPP_ASSIGN_(member_, value_) value_ member_;
+#define CMETA_IMPLEMENTS(I, NAME, CAPS, ...) \
+    static constexpr I##_vtable NAME##_make_vtable(void) { \
+        I##_vtable value = {}; \
+        value.implementation = #NAME; \
+        value.capabilities = CMETA_IFACE_U64_CAST(CAPS); \
+        CMETA_PP_MAP(CMETA_IMPLEMENTS_CPP_ASSIGN_, value, __VA_ARGS__) \
+        return value; \
+    } \
+    CMETA_LOCAL constexpr I##_vtable NAME##_vtable = NAME##_make_vtable(); \
+    static I NAME##_as_##I(void *self) { return I##_bind(self, &NAME##_vtable); } \
+    typedef int NAME##_implements_anchor_t
+#else
 #define CMETA_IMPLEMENTS(I, NAME, CAPS, ...) \
     CMETA_LOCAL const I##_vtable NAME##_vtable = { \
         .implementation = #NAME, \
@@ -382,6 +396,7 @@ cmeta_interface_desc_has_owning_method(const cmeta_interface_desc *desc) {
     }; \
     static I NAME##_as_##I(void *self) { return I##_bind(self, &NAME##_vtable); } \
     typedef int NAME##_implements_anchor_t
+#endif
 
 
 /* Natural DSL spellings are the default when the host headers have not already
