@@ -100,6 +100,35 @@ typedef struct salts_component_provider_binding {
     salts_component_deactivate_fn deactivate;
 } salts_component_provider_binding;
 
+static inline bool salts_component_provider_binding_valid(
+    const salts_component_provider_binding *binding) {
+    size_t i;
+    bool provides = false;
+
+    if (binding == NULL ||
+        binding->struct_size != sizeof(*binding) ||
+        binding->abi_version != SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION ||
+        !cmeta_component_desc_valid(binding->component) ||
+        binding->create == NULL ||
+        ((binding->activate == NULL) != (binding->deactivate == NULL)))
+        return false;
+
+    if (binding->interfaces != NULL &&
+        !cmeta_object_interface_provider_valid(binding->interfaces))
+        return false;
+
+    for (i = 0u; i < binding->component->capability_count; ++i) {
+        if (binding->component->capabilities[i].role ==
+            CMETA_COMPONENT_PROVIDES) {
+            provides = true;
+            break;
+        }
+    }
+
+    return !provides ||
+        cmeta_object_interface_provider_valid(binding->interfaces);
+}
+
 /*
  * Host/deployment-owned configuration. Configuration is borrowed until
  * create() returns; providers that need it afterwards must copy/retain it
