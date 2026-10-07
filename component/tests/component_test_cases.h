@@ -56,6 +56,27 @@ suite("Salts static Component Configurator") {
         check_equal(context.state, SALTS_COMPONENT_CONTEXT_STOPPED);
     }
 
+    it("rejects provider binding ABI mismatch before resolution") {
+        test_provider_state logger;
+        salts_component_provider_binding provider;
+        salts_component_deployment deployment;
+        salts_component_instance instance;
+        size_t order;
+        salts_component_context context;
+
+        test_provider_state_init(&logger, 7, NULL);
+        provider = TEST_PROVIDER_BINDING(
+            TestLogger, &logger, test_logger_create);
+        provider.abi_version =
+            SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION + UINT32_C(1);
+        deployment = TEST_DEPLOYMENT(&provider, NULL, NULL);
+
+        check_equal(salts_component_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_INVALID_COMPONENT);
+        check_equal(logger.creates, 0u);
+    }
+
     it("fails closed when a required provider is missing") {
         int config = 1;
         test_provider_state app;
