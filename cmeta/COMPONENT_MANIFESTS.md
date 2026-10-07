@@ -7,6 +7,7 @@ A declaration contains only:
 
 ```text
 stable component/provider identity
++ optional typed config DataDesc
 + ordered provides Interface rows
 + ordered requires Interface rows
 ```
@@ -112,11 +113,11 @@ CMeta itself owns no loader or dynamic service registry.
 
 ## Current integration scope
 
-Format 1 intentionally contains only stable identity plus provides/requires.
-Typed configuration and factory/lifecycle semantic contracts are being designed
-under #1007. They must reuse canonical CMeta Data/Function semantics and must
-not place Configurator runtime state or arbitrary executable authority inside
-the descriptor.
+Format 2 contains stable identity, optional typed config, and provides/requires.
+Typed configuration reuses canonical `cmeta_data_desc` identity directly.
+External YAML/JSON/XML/CLI parsing remains outside CMeta. Factory and lifecycle
+execution authority are deliberately not embedded in the descriptor; they
+belong to the Component runtime binding under #1008.
 
 Development remains on
 `feature/cmeta-pattern-component-runtime`; this contract is not yet a
