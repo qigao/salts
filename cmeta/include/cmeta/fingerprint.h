@@ -4,7 +4,7 @@
 #include <cmeta/manifest.h>
 #include <cmeta/struct.h>
 #include <cmeta/interface.h>
-#include <cmeta/plugin.h>
+#include <cmeta/component.h>
 
 /* The projection version is separate from the FNV-1a algorithm version and
  * the Reflection ABI epoch. See FINGERPRINTS.md for the exact byte stream. */
@@ -60,9 +60,9 @@ cmeta_status cmeta_contract_fingerprint_interface(const cmeta_interface_desc *de
 
 /** Ordered provides/requires membership plus canonical Interface rows, in
  * domain 6. Declaration format/size must match exactly. Diagnostic name and
- * runtime Plugin ID/version are excluded; the owner validates those separately.
+ * runtime module ID/version are excluded; the owner validates those separately.
  * Same budgets/errors/output and borrow contract as the queries above. */
-cmeta_status cmeta_contract_fingerprint_plugin(const cmeta_plugin_desc *desc,
+cmeta_status cmeta_contract_fingerprint_component(const cmeta_component_desc *desc,
     const cmeta_fingerprint_limits *limits, uint64_t *out);
 
 #ifdef __cplusplus
