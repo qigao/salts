@@ -5,6 +5,8 @@
 #include <cmeta/interface.h>
 #include <cmeta/data.h>
 
+#include <stdbool.h>
+
 #define CMETA_COMPONENT_DECLARATION_VERSION UINT32_C(2)
 
 typedef enum cmeta_component_role {
@@ -35,6 +37,17 @@ typedef struct cmeta_component_desc {
     const cmeta_component_capability *capabilities;
     size_t capability_count;
 } cmeta_component_desc;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/** Validate one immutable canonical component declaration. */
+bool cmeta_component_desc_valid(const cmeta_component_desc *desc);
+
+#ifdef __cplusplus
+}
+#endif
 
 /* Flat nonempty 1..16 role rows, using the existing PP schema machinery. */
 #define CMETA_COMPONENT_ROW_(role_, interface_) \
