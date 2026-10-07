@@ -67,4 +67,4 @@ int main(void) {
 
 这些向量从上述字节语法独立计算，测试不以另一次同函数调用充当期望值。CI 在 GCC、GCC ASan、MSVC、ClangCL、AppleClang 的独立 build 中断言同一向量；C/C++ TU 和链接的 DLL/DSO 具有不同 descriptor 地址。DSO fixture 的加载期覆盖整个测试进程，并在返回 metadata 前协商 Reflection epoch，不声明 unload-race 验证。安装包 C11/C++17 测试实际链接 fingerprint symbol，验证 core 仍独立消费。
 
-Plugin/service declaration 与 domain 6 指纹组合见 [PLUGIN_MANIFESTS.md](PLUGIN_MANIFESTS.md)。所有权继续归 Plugin lease；不新增第二个 schema 或 registry。
+Component declaration 与 domain 6 指纹组合见 [COMPONENT_MANIFESTS.md](PLUGIN_MANIFESTS.md)。所有权继续归 Plugin lease；不新增第二个 schema 或 registry。
