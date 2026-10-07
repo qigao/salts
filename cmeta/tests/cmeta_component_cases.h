@@ -5,6 +5,12 @@
 #include <cmeta/fingerprint.h>
 #include <cmeta/manifest_view.h>
 
+#ifdef __cplusplus
+#define COMPONENT_SIZE(value_) static_cast<size_t>(value_)
+#else
+#define COMPONENT_SIZE(value_) ((size_t)(value_))
+#endif
+
 #define COMPONENT_STORAGE_METHODS(X, I) \
     X(I, F0, int, ready, value, &cmeta_type_int, CMETA_ABI_SCALAR)
 
@@ -41,7 +47,7 @@ suite("CMeta component declarations") {
             &pattern_components, 0u, &limits, &component), CMETA_OK);
         check_not_null(component);
         check_equal(component->stable_id, "PatternStorage");
-        check_equal(component->capability_count, (size_t)2u);
+        check_equal(component->capability_count, COMPONENT_SIZE(2u));
 
         check_equal(cmeta_component_get_capability(
             component, 0u, CMETA_COMPONENT_PROVIDES, &limits, &provided), CMETA_OK);
@@ -103,9 +109,11 @@ suite("CMeta component declarations") {
         check_equal(cmeta_manifest_get_component(
             &pattern_components, 1u, &limits, &component), CMETA_OK);
         check_not_null(component);
-        check_equal(component->capability_count, (size_t)0u);
+        check_equal(component->capability_count, COMPONENT_SIZE(0u));
         check_null(component->capabilities);
     }
 }
+
+#undef COMPONENT_SIZE
 
 #endif /* CMETA_COMPONENT_CASES_H */
