@@ -170,6 +170,16 @@ suite("Salts static Component Configurator") {
             service.object, service.interfaces, &app_interface), CMETA_OK);
         check_equal(test_app_value(&app_interface), 18);
 
+        check_equal(salts_component_context_find_service_from(
+            &context, "TestLoggerAlt", test_log_interface(), &service),
+            SALTS_COMPONENT_OK);
+        {
+            test_log selected = test_log_bind(NULL, NULL);
+            check_equal(test_log_borrow_from_object(
+                service.object, service.interfaces, &selected), CMETA_OK);
+            check_equal(test_log_get(&selected), 8);
+        }
+
         check_equal(salts_component_context_stop(&context), SALTS_COMPONENT_OK);
     }
 
@@ -247,7 +257,8 @@ suite("Salts static Component Configurator") {
         check_equal(salts_component_context_resolve(&context), SALTS_COMPONENT_OK);
         check_equal(salts_component_context_start(&context),
                     SALTS_COMPONENT_INTERFACE_UNAVAILABLE);
-        check_equal(broken.activates, 0u);
+        check_equal(broken.activates, 1u);
+        check_equal(broken.deactivates, 1u);
         check_equal(broken.destroys, 1u);
         check_equal(salts_component_context_failure(&context)->phase,
                     SALTS_COMPONENT_PHASE_PROVIDE);
