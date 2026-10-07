@@ -202,10 +202,11 @@ salts_component_plugin_status salts_component_plugin_generation_build(
     size_t i;
     salts_component_status component_status;
 
-    if (generation == NULL || generation_id == 0u || registry == NULL ||
+    if (generation == NULL || generation_id == 0u ||
         storage == NULL ||
         (static_deployment_count != 0u && static_deployments == NULL) ||
-        (dynamic_source_count != 0u && dynamic_sources == NULL) ||
+        (dynamic_source_count != 0u &&
+         (dynamic_sources == NULL || registry == NULL)) ||
         (selection_count != 0u && selections == NULL))
         return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
 
@@ -350,7 +351,8 @@ salts_component_plugin_status salts_component_plugin_runtime_publish(
 
     if (generation->state != SALTS_COMPONENT_PLUGIN_GENERATION_BUILT ||
         generation->runtime_owner != NULL ||
-        generation->active_scopes != 0u) {
+        generation->active_scopes != 0u ||
+        runtime->attached_generations == SIZE_MAX) {
         cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
         return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
     }
@@ -522,6 +524,7 @@ salts_component_plugin_status salts_component_plugin_generation_drain(
     cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
 
     if (generation->runtime_owner != runtime ||
+        runtime->attached_generations == 0u ||
         (generation->state != SALTS_COMPONENT_PLUGIN_GENERATION_DRAINING &&
          !(generation->state == SALTS_COMPONENT_PLUGIN_GENERATION_FAILED &&
            generation->components.state == SALTS_COMPONENT_CONTEXT_STOPPED))) {
@@ -561,10 +564,6 @@ salts_component_plugin_status salts_component_plugin_generation_drain(
     cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
     generation->state = SALTS_COMPONENT_PLUGIN_GENERATION_DRAINED;
     generation->runtime_owner = NULL;
-    if (runtime->attached_generations == 0u) {
-        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
-        return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
-    }
     --runtime->attached_generations;
     cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
 
