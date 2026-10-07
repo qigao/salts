@@ -6,12 +6,19 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #define SALTS_COMPONENT_INDEX_NONE SIZE_MAX
+
+#if defined(_WIN32)
+#define SALTS_COMPONENT_CALL __cdecl
+#else
+#define SALTS_COMPONENT_CALL
+#endif
 
 typedef enum salts_component_status {
     SALTS_COMPONENT_OK = 0,
@@ -34,6 +41,7 @@ typedef enum salts_component_phase {
     SALTS_COMPONENT_PHASE_INIT,
     SALTS_COMPONENT_PHASE_RESOLVE,
     SALTS_COMPONENT_PHASE_DEPENDENCY,
+    SALTS_COMPONENT_PHASE_PROVIDE,
     SALTS_COMPONENT_PHASE_CREATE,
     SALTS_COMPONENT_PHASE_ACTIVATE
 } salts_component_phase;
@@ -49,7 +57,7 @@ typedef enum salts_component_context_state {
 
 typedef struct salts_component_dependency salts_component_dependency;
 
-typedef cmeta_status (*salts_component_create_fn)(
+typedef cmeta_status (SALTS_COMPONENT_CALL *salts_component_create_fn)(
     void *provider_context,
     const cmeta_data_desc *config_data,
     const void *config_value,
@@ -57,11 +65,11 @@ typedef cmeta_status (*salts_component_create_fn)(
     size_t dependency_count,
     cmeta_object_ref *out_instance);
 
-typedef cmeta_status (*salts_component_activate_fn)(
+typedef cmeta_status (SALTS_COMPONENT_CALL *salts_component_activate_fn)(
     void *provider_context,
     const cmeta_object_ref *instance);
 
-typedef void (*salts_component_deactivate_fn)(
+typedef void (SALTS_COMPONENT_CALL *salts_component_deactivate_fn)(
     void *provider_context,
     const cmeta_object_ref *instance);
 

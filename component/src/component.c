@@ -137,6 +137,32 @@ static bool salts_component_dependencies_ready(
     return true;
 }
 
+static cmeta_status salts_component_preflight_provides(
+    const salts_component_provider_binding *binding,
+    const cmeta_object_ref *instance) {
+    size_t i;
+
+    for (i = 0u; i < binding->component->capability_count; ++i) {
+        const cmeta_component_capability *capability =
+            &binding->component->capabilities[i];
+        cmeta_interface_projection projection =
+            CMETA_INTERFACE_PROJECTION_INIT;
+
+        if (capability->role != CMETA_COMPONENT_PROVIDES)
+            continue;
+
+        {
+            cmeta_status status = cmeta_object_interface_project_borrowed(
+                instance, binding->interfaces,
+                capability->interface_desc, &projection);
+            if (status != CMETA_OK)
+                return status;
+        }
+    }
+
+    return CMETA_OK;
+}
+
 static void salts_component_rollback(
     salts_component_context *context,
     size_t activated_count) {
@@ -199,10 +225,16 @@ salts_component_status salts_component_context_init(
     memset(context, 0, sizeof(*context));
     context->failure = salts_component_failure_none();
 
-    if ((provider_count != 0u && providers == NULL) ||
-        provider_count > instance_capacity ||
-        provider_count > activation_capacity ||
-        (provider_count != 0u && (instances == NULL || activation_order == NULL)))
+    if ((provider_count != 0u &&
+         (providers == NULL || instances == NULL || activation_order == NULL)) ||
+        (dependency_capacity != 0u && dependencies == NULL))
+        return salts_component_fail(
+            context, SALTS_COMPONENT_INVALID_ARGUMENT,
+            SALTS_COMPONENT_PHASE_INIT, SALTS_COMPONENT_INDEX_NONE,
+            SALTS_COMPONENT_INDEX_NONE, CMETA_OK);
+
+    if (provider_count > instance_capacity ||
+        provider_count > activation_capacity)
         return salts_component_fail(
             context, SALTS_COMPONENT_CAPACITY_EXCEEDED,
             SALTS_COMPONENT_PHASE_INIT, SALTS_COMPONENT_INDEX_NONE,
@@ -257,9 +289,16 @@ salts_component_status salts_component_context_resolve(
     context->dependency_count = 0u;
     context->activation_count = 0u;
 
-    for (i = 0u; i < context->provider_count; ++i)
-        required_total +=
+    for (i = 0u; i < context->provider_count; ++i) {
+        size_t count =
             salts_component_requirement_count(context->providers[i].component);
+        if (required_total > SIZE_MAX - count)
+            return salts_component_fail(
+                context, SALTS_COMPONENT_CAPACITY_EXCEEDED,
+                SALTS_COMPONENT_PHASE_RESOLVE, i,
+                SALTS_COMPONENT_INDEX_NONE, CMETA_OK);
+        required_total += count;
+    }
 
     if (required_total > context->dependency_capacity ||
         (required_total != 0u && context->dependencies == NULL))
@@ -430,6 +469,17 @@ salts_component_status salts_component_context_start(
                 context, SALTS_COMPONENT_CREATE_FAILED,
                 SALTS_COMPONENT_PHASE_CREATE, component_index,
                 SALTS_COMPONENT_INDEX_NONE, CMETA_CALLBACK_ERROR);
+        }
+
+        provider_status =
+            salts_component_preflight_provides(binding, &instance->object);
+        if (provider_status != CMETA_OK) {
+            cmeta_object_release(&instance->object);
+            salts_component_rollback(context, order_index);
+            return salts_component_fail(
+                context, SALTS_COMPONENT_INTERFACE_UNAVAILABLE,
+                SALTS_COMPONENT_PHASE_PROVIDE, component_index,
+                SALTS_COMPONENT_INDEX_NONE, provider_status);
         }
 
         if (binding->activate != NULL) {

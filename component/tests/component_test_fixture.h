@@ -30,6 +30,9 @@ cmeta_component_configured(TestApp, &cmeta_data_int,
 cmeta_component(TestLoggerAlt,
     cmeta_provides(test_log));
 
+cmeta_component(TestBrokenProvider,
+    cmeta_provides(test_a));
+
 cmeta_component(TestCycleA,
     cmeta_provides(test_a)
     cmeta_requires(test_b));

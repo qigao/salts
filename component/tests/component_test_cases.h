@@ -174,6 +174,88 @@ suite("Salts static Component Configurator") {
         check_equal(app.creates, 0u);
     }
 
+    it("rejects a provider that cannot project its declared service") {
+        test_provider_state broken;
+        salts_component_provider_binding provider;
+        salts_component_instance instance;
+        size_t order;
+        salts_component_context context;
+
+        test_provider_state_init(&broken, 9, NULL);
+        provider = (salts_component_provider_binding){
+            cmeta_component_meta(TestBrokenProvider), &broken,
+            NULL, NULL, &test_interfaces,
+            test_cycle_create, test_activate, test_deactivate
+        };
+
+        check_equal(salts_component_context_init(
+            &context, &provider, 1u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_resolve(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_start(&context),
+                    SALTS_COMPONENT_INTERFACE_UNAVAILABLE);
+        check_equal(broken.activates, 0u);
+        check_equal(broken.destroys, 1u);
+        check_equal(salts_component_context_failure(&context)->phase,
+                    SALTS_COMPONENT_PHASE_PROVIDE);
+    }
+
+    it("keeps two static component contexts fully independent") {
+        test_provider_state left;
+        test_provider_state right;
+        salts_component_provider_binding left_provider;
+        salts_component_provider_binding right_provider;
+        salts_component_instance left_instance;
+        salts_component_instance right_instance;
+        size_t left_order;
+        size_t right_order;
+        salts_component_context left_context;
+        salts_component_context right_context;
+        salts_component_service left_service;
+        salts_component_service right_service;
+        test_log left_log = test_log_bind(NULL, NULL);
+        test_log right_log = test_log_bind(NULL, NULL);
+
+        test_provider_state_init(&left, 11, NULL);
+        test_provider_state_init(&right, 22, NULL);
+
+        left_provider = (salts_component_provider_binding){
+            cmeta_component_meta(TestLogger), &left,
+            NULL, NULL, &test_interfaces,
+            test_logger_create, test_activate, test_deactivate
+        };
+        right_provider = (salts_component_provider_binding){
+            cmeta_component_meta(TestLogger), &right,
+            NULL, NULL, &test_interfaces,
+            test_logger_create, test_activate, test_deactivate
+        };
+
+        check_equal(salts_component_context_init(
+            &left_context, &left_provider, 1u, &left_instance, 1u,
+            NULL, 0u, &left_order, 1u), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_init(
+            &right_context, &right_provider, 1u, &right_instance, 1u,
+            NULL, 0u, &right_order, 1u), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_resolve(&left_context), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_resolve(&right_context), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_start(&left_context), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_start(&right_context), SALTS_COMPONENT_OK);
+
+        check_equal(salts_component_context_find_service(
+            &left_context, test_log_interface(), &left_service), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_find_service(
+            &right_context, test_log_interface(), &right_service), SALTS_COMPONENT_OK);
+        check_equal(test_log_borrow_from_object(
+            left_service.object, left_service.interfaces, &left_log), CMETA_OK);
+        check_equal(test_log_borrow_from_object(
+            right_service.object, right_service.interfaces, &right_log), CMETA_OK);
+        check_equal(test_log_get(&left_log), 11);
+        check_equal(test_log_get(&right_log), 22);
+
+        check_equal(salts_component_context_stop(&left_context), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_stop(&right_context), SALTS_COMPONENT_OK);
+    }
+
     it("rolls back prior active components exactly once on activation failure") {
         int config = 3;
         test_provider_state logger;
