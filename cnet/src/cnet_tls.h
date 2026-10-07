@@ -34,6 +34,7 @@ typedef enum cnet_tls_protocol_version {
 typedef struct cnet_tls_state {
   cnet_tls_context *context;
   void *engine;
+  /* Reserved for transport receive through terminal completion, never plaintext. */
   unsigned char *read_buffer;
   unsigned char *write_buffer;
   size_t io_buffer_bytes;
@@ -74,8 +75,8 @@ int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity, size_t *
                   bool *out_peer_closed);
 /**
  * Advances TLS control state without consuming application plaintext.
- * out_plaintext_pending is true when SSL_peek observes application data that
- * must remain buffered until receive demand exists.
+ * out_plaintext_pending is true when application data is retained in the
+ * engine's plaintext buffer until receive demand exists.
  */
 int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed,
                               bool *out_plaintext_pending);

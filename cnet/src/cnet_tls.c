@@ -69,6 +69,7 @@ typedef struct cnet_tls_gmssl_state {
   TLS_IO io;
   unsigned char *cipher_input;
   unsigned char *cipher_output;
+  unsigned char *plaintext;
   size_t capacity;
   size_t input_head;
   size_t input_size;
@@ -1030,6 +1031,8 @@ int cnet_tls_state_init(cnet_tls_state *state, cnet_tls_context *context,
     return SALTS_ERANGE;
 
   allocation_size = sizeof(cnet_tls_gmssl_state) + ring_capacity * 2u;
+  if (io_buffer_bytes > SIZE_MAX - allocation_size) return SALTS_ERANGE;
+  allocation_size += io_buffer_bytes;
   engine = (cnet_tls_gmssl_state *)calloc(1u, allocation_size);
   read_buffer = (unsigned char *)malloc(io_buffer_bytes);
   write_buffer = (unsigned char *)malloc(io_buffer_bytes);
@@ -1043,6 +1046,9 @@ int cnet_tls_state_init(cnet_tls_state *state, cnet_tls_context *context,
   engine->capacity = ring_capacity;
   engine->cipher_input = (unsigned char *)(engine + 1);
   engine->cipher_output = engine->cipher_input + ring_capacity;
+  /* NativeIO owns state->read_buffer until the receive completion is consumed.
+   * Provider reads/probes and pending plaintext must not alias that storage. */
+  engine->plaintext = engine->cipher_output + ring_capacity;
   if (!server)
     memcpy(engine->server_name, server_name, strlen(server_name) + 1u);
 
@@ -1388,7 +1394,7 @@ static int cnet_tls_read_pending(cnet_tls_state *state, void *buffer,
   available =
       engine->plaintext_pending_size - engine->plaintext_pending_offset;
   size = capacity < available ? capacity : available;
-  memcpy(buffer, state->read_buffer + engine->plaintext_pending_offset, size);
+  memcpy(buffer, engine->plaintext + engine->plaintext_pending_offset, size);
   engine->plaintext_pending_offset += size;
   if (engine->plaintext_pending_offset == engine->plaintext_pending_size) {
     engine->plaintext_pending_offset = 0u;
@@ -1436,12 +1442,12 @@ int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity,
   if (status != SALTS_OK) return status;
   if (!record_ready) return SALTS_OK;
 
-  result = tls_recv(&engine->connection, state->read_buffer,
+  result = tls_recv(&engine->connection, engine->plaintext,
                     state->io_buffer_bytes, &received_size);
   if (result == 1) {
     if (received_size > state->io_buffer_bytes) return SALTS_EPROTO;
     copy_size = capacity < received_size ? capacity : received_size;
-    if (copy_size != 0u) memcpy(buffer, state->read_buffer, copy_size);
+    if (copy_size != 0u) memcpy(buffer, engine->plaintext, copy_size);
     *out_size = copy_size;
     if (copy_size < received_size) {
       engine->plaintext_pending_offset = copy_size;
@@ -1489,7 +1495,7 @@ int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed,
     if (!record_ready) return SALTS_OK;
   }
 
-  result = tls_recv(&engine->connection, state->read_buffer,
+  result = tls_recv(&engine->connection, engine->plaintext,
                     state->io_buffer_bytes, &received_size);
   if (result == 1 && received_size != 0u) {
     engine->plaintext_pending_offset = 0u;
