@@ -422,7 +422,7 @@
                 "BUILD_TESTS": "OFF",
                 "BUILD_BENCHMARKS": "OFF",
                 "BUILD_EXAMPLES": "OFF",
-                "VCPKG_INSTALL_OPTIONS": "--only-binarycaching"
+                "VCPKG_INSTALL_OPTIONS": ""
             },
             "environment": {
                 "SALTS_ROOT": "${sourceDir}/stage/sdk/linux-arm64"
@@ -491,7 +491,7 @@
                 "CMAKE_OSX_ARCHITECTURES": "arm64",
                 "VCPKG_TARGET_TRIPLET": "arm64-ios",
                 "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/arm64-ios",
-                "VCPKG_INSTALL_OPTIONS": "--only-binarycaching",
+                "VCPKG_INSTALL_OPTIONS": "",
                 "ENABLE_TESTS": "OFF",
                 "BUILD_TESTS": "OFF",
                 "BUILD_BENCHMARKS": "OFF",
