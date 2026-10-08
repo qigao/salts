@@ -1,0 +1,319 @@
+#ifndef CMETA_ACE_SYNC_CASES_H
+#define CMETA_ACE_SYNC_CASES_H
+
+#include <cmeta/ace_synchronization.h>
+#include <salts/thread.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+#define ACE_SYNC_CAST(type_, ptr_) static_cast<type_>(ptr_)
+#else
+#define ACE_SYNC_CAST(type_, ptr_) ((type_)(ptr_))
+#endif
+
+/* One canonical CMeta Interface with two real native strategies. */
+static void ace_sync_mutex_acquire(void *user) {
+    cmeta_mutex_lock(ACE_SYNC_CAST(cmeta_mutex_t *, user));
+}
+static void ace_sync_mutex_release(void *user) {
+    cmeta_mutex_unlock(ACE_SYNC_CAST(cmeta_mutex_t *, user));
+}
+static void ace_sync_rw_acquire(void *user) {
+    cmeta_rwlock_wrlock(ACE_SYNC_CAST(cmeta_rwlock_t *, user));
+}
+static void ace_sync_rw_release(void *user) {
+    cmeta_rwlock_wrunlock(ACE_SYNC_CAST(cmeta_rwlock_t *, user));
+}
+CMETA_IMPLEMENTS(cmeta_ace_lockable, ace_sync_mutex_policy, 0u,
+    .acquire = ace_sync_mutex_acquire,
+    .release = ace_sync_mutex_release);
+CMETA_IMPLEMENTS(cmeta_ace_lockable, ace_sync_rw_policy, 0u,
+    .acquire = ace_sync_rw_acquire,
+    .release = ace_sync_rw_release);
+
+/* Thread-Safe Interface: public wrapper acquires once; private method is
+ * already under the guard and must NEVER enter the public method again. */
+typedef struct ace_sync_counter {
+    cmeta_ace_lockable policy;
+    int value;
+    unsigned private_calls;
+} ace_sync_counter;
+
+typedef struct ace_sync_operation {
+    ace_sync_counter *counter;
+    int increment;
+    int result;
+} ace_sync_operation;
+
+CMETA_ACE_SYNCHRONIZED(ace_sync_counter_gate, ace_sync_operation);
+
+static void ace_sync_add_private(ace_sync_counter *counter, int delta) {
+    counter->value += delta;
+    ++counter->private_calls;
+}
+static cmeta_status ace_sync_add_body(ace_sync_operation *operation) {
+    ace_sync_add_private(operation->counter, operation->increment);
+    ace_sync_add_private(operation->counter, operation->increment);
+    operation->result = operation->counter->value;
+    return CMETA_OK;
+}
+static cmeta_status ace_sync_read_body(ace_sync_operation *operation) {
+    operation->result = operation->counter->value;
+    return CMETA_OK;
+}
+
+#define ACE_SYNC_COUNTER_METHODS(X,I) \
+    X(I,R1,cmeta_status,add,int,increment) \
+    X(I,R0,int,get,_)
+CMETA_INTERFACE(ace_sync_counter_port, ACE_SYNC_COUNTER_METHODS);
+
+static cmeta_status ace_sync_counter_add(void *self, int increment) {
+    ace_sync_counter *counter = ACE_SYNC_CAST(ace_sync_counter *, self);
+    ace_sync_operation operation = {counter, increment, 0};
+    return ace_sync_counter_gate_run(&counter->policy, &operation,
+                                     ace_sync_add_body);
+}
+static int ace_sync_counter_get(void *self) {
+    ace_sync_counter *counter = ACE_SYNC_CAST(ace_sync_counter *, self);
+    ace_sync_operation operation = {counter, 0, 0};
+    if (ace_sync_counter_gate_run(&counter->policy, &operation,
+                                  ace_sync_read_body) != CMETA_OK)
+        return -1;
+    return operation.result;
+}
+CMETA_IMPLEMENTS(ace_sync_counter_port, ace_sync_counter_impl, 0u,
+    .add = ace_sync_counter_add,
+    .get = ace_sync_counter_get);
+
+typedef struct ace_sync_worker {
+    ace_sync_counter_port counter;
+    int failures;
+} ace_sync_worker;
+
+static void ace_sync_counter_worker(void *user) {
+    ace_sync_worker *worker = ACE_SYNC_CAST(ace_sync_worker *, user);
+    for (int i = 0; i < 125; ++i)
+        if (ace_sync_counter_port_add(&worker->counter, 1) != CMETA_OK)
+            ++worker->failures;
+}
+
+/* Monitor Object: predicate, condition and close belong to the same guarded
+ * native object. The public CMeta interface supplies exact synchronous ABI. */
+typedef struct ace_sync_monitor {
+    cmeta_mutex_t mutex;
+    cmeta_cond_t changed;
+    bool full;
+    bool closed;
+    unsigned waiters;
+    int value;
+} ace_sync_monitor;
+
+static void ace_sync_monitor_init(ace_sync_monitor *monitor) {
+    ace_sync_monitor empty = {0};
+    *monitor = empty;
+    cmeta_mutex_init(&monitor->mutex);
+    cmeta_cond_init(&monitor->changed);
+}
+static void ace_sync_monitor_destroy(ace_sync_monitor *monitor) {
+    /* Only after close plus joining all waiters: no hidden lease or worker. */
+    cmeta_cond_destroy(&monitor->changed);
+    cmeta_mutex_destroy(&monitor->mutex);
+}
+static int ace_sync_monitor_wait(ace_sync_monitor *monitor) {
+    int rc;
+    ++monitor->waiters;
+    rc = cmeta_cond_timedwait(&monitor->changed, &monitor->mutex,
+                              UINT64_C(2000000000));
+    --monitor->waiters;
+    return rc;
+}
+
+#define ACE_SYNC_MONITOR_METHODS(X,I) \
+    X(I,R1,cmeta_status,put,int,value) \
+    X(I,R1,cmeta_status,take,int*,out) \
+    X(I,V0,void,close,_)
+CMETA_INTERFACE(ace_sync_monitor_port, ACE_SYNC_MONITOR_METHODS);
+
+static cmeta_status ace_sync_monitor_put(void *self, int value) {
+    ace_sync_monitor *monitor = ACE_SYNC_CAST(ace_sync_monitor *, self);
+    cmeta_mutex_lock(&monitor->mutex);
+    while (monitor->full && !monitor->closed) {
+        if (ace_sync_monitor_wait(monitor) != 0) {
+            cmeta_mutex_unlock(&monitor->mutex);
+            return CMETA_BUSY;
+        }
+    }
+    if (monitor->closed) {
+        cmeta_mutex_unlock(&monitor->mutex);
+        return CMETA_BUSY;
+    }
+    monitor->value = value;
+    monitor->full = true;
+    cmeta_cond_broadcast(&monitor->changed);
+    cmeta_mutex_unlock(&monitor->mutex);
+    return CMETA_OK;
+}
+static cmeta_status ace_sync_monitor_take(void *self, int *out) {
+    ace_sync_monitor *monitor = ACE_SYNC_CAST(ace_sync_monitor *, self);
+    if (out == NULL) return CMETA_INVALID_ARGUMENT;
+    cmeta_mutex_lock(&monitor->mutex);
+    while (!monitor->full && !monitor->closed) {
+        if (ace_sync_monitor_wait(monitor) != 0) {
+            cmeta_mutex_unlock(&monitor->mutex);
+            return CMETA_BUSY;
+        }
+    }
+    if (!monitor->full) {
+        cmeta_mutex_unlock(&monitor->mutex);
+        return CMETA_BUSY;
+    }
+    *out = monitor->value;
+    monitor->full = false;
+    cmeta_cond_broadcast(&monitor->changed);
+    cmeta_mutex_unlock(&monitor->mutex);
+    return CMETA_OK;
+}
+static void ace_sync_monitor_close(void *self) {
+    ace_sync_monitor *monitor = ACE_SYNC_CAST(ace_sync_monitor *, self);
+    cmeta_mutex_lock(&monitor->mutex);
+    monitor->closed = true;
+    cmeta_cond_broadcast(&monitor->changed);
+    cmeta_mutex_unlock(&monitor->mutex);
+}
+CMETA_IMPLEMENTS(ace_sync_monitor_port, ace_sync_monitor_impl, 0u,
+    .put = ace_sync_monitor_put,
+    .take = ace_sync_monitor_take,
+    .close = ace_sync_monitor_close);
+
+typedef struct ace_sync_consumer {
+    ace_sync_monitor_port monitor;
+    cmeta_status status;
+    int value;
+} ace_sync_consumer;
+static void ace_sync_monitor_worker(void *user) {
+    ace_sync_consumer *consumer = ACE_SYNC_CAST(ace_sync_consumer *, user);
+    consumer->status = ace_sync_monitor_port_take(&consumer->monitor,
+                                                  &consumer->value);
+}
+
+#ifdef __cplusplus
+static cmeta_status ace_sync_throws(ace_sync_operation *operation) {
+    (void)operation;
+    throw 7;
+}
+#endif
+
+suite("CMeta ACE concurrent pattern composition") {
+    it("selects real typed locking strategies and rejects double release") {
+        cmeta_mutex_t mutex = NULL;
+        cmeta_rwlock_t rw = NULL;
+        cmeta_ace_guard guard = {0};
+        cmeta_ace_lockable missing = cmeta_ace_lockable_bind(NULL, NULL);
+        cmeta_mutex_init(&mutex);
+        check_equal(cmeta_rwlock_init(&rw), 0);
+        cmeta_ace_lockable lock = ace_sync_mutex_policy_as_cmeta_ace_lockable(&mutex);
+        check_equal(cmeta_ace_guard_enter(&guard, &missing), CMETA_INVALID_ARGUMENT);
+        check_equal(cmeta_ace_guard_enter(&guard, &lock), CMETA_OK);
+        check_equal(cmeta_ace_guard_enter(&guard, &lock), CMETA_BUSY);
+        check_equal(cmeta_ace_guard_leave(&guard), CMETA_OK);
+        check_equal(cmeta_ace_guard_leave(&guard), CMETA_INVALID_ARGUMENT);
+        lock = ace_sync_rw_policy_as_cmeta_ace_lockable(&rw);
+        check_equal(cmeta_ace_guard_enter(&guard, &lock), CMETA_OK);
+        check_equal(cmeta_ace_guard_leave(&guard), CMETA_OK);
+        cmeta_rwlock_destroy(&rw);
+        cmeta_mutex_destroy(&mutex);
+    }
+
+    it("serializes concurrent public Interface calls with a single private gate") {
+        cmeta_mutex_t mutex = NULL;
+        cmeta_rwlock_t rw = NULL;
+        cmeta_thread_t threads[4] = {0};
+        ace_sync_worker workers[4] = {0};
+        ace_sync_counter counter = {0};
+        cmeta_mutex_init(&mutex);
+        counter.policy = ace_sync_mutex_policy_as_cmeta_ace_lockable(&mutex);
+        ace_sync_counter_port port = ace_sync_counter_impl_as_ace_sync_counter_port(&counter);
+        for (size_t i = 0; i < 4u; ++i) {
+            workers[i].counter = port;
+            check_equal(cmeta_thread_create(&threads[i], ace_sync_counter_worker,
+                                             &workers[i]), 0);
+        }
+        for (size_t i = 0; i < 4u; ++i) {
+            check_equal(cmeta_thread_join(&threads[i]), 0);
+            check_equal(workers[i].failures, 0);
+        }
+        check_equal(ace_sync_counter_port_get(&port), 1000);
+        check_equal(counter.private_calls, 1000u);
+        /* Policy switch is legal only when all concurrent callers are joined. */
+        check_equal(cmeta_rwlock_init(&rw), 0);
+        counter.policy = ace_sync_rw_policy_as_cmeta_ace_lockable(&rw);
+        check_equal(ace_sync_counter_port_add(&port, 2), CMETA_OK);
+        check_equal(ace_sync_counter_port_get(&port), 1004);
+        cmeta_rwlock_destroy(&rw);
+        cmeta_mutex_destroy(&mutex);
+    }
+
+    it("runs a real Monitor Object with bounded predicate and terminal close") {
+        ace_sync_monitor monitor;
+        ace_sync_monitor_init(&monitor);
+        ace_sync_monitor_port port =
+            ace_sync_monitor_impl_as_ace_sync_monitor_port(&monitor);
+        int value = -1;
+        check_equal(ace_sync_monitor_port_take(&port, NULL), CMETA_INVALID_ARGUMENT);
+        check_equal(ace_sync_monitor_port_put(&port, 42), CMETA_OK);
+        check_equal(ace_sync_monitor_port_take(&port, &value), CMETA_OK);
+        check_equal(value, 42);
+        ace_sync_monitor_port_close(&port);
+        check_equal(ace_sync_monitor_port_put(&port, 43), CMETA_BUSY);
+        check_equal(ace_sync_monitor_port_take(&port, &value), CMETA_BUSY);
+        ace_sync_monitor_destroy(&monitor);
+    }
+
+    it("wakes an actual blocked Monitor waiter before resource destruction") {
+        ace_sync_monitor monitor;
+        ace_sync_monitor_init(&monitor);
+        ace_sync_monitor_port port =
+            ace_sync_monitor_impl_as_ace_sync_monitor_port(&monitor);
+        ace_sync_consumer consumer = {port, CMETA_OK, -1};
+        cmeta_thread_t thread = NULL;
+        bool observed_waiter = false;
+        check_equal(cmeta_thread_create(&thread, ace_sync_monitor_worker,
+                                        &consumer), 0);
+        for (unsigned attempt = 0u; attempt < 500u; ++attempt) {
+            cmeta_mutex_lock(&monitor.mutex);
+            observed_waiter = monitor.waiters != 0u;
+            cmeta_mutex_unlock(&monitor.mutex);
+            if (observed_waiter) break;
+            cmeta_sleep_ms(1u);
+        }
+        /* Even if the worker has not reached wait, close must reject it. */
+        ace_sync_monitor_port_close(&port);
+        check_equal(cmeta_thread_join(&thread), 0);
+        check_true(observed_waiter);
+        check_equal(consumer.status, CMETA_BUSY);
+        check_equal(consumer.value, -1);
+        check_equal(monitor.waiters, 0u);
+        ace_sync_monitor_destroy(&monitor);
+    }
+
+#ifdef __cplusplus
+    it("releases the typed public guard when a C++ body throws") {
+        cmeta_mutex_t mutex = NULL;
+        cmeta_mutex_init(&mutex);
+        cmeta_ace_lockable lock = ace_sync_mutex_policy_as_cmeta_ace_lockable(&mutex);
+        ace_sync_counter counter = {lock, 0, 0u};
+        ace_sync_operation operation = {&counter, 1, 0};
+        bool caught = false;
+        try { (void)ace_sync_counter_gate_run(&lock, &operation, ace_sync_throws); }
+        catch (int value) { caught = value == 7; }
+        check_true(caught);
+        check_equal(ace_sync_counter_gate_run(&lock, &operation,
+                                               ace_sync_add_body), CMETA_OK);
+        check_equal(counter.value, 2);
+        cmeta_mutex_destroy(&mutex);
+    }
+#endif
+}
+
+#undef ACE_SYNC_CAST
+#endif /* CMETA_ACE_SYNC_CASES_H */
