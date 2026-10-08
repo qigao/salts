@@ -72,4 +72,17 @@ if(CFLOW_CNET_BUILD_BENCHMARKS)
   if(WIN32)
     target_link_libraries(cflow_cnet_direct_tcp_benchmark PRIVATE ws2_32)
   endif()
+  add_executable(cflow_cnet_same_owner_actor_benchmark
+    benchmarks/cnet_same_owner_actor_benchmark.c
+    benchmarks/cnet_benchmark_stats.c)
+  target_include_directories(cflow_cnet_same_owner_actor_benchmark PRIVATE benchmarks)
+  target_link_libraries(cflow_cnet_same_owner_actor_benchmark PRIVATE
+    Salts::CFlowCNet Salts::Platform)
+  target_compile_features(cflow_cnet_same_owner_actor_benchmark PRIVATE c_std_11)
+  set_target_properties(cflow_cnet_same_owner_actor_benchmark PROPERTIES
+    C_EXTENSIONS OFF FOLDER "cflow/cnet-adapter/benchmarks")
+  if(WIN32)
+    target_link_libraries(cflow_cnet_same_owner_actor_benchmark PRIVATE ws2_32)
+  endif()
+
 endif()
