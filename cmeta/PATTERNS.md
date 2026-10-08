@@ -165,6 +165,21 @@ mechanism remains outside CMeta:
 CMeta may describe typed policies, messages, interfaces, factories and
 lifecycle contracts for these mechanisms.
 
+### ACE Acceptor–Connector composition conformance
+
+The post-3.0 ACE integration suite in
+`cnet/tests/cnet_ace_acceptor_connector_test.c` uses a real loopback TCP
+connection, not a simulated acceptor. `cnet_listener` and `cnet_client`
+own listener/connection admission and deterministic callback progress.
+A fully reflected `CMETA_INTERFACE` Strategy supplies borrowed typed
+`on_state` dispatch, and the callback owner's storage remains live until
+CNet stop/destroy. Closing the listener does not invalidate established
+connections. Invalid admission fails without callback publication.
+
+This qualifies a composition of existing primitives: **it does not authorize**
+a `cmeta_acceptor`, `cmeta_connector`, hidden reactor, global registration
+or implicit handler lifetime extension.
+
 ## Admission test for a new pattern helper
 
 Add a new CMeta pattern-level macro/inline helper only if at least one condition

@@ -372,6 +372,14 @@ set_target_properties(
              C_STANDARD_REQUIRED ON
              C_EXTENSIONS OFF)
 
+# ACE pattern conformance: CNet owns I/O, CMeta supplies borrowed typed handlers.
+cmake_add_test(cnet_ace_acceptor_connector_test
+  SOURCES cnet_ace_acceptor_connector_test.c
+  LIBS cnet Salts::CMeta Salts::Core Salts::TinyTest
+  FOLDER "cnet/tests")
+set_target_properties(cnet_ace_acceptor_connector_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
 cmake_add_test(
   cnet_tcp_endpoint_test
   SOURCES
