@@ -75,6 +75,26 @@ static void owner_sched_cancel_foreign(void *user) {
                  cflow_scheduler_cancel(p->scheduler, p->task_id));
 }
 
+enum { OWNER_CANCEL_RACE_TASKS = 32 };
+
+typedef struct owner_cancel_race {
+    cflow_scheduler *scheduler;
+    cflow_task_id ids[OWNER_CANCEL_RACE_TASKS];
+    atomic_bool started;
+    atomic_bool done;
+    atomic_int won;
+} owner_cancel_race;
+
+static void owner_sched_cancel_race_foreign(void *user) {
+    owner_cancel_race *r = (owner_cancel_race *)user;
+    while (!atomic_load(&r->started)) cmeta_thread_yield();
+    for (size_t i = 0u; i < OWNER_CANCEL_RACE_TASKS; ++i) {
+        if (cflow_scheduler_cancel(r->scheduler, r->ids[i]))
+            atomic_fetch_add(&r->won, 1);
+    }
+    atomic_store(&r->done, true);
+}
+
 suite("CFlow shared-owner Concurrent Scheduler") {
     it("rejects unsupported bindings and shares the existing Executor queue") {
         cflow_executor executor = {0};
@@ -221,6 +241,54 @@ suite("CFlow shared-owner Concurrent Scheduler") {
         check_true(cflow_scheduler_wait_idle(&scheduler));
         check_equal(atomic_load(&probe.cancels), 1);
         check_equal(atomic_load(&probe.finalizers), 1);
+        cflow_scheduler_destroy(&scheduler);
+        cflow_executor_destroy(&executor);
+    }
+
+    it("settles racing owner runs and foreign cancellation exactly once") {
+        cflow_executor executor = {0};
+        cflow_scheduler scheduler = {0};
+        owner_scheduler_probe probe = {0};
+        owner_cancel_race race = {0};
+        cmeta_thread_t canceller = NULL;
+        cflow_executor_task task = {
+            .run = owner_sched_run,
+            .cancel = owner_sched_cancel,
+            .finalize = owner_sched_finalize,
+            .user = &probe
+        };
+
+        probe.owner = cmeta_thread_current_token();
+        check_true(cflow_executor_owner_init_with_capacity(
+            &executor, OWNER_CANCEL_RACE_TASKS, NULL, NULL));
+        check_true(cflow_scheduler_owner_bind(
+            &scheduler, &executor, OWNER_CANCEL_RACE_TASKS));
+
+        race.scheduler = &scheduler;
+        for (size_t i = 0u; i < OWNER_CANCEL_RACE_TASKS; ++i) {
+            cflow_schedule_result posted = {0};
+            check_true(cflow_scheduler_try_post_task_after_internal(
+                &scheduler, 0u, &task, &posted));
+            check_equal(posted.status, CFLOW_ADMISSION_ACCEPTED);
+            race.ids[i] = posted.task_id;
+        }
+        check_equal(cmeta_thread_create(
+            &canceller, owner_sched_cancel_race_foreign, &race), 0);
+        atomic_store(&race.started, true);
+        while (!atomic_load(&race.done) ||
+               cflow_scheduler_pending(&scheduler) != 0u) {
+            if (!cflow_executor_run_one(&executor))
+                cmeta_thread_yield();
+        }
+        check_equal(cmeta_thread_join(&canceller), 0);
+        check_true(cflow_scheduler_wait_idle(&scheduler));
+        check_equal(atomic_load(&probe.runs) +
+                    atomic_load(&probe.cancels), OWNER_CANCEL_RACE_TASKS);
+        check_equal(atomic_load(&probe.finalizers), OWNER_CANCEL_RACE_TASKS);
+        check_equal(atomic_load(&probe.wrong_owner), 0);
+        check_equal(atomic_load(&probe.cancel_off_owner),
+                    atomic_load(&race.won));
+
         cflow_scheduler_destroy(&scheduler);
         cflow_executor_destroy(&executor);
     }
