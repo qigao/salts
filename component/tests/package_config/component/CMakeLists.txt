@@ -23,6 +23,9 @@ endif()
 if(NOT TARGET Salts::Component)
   message(FATAL_ERROR "installed package is missing Salts::Component")
 endif()
+if(NOT TARGET Salts::ComponentPlugin)
+  message(FATAL_ERROR "installed package is missing Salts::ComponentPlugin")
+endif()
 
 get_target_property(component_abi_type Salts::ComponentABI TYPE)
 if(NOT component_abi_type STREQUAL "INTERFACE_LIBRARY")
@@ -45,6 +48,16 @@ add_executable(component_installed_consumer main.c)
 target_link_libraries(component_installed_consumer PRIVATE Salts::Component)
 target_compile_features(component_installed_consumer PRIVATE c_std_11)
 
+# Rebuild and execute against the installed headers/libraries, not the
+# in-tree source targets: catch layout/version skew in ComponentPlugin scopes.
+add_executable(component_plugin_scope_installed_consumer scope.c)
+target_link_libraries(component_plugin_scope_installed_consumer PRIVATE Salts::ComponentPlugin)
+target_compile_features(component_plugin_scope_installed_consumer PRIVATE c_std_11)
+set_target_properties(component_plugin_scope_installed_consumer PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
 enable_testing()
 add_test(NAME component_installed_consumer
   COMMAND component_installed_consumer)
+add_test(NAME component_plugin_scope_installed_consumer
+  COMMAND component_plugin_scope_installed_consumer)
