@@ -237,6 +237,7 @@ static void domain_foreign_stats(void *user) {
  */
 typedef struct domain_loopback {
     cnet_client client;
+    native_io_backend backend; /* Borrowed by CNet in external mode. */
     domain_test_fixture domain;
     cnet_connection connection;
     domain_socket listener;
@@ -244,6 +245,10 @@ typedef struct domain_loopback {
     cnet_connection_state state;
     int on_receive_status;
     size_t received_callbacks;
+    size_t observed_completions;
+    size_t routed_completions;
+    size_t unmatched_completions;
+    bool external;
     bool connected;
     bool terminal;
 } domain_loopback;
@@ -348,7 +353,40 @@ static void domain_network_receive(
     ++s->received_callbacks;
 }
 
-static int domain_loopback_open(domain_loopback *s) {
+/* The embedding host is the ONLY NativeIO completion observer in external
+ * mode; CNet never polls the borrowed backend. Domain Actor execution remains
+ * separately owned and bounded by the caller's run_one() fairness quantum. */
+static int domain_loopback_progress(domain_loopback *s, uint32_t wait_ms) {
+    native_io_completion batch[8] = {{0}};
+    size_t count = 0u;
+    size_t events = 0u;
+    int status;
+    if (!s->external)
+        return cnet_client_poll(&s->client, wait_ms, &events);
+    status = cnet_client_advance_external(&s->client, &events);
+    if (status != SALTS_OK) return status;
+    status = native_io_backend_observe(&s->backend, batch, 8u,
+                                       wait_ms, &count);
+    if (status != SALTS_OK && status != SALTS_ETIMEDOUT) return status;
+    if (status == SALTS_OK) {
+        s->observed_completions += count;
+        for (size_t i = 0u; i < count; ++i) {
+            bool consumed = false;
+            size_t routed_events = 0u;
+            status = cnet_client_route_external_completion(
+                &s->client, &batch[i], &consumed, &routed_events);
+            if (status != SALTS_OK) return status;
+            if (!consumed) {
+                ++s->unmatched_completions;
+                return SALTS_EPROTO; /* Never fabricate a terminal owner. */
+            }
+            ++s->routed_completions;
+        }
+    }
+    return cnet_client_advance_external(&s->client, &events);
+}
+
+static int domain_loopback_open_mode(domain_loopback *s, bool external) {
     struct sockaddr_in address = {0};
     domain_socklen length = (domain_socklen)sizeof(address);
     uint16_t port;
@@ -368,6 +406,7 @@ static int domain_loopback_open(domain_loopback *s) {
     int status;
 
     memset(s, 0, sizeof(*s));
+    s->external = external;
     s->listener = DOMAIN_BAD_SOCKET;
     s->peer = DOMAIN_BAD_SOCKET;
 #if defined(_WIN32)
@@ -391,7 +430,16 @@ static int domain_loopback_open(domain_loopback *s) {
         return SALTS_EIO;
     port = ntohs(address.sin_port);
 
-    status = cnet_client_init(&s->client, &config);
+    if (external) {
+        const native_io_backend_config backend_config = {
+            domain_loopback_backend(), 4u, 16u, 8u
+        };
+        status = native_io_backend_init(&s->backend, &backend_config);
+        if (status != SALTS_OK) return status;
+        status = cnet_client_init_external(&s->client, &config, &s->backend);
+    } else {
+        status = cnet_client_init(&s->client, &config);
+    }
     if (status != SALTS_OK) return status;
     (void)snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u",
                    (unsigned)port);
@@ -418,7 +466,8 @@ static int domain_loopback_open(domain_loopback *s) {
                 !domain_socket_would_block())
                 return SALTS_EIO;
         }
-        status = cnet_client_poll(&s->client, 1u, &events);
+        (void)events;
+        status = domain_loopback_progress(s, 1u);
         if (status != SALTS_OK) return status;
         if (cmeta_monotonic_ms() >= deadline)
             return SALTS_ETIMEDOUT;
@@ -426,6 +475,10 @@ static int domain_loopback_open(domain_loopback *s) {
     domain_socket_close(s->listener);
     s->listener = DOMAIN_BAD_SOCKET;
     return SALTS_OK;
+}
+
+static int domain_loopback_open(domain_loopback *s) {
+    return domain_loopback_open_mode(s, false);
 }
 
 static int domain_loopback_reserve_and_arm(domain_loopback *s) {
@@ -448,7 +501,8 @@ static int domain_loopback_poll_callbacks(domain_loopback *s,
     const uint64_t deadline = cmeta_monotonic_ms() + DOMAIN_TEST_TIMEOUT_MS;
     while (s->received_callbacks < expected) {
         size_t events = 0u;
-        const int status = cnet_client_poll(&s->client, 1u, &events);
+        (void)events;
+        const int status = domain_loopback_progress(s, 1u);
         if (status != SALTS_OK) return status;
         if (s->terminal || cmeta_monotonic_ms() >= deadline)
             return SALTS_ETIMEDOUT;
