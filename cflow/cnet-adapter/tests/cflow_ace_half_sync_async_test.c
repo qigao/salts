@@ -462,6 +462,13 @@ static void ace_handoff_network_stop(ace_handoff_fixture *fixture) {
         check_equal(cnet_listener_close(&fixture->listener), SALTS_OK);
         check_equal(cnet_listener_destroy(&fixture->listener), SALTS_OK);
     }
+    /* CNet owns exactly one terminal per connection. Both owner handles
+     * must be empty before their callback context can expire. */
+    check_equal(fixture->connector_terminal, (size_t)1u);
+    check_equal(fixture->acceptor_terminal, (size_t)1u);
+    check_null(fixture->connector.impl);
+    check_null(fixture->acceptor.impl);
+    check_null(fixture->listener.impl);
     fixture->net_context_live = false;
 }
 
@@ -480,6 +487,10 @@ static void ace_handoff_finish(ace_handoff_fixture *fixture) {
     cflow_subscription_cancel(&fixture->subscription);
     cflow_subscription_close(&fixture->subscription);
     check_null(fixture->subscription.impl);
+    /* Idempotent close: the moved Publisher must not be settled twice. */
+    cflow_subscription_close(&fixture->subscription);
+    check_null(fixture->subscription.impl);
+    check_null(fixture->publisher.self);
     fixture->sink_context_live = false;
 
     if (fixture->publisher.self != NULL)
@@ -489,6 +500,7 @@ static void ace_handoff_finish(ace_handoff_fixture *fixture) {
         check_equal(cflow_channel_try_push(&fixture->channel, &final),
                     CFLOW_CHANNEL_CLOSED);
         cflow_channel_destroy(&fixture->channel);
+        check_null(fixture->channel.impl);
     }
     if (fixture->actor.impl != NULL) {
         stop = cflow_actor_request_stop(&fixture->actor);
@@ -498,12 +510,16 @@ static void ace_handoff_finish(ace_handoff_fixture *fixture) {
         if (fixture->producer.impl != NULL)
             check_equal(cflow_actor_ref_try_send(&fixture->producer, &event),
                         CFLOW_ACTOR_SEND_STOPPED);
+        check_equal(atomic_load(&fixture->actor_done), 1);
+        check_equal(atomic_load(&fixture->actor_errors), 0);
         cflow_actor_destroy(&fixture->actor);
+        check_null(fixture->actor.impl);
     }
     if (fixture->producer.impl != NULL) {
         check_equal(cflow_actor_ref_try_send(&fixture->producer, &event),
                     CFLOW_ACTOR_SEND_STALE);
         cflow_actor_ref_release(&fixture->producer);
+        check_null(fixture->producer.impl);
     }
     fixture->actor_context_live = false;
     if (cflow_scheduler_valid(&fixture->pump_scheduler))
