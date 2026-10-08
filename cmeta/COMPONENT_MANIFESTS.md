@@ -93,7 +93,7 @@ Static:
 ```text
 cmeta_component_desc
     -> explicit CMeta manifest
-    -> future Component Configurator
+    -> Salts::Component Configurator
 ```
 
 Dynamic:
@@ -103,7 +103,7 @@ DSO
     -> Salts::Plugin manifest/export
     -> live Plugin lease
     -> borrowed cmeta_component_desc
-    -> future Component Configurator
+    -> Salts::Component Configurator
 ```
 
 A dynamic consumer must hold the Plugin lease through every descriptor,
