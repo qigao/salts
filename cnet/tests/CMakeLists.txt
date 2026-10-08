@@ -1,11 +1,8 @@
 set(CNET_TEST_PRIVATE_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 cmake_add_test(cnet_handoff_test SOURCES cnet_handoff_test.c
-  LIBS Salts::CNet Salts::TinyTest FOLDER "cnet/tests")
+  LIBS Salts::CNetManager Salts::TinyTest FOLDER "cnet/tests")
 cmake_add_test(cnet_manager_test SOURCES cnet_manager_test.c
-  LIBS Salts::CNet Salts::TinyTest FOLDER "cnet/tests")
-# Strict target ownership and independent cross-DSO consumers.
-include(cnet_manager_target_contract.cmake)
-add_subdirectory(manager_link)
+  LIBS Salts::CNetManager Salts::TinyTest FOLDER "cnet/tests")
 set(CNET_WSPARSER_INCLUDE ${CMAKE_SOURCE_DIR}/tools/wsparser)
 
 cmake_add_test(cnet_ipc_test
@@ -478,6 +475,22 @@ target_compile_definitions(cnet_external_tls_listener_test PRIVATE
 unset(CNET_EXTERNAL_TLS_CA)
 unset(CNET_EXTERNAL_TLS_CERT)
 unset(CNET_EXTERNAL_TLS_KEY)
+
+cmake_add_test(
+  cnet_external_gateway_owner_test
+  SOURCES
+  cnet_external_gateway_owner_test.c
+  LIBS
+  cnet
+  Salts::Core
+  Salts::NativeIO
+  Salts::TinyTest
+  FOLDER
+  "cnet/tests")
+set_target_properties(
+  cnet_external_gateway_owner_test
+  PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+add_dependencies(cnet_api_test cnet_external_gateway_owner_test)
 
 cmake_add_test(
   cnet_external_progress_test
