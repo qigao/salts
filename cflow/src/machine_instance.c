@@ -1374,7 +1374,7 @@ void cflow_machine_instance_destroy(cflow_machine_instance *instance) {
         (!cflow_executor_owner_is_thread_internal(impl->executor) ||
          cflow_executor_is_current_internal(impl->executor))) {
         assert(!"owner-bound Machine destroy requires an idle owner caller");
-        return;
+        abort(); /* a void destroy cannot safely report partial teardown */
     }
 
     cmeta_mutex_lock(&impl->lock);
