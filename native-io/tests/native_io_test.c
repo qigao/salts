@@ -4,6 +4,7 @@
 
 #include <salts/error_codes.h>
 #include <salts/native_io.h>
+#include <salts/native_io_ace_token.h>
 #include <salts/thread.h>
 #include <salts/clock.h>
 #include <coro.h>
@@ -37,6 +38,8 @@ typedef int native_io_test_socket;
 typedef socklen_t native_io_test_socklen;
   #define NATIVE_IO_TEST_INVALID_SOCKET (-1)
 #endif
+
+NATIVE_IO_ACE_TOKEN_TYPE(native_io_test_ace_read, unsigned char);
 
 enum {
   NATIVE_IO_TEST_ENDPOINT_CAPACITY = 2,
@@ -131,6 +134,9 @@ static void native_io_test_pipe_round_trip(native_io_backend_kind kind, bool non
   native_io_endpoint duplicate = {1u, 1u};
   native_io_request requests[2] = {0};
   native_io_completion events[2] = {0};
+  native_io_test_ace_read token = {0};
+  native_io_completion stale;
+  unsigned char *settled_context = NULL;
   unsigned char received[sizeof(payload)] = {0};
   const uint32_t flags = NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE;
   native_io_operation operations[2];
@@ -158,12 +164,27 @@ static void native_io_test_pipe_round_trip(native_io_backend_kind kind, bool non
                                        .length = sizeof(payload),
                                        .user_data = 42u};
   check_equal(native_io_backend_submit(&backend, &operations[0], &requests[0]), SALTS_OK);
+  check_equal(native_io_test_ace_read_bind(&token, requests[0], endpoints[0],
+                                          operations[0].user_data, received), SALTS_OK);
+  check_equal(native_io_test_ace_read_bind(&token, requests[0], endpoints[0],
+                                          operations[0].user_data, received), SALTS_EBUSY);
   check_equal(native_io_backend_release_pipe(&backend, endpoints[0]), SALTS_EBUSY);
   check_equal(native_io_backend_submit(&backend, &operations[1], &requests[1]), SALTS_OK);
   check_equal(native_io_test_observe_all(&backend, events, 2u), SALTS_OK);
   check_equal(events[0].kind, NATIVE_IO_COMPLETION_OK);
   check_equal(events[1].kind, NATIVE_IO_COMPLETION_OK);
   check_equal(memcmp(received, payload, sizeof(payload)), 0);
+  stale = events[0];
+  ++stale.request.generation;
+  check_equal(native_io_test_ace_read_settle(&token, &stale, &settled_context),
+              SALTS_ENOENT);
+  check_null(settled_context);
+  check_equal(native_io_test_ace_read_settle(&token, &events[0], &settled_context),
+              SALTS_OK);
+  check_true(settled_context == received);
+  check_equal(native_io_test_ace_read_settle(&token, &events[0], &settled_context),
+              SALTS_EALREADY);
+  check_null(settled_context);
 
   (void)close(descriptors[0]);
   (void)close(descriptors[1]);
