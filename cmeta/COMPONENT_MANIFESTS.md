@@ -139,7 +139,9 @@ replacement for `cmeta_plugin(PostgresDriver, ...)`. For manual descriptors,
 rebuild the initializer against format 2: `name` becomes `stable_id`, which is
 now semantic provider identity rather than a diagnostic name; `count` becomes
 `capability_count`; the new `config` field is NULL for an unconfigured provider
-or borrows the exact canonical DataDesc for its native configuration. Never
+or borrows the exact canonical DataDesc for its native configuration. A non-NULL
+Component config requires a valid native `storage_type`; a schema-only (kind-only)
+Sequence/Set/Map DataDesc cannot be admitted as a Component config. Never
 cast a format-1 descriptor to `cmeta_component_desc` or reuse its serialized
 layout.
 

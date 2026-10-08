@@ -11,7 +11,12 @@ bool cmeta_component_desc_valid(const cmeta_component_desc *desc) {
         desc->stable_id == NULL || desc->stable_id[0] == '\0')
         return false;
 
-    if (desc->config != NULL && !cmeta_data_desc_valid(desc->config))
+    /* A Component config is a concrete native value, not a kind-only
+     * container contract. Preserve kind-only DataDesc for other consumers. */
+    if (desc->config != NULL &&
+        (!cmeta_data_desc_valid(desc->config) ||
+         desc->config->storage_type == NULL ||
+         !cmeta_type_desc_valid(desc->config->storage_type)))
         return false;
 
     if ((desc->capability_count != 0u && desc->capabilities == NULL) ||
