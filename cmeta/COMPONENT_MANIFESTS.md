@@ -51,9 +51,10 @@ cmeta_registry(drivers,
         "postgres", cmeta_component_meta(PostgresDriver)));
 ```
 
-`CMETA_MANIFEST_COMPONENT` retains numeric kind 1 from the experimental
-integration history, but its public semantic name is Component. There is no
-`CMETA_MANIFEST_PLUGIN` compatibility alias on the integration branch.
+`CMETA_MANIFEST_COMPONENT` retains numeric kind 1 from the 2.x static Plugin
+declaration API, but its public semantic name and descriptor layout are now
+Component. Numeric equality does not make the old descriptor compatible. There
+is no `CMETA_MANIFEST_PLUGIN` compatibility alias in the 3.0.0 integration SDK.
 
 Use:
 
@@ -70,9 +71,9 @@ unchanged on failure.
 
 ## Fingerprint
 
-`cmeta_contract_fingerprint_component()` fingerprints the ordered
-provides/requires **shape** and canonical Interface contracts in fingerprint
-domain 6.
+`cmeta_contract_fingerprint_component()` fingerprints the declaration format,
+optional canonical configuration contract, ordered provides/requires **shape**
+and canonical Interface contracts in fingerprint domain 6.
 
 The component `stable_id` is validated but intentionally excluded from the
 shape digest. Identity and contract shape are separate admission facts:
@@ -108,6 +109,84 @@ DSO
 A dynamic consumer must hold the Plugin lease through every descriptor,
 Interface, callback, instance teardown, and dependent cleanup that can reach
 provider-owned code or metadata.
+
+## Migration from Salts 2.x
+
+The static `<cmeta/plugin.h>` declarations were published in Salts 2.x, including
+2.2.0. Replacing them is an intentional source and binary compatibility break
+scheduled for Salts **3.0.0**. The integration branch does not supply legacy
+aliases: keeping two names for one static capability model would preserve the
+ambiguity between declaration metadata and the dynamic Plugin runtime.
+
+| Salts 2.x static metadata | Salts 3.0.0 replacement |
+| --- | --- |
+| `<cmeta/plugin.h>` | `<cmeta/component.h>` |
+| `cmeta_plugin`, `cmeta_plugin_empty`, `cmeta_plugin_meta` | `cmeta_component`, `cmeta_component_empty`, `cmeta_component_meta` |
+| `cmeta_plugin_desc`, `cmeta_plugin_capability`, `cmeta_plugin_role` | `cmeta_component_desc`, `cmeta_component_capability`, `cmeta_component_role` |
+| `CMETA_PLUGIN_DECLARATION_VERSION` (1) | `CMETA_COMPONENT_DECLARATION_VERSION` (2) |
+| `CMETA_PLUGIN_PROVIDES`, `CMETA_PLUGIN_REQUIRES` | `CMETA_COMPONENT_PROVIDES`, `CMETA_COMPONENT_REQUIRES` |
+| `CMETA_MANIFEST_PLUGIN`, `cmeta_manifest_plugin_entry` | `CMETA_MANIFEST_COMPONENT`, `cmeta_manifest_component_entry` |
+| `cmeta_manifest_get_plugin`, `cmeta_plugin_get_capability` | `cmeta_manifest_get_component`, `cmeta_component_get_capability` |
+| `cmeta_contract_fingerprint_plugin` | `cmeta_contract_fingerprint_component` |
+
+`cmeta_provides` and `cmeta_requires` keep their spelling but now declare
+Component role rows. Existing dynamic APIs in `<salts/plugin.h>` and
+`<salts/plugin_decl.h>` are not renamed by this migration.
+
+For generated declarations, update the header, declaration macro, metadata
+accessor and manifest entry together. The declaration example above is the
+replacement for `cmeta_plugin(PostgresDriver, ...)`. For manual descriptors,
+rebuild the initializer against format 2: `name` becomes `stable_id`, which is
+now semantic provider identity rather than a diagnostic name; `count` becomes
+`capability_count`; the new `config` field is NULL for an unconfigured provider
+or borrows the exact canonical DataDesc for its native configuration. Never
+cast a format-1 descriptor to `cmeta_component_desc` or reuse its serialized
+layout.
+
+Regenerate stored contract fingerprints. Domain 6 retains its numeric value,
+but format 2 includes configuration and declaration-format semantics; a 2.x
+static Plugin digest is not a 3.0.0 Component admission token. Stable identity
+still needs a separate check and is excluded from the shape fingerprint.
+
+Rebuild the host, libraries, provider DSOs and downstream consumers against one
+complete 3.0.0 SDK, then qualify their ordinary Plugin exports and provider
+bindings before deployment. Do not mix 2.x headers, libraries, descriptors or
+cached fingerprints with 3.0.0. CMake's project version and the package manifest
+both identify 3.0.0; versioned native libraries use SOVERSION 3. Reflection ABI
+and the ordinary Plugin ABI retain their own negotiated versions; they do not
+override the Component descriptor format or establish 2.x SDK compatibility.
+
+Rollback replaces the complete SDK, rebuilt host and provider set with the
+previous 2.x deployment and its original contract cache. There is no in-place
+descriptor conversion or mixed-version compatibility path.
+
+## Generation concurrency and resource admission
+
+`Salts::ComponentPlugin` builds a complete candidate before publication. Its
+runtime mutex serializes publication, scope admission/release, close and the
+drain claim. A scope pins one immutable generation: publication changes only
+new admissions, and drain returns BUSY while any scope still pins that
+generation. Close rejects subsequent acquisitions; existing scopes can still
+use their services until release. Component stop and ObjectRef cleanup finish
+before module leases are released. At most two generations are attached.
+
+Runtime initialization returns `SALTS_COMPONENT_PLUGIN_RESOURCE_ERROR` if the
+platform mutex cannot be created. The runtime stays zero/uninitialized and can
+be retried; failed initialization never enables admission without a lock.
+
+Keep the runtime, registry, generation bundles and caller-owned storage alive
+and address-stable until scopes are released and all attached generations are
+drained. A live scope has one owner and must not be copied or used concurrently
+with its release; service views expire at release. Provider methods follow their
+own concurrency contract. Runtime init/destroy and generation build/discard or
+reuse require exclusive access to their objects. Do not read mutable runtime
+or generation fields while another thread is changing them.
+
+Formal CTest qualification includes a platform-adapter mutex failure/retry
+test, DSO-backed readers holding old/new scopes across publication and close,
+repeated acquisition races with publication, and concurrent drain claims that
+release the provider lease exactly once. These tests do not replace a
+ThreadSanitizer run when a supported runner is available.
 
 CMeta itself owns no loader or dynamic service registry.
 

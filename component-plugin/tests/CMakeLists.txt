@@ -53,3 +53,23 @@ add_dependencies(
   cmeta_component_plugin_provider_fixture)
 set_target_properties(cmeta_native_component_plugin_publication_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
+# Compile the same lifecycle source against a test-owned platform adapter.
+# Do not link ComponentPlugin: the graph runtime uses the real Platform library.
+cmake_add_test(cmeta_native_component_plugin_runtime_failure_test
+  SOURCES component_plugin_runtime_failure_test.c ../src/component_plugin_runtime.c
+  LIBS Salts::ComponentPluginABI Salts::Platform Salts::TinyTest
+  FOLDER "component-plugin/tests")
+set_target_properties(cmeta_native_component_plugin_runtime_failure_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
+cmake_add_test(cmeta_native_component_plugin_concurrency_test
+  SOURCES component_plugin_concurrency_test.c
+  LIBS Salts::ComponentPlugin Salts::Platform Salts::TinyTest
+  DEFS "COMPONENT_PROVIDER_PLUGIN_PATH=\"$<TARGET_FILE:cmeta_component_plugin_provider_fixture>\""
+  FOLDER "component-plugin/tests")
+add_dependencies(cmeta_native_component_plugin_concurrency_test
+  cmeta_component_plugin_provider_fixture)
+set_target_properties(cmeta_native_component_plugin_concurrency_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_tests_properties(cmeta_native_component_plugin_concurrency_test PROPERTIES TIMEOUT 60)

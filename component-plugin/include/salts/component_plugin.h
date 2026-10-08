@@ -26,7 +26,8 @@ typedef enum salts_component_plugin_status {
     SALTS_COMPONENT_PLUGIN_PROVIDER_ERROR,
     SALTS_COMPONENT_PLUGIN_COMPONENT_ERROR,
     SALTS_COMPONENT_PLUGIN_BUSY,
-    SALTS_COMPONENT_PLUGIN_INVALID_STATE
+    SALTS_COMPONENT_PLUGIN_INVALID_STATE,
+    SALTS_COMPONENT_PLUGIN_RESOURCE_ERROR
 } salts_component_plugin_status;
 
 typedef enum salts_component_plugin_generation_state {
@@ -100,6 +101,20 @@ typedef struct salts_component_plugin_scope {
     bool live;
 } salts_component_plugin_scope;
 
+/* The runtime, registry, generation bundles and their borrowed storage must
+ * remain alive and address-stable until all scopes are released and attached
+ * generations are drained. Do not copy a live scope; one owner releases it
+ * exactly once. Services borrowed from it expire at that release.
+ *
+ * After init, publish/close/acquire/release/drain synchronize runtime admission
+ * and generation counts. Each scope is used by one thread at a time; provider
+ * services retain their own concurrency contracts. Build/discard and reuse of
+ * a generation require exclusive access to that bundle. Never inspect mutable
+ * runtime/generation fields concurrently with these operations.
+ *
+ * Init/destroy require exclusive access to the runtime, including exclusion of
+ * concurrent API calls. Destroy returns BUSY until close and drain complete. */
+
 struct salts_component_plugin_runtime {
     void *lock;
     salts_component_plugin_generation *current;
@@ -127,6 +142,9 @@ salts_component_plugin_status salts_component_plugin_generation_build(
 salts_component_plugin_status salts_component_plugin_generation_discard(
     salts_component_plugin_generation *generation);
 
+/* Initialize a zero-initialized runtime. RESOURCE_ERROR means the platform
+ * mutex could not be created; the runtime remains zero and may be retried.
+ * NULL or an already initialized runtime returns INVALID_ARGUMENT. */
 salts_component_plugin_status salts_component_plugin_runtime_init(
     salts_component_plugin_runtime *runtime);
 

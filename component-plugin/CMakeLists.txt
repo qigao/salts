@@ -17,7 +17,8 @@ target_link_libraries(
   INTERFACE Salts::ComponentABI Salts::PluginABI)
 
 add_library(salts_component_plugin STATIC
-  src/component_plugin.c)
+  src/component_plugin.c
+  src/component_plugin_runtime.c)
 
 cmake_config_target(
   salts_component_plugin

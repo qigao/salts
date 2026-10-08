@@ -20,6 +20,20 @@ These abstractions are designed to compile down to ordinary C data structures an
 并用同一版本重新构建库、宿主和插件。部署时使用完整的新 SDK；不要混用旧头文件、
 旧静态库或旧插件。数据布局与错误码没有因前缀迁移改变。
 
+## Component migration for 3.0.0
+
+This integration branch prepares the next major SDK version, 3.0.0. It removes
+the static CMeta Plugin declaration API published in 2.x and replaces it with
+Component metadata and Configurator runtime contracts. This is a source and
+binary compatibility break; CMake and the package manifest use the new major
+version, and versioned libraries use SOVERSION 3. The branch is not part of the
+published 2.2.0 SDK.
+
+See [the Component migration guide](cmeta/COMPONENT_MANIFESTS.md#migration-from-salts-2x)
+for exact symbol changes, descriptor and fingerprint differences, and the
+rebuild/rollback procedure. Dynamic loading and module leases remain owned by
+`Salts::Plugin`.
+
 ## Why Salts?
 
 Salts is built around a small set of shared semantics instead of independent framework-specific runtimes:
