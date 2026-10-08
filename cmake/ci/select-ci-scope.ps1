@@ -170,7 +170,10 @@ if ($aceSanitizerQualification) {
 }
 $builds = @()
 foreach ($profile in $profiles) {
-  if ($acePatternsDevelopment -and $profile.id -ne 'linux-release') { continue }
+  # Keep regular ACE PRs on Linux only, but do not discard the explicit
+  # ASan+UBSan/TSan Debug profiles supplied for an [ACE-SAN] qualification.
+  if ($acePatternsDevelopment -and $profile.id -ne 'linux-release' -and
+      -not $profile.ContainsKey('sanitizer')) { continue }
   # Clang profiles qualify the same portable/native contracts in isolated trees;
   # they do not produce additional release packages.
   $profile.clang = $profile.id -in @('linux-clang-release', 'macos-clang-release')
