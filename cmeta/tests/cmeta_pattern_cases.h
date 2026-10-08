@@ -7,7 +7,11 @@
 /* The explicit result/cleanup contract is shared by C11 and C++17.
  * This ObjectRef does NOT retain a provider DSO/Plugin lease on its own. */
 static void pattern_destroy_owned_value(void *context, void *object) {
+#ifdef __cplusplus
+    unsigned *count = static_cast<unsigned *>(context);
+#else
     unsigned *count = (unsigned *)context;
+#endif
     (void)object;
     ++*count;
 }
