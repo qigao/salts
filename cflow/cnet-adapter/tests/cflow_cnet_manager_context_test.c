@@ -14,6 +14,70 @@
 #include <stdio.h>
 #include <string.h>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+typedef SOCKET manager_socket;
+#define MANAGER_BAD_SOCKET INVALID_SOCKET
+#else
+#include <errno.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+typedef int manager_socket;
+#define MANAGER_BAD_SOCKET (-1)
+#endif
+
+static void manager_socket_close(manager_socket fd) {
+    if (fd == MANAGER_BAD_SOCKET) return;
+#if defined(_WIN32)
+    (void)closesocket(fd);
+#else
+    (void)close(fd);
+#endif
+}
+static bool manager_would_block(void) {
+#if defined(_WIN32)
+    return WSAGetLastError() == WSAEWOULDBLOCK;
+#else
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+}
+static bool manager_nonblocking(manager_socket fd) {
+#if defined(_WIN32)
+    u_long enabled = 1u;
+    return ioctlsocket(fd, FIONBIO, &enabled) == 0;
+#else
+    const int flags = fcntl(fd, F_GETFL, 0);
+    return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+#endif
+}
+static int manager_send_byte(manager_socket fd, unsigned char byte) {
+    const uint64_t deadline = cmeta_monotonic_ms() + 5000u;
+    for (;;) {
+#if defined(_WIN32)
+        int n = send(fd, (const char *)&byte, 1, 0);
+        if (n == SOCKET_ERROR) {
+#elif defined(MSG_NOSIGNAL)
+        ssize_t n = send(fd, &byte, 1u, MSG_NOSIGNAL);
+        if (n < 0) {
+#else
+        ssize_t n = send(fd, &byte, 1u, 0);
+        if (n < 0) {
+#endif
+            if (!manager_would_block()) return SALTS_EIO;
+            if (cmeta_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+            cmeta_thread_yield();
+            continue;
+        }
+        return n == 1 ? SALTS_OK : SALTS_EIO;
+    }
+}
+
 enum {
     MANAGER_LEASE_TIMEOUT_MS = 5000u,
     MANAGER_LEASE_EVENT = 501u,
@@ -57,6 +121,9 @@ typedef struct manager_lease_fixture {
     atomic_int wrong_route_binding;
     atomic_int wakes;
     atomic_int recycled;
+    atomic_int receives;
+    atomic_int receive_status;
+    cflow_cnet_domain_route_credit receive_credit;
 } manager_lease_fixture;
 
 static native_io_backend_kind manager_lease_backend(void) {
@@ -86,6 +153,20 @@ static void manager_lease_state(
                 cflow_cnet_domain_route_source_terminal(&f->route));
         atomic_store(&f->terminal, true);
     }
+}
+
+static void manager_lease_receive(
+    void *user, cnet_connection connection, const cnet_receive_view *view) {
+    manager_lease_fixture *f = (manager_lease_fixture *)user;
+    if (!f || connection.slot != f->connection.slot ||
+        connection.generation != f->connection.generation ||
+        !view || view->kind != CNET_MESSAGE_BYTES || view->size != 1u) {
+        if (f) atomic_store(&f->receive_status, SALTS_EPROTO);
+        return;
+    }
+    atomic_store(&f->receive_status,
+        cflow_cnet_domain_route_receive(&f->route, f->receive_credit, view));
+    atomic_fetch_add(&f->receives, 1);
 }
 
 static void manager_lease_recycle(void *user) {
@@ -293,9 +374,14 @@ spec("CNetManager held context across cross-owner Actor ACK") {
             .max_send_bytes = 1024u,
             .receive_buffer_bytes = 1024u
         };
-        cnet_listener_config listen = {
-            manager_lease_backend(), "127.0.0.1", 0u, 8u
-        };
+        manager_socket listen_fd = MANAGER_BAD_SOCKET;
+        manager_socket peer_fd = MANAGER_BAD_SOCKET;
+        struct sockaddr_in address = {0};
+#if defined(_WIN32)
+        int address_length = (int)sizeof(address);
+#else
+        socklen_t address_length = (socklen_t)sizeof(address);
+#endif
         cnet_manager_config mconfig = {0};
         cnet_manager_attachment attachment = {0};
         cflow_cnet_manager_context_config context_config = {0};
@@ -308,10 +394,6 @@ spec("CNetManager held context across cross-owner Actor ACK") {
         cnet_connection source_connection = {0};
         uint32_t source_id = 0u;
         uint16_t port = 0u;
-        unsigned char borrowed[] = {67u};
-        const cnet_receive_view view = {
-            borrowed, sizeof(borrowed), CNET_MESSAGE_BYTES
-        };
         char uri[80] = {0};
         size_t work = 0u;
         bool released = true;
@@ -319,8 +401,18 @@ spec("CNetManager held context across cross-owner Actor ACK") {
             cmeta_monotonic_ms() + MANAGER_LEASE_TIMEOUT_MS;
 
         check_equal(cnet_client_init(&f.client, &config), SALTS_OK);
-        check_equal(cnet_listener_init(&f.listener, &listen), SALTS_OK);
-        check_equal(cnet_listener_port(&f.listener, &port), SALTS_OK);
+        listen_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        check_true(listen_fd != MANAGER_BAD_SOCKET);
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        address.sin_port = htons(0u);
+        check_equal(bind(listen_fd, (const struct sockaddr *)&address,
+                         (int)sizeof(address)), 0);
+        check_equal(getsockname(listen_fd, (struct sockaddr *)&address,
+                                &address_length), 0);
+        check_equal(listen(listen_fd, 2), 0);
+        check_true(manager_nonblocking(listen_fd));
+        port = ntohs(address.sin_port);
         check_true(port != 0u);
         (void)snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u",
                        (unsigned)port);
@@ -330,6 +422,7 @@ spec("CNetManager held context across cross-owner Actor ACK") {
         check_equal(cnet_manager_init(&f.manager, &mconfig), SALTS_OK);
         attachment.observer = (cnet_observer){
             .on_state = manager_lease_state,
+            .on_receive = manager_lease_receive,
             .user = &f
         };
         attachment.on_recycle = manager_lease_recycle;
@@ -339,11 +432,17 @@ spec("CNetManager held context across cross-owner Actor ACK") {
         options.uri = uri;
         check_equal(cnet_manager_connect(
             &f.manager, f.managed, &options, &f.connection), SALTS_OK);
-        while (!atomic_load(&f.connected) &&
+        while ((!atomic_load(&f.connected) || peer_fd == MANAGER_BAD_SOCKET) &&
                cmeta_monotonic_ms() < deadline) {
             size_t events = 0u;
+            if (peer_fd == MANAGER_BAD_SOCKET) {
+                peer_fd = accept(listen_fd, NULL, NULL);
+                if (peer_fd == MANAGER_BAD_SOCKET)
+                    check_true(manager_would_block());
+            }
             check_equal(cnet_client_poll(&f.client, 1u, &events), SALTS_OK);
         }
+        check_true(peer_fd != MANAGER_BAD_SOCKET);
         check_true(atomic_load(&f.connected));
 
         check_equal(cmeta_thread_create(
@@ -379,13 +478,20 @@ spec("CNetManager held context across cross-owner Actor ACK") {
         check_equal(cflow_cnet_manager_context_destroy(
             &f.guard), SALTS_EBUSY);
 
-        /* Synthetic borrowed business chunk, but the connection and terminal
-         * are REAL CNetManager/CNet callbacks on the source network owner. */
+        /* Real CNet receive callback consumes the reserved route credit.
+         * The Actor stays paused until transport terminal and manager RETIRED. */
         check_equal(cflow_cnet_domain_route_reserve(
             &f.route, &credit), SALTS_OK);
-        check_equal(cflow_cnet_domain_route_receive(
-            &f.route, credit, &view), SALTS_OK);
-        borrowed[0] = 0u;
+        f.receive_credit = credit;
+        check_equal(cnet_receive(&f.client, f.connection, 1u), SALTS_OK);
+        check_equal(manager_send_byte(peer_fd, 67u), SALTS_OK);
+        while (atomic_load(&f.receives) == 0 &&
+               cmeta_monotonic_ms() < deadline) {
+            size_t events = 0u;
+            check_equal(cnet_client_poll(&f.client, 1u, &events), SALTS_OK);
+        }
+        check_equal(atomic_load(&f.receives), 1);
+        check_equal(atomic_load(&f.receive_status), SALTS_OK);
         check_equal(cflow_cnet_domain_route_get_stats(
             &f.route, &route_stats), SALTS_OK);
         check_equal(route_stats.awaiting_ack, (size_t)1u);
@@ -461,7 +567,7 @@ spec("CNetManager held context across cross-owner Actor ACK") {
         check_equal(cnet_client_stop(
             &f.client, MANAGER_LEASE_TIMEOUT_MS), SALTS_OK);
         check_equal(cnet_client_destroy(&f.client), SALTS_OK);
-        check_equal(cnet_listener_close(&f.listener), SALTS_OK);
-        check_equal(cnet_listener_destroy(&f.listener), SALTS_OK);
+        manager_socket_close(peer_fd);
+        manager_socket_close(listen_fd);
     }
 }
