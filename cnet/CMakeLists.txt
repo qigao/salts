@@ -65,7 +65,7 @@ endfunction()
 
 add_library(${TARGET_NAME} SHARED ${CNET_SOURCE_FILES})
 cmake_config_target(${TARGET_NAME}
-  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
+  VERSION "${PROJECT_VERSION}" SOVERSION "${SALTS_NATIVE_SOVERSION}"
   ALIAS Salts::CNet
   FOLDER "cnet"
   EXPORT_NAME CNet)
@@ -96,7 +96,7 @@ install(TARGETS ${TARGET_NAME} EXPORT SaltsTargets)
 add_library(cnet_manager SHARED src/cnet_manager.c src/cnet_handoff.c)
 cmake_config_target(cnet_manager
   ALIAS Salts::CNetManager FOLDER "cnet" EXPORT_NAME CNetManager
-  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}")
+  VERSION "${PROJECT_VERSION}" SOVERSION "${SALTS_NATIVE_SOVERSION}")
 set_target_properties(cnet_manager PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 target_include_directories(cnet_manager PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
