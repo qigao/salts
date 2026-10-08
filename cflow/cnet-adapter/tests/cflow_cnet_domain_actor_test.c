@@ -230,6 +230,266 @@ static void domain_foreign_stats(void *user) {
         cflow_cnet_domain_get_stats(p->bridge, &snapshot));
 }
 
+/*
+ * Production CNet callback qualification uses loopback TCP but keeps the
+ * listener and accepted peer socket HOST-owned. The CNet client, domain Actor
+ * and shared Scheduler are all driven by this same calling owner.
+ */
+typedef struct domain_loopback {
+    cnet_client client;
+    domain_test_fixture domain;
+    cnet_connection connection;
+    domain_socket listener;
+    domain_socket peer;
+    cnet_connection_state state;
+    int on_receive_status;
+    size_t received_callbacks;
+    bool connected;
+    bool terminal;
+} domain_loopback;
+
+static void domain_socket_close(domain_socket fd) {
+    if (fd == DOMAIN_BAD_SOCKET) return;
+#if defined(_WIN32)
+    (void)closesocket(fd);
+#else
+    (void)close(fd);
+#endif
+}
+
+static bool domain_socket_would_block(void) {
+#if defined(_WIN32)
+    return WSAGetLastError() == WSAEWOULDBLOCK;
+#else
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+}
+
+static bool domain_socket_nonblock(domain_socket fd) {
+#if defined(_WIN32)
+    u_long yes = 1u;
+    return ioctlsocket(fd, FIONBIO, &yes) == 0;
+#else
+    const int flags = fcntl(fd, F_GETFL, 0);
+    return flags >= 0 &&
+           ((flags & O_NONBLOCK) != 0 ||
+            fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0);
+#endif
+}
+
+static int domain_socket_send_all(domain_socket fd, const void *bytes,
+                                  size_t count) {
+    const unsigned char *data = (const unsigned char *)bytes;
+    const uint64_t deadline = cmeta_monotonic_ms() + DOMAIN_TEST_TIMEOUT_MS;
+    size_t offset = 0u;
+    while (offset < count) {
+#if defined(_WIN32)
+        const int wrote = send(fd, (const char *)data + offset,
+                               (int)(count - offset), 0);
+        if (wrote == SOCKET_ERROR) {
+#elif defined(MSG_NOSIGNAL)
+        const ssize_t wrote = send(fd, data + offset, count - offset,
+                                   MSG_NOSIGNAL);
+        if (wrote < 0) {
+#else
+        const ssize_t wrote = send(fd, data + offset, count - offset, 0);
+        if (wrote < 0) {
+#endif
+            if (!domain_socket_would_block())
+                return SALTS_EIO;
+            if (cmeta_monotonic_ms() >= deadline)
+                return SALTS_ETIMEDOUT;
+            cmeta_thread_yield();
+            continue;
+        }
+        if (wrote == 0) return SALTS_EIO;
+        offset += (size_t)wrote;
+    }
+    return SALTS_OK;
+}
+
+static native_io_backend_kind domain_loopback_backend(void) {
+#if defined(_WIN32)
+    return NATIVE_IO_BACKEND_IOCP;
+#elif defined(__linux__)
+    return NATIVE_IO_BACKEND_EPOLL;
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || \
+      defined(__NetBSD__) || defined(__DragonFly__)
+    return NATIVE_IO_BACKEND_KQUEUE;
+#else
+    return (native_io_backend_kind)0;
+#endif
+}
+
+static void domain_network_state(
+    void *user, cnet_connection connection, cnet_connection_state state,
+    const cnet_error *error) {
+    domain_loopback *s = (domain_loopback *)user;
+    (void)error;
+    if (!s || s->connection.slot != connection.slot ||
+        s->connection.generation != connection.generation)
+        return;
+    s->state = state;
+    if (state == CNET_CONNECTION_CONNECTED)
+        s->connected = true;
+    if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
+        s->terminal = true;
+        if (s->domain.bridge.impl)
+            (void)cflow_cnet_domain_transport_terminal(&s->domain.bridge);
+    }
+}
+
+static void domain_network_receive(
+    void *user, cnet_connection connection, const cnet_receive_view *view) {
+    domain_loopback *s = (domain_loopback *)user;
+    if (!s) return;
+    s->on_receive_status = cflow_cnet_domain_receive(
+        &s->domain.bridge, connection, view);
+    ++s->received_callbacks;
+}
+
+static int domain_loopback_open(domain_loopback *s) {
+    struct sockaddr_in address = {0};
+    domain_socklen length = (domain_socklen)sizeof(address);
+    uint16_t port;
+    char uri[80];
+    cnet_client_config config = {
+        .backend = domain_loopback_backend(),
+        .connection_capacity = 2u,
+        .command_capacity = 8u,
+        .request_capacity = 8u,
+        .completion_batch_capacity = 4u,
+        .event_capacity = 8u,
+        .max_send_bytes = 1024u,
+        .receive_buffer_bytes = 1024u
+    };
+    cnet_connect_options connect_options = {0};
+    const uint64_t deadline = cmeta_monotonic_ms() + DOMAIN_TEST_TIMEOUT_MS;
+    int status;
+
+    memset(s, 0, sizeof(*s));
+    s->listener = DOMAIN_BAD_SOCKET;
+    s->peer = DOMAIN_BAD_SOCKET;
+#if defined(_WIN32)
+    {
+        WSADATA winsock;
+        if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0)
+            return SALTS_EIO;
+    }
+#endif
+    s->listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s->listener == DOMAIN_BAD_SOCKET) return SALTS_EIO;
+    address.sin_family = AF_INET;
+    address.sin_port = htons(0u);
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(s->listener, (const struct sockaddr *)&address,
+             (domain_socklen)sizeof(address)) != 0 ||
+        getsockname(s->listener, (struct sockaddr *)&address,
+                    &length) != 0 ||
+        listen(s->listener, 2) != 0 ||
+        !domain_socket_nonblock(s->listener))
+        return SALTS_EIO;
+    port = ntohs(address.sin_port);
+
+    status = cnet_client_init(&s->client, &config);
+    if (status != SALTS_OK) return status;
+    (void)snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u",
+                   (unsigned)port);
+    connect_options.uri = uri;
+    connect_options.observer = (cnet_observer){
+        .on_state = domain_network_state,
+        .on_receive = domain_network_receive,
+        .user = s
+    };
+    status = cnet_connect(&s->client, &connect_options, &s->connection);
+    if (status != SALTS_OK) return status;
+    if (!domain_fixture_init_connection(
+            &s->domain, 1u, 2u, s->connection))
+        return SALTS_EPROTO;
+
+    while (!s->connected || s->peer == DOMAIN_BAD_SOCKET) {
+        size_t events = 0u;
+        if (s->peer == DOMAIN_BAD_SOCKET) {
+            s->peer = accept(s->listener, NULL, NULL);
+            if (s->peer != DOMAIN_BAD_SOCKET &&
+                !domain_socket_nonblock(s->peer))
+                return SALTS_EIO;
+            if (s->peer == DOMAIN_BAD_SOCKET &&
+                !domain_socket_would_block())
+                return SALTS_EIO;
+        }
+        status = cnet_client_poll(&s->client, 1u, &events);
+        if (status != SALTS_OK) return status;
+        if (cmeta_monotonic_ms() >= deadline)
+            return SALTS_ETIMEDOUT;
+    }
+    domain_socket_close(s->listener);
+    s->listener = DOMAIN_BAD_SOCKET;
+    return SALTS_OK;
+}
+
+static int domain_loopback_reserve_and_arm(domain_loopback *s) {
+    cflow_cnet_domain_credit credit = {0};
+    int status = cflow_cnet_domain_reserve_credit(
+        &s->domain.bridge, &credit);
+    if (status != SALTS_OK) return status;
+    status = cnet_receive(&s->client, s->connection, 1u);
+    if (status != SALTS_OK) {
+        /* Failure has not transferred a CNet receive credit. */
+        if (cflow_cnet_domain_cancel_credit(
+                &s->domain.bridge, credit) != SALTS_OK)
+            return SALTS_EPROTO;
+    }
+    return status;
+}
+
+static int domain_loopback_poll_callbacks(domain_loopback *s,
+                                          size_t expected) {
+    const uint64_t deadline = cmeta_monotonic_ms() + DOMAIN_TEST_TIMEOUT_MS;
+    while (s->received_callbacks < expected) {
+        size_t events = 0u;
+        const int status = cnet_client_poll(&s->client, 1u, &events);
+        if (status != SALTS_OK) return status;
+        if (s->terminal || cmeta_monotonic_ms() >= deadline)
+            return SALTS_ETIMEDOUT;
+    }
+    return SALTS_OK;
+}
+
+static void domain_loopback_finish(domain_loopback *s) {
+    if (s->client.impl != NULL) {
+        if (!s->terminal && s->connection.slot != 0u) {
+            int status = cnet_close(&s->client, s->connection);
+            check_true(status == SALTS_OK ||
+                       status == SALTS_EALREADY ||
+                       status == SALTS_ENOENT);
+        }
+        for (size_t i = 0u; !s->terminal &&
+                i < (size_t)DOMAIN_TEST_TIMEOUT_MS; ++i) {
+            size_t events = 0u;
+            int status = cnet_client_poll(&s->client, 1u, &events);
+            if (status != SALTS_OK) break;
+        }
+        {
+            int status = cnet_client_stop(
+                &s->client, DOMAIN_TEST_TIMEOUT_MS);
+            if (status == SALTS_ETIMEDOUT)
+                status = cnet_client_stop(
+                    &s->client, DOMAIN_TEST_TIMEOUT_MS);
+            check_equal(status, SALTS_OK);
+        }
+        check_equal(cnet_client_destroy(&s->client), SALTS_OK);
+    }
+    domain_socket_close(s->peer);
+    domain_socket_close(s->listener);
+    s->peer = DOMAIN_BAD_SOCKET;
+    s->listener = DOMAIN_BAD_SOCKET;
+    domain_fixture_finish(&s->domain);
+#if defined(_WIN32)
+    (void)WSACleanup();
+#endif
+}
+
 suite("CNet to CFlow Domain Actor bounded credit bridge") {
     it("reserves before CNet receive, rolls back rejection and rejects foreign owner") {
         domain_test_fixture f;
