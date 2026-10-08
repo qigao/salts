@@ -491,6 +491,101 @@ static void domain_loopback_finish(domain_loopback *s) {
 }
 
 suite("CNet to CFlow Domain Actor bounded credit bridge") {
+    it("drives real CNet TCP receive credit through Actor FULL and ACK") {
+        domain_loopback s;
+        cflow_cnet_domain_stats stats = {0};
+        const unsigned char first[] = {13u, 14u, 15u};
+        const unsigned char second[] = {47u, 48u};
+        const unsigned char third[] = {8u};
+        size_t retried = 0u;
+
+        check_equal(domain_loopback_open(&s), SALTS_OK);
+        check_equal(domain_loopback_reserve_and_arm(&s), SALTS_OK);
+        check_equal(domain_socket_send_all(
+            s.peer, first, sizeof(first)), SALTS_OK);
+        check_equal(domain_loopback_poll_callbacks(&s, 1u), SALTS_OK);
+        check_equal(s.on_receive_status, SALTS_OK);
+        check_equal(atomic_load(&s.domain.actions), 0);
+
+        check_equal(domain_loopback_reserve_and_arm(&s), SALTS_OK);
+        check_equal(domain_socket_send_all(
+            s.peer, second, sizeof(second)), SALTS_OK);
+        check_equal(domain_loopback_poll_callbacks(&s, 2u), SALTS_OK);
+        check_equal(s.on_receive_status, SALTS_ENOBUFS);
+        check_equal(cflow_cnet_domain_reserve_credit(
+            &s.domain.bridge, &(cflow_cnet_domain_credit){0}), SALTS_EBUSY);
+        check_equal(cflow_cnet_domain_get_stats(
+            &s.domain.bridge, &stats), SALTS_OK);
+        check_equal(stats.active_slots, (size_t)2u);
+        check_equal(stats.awaiting_ack, (size_t)1u);
+        check_equal(stats.pending_actor_admission, (size_t)1u);
+        check_equal(stats.retained_bytes, sizeof(first) + sizeof(second));
+
+        check_true(domain_drive_until(&s.domain, 1));
+        check_equal(cflow_cnet_domain_retry_actor(
+            &s.domain.bridge, &retried), SALTS_OK);
+        check_equal(retried, (size_t)1u);
+        check_true(domain_drive_until(&s.domain, 2));
+        check_equal(atomic_load(&s.domain.first_bytes_sum), 60);
+        check_equal(atomic_load(&s.domain.actions), 2);
+        check_equal(atomic_load(&s.domain.wrong_thread), 0);
+        check_equal(atomic_load(&s.domain.errors), 0);
+
+        /* An ACKed slot becomes available for future CNet receive demand. */
+        check_equal(domain_loopback_reserve_and_arm(&s), SALTS_OK);
+        check_equal(domain_socket_send_all(
+            s.peer, third, sizeof(third)), SALTS_OK);
+        check_equal(domain_loopback_poll_callbacks(&s, 3u), SALTS_OK);
+        check_equal(s.on_receive_status, SALTS_OK);
+        check_true(domain_drive_until(&s.domain, 3));
+        check_equal(atomic_load(&s.domain.first_bytes_sum), 68);
+
+        check_equal(cflow_cnet_domain_get_stats(
+            &s.domain.bridge, &stats), SALTS_OK);
+        check_equal(stats.active_slots, (size_t)0u);
+        check_equal(stats.retained_bytes, (size_t)0u);
+        check_equal(stats.mailbox_accepted, (uint64_t)3u);
+        check_equal(stats.acknowledged, (uint64_t)3u);
+        check_true(stats.mailbox_full >= (uint64_t)1u);
+        check_equal(stats.reserved_credits, (uint64_t)3u);
+        domain_loopback_finish(&s);
+    }
+
+    it("retains real CNet callback bytes across peer EOF until Actor ACK") {
+        domain_loopback s;
+        cflow_cnet_domain_stats stats = {0};
+        const unsigned char body[] = {91u};
+        const uint64_t deadline = cmeta_monotonic_ms() + DOMAIN_TEST_TIMEOUT_MS;
+
+        check_equal(domain_loopback_open(&s), SALTS_OK);
+        check_equal(domain_loopback_reserve_and_arm(&s), SALTS_OK);
+        check_equal(domain_socket_send_all(s.peer, body, sizeof(body)),
+                    SALTS_OK);
+        check_equal(domain_loopback_poll_callbacks(&s, 1u), SALTS_OK);
+        check_equal(s.on_receive_status, SALTS_OK);
+        domain_socket_close(s.peer);
+        s.peer = DOMAIN_BAD_SOCKET;
+
+        while (!s.terminal && cmeta_monotonic_ms() < deadline) {
+            size_t events = 0u;
+            check_equal(cnet_client_poll(&s.client, 1u, &events), SALTS_OK);
+        }
+        check_true(s.terminal);
+        check_equal(cflow_cnet_domain_get_stats(
+            &s.domain.bridge, &stats), SALTS_OK);
+        check_true(stats.transport_terminal);
+        check_equal(stats.active_slots, (size_t)1u);
+        check_equal(stats.awaiting_ack, (size_t)1u);
+        check_equal(stats.mailbox_accepted, (uint64_t)1u);
+        check_true(domain_drive_until(&s.domain, 1));
+        check_equal(atomic_load(&s.domain.first_bytes_sum), 91);
+        check_equal(cflow_cnet_domain_get_stats(
+            &s.domain.bridge, &stats), SALTS_OK);
+        check_equal(stats.active_slots, (size_t)0u);
+        check_equal(stats.acknowledged, (uint64_t)1u);
+        domain_loopback_finish(&s);
+    }
+
     it("reserves before CNet receive, rolls back rejection and rejects foreign owner") {
         domain_test_fixture f;
         cflow_cnet_domain_credit first = {0};
