@@ -32,6 +32,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      actions: read
     env:
       SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
@@ -111,6 +112,11 @@ jobs:
           grep -Fq 'Salts::Component' "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -Fq 'Salts::ComponentPlugin' "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -Fq 'set(PACKAGE_VERSION "4.0.0")' "$prefix/lib/cmake/Salts/SaltsConfigVersion.cmake"
+          cnet_so="$(find "$prefix" -type f -name 'libcnet.so*' -print -quit)"
+          test -n "$cnet_so" || { echo "missing versioned CNet shared library" >&2; exit 1; }
+          readelf -d "$cnet_so" | grep -Eq 'SONAME.*libcnet[.]so[.]4([^0-9]|$)'
+          grep -Fq 'SALTS_COMPONENT_CONTEXT_INIT' "$prefix/include/salts/component.h"
+          grep -Fq 'owner_address' "$prefix/include/salts/component_plugin.h"
 
           # This existing out-of-tree fixture rejects find_package(Salts 3)
           # and builds/runs a real exact-version Component consumer.
@@ -199,6 +205,35 @@ jobs:
             dist/*.nupkg
             dist/SHA256SUMS
           if-no-files-found: error
+
+      - name: Verify successful exact-head full host CI before prerelease publication
+        timeout-minutes: 45
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/pulls/1013" \
+            --jq '.title' | grep -Fq '[ACE-MATRIX]'
+          full_ci_id=""
+          for attempt in $(seq 1 30); do
+            full_ci_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SOURCE_SHA&per_page=50" \
+              --jq '.workflow_runs | map(select(.event == "pull_request")) | .[0].id // empty')"
+            if [ -n "$full_ci_id" ]; then break; fi
+            sleep 15
+          done
+          test -n "$full_ci_id" || { echo "Exact eight-profile CI not found" >&2; exit 1; }
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$full_ci_id" --jq '.head_sha')" = "$SOURCE_SHA"
+          gh run watch "$full_ci_id" --repo "$GITHUB_REPOSITORY" --interval 15 --exit-status
+          native_count="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$full_ci_id/jobs?per_page=100" \
+            --jq '[.jobs[] | select(.name | startswith("native / "))] | length')"
+          incomplete_count="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$full_ci_id/jobs?per_page=100" \
+            --jq '[.jobs[] | select((.name | startswith("native / ")) and .conclusion != "success")] | length')"
+          test "$native_count" -eq 8 && test "$incomplete_count" -eq 0 || {
+            echo "Candidate requires successful Linux, macOS, Windows, ARM and mobile CI on $SOURCE_SHA" >&2
+            exit 1
+          }
+          echo "Candidate source SHA $SOURCE_SHA qualified by eight-profile CI $full_ci_id"
 
       - name: Publish opt-in immutable prerelease (not a stable release)
         shell: bash
