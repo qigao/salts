@@ -12,8 +12,9 @@ permissions:
   packages: write
 
 concurrency:
-  group: salts-component-candidate-${{ github.ref }}
-  cancel-in-progress: true
+  # A published SHA remains buildable even when the integration branch advances.
+  group: salts-component-candidate-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   candidate:
