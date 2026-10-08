@@ -192,12 +192,17 @@ int cflow_cnet_domain_bridge_init(
     s->slots = (domain_slot *)calloc(config->slot_capacity, sizeof(*s->slots));
     s->storage = (unsigned char *)calloc(
         config->slot_capacity, config->max_receive_bytes);
-    if (!s->slots || !s->storage ||
-        !cflow_actor_ref_retain(config->actor, &s->actor)) {
+    if (!s->slots || !s->storage) {
         free(s->storage);
         free(s->slots);
         free(s);
         return SALTS_ENOMEM;
+    }
+    if (!cflow_actor_ref_retain(config->actor, &s->actor)) {
+        free(s->storage);
+        free(s->slots);
+        free(s);
+        return SALTS_ESHUTDOWN; /* Invalid or already stale Actor producer. */
     }
 
     s->owner_thread = cmeta_thread_current_token();
