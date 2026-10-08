@@ -23,3 +23,11 @@ target_compile_features(cflow_ace_actor_installed_consumer PRIVATE c_std_11)
 enable_testing()
 add_test(NAME cflow_ace_actor_installed_consumer
   COMMAND cflow_ace_actor_installed_consumer)
+
+# One installed SDK and one out-of-tree CMake run now qualify both ACE
+# Active Object and Pipes/Filters; do not duplicate the install harness.
+add_executable(cflow_ace_pipes_installed_consumer pipes.c)
+target_link_libraries(cflow_ace_pipes_installed_consumer PRIVATE Salts::CFlow)
+target_compile_features(cflow_ace_pipes_installed_consumer PRIVATE c_std_11)
+add_test(NAME cflow_ace_pipes_installed_consumer
+  COMMAND cflow_ace_pipes_installed_consumer)

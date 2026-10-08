@@ -229,6 +229,13 @@ with reactive demand. The Channel is owned outside the Subscription and is
 closed/destroyed after its Publisher and Subscription are quiescent. Neither
 CMeta nor CFlow automatically retries failed admission.
 
+The installed-SDK CMake consumer under
+`cflow/tests/package_config/ace_actor/pipes.c` compiles and executes the
+same public FILTER → MAP, Subscriber, demand/cancel and bounded Channel APIs
+against one exact installed `Salts::CFlow`. It shares the existing out-of-tree
+`find_package(Salts ... EXACT)` and SDK install test with the ACE Actor
+consumer; no second packaging workflow or fallback SDK is introduced.
+
 ## Admission test for a new pattern helper
 
 Add a new CMeta pattern-level macro/inline helper only if at least one condition
