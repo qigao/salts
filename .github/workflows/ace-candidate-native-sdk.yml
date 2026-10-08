@@ -1,4 +1,4 @@
-name: Salts.Native ACE next-major candidate (Linux x64)
+name: Salts.Native ACE 2.3 candidate (Linux x64)
 
 # This workflow is isolated to the unmerged ACE integration branch.
 # It can publish only an immutable SHA-qualified prerelease, never a stable tag.
@@ -42,7 +42,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
-      - name: Gate source, next-major version and immutable package ID
+      - name: Gate source, 2.3 version and immutable package ID
         id: identity
         shell: bash
         run: |
@@ -51,7 +51,7 @@ jobs:
           test "$(git rev-parse --abbrev-ref HEAD)" = 'HEAD'
           sdk_version="$(awk '/^[[:space:]]*VERSION[[:space:]]+[0-9]/{print $2; exit}' CMakeLists.txt)"
           vcpkg_version="$(python3 -c 'import json; print(json.load(open("vcpkg.json"))["version-semver"])')"
-          test "$sdk_version" = '4.0.0'
+          test "$sdk_version" = '2.3.0'
           test "$vcpkg_version" = "$sdk_version"
           # A SHA prefix avoids an all-numeric SemVer prerelease identifier.
           candidate_version="$sdk_version-ace.sha$SOURCE_SHA"
@@ -73,9 +73,9 @@ jobs:
       - name: Restore candidate compiler cache
         uses: ./.github/actions/setup-compiler-cache
         with:
-          profile: linux-ace-next-major-candidate
+          profile: linux-ace-2.3-candidate
 
-      - name: Configure and build next-major SDK
+      - name: Configure and build 2.3 SDK
         shell: bash
         run: |
           set -euo pipefail
@@ -111,14 +111,14 @@ jobs:
           test -f "$prefix/include/salts/component_plugin.h"
           grep -Fq 'Salts::Component' "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -Fq 'Salts::ComponentPlugin' "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -Fq 'set(PACKAGE_VERSION "4.0.0")' "$prefix/lib/cmake/Salts/SaltsConfigVersion.cmake"
+          grep -Fq 'set(PACKAGE_VERSION "2.3.0")' "$prefix/lib/cmake/Salts/SaltsConfigVersion.cmake"
           cnet_so="$(find "$prefix" -type f -name 'libcnet.so*' -print -quit)"
           test -n "$cnet_so" || { echo "missing versioned CNet shared library" >&2; exit 1; }
           readelf -d "$cnet_so" | grep -Eq 'SONAME.*libcnet[.]so[.]4([^0-9]|$)'
           grep -Fq 'SALTS_COMPONENT_CONTEXT_INIT' "$prefix/include/salts/component.h"
           grep -Fq 'owner_address' "$prefix/include/salts/component_plugin.h"
 
-          # This existing out-of-tree fixture rejects find_package(Salts 3)
+          # This existing out-of-tree fixture rejects find_package(Salts 2.2)
           # and builds/runs a real exact-version Component consumer.
           cmake -S component/tests/package_config/component \
             -B "$RUNNER_TEMP/ace-installed-consumer" \
@@ -142,7 +142,7 @@ jobs:
           version=$CANDIDATE_VERSION
           commit=$SOURCE_SHA
           rid=linux-x64
-          profile=ace-next-major-candidate
+          profile=ace-2.3-candidate
           EOF
 
       - uses: actions/setup-dotnet@v4
@@ -181,7 +181,7 @@ jobs:
               )
               expected = dict(
                   version=version, commit=sha, rid='linux-x64',
-                  profile='ace-next-major-candidate'
+                  profile='ace-2.3-candidate'
               )
               if actual != expected:
                   raise SystemExit(f'candidate manifest mismatch: {actual!r}')
@@ -251,10 +251,10 @@ jobs:
             --api-key "$GITHUB_TOKEN" --source github --skip-duplicate \
             --configfile "$config"
           {
-            echo '### ACE next-major integration-only candidate'
+            echo '### ACE 2.3 integration-only candidate'
             echo "- Source commit: $SOURCE_SHA"
             echo "- NuGet: Salts.Native $CANDIDATE_VERSION"
             echo '- RID: linux-x64 only'
             echo '- Full Windows/macOS, sanitizer and downstream qualification remain separate.'
-            echo '- No tag, GitHub Release, 3.0.x overwrite or master merge was performed.'
+            echo '- No tag, GitHub Release, 2.2.x overwrite or master merge was performed.'
           } >> "$GITHUB_STEP_SUMMARY"

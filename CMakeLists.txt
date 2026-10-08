@@ -8,8 +8,13 @@ endif()
 
 project(
   Salts
-  VERSION 4.0.0
+  VERSION 2.3.0
   LANGUAGES C CXX)
+
+# The 2.3 SDK includes an explicit native ABI transition from released 2.2.
+# Distinct SONAME (2.3) prevents old 2.2 binaries loading incompatible 2.3
+# Component/Plugin records merely because the SemVer major remains 2.
+set(SALTS_NATIVE_SOVERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}")
 
 # Project configuration - output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -102,7 +107,7 @@ configure_package_config_file(
 write_basic_package_version_file(
   "${CMAKE_BINARY_DIR}/SaltsConfigVersion.cmake"
   VERSION ${PROJECT_VERSION}
-  COMPATIBILITY SameMajorVersion)
+  COMPATIBILITY SameMinorVersion)
 
 # Install the config files
 install(FILES "${CMAKE_BINARY_DIR}/SaltsConfig.cmake"
