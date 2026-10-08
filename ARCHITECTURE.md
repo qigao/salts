@@ -508,6 +508,11 @@ Only uc/data links/ships; data increases SDK size but no ICU types enter the ABI
 and no thread is created. Input is bounded to 4096 UTF-8 bytes, output to 253 DNS
 bytes excluding a root dot. Attribution is in THIRD_PARTY_NOTICES.md.
 
+Linux/Android build hosts install ICU's Autoconf prerequisites. The iOS preset
+selects a local triplet which supplies ICU 74's Darwin make fragment for the
+apple-ios host name; SDK/compiler selection still belongs to vcpkg. Darwin UDP
+disconnect uses disconnectx, avoiding connect(AF_UNSPEC)'s failure after mutation.
+
 Qualification covers IPv4/IPv6, empty/oversized messages, peer replacement,
 terminal pause, numeric/Unicode/invalid names, ordered results, bounded failures
 and stale/cross-owner handles. Additive callers relink; old callers retain their

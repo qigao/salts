@@ -671,6 +671,14 @@ int cnet_datagram_associate_endpoint(cnet_datagram *d, const cnet_stream_endpoin
 #endif
   if (!endpoint && getsockname(p->socket_value, (struct sockaddr *)&local, &local_size) != 0)
     return cnet_datagram_native_error();
+#if defined(__APPLE__)
+  /* Darwin connect(AF_UNSPEC) disconnects then reports EAFNOSUPPORT. Use its
+   * explicit disconnect API so the native result matches the state change. */
+  if (!endpoint) {
+    if (disconnectx(p->socket_value, SAE_ASSOCID_ANY, SAE_CONNID_ANY) != 0 && errno != ENOTCONN)
+      return cnet_datagram_native_error();
+  } else
+#endif
   if (connect(p->socket_value, (struct sockaddr *)&address, (int)size) != 0) return cnet_datagram_native_error();
   /* Linux disconnect can clear the port. Restore the explicit binding before
    * reporting success; the owner remains bound throughout association changes. */
