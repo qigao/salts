@@ -218,9 +218,63 @@ releasing the already delivered business lease.
 This remains one host-selected CNet owner and one co-located Actor owner;
 the bridge does **not** install its own CNet observer, frame the application
 protocol, call `cnet_receive()` automatically or claim business durability.
-**True `cnet_client_init_external()` / NativeIO external-progress integration,
-CNetManager retention, 2/4-owner handoff, explicit policy placement and
-representative consumer qualification remain later #1022 slices.**
+**CNetManager retention, 2/4-owner handoff, explicit policy placement
+and representative consumer qualification remain later #1022 slices.**
+Phase 3b below adds the external-progress qualification, not an automatic
+runtime API or a cross-owner transport.
+
+### Phase 3b: host-owned NativeIO progress with Domain Actor (PR #1027)
+
+The same TCP loopback / Machine-backed Actor test now qualifies a second mode
+where the host creates a single `native_io_backend` and passes it to
+`cnet_client_init_external()`. In this mode **CNet cannot poll the backend**:
+`cnet_client_poll()` and `cnet_client_stop()` must return
+`SALTS_ENOTSUP`. All NativeIO completion observation stays in the host's
+existing fixed owner loop, and the host routes **each observed completion**
+to exactly one authoritative CNet client before resuming progress.
+
+```c
+/* Schematic host-side progress; the host owns NativeIO, CNet and scheduling
+ * lifetimes, and supplies the finite completion batch and fairness budgets. */
+size_t events = 0u, count = 0u;
+native_io_completion batch[8];
+int rc = cnet_client_advance_external(&client, &events);
+if (rc != SALTS_OK) return rc;
+rc = native_io_backend_observe(&backend, batch, 8u, wait_ms, &count);
+if (rc != SALTS_OK && rc != SALTS_ETIMEDOUT) return rc;
+if (rc == SALTS_OK) {
+    for (size_t i = 0u; i < count; ++i) {
+        bool consumed = false;
+        size_t routed = 0u;
+        rc = cnet_client_route_external_completion(
+            &client, &batch[i], &consumed, &routed);
+        if (rc != SALTS_OK || !consumed) return SALTS_EPROTO;
+    }
+}
+rc = cnet_client_advance_external(&client, &events);
+if (rc != SALTS_OK) return rc;
+/* The host separately executes a FINITE quantum of existing owner tasks:
+ *   cflow_executor_run_one(&owner_executor)
+ * and checks pending work before blocking in NativeIO again. */
+```
+
+The test's unmatched-completion guard applies to its one-CNet-client backend.
+A general host serving multiple backend consumers must first offer an observed
+completion to their authoritative owners (as in the existing CNet/NativeIO
+routing protocols), not blindly fail on a completion owned by a neighbor.
+
+The same tests assert Actor FULL retains bounded copied bytes, owner progress
+allows explicit retry and application ACK-based reuse, and a peer EOF with a
+separate pending receive credit retires that **transport** credit but preserves
+the previously accepted business payload. On shutdown, the host closes the
+CNet connection, routes any pending native terminals, calls
+`cnet_client_stop_external()` until quiescent, destroys CNet, and **only then**
+closes/destroys the borrowed NativeIO backend. Actor/Subscription settlement
+remains separate.
+
+This remains an explicit host-composed **single owner**, not a new CFlow
+scheduler/backend, implicit listener handoff, 2/4-owner routing or proof of
+performance superiority.
 
 ## 5. Execution placement and fairness
 

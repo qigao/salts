@@ -237,6 +237,7 @@ static void domain_foreign_stats(void *user) {
  */
 typedef struct domain_loopback {
     cnet_client client;
+    native_io_backend backend; /* Borrowed by CNet in external mode. */
     domain_test_fixture domain;
     cnet_connection connection;
     domain_socket listener;
@@ -244,6 +245,10 @@ typedef struct domain_loopback {
     cnet_connection_state state;
     int on_receive_status;
     size_t received_callbacks;
+    size_t observed_completions;
+    size_t routed_completions;
+    size_t unmatched_completions;
+    bool external;
     bool connected;
     bool terminal;
 } domain_loopback;
@@ -348,7 +353,40 @@ static void domain_network_receive(
     ++s->received_callbacks;
 }
 
-static int domain_loopback_open(domain_loopback *s) {
+/* The embedding host is the ONLY NativeIO completion observer in external
+ * mode; CNet never polls the borrowed backend. Domain Actor execution remains
+ * separately owned and bounded by the caller's run_one() fairness quantum. */
+static int domain_loopback_progress(domain_loopback *s, uint32_t wait_ms) {
+    native_io_completion batch[8] = {{0}};
+    size_t count = 0u;
+    size_t events = 0u;
+    int status;
+    if (!s->external)
+        return cnet_client_poll(&s->client, wait_ms, &events);
+    status = cnet_client_advance_external(&s->client, &events);
+    if (status != SALTS_OK) return status;
+    status = native_io_backend_observe(&s->backend, batch, 8u,
+                                       wait_ms, &count);
+    if (status != SALTS_OK && status != SALTS_ETIMEDOUT) return status;
+    if (status == SALTS_OK) {
+        s->observed_completions += count;
+        for (size_t i = 0u; i < count; ++i) {
+            bool consumed = false;
+            size_t routed_events = 0u;
+            status = cnet_client_route_external_completion(
+                &s->client, &batch[i], &consumed, &routed_events);
+            if (status != SALTS_OK) return status;
+            if (!consumed) {
+                ++s->unmatched_completions;
+                return SALTS_EPROTO; /* Never fabricate a terminal owner. */
+            }
+            ++s->routed_completions;
+        }
+    }
+    return cnet_client_advance_external(&s->client, &events);
+}
+
+static int domain_loopback_open_mode(domain_loopback *s, bool external) {
     struct sockaddr_in address = {0};
     domain_socklen length = (domain_socklen)sizeof(address);
     uint16_t port;
@@ -368,6 +406,7 @@ static int domain_loopback_open(domain_loopback *s) {
     int status;
 
     memset(s, 0, sizeof(*s));
+    s->external = external;
     s->listener = DOMAIN_BAD_SOCKET;
     s->peer = DOMAIN_BAD_SOCKET;
 #if defined(_WIN32)
@@ -391,7 +430,16 @@ static int domain_loopback_open(domain_loopback *s) {
         return SALTS_EIO;
     port = ntohs(address.sin_port);
 
-    status = cnet_client_init(&s->client, &config);
+    if (external) {
+        const native_io_backend_config backend_config = {
+            domain_loopback_backend(), 4u, 16u, 8u
+        };
+        status = native_io_backend_init(&s->backend, &backend_config);
+        if (status != SALTS_OK) return status;
+        status = cnet_client_init_external(&s->client, &config, &s->backend);
+    } else {
+        status = cnet_client_init(&s->client, &config);
+    }
     if (status != SALTS_OK) return status;
     (void)snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u",
                    (unsigned)port);
@@ -418,7 +466,8 @@ static int domain_loopback_open(domain_loopback *s) {
                 !domain_socket_would_block())
                 return SALTS_EIO;
         }
-        status = cnet_client_poll(&s->client, 1u, &events);
+        (void)events;
+        status = domain_loopback_progress(s, 1u);
         if (status != SALTS_OK) return status;
         if (cmeta_monotonic_ms() >= deadline)
             return SALTS_ETIMEDOUT;
@@ -426,6 +475,10 @@ static int domain_loopback_open(domain_loopback *s) {
     domain_socket_close(s->listener);
     s->listener = DOMAIN_BAD_SOCKET;
     return SALTS_OK;
+}
+
+static int domain_loopback_open(domain_loopback *s) {
+    return domain_loopback_open_mode(s, false);
 }
 
 static int domain_loopback_reserve_and_arm(domain_loopback *s) {
@@ -448,7 +501,8 @@ static int domain_loopback_poll_callbacks(domain_loopback *s,
     const uint64_t deadline = cmeta_monotonic_ms() + DOMAIN_TEST_TIMEOUT_MS;
     while (s->received_callbacks < expected) {
         size_t events = 0u;
-        const int status = cnet_client_poll(&s->client, 1u, &events);
+        (void)events;
+        const int status = domain_loopback_progress(s, 1u);
         if (status != SALTS_OK) return status;
         if (s->terminal || cmeta_monotonic_ms() >= deadline)
             return SALTS_ETIMEDOUT;
@@ -464,21 +518,45 @@ static void domain_loopback_finish(domain_loopback *s) {
                        status == SALTS_EALREADY ||
                        status == SALTS_ENOENT);
         }
-        for (size_t i = 0u; !s->terminal &&
-                i < (size_t)DOMAIN_TEST_TIMEOUT_MS; ++i) {
-            size_t events = 0u;
-            int status = cnet_client_poll(&s->client, 1u, &events);
-            if (status != SALTS_OK) break;
-        }
-        {
-            int status = cnet_client_stop(
-                &s->client, DOMAIN_TEST_TIMEOUT_MS);
-            if (status == SALTS_ETIMEDOUT)
-                status = cnet_client_stop(
+        if (s->external) {
+            /* Stop CNet while the borrowed backend remains live. Only the
+             * host observes and routes true NativeIO terminals. */
+            const uint64_t deadline =
+                cmeta_monotonic_ms() + DOMAIN_TEST_TIMEOUT_MS;
+            bool stopped = false;
+            while (!stopped && cmeta_monotonic_ms() < deadline) {
+                int status = cnet_client_stop_external(&s->client);
+                if (status == SALTS_OK) {
+                    stopped = true;
+                    break;
+                }
+                check_equal(status, SALTS_EBUSY);
+                status = domain_loopback_progress(s, 1u);
+                check_equal(status, SALTS_OK);
+                if (status != SALTS_OK) break;
+            }
+            check_true(stopped);
+        } else {
+            for (size_t i = 0u; !s->terminal &&
+                    i < (size_t)DOMAIN_TEST_TIMEOUT_MS; ++i) {
+                int status = domain_loopback_progress(s, 1u);
+                if (status != SALTS_OK) break;
+            }
+            {
+                int status = cnet_client_stop(
                     &s->client, DOMAIN_TEST_TIMEOUT_MS);
-            check_equal(status, SALTS_OK);
+                if (status == SALTS_ETIMEDOUT)
+                    status = cnet_client_stop(
+                        &s->client, DOMAIN_TEST_TIMEOUT_MS);
+                check_equal(status, SALTS_OK);
+            }
         }
         check_equal(cnet_client_destroy(&s->client), SALTS_OK);
+    }
+    if (s->external && s->backend.impl != NULL) {
+        /* CNet does not destroy the NativeIO backend borrowed from the host. */
+        check_equal(native_io_backend_close(&s->backend), SALTS_OK);
+        check_equal(native_io_backend_destroy(&s->backend), SALTS_OK);
     }
     domain_socket_close(s->peer);
     domain_socket_close(s->listener);
@@ -572,7 +650,8 @@ suite("CNet to CFlow Domain Actor bounded credit bridge") {
 
         while (!s.terminal && cmeta_monotonic_ms() < deadline) {
             size_t events = 0u;
-            check_equal(cnet_client_poll(&s.client, 1u, &events), SALTS_OK);
+            (void)events;
+            check_equal(domain_loopback_progress(&s, 1u), SALTS_OK);
         }
         check_true(s.terminal);
         check_equal(cflow_cnet_domain_get_stats(
@@ -587,6 +666,111 @@ suite("CNet to CFlow Domain Actor bounded credit bridge") {
             &s.domain.bridge, &stats), SALTS_OK);
         check_equal(stats.active_slots, (size_t)0u);
         check_equal(stats.acknowledged, (uint64_t)1u);
+        domain_loopback_finish(&s);
+    }
+
+    it("shares host NativeIO observe with CNet TCP and Domain Actor backpressure") {
+        domain_loopback s;
+        cflow_cnet_domain_stats stats = {0};
+        cflow_cnet_domain_credit extra = {0};
+        const unsigned char first[] = {17u, 19u};
+        const unsigned char second[] = {51u, 53u};
+        const unsigned char third[] = {7u};
+        size_t work = 0u;
+        size_t events = 0u;
+
+        check_equal(domain_loopback_open_mode(&s, true), SALTS_OK);
+        /* The borrowed NativeIO backend is observed by the host ONLY:
+         * accidental CNet-owned poll/stop APIs fail fast. */
+        check_equal(cnet_client_poll(&s.client, 0u, &events), SALTS_ENOTSUP);
+        check_equal(cnet_client_stop(&s.client, 0u), SALTS_ENOTSUP);
+        check_true(s.observed_completions > 0u);
+        check_equal(s.observed_completions, s.routed_completions);
+        check_equal(s.unmatched_completions, (size_t)0u);
+
+        check_equal(domain_loopback_reserve_and_arm(&s), SALTS_OK);
+        check_equal(domain_socket_send_all(s.peer, first, sizeof(first)),
+                    SALTS_OK);
+        check_equal(domain_loopback_poll_callbacks(&s, 1u), SALTS_OK);
+        check_equal(s.on_receive_status, SALTS_OK);
+        check_equal(atomic_load(&s.domain.actions), 0);
+
+        check_equal(domain_loopback_reserve_and_arm(&s), SALTS_OK);
+        check_equal(domain_socket_send_all(s.peer, second, sizeof(second)),
+                    SALTS_OK);
+        check_equal(domain_loopback_poll_callbacks(&s, 2u), SALTS_OK);
+        check_equal(s.on_receive_status, SALTS_ENOBUFS);
+        check_equal(cflow_cnet_domain_reserve_credit(&s.domain.bridge, &extra),
+                    SALTS_EBUSY);
+        check_equal(cflow_cnet_domain_get_stats(&s.domain.bridge, &stats),
+                    SALTS_OK);
+        check_equal(stats.retained_bytes,
+                    sizeof(first) + sizeof(second));
+        check_equal(stats.pending_actor_admission, (size_t)1u);
+
+        /* Owner executes only bounded task quanta. It never observes a
+         * second backend or transfers a borrowed CNet receive pointer. */
+        check_true(domain_drive_until(&s.domain, 1));
+        check_equal(cflow_cnet_domain_retry_actor(&s.domain.bridge, &work),
+                    SALTS_OK);
+        check_equal(work, (size_t)1u);
+        check_true(domain_drive_until(&s.domain, 2));
+        check_equal(atomic_load(&s.domain.first_bytes_sum), 68);
+        check_equal(atomic_load(&s.domain.wrong_thread), 0);
+        check_equal(atomic_load(&s.domain.errors), 0);
+
+        /* Application ACK, not NativeIO or Actor admission, freed the stage. */
+        check_equal(domain_loopback_reserve_and_arm(&s), SALTS_OK);
+        check_equal(domain_socket_send_all(s.peer, third, sizeof(third)),
+                    SALTS_OK);
+        check_equal(domain_loopback_poll_callbacks(&s, 3u), SALTS_OK);
+        check_equal(s.on_receive_status, SALTS_OK);
+        check_true(domain_drive_until(&s.domain, 3));
+        check_equal(atomic_load(&s.domain.first_bytes_sum), 75);
+        check_equal(cflow_cnet_domain_get_stats(&s.domain.bridge, &stats),
+                    SALTS_OK);
+        check_equal(stats.acknowledged, (uint64_t)3u);
+        check_equal(stats.active_slots, (size_t)0u);
+        check_true(stats.mailbox_full >= (uint64_t)1u);
+        check_equal(s.observed_completions, s.routed_completions);
+        check_equal(s.unmatched_completions, (size_t)0u);
+        domain_loopback_finish(&s);
+    }
+
+    it("keeps accepted Actor lease after NativeIO-routed peer EOF") {
+        domain_loopback s;
+        cflow_cnet_domain_stats stats = {0};
+        const unsigned char bytes[] = {93u};
+        const uint64_t deadline = cmeta_monotonic_ms() + DOMAIN_TEST_TIMEOUT_MS;
+
+        check_equal(domain_loopback_open_mode(&s, true), SALTS_OK);
+        check_equal(domain_loopback_reserve_and_arm(&s), SALTS_OK);
+        check_equal(domain_socket_send_all(s.peer, bytes, sizeof(bytes)),
+                    SALTS_OK);
+        check_equal(domain_loopback_poll_callbacks(&s, 1u), SALTS_OK);
+        check_equal(s.on_receive_status, SALTS_OK);
+        /* A distinct outstanding receive credit observes EOF and closes
+         * transport; it does NOT acknowledge the accepted domain event. */
+        check_equal(domain_loopback_reserve_and_arm(&s), SALTS_OK);
+        domain_socket_close(s.peer);
+        s.peer = DOMAIN_BAD_SOCKET;
+
+        while (!s.terminal && cmeta_monotonic_ms() < deadline)
+            check_equal(domain_loopback_progress(&s, 1u), SALTS_OK);
+        check_true(s.terminal);
+        check_equal(cflow_cnet_domain_get_stats(&s.domain.bridge, &stats),
+                    SALTS_OK);
+        check_true(stats.transport_terminal);
+        check_equal(stats.active_slots, (size_t)1u);
+        check_equal(stats.awaiting_ack, (size_t)1u);
+        check_true(domain_drive_until(&s.domain, 1));
+        check_equal(atomic_load(&s.domain.first_bytes_sum), 93);
+        check_equal(cflow_cnet_domain_get_stats(&s.domain.bridge, &stats),
+                    SALTS_OK);
+        check_equal(stats.acknowledged, (uint64_t)1u);
+        check_equal(stats.active_slots, (size_t)0u);
+        check_equal(s.observed_completions, s.routed_completions);
+        check_equal(s.unmatched_completions, (size_t)0u);
         domain_loopback_finish(&s);
     }
 
