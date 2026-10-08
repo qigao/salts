@@ -68,6 +68,21 @@ Every missing or unqualified pattern must specify: **Intent → ACE participants
 - All bounded admission, no implicit retries, no hidden queues/thread pools, no global mutable CMeta registry. Do not dispatch every network packet through pattern reflection.
 - Documentation-only evidence changes do not reopen ACE functional freeze. **Any new source/public ABI work is post-freeze and requires separate approval, a precise issue/regression test, and the appropriate CI/SDK gates; do not silently merge into the frozen 2.3 candidate.**
 
+## Active pattern-gap tracking
+
+Umbrella: [#1058 — POSA2 17-pattern coverage and conformance](https://github.com/qigao/salts/issues/1058). Missing semantic/composition slices:
+
+| Pattern | Issue | Scope |
+|---|---|---|
+| Interceptor | [#1059](https://github.com/qigao/salts/issues/1059) | Exact FunctionAbi, before/after/error and borrowed callback lifetime |
+| Asynchronous Completion Token | [#1060](https://github.com/qigao/salts/issues/1060) | Typed terminal association and once-only context settlement |
+| Strategized Locking | [#1061](https://github.com/qigao/salts/issues/1061) | Typed lock policy plus scoped guard |
+| Thread-Safe Interface | [#1062](https://github.com/qigao/salts/issues/1062) | Synchronized entry/private operations and self-deadlock prevention |
+| Monitor Object | [#1063](https://github.com/qigao/salts/issues/1063) | Predicate/condition waiting, synchronized access and teardown |
+| Leader/Followers | [#1064](https://github.com/qigao/salts/issues/1064) | Genuine leader handoff on an optional non-SG execution topology |
+
+Primitive-only conformance (Wrapper Facade / Scoped Locking / safe Once-DCL / Thread-Specific Storage) is separately tracked in #1058. **Neither this issue list nor documentation changes the frozen CMeta source ABI.**
+
 ## Proposed investigation / implementation order
 
 1. **Typed asynchronous boundaries:** Interceptor and ACT (FunctionAbi, callback borrow, cancellation/settlement).
