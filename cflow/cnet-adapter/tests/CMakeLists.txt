@@ -30,6 +30,7 @@ set_target_properties(
   cflow_io_cnet_adapter_test
   cflow_cnet_domain_actor_test
   cflow_cnet_domain_route_test
+  cflow_cnet_manager_context_test
   PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
