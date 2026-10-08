@@ -105,6 +105,10 @@ bool cflow_io_native_file_operation_valid(
 
 bool cflow_io_native_backend_supported(cflow_io_native_backend_kind kind) {
     switch (kind) {
+#if defined(CFLOW_HAS_NATIVE_DARWIN_AIO)
+        case CFLOW_IO_NATIVE_DARWIN_AIO:
+            return true;
+#endif
 #if defined(CFLOW_HAS_NATIVE_EPOLL)
         case CFLOW_IO_NATIVE_EPOLL:
             return true;
@@ -136,7 +140,8 @@ bool cflow_io_native_backend_vector_operation_supported(
     if (operation_kind != CFLOW_IO_NATIVE_TCP_RECV_VECTOR &&
         operation_kind != CFLOW_IO_NATIVE_TCP_SEND_VECTOR)
         return false;
-    if (!cflow_io_native_backend_supported(kind))
+    if (!cflow_io_native_backend_supported(kind) ||
+        kind == CFLOW_IO_NATIVE_DARWIN_AIO)
         return false;
 #if !defined(_WIN32)
     {
@@ -160,6 +165,10 @@ bool cflow_io_native_backend_file_operation_supported(
             return false;
     }
     switch (kind) {
+#if defined(CFLOW_HAS_NATIVE_DARWIN_AIO)
+        case CFLOW_IO_NATIVE_DARWIN_AIO:
+            return true;
+#endif
 #if defined(CFLOW_HAS_NATIVE_IOCP)
         case CFLOW_IO_NATIVE_IOCP:
             return operation_kind != CFLOW_IO_NATIVE_FILE_FLUSH;
@@ -188,6 +197,10 @@ int cflow_io_native_backend_init(
         return SALTS_ENOTSUP;
 
     switch (config->kind) {
+#if defined(CFLOW_HAS_NATIVE_DARWIN_AIO)
+        case CFLOW_IO_NATIVE_DARWIN_AIO:
+            return cflow_io_native_darwin_aio_init(backend, config);
+#endif
 #if defined(CFLOW_HAS_NATIVE_EPOLL) || defined(CFLOW_HAS_NATIVE_KQUEUE) || \
     defined(CFLOW_HAS_NATIVE_POLL)
         case CFLOW_IO_NATIVE_EPOLL:
@@ -218,10 +231,12 @@ static int native_actor_submit(void *backend_user,
     cflow_io_native_operation *operation =
         (cflow_io_native_operation *)operation_user;
     (void)lease_id;
-    if (impl == NULL || impl->ops == NULL || impl->ops->submit == NULL ||
+    if (impl == NULL || impl->ops == NULL ||
         actor == NULL || request_id == 0u ||
         !cflow_io_native_operation_valid(operation))
         return SALTS_EINVAL;
+    if (impl->ops->submit == NULL)
+        return SALTS_ENOTSUP;
     return impl->ops->submit(impl, actor, request_id, operation);
 }
 

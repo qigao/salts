@@ -13,6 +13,13 @@ else()
   message(FATAL_ERROR "libuv package did not provide libuv::uv_a or libuv::uv")
 endif()
 
+cmake_add_benchmark(cnet_transport_owner_benchmark
+  SOURCES cnet_transport_owner_benchmark.c cnet_io_benchmark_config.c
+  LIBS cnet Salts::Core Salts::TinyTest ${CNET_LIBUV_TARGET}
+  FOLDER "cnet/benchmarks")
+add_test(NAME cnet_transport_owner_benchmark COMMAND cnet_transport_owner_benchmark)
+set_tests_properties(cnet_transport_owner_benchmark PROPERTIES LABELS benchmark TIMEOUT 120)
+
 cmake_add_benchmark(cnet_io_benchmark
   SOURCES cnet_io_benchmark.c cnet_io_benchmark_config.c cnet_benchmark_stats.c
   LIBS cnet_profile Salts::TinyTest ${CNET_LIBUV_TARGET}

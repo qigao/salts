@@ -279,6 +279,18 @@ spec("NativeIPC pipe control plane") {
     check_equal(stats.submitted, (uint64_t)2u);
     check_equal(stats.rejected_full, (uint64_t)1u);
     check_true(stats.admission_open);
+    {
+      uintptr_t sources[2] = {UINTPTR_MAX, UINTPTR_MAX};
+      size_t count = 0u;
+      bool ready = true;
+      check_equal(cmeta_ipc_pipe_server_wait_sources(&server, sources, 1u, &count, &ready), SALTS_ENOBUFS);
+      check_equal(count, 2u);
+      check_equal(sources[0], UINTPTR_MAX);
+      check_false(ready);
+      check_equal(cmeta_ipc_pipe_server_wait_sources(&server, sources, 2u, &count, &ready), SALTS_OK);
+      check_equal(count, 2u);
+      check(sources[0] != 0u && sources[1] != 0u && sources[0] != sources[1]);
+    }
     check_equal(cmeta_ipc_pipe_server_cancel(&server, first), SALTS_OK);
     check_equal(cmeta_ipc_pipe_server_cancel(&server, second), SALTS_OK);
     check_equal(ipc_wait(&server, &probe, 2u), SALTS_OK);

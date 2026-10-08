@@ -101,6 +101,18 @@ jobs:
         if: matrix.family == 'mac'
         shell: bash
         run: brew install gcc@15
+      - name: Measure fixed-budget IPC and UDP owners
+        if: fromJSON(inputs.scope).transport_owner == 'true'
+        shell: pwsh
+        env:
+          CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          ctest --test-dir "${{ matrix.build_dir }}" --no-tests=error -V -R "^cnet_transport_owner_benchmark$" 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "cnet-transport-owner.log")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Compare PR-base and candidate CNet owner
         if: matrix.family == 'windows' && fromJSON(inputs.scope).cnet_compare == 'true' && github.event_name == 'pull_request'
         shell: pwsh

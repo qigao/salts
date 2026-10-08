@@ -3,6 +3,7 @@
 
 #include <cnet/cnet.h>
 #include <salts/native_io.h>
+#include <tstr.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -157,6 +158,17 @@ int cnet_transport_adopt_pipe(cnet_transport *transport, native_io_backend *back
  */
 int cnet_transport_pipe_connect(cnet_transport *transport, native_io_backend *backend,
                                 native_io_backend_kind backend_kind, const char *name);
+
+int cnet_transport_ipc_validate_name(const char *name, size_t length);
+int cnet_transport_ipc_native_name(const char *name, tstr *out_name);
+int cnet_transport_ipc_address(const char *name, void *address, size_t capacity, size_t *out_length);
+int cnet_transport_ipc_prepare_connect(cnet_transport *transport, native_io_backend *backend,
+                                        native_io_backend_kind backend_kind, const char *name,
+                                        void *address, size_t address_length,
+                                        native_io_operation *out_operation, bool *out_immediate);
+int cnet_transport_adopt_ipc(cnet_transport *transport, native_io_backend *backend,
+                              uintptr_t native_handle);
+int cnet_transport_close_ipc(uintptr_t native_handle);
 
 native_io_endpoint cnet_transport_read_endpoint(const cnet_transport *transport);
 native_io_endpoint cnet_transport_write_endpoint(const cnet_transport *transport);

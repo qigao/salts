@@ -130,7 +130,7 @@ jobs:
         run: |
           set -euo pipefail
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V \
-            -R '^(platform_fastpath_|cmeta_trace_|cmeta_fastpath_|cmeta_data_reflect_|tinymock_reflect_|cmeta_coroutine|coro_executor|cmeta_native_|cmeta_plugin_native_)'
+            -R '^(platform_fastpath_|cmeta_trace_|cmeta_fastpath_|cmeta_data_reflect_|tinymock_reflect_|cmeta_coroutine|coro_executor|cmeta_native_|cmeta_plugin_native_|cflow_io_native_test$|cflow_io_file_test$)'
       - name: Run Windows native and plugin contracts
         if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.native }}
         timeout-minutes: 30
@@ -140,13 +140,13 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V -R "^(platform_fastpath_|cmeta_trace_|cmeta_fastpath_|cmeta_data_reflect_|tinymock_reflect_|cmeta_coroutine|coro_executor|cmeta_native_|cmeta_plugin_native_|cflow_execution_test$|cflow_interface_reflection_test$|cflow_executor_dso_test$)"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V -R "^(platform_fastpath_|cmeta_trace_|cmeta_fastpath_|cmeta_data_reflect_|tinymock_reflect_|cmeta_coroutine|coro_executor|cmeta_native_|cmeta_plugin_native_|cflow_io_native_test$|cflow_io_file_test$|cflow_execution_test$|cflow_interface_reflection_test$|cflow_executor_dso_test$)"
           if errorlevel 1 exit /b 1
       - name: Run POSIX execution and nested CSTL contracts
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.execution }}
         timeout-minutes: 30
         shell: bash
-        run: ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cnet_(api|tls)_test$|cmeta_native_|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
+        run: ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cnet_.*_test$|native_ipc(_header_cpp)?_test$|cmeta_native_|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
       - name: Run Windows execution and nested CSTL contracts
         if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.execution }}
         timeout-minutes: 30
@@ -156,7 +156,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cnet_(api|tls)_test$|cmeta_native_|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
+          ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cnet_.*_test$|native_ipc(_header_cpp)?_test$|cmeta_native_|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
           if errorlevel 1 exit /b 1
       - name: Run reflected CFlow contracts
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.projection }}

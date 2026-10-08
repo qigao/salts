@@ -9,6 +9,10 @@
 #include <salts/thread.h>
 
 #include "tinytest.h"
+
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 #include "io_native_internal.h"
 
 #include <limits.h>
@@ -908,7 +912,7 @@ static void native_check_readiness_rejects_regular_file(
 }
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 static int native_test_open_posix_file(char **out_path, int *out_fd) {
     char *path = tt_make_temp_file("cflow-native-file-", ".bin");
     int fd;
@@ -935,7 +939,7 @@ static void native_test_remove_posix_file(char *path, int fd) {
     }
 }
 
-static void native_check_file_read_write_uring(void) {
+static void native_check_file_read_write_posix(cflow_io_native_backend_kind kind) {
     static const unsigned char payload[] = {0x75u, 0x72u, 0x69u,
                                              0x6eu, 0x67u};
     native_fixture fixture;
@@ -946,7 +950,7 @@ static void native_check_file_read_write_uring(void) {
     int fd = -1;
 
     check_equal(native_file_fixture_init(
-                    &fixture, CFLOW_IO_NATIVE_IO_URING, 2u), SALTS_OK);
+                    &fixture, kind, 2u), SALTS_OK);
     check_equal(native_test_open_posix_file(&path, &fd), SALTS_OK);
     check_equal(lseek(fd, 3, SEEK_SET), (off_t)3);
     operation.native = (cflow_io_native_file_operation){
@@ -1006,7 +1010,7 @@ static void native_check_file_read_write_uring(void) {
     native_test_remove_posix_file(path, fd);
 }
 
-static void native_check_file_eof_and_type_uring(void) {
+static void native_check_file_eof_and_type_posix(cflow_io_native_backend_kind kind) {
     static const unsigned char payload[] = {0x45u, 0x4fu, 0x46u, 0x21u};
     native_fixture fixture;
     native_test_file_operation operation = {0};
@@ -1017,7 +1021,7 @@ static void native_check_file_eof_and_type_uring(void) {
     int pipes[2] = {-1, -1};
 
     check_equal(native_file_fixture_init(
-                    &fixture, CFLOW_IO_NATIVE_IO_URING, 1u), SALTS_OK);
+                    &fixture, kind, 1u), SALTS_OK);
     check_equal(native_test_open_posix_file(&path, &fd), SALTS_OK);
     operation.native = (cflow_io_native_file_operation){
         .kind = CFLOW_IO_NATIVE_FILE_WRITE_AT,
@@ -1060,7 +1064,7 @@ static void native_check_file_eof_and_type_uring(void) {
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_ACK_RELEASED);
 
-    check_equal(pipe2(pipes, O_NONBLOCK | O_CLOEXEC), 0);
+    check_equal(pipe(pipes), 0);
     operation.native.handle = (uintptr_t)pipes[0];
     operation.native.offset = 0u;
     submitted = native_file_submit(&fixture, 136u, &operation);
@@ -1084,7 +1088,7 @@ static void native_check_file_eof_and_type_uring(void) {
     native_test_remove_posix_file(path, fd);
 }
 
-static void native_check_file_cancel_race_uring(void) {
+static void native_check_file_cancel_race_posix(cflow_io_native_backend_kind kind) {
     native_fixture fixture;
     native_test_file_operation operation = {0};
     unsigned char byte = 0u;
@@ -1094,7 +1098,7 @@ static void native_check_file_cancel_race_uring(void) {
     size_t iteration;
 
     check_equal(native_file_fixture_init(
-                    &fixture, CFLOW_IO_NATIVE_IO_URING, 1u), SALTS_OK);
+                    &fixture, kind, 1u), SALTS_OK);
     check_equal(native_test_open_posix_file(&path, &fd), SALTS_OK);
     operation.native = (cflow_io_native_file_operation){
         .kind = CFLOW_IO_NATIVE_FILE_READ_AT,
@@ -2422,7 +2426,64 @@ spec("CFlow native IO backend") {
                 .flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE << 1u}));
     }
 
+    it("preserves backend enum ABI and rejects Darwin AIO socket vectors") {
+        check_equal((int)CFLOW_IO_NATIVE_POLL, 5);
+        check_equal((int)CFLOW_IO_NATIVE_DARWIN_AIO, 6);
+        check_false(cflow_io_native_backend_vector_operation_supported(
+            CFLOW_IO_NATIVE_DARWIN_AIO, CFLOW_IO_NATIVE_TCP_SEND_VECTOR));
+#if !defined(__APPLE__) || !TARGET_OS_OSX
+        cflow_io_native_backend backend = {0};
+        const cflow_io_native_backend_config config = {
+            CFLOW_IO_NATIVE_DARWIN_AIO, 1u, 1u};
+        check_false(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_DARWIN_AIO));
+        check_equal(cflow_io_native_backend_init(&backend, &config), SALTS_ENOTSUP);
+#endif
+    }
+
+#if defined(__APPLE__) && TARGET_OS_OSX
+    it("rejects socket operations on the file-only Darwin AIO backend") {
+        native_fixture fixture;
+        native_test_operation operation = {0};
+        unsigned char byte = 0u;
+        check_equal(native_fixture_init(
+                        &fixture, CFLOW_IO_NATIVE_DARWIN_AIO, 1u), SALTS_OK);
+        operation.native = (cflow_io_native_operation){
+            .kind = CFLOW_IO_NATIVE_TCP_RECV,
+            .socket = 0u, .buffer = &byte, .length = 1u};
+        const cflow_io_submit_result submitted =
+            native_submit(&fixture, 138u, &operation);
+        check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+        check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
+        check_equal(fixture.completions.values[0].kind, CFLOW_IO_COMPLETION_FAILED);
+        check_equal(fixture.completions.values[0].error, SALTS_ENOTSUP);
+        check_equal(cflow_io_actor_acknowledge(&fixture.actor, submitted.request_id),
+                    CFLOW_IO_ACK_RELEASED);
+        check_equal(operation.released, 1);
+        native_fixture_destroy(&fixture);
+    }
+    it("reads writes and flushes regular files with Darwin AIO") {
+        native_check_file_read_write_posix(CFLOW_IO_NATIVE_DARWIN_AIO);
+    }
+    it("reports Darwin AIO partial reads EOF and rejects pipes") {
+        native_check_file_eof_and_type_posix(CFLOW_IO_NATIVE_DARWIN_AIO);
+    }
+    it("settles Darwin AIO cancellation with one authoritative completion") {
+        native_check_file_cancel_race_posix(CFLOW_IO_NATIVE_DARWIN_AIO);
+    }
+#endif
+
     it("reports file support per backend and operation") {
+#if defined(__APPLE__) && TARGET_OS_OSX
+        check_true(cflow_io_native_backend_file_operation_supported(
+            CFLOW_IO_NATIVE_DARWIN_AIO, CFLOW_IO_NATIVE_FILE_READ_AT));
+        check_true(cflow_io_native_backend_file_operation_supported(
+            CFLOW_IO_NATIVE_DARWIN_AIO, CFLOW_IO_NATIVE_FILE_WRITE_AT));
+        check_true(cflow_io_native_backend_file_operation_supported(
+            CFLOW_IO_NATIVE_DARWIN_AIO, CFLOW_IO_NATIVE_FILE_FLUSH));
+#else
+        check_false(cflow_io_native_backend_file_operation_supported(
+            CFLOW_IO_NATIVE_DARWIN_AIO, CFLOW_IO_NATIVE_FILE_READ_AT));
+#endif
         check_false(cflow_io_native_backend_file_operation_supported(
             (cflow_io_native_backend_kind)0,
             CFLOW_IO_NATIVE_FILE_READ_AT));
@@ -2637,9 +2698,9 @@ spec("CFlow native IO backend") {
 
 
 
-                native_check_file_read_write_uring();
-                native_check_file_eof_and_type_uring();
-                native_check_file_cancel_race_uring();
+                native_check_file_read_write_posix(CFLOW_IO_NATIVE_IO_URING);
+                native_check_file_eof_and_type_posix(CFLOW_IO_NATIVE_IO_URING);
+                native_check_file_cancel_race_posix(CFLOW_IO_NATIVE_IO_URING);
             } else {
                 check_true(status < 0);
                 check_null(probe.impl);

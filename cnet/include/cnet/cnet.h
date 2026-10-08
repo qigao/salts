@@ -1476,6 +1476,62 @@ int cnet_listener_destroy(cnet_listener *listener);
  */
 int cnet_datagram_init(cnet_datagram *datagram, const cnet_datagram_config *config);
 
+/** SDK capability for the complete borrowed-backend datagram progress API. */
+#define CNET_DATAGRAM_EXTERNAL_PROGRESS_VERSION 1u
+
+/**
+ * Initializes a fixed-owner UDP endpoint on a live borrowed backend.
+ * config has the same validation as owned init; backend kind must match and
+ * its request capacity must cover config.request_capacity. The host budgets
+ * aggregate endpoint/request capacity across all borrowers. The host's batch
+ * capacity controls observe; no private completion array is allocated here.
+ * Backend storage must outlive the datagram and all concurrent wake callers.
+ * Failure leaves datagram uninitialized and never closes the host backend.
+ * Returns SALTS_OK, SALTS_EINVAL, SALTS_EALREADY, SALTS_ESHUTDOWN,
+ * SALTS_ENOBUFS, SALTS_ERANGE, SALTS_ENOMEM, SALTS_ENOTSUP, or a native error.
+ */
+int cnet_datagram_init_external(cnet_datagram *datagram, const cnet_datagram_config *config,
+                                 native_io_backend *backend);
+
+/**
+ * Advances deferred receive rearm and stop cleanup without observe or waiting.
+ * Valid during STOPPING. Receive errors require explicit receive admission;
+ * advance only retries a deferred rearm, never a failed receive terminal.
+ * out_events is required and receives the callback count (currently zero).
+ * Returns SALTS_OK, a rearm/cleanup error, SALTS_EINVAL, SALTS_ENOTSUP for an
+ * owned instance, or SALTS_EBUSY for recursive progress/callback execution.
+ */
+int cnet_datagram_advance_external(cnet_datagram *datagram, size_t *out_events);
+
+/**
+ * Routes one terminal observed by the host from this instance's backend.
+ * Never route across backends. Foreign/duplicate requests return SALTS_OK,
+ * consumed=false and zero events. Matching slot/generation claims the terminal
+ * before validating metadata; malformed owned terminals return SALTS_EPROTO
+ * with consumed=true and settle the request, including one failed send callback.
+ * The input is unchanged. Callbacks run inline; receive views last only through
+ * their callback. Process the rest of a host batch even when one route fails.
+ * Returns SALTS_OK, SALTS_EINVAL, SALTS_ENOTSUP, SALTS_EBUSY, or a receive/rearm
+ * error. out_consumed and out_events are required and cleared before validation.
+ */
+int cnet_datagram_route_external_completion(cnet_datagram *datagram,
+                                             const native_io_completion *completion,
+                                             bool *out_consumed, size_t *out_events);
+
+/**
+ * Closes admission and cancels only this instance's requests without observe.
+ * out_stopped is required and true only after all terminals/callbacks and owned
+ * endpoint cleanup have finished. SALTS_EBUSY means continue host route/advance.
+ * cancel ENOENT/EALREADY on retained requests waits for their real terminal;
+ * it never releases payload or fabricates a callback. Receive callbacks cease
+ * during stop; every accepted send still gets exactly one terminal.
+ * Other cancellation/cleanup errors are retained and returned independently of
+ * out_stopped. Retry cleanup on error; destroy requires out_stopped=true.
+ * Never closes/destroys the host backend. Repeated calls are safe.
+ * Returns SALTS_OK, SALTS_EBUSY, SALTS_EINVAL, SALTS_ENOTSUP, or the first error.
+ */
+int cnet_datagram_stop_external(cnet_datagram *datagram, bool *out_stopped);
+
 /** Returns the host-order bound port, including an OS-selected ephemeral port. */
 int cnet_datagram_port(const cnet_datagram *datagram, uint16_t *out_port);
 

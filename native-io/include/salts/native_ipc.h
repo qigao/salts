@@ -131,6 +131,21 @@ int cmeta_ipc_pipe_server_cancel(cmeta_ipc_pipe_server *server, cmeta_ipc_reques
 int cmeta_ipc_pipe_server_observe(cmeta_ipc_pipe_server *server, size_t max_events,
                                   size_t *out_count);
 
+/**
+ * Copies borrowed Windows event handles for pending accepts, without waiting.
+ * out_ready also reports synchronous/already-ready terminals that need observe
+ * even when no event was signaled. Check it before entering the host wait.
+ * On ENOBUFS, out_count is the required capacity and no partial array is written.
+ * A zero-capacity NULL array is valid. Handles must never be closed/reset by the
+ * caller; refresh after any server mutation and unregister before observe/close/
+ * destroy can release them. Single-owner only; no callback reentry. The host
+ * supplies its own wake source for stop/commands and respects native wait limits.
+ * Returns SALTS_OK, SALTS_ENOBUFS, SALTS_EINVAL, SALTS_EBUSY, or SALTS_ENOTSUP.
+ */
+int cmeta_ipc_pipe_server_wait_sources(const cmeta_ipc_pipe_server *server,
+                                       uintptr_t *out_handles, size_t capacity,
+                                       size_t *out_count, bool *out_ready);
+
 /** Stops admission and requests cancellation for every pending accept. */
 int cmeta_ipc_pipe_server_close(cmeta_ipc_pipe_server *server);
 
