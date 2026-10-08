@@ -415,6 +415,437 @@ done:
     atomic_store(&source->done, true);
 }
 
+/*
+ * Real CNet qualification: each source CNet client/socket/poll loop lives
+ * exclusively inside its own producer thread. The target owns the Machine,
+ * shared SerialExecutor, Scheduler and every bounded route payload slot.
+ * CNet terminal truth is delivered before the Actor processes/ACKs its event.
+ */
+typedef struct route_net_source {
+    cflow_cnet_domain_route *route;
+    cnet_client client;
+    cnet_connection connection;
+    route_net_socket listener;
+    route_net_socket peer;
+    cflow_cnet_domain_route_credit credit;
+    const void *thread_owner;
+    uint32_t owner_id;
+    unsigned char sent_byte;
+    atomic_bool connection_created;
+    atomic_bool route_ready;
+    atomic_bool completed;
+    bool connected;
+    bool terminal;
+    bool wrong_owner;
+    size_t received;
+    int recv_status;
+    int terminal_status;
+    int result;
+    bool allow_full;
+} route_net_source;
+
+static void route_net_close(route_net_socket socket_value) {
+    if (socket_value == ROUTE_NET_BAD_SOCKET) return;
+#if defined(_WIN32)
+    (void)closesocket(socket_value);
+#else
+    (void)close(socket_value);
+#endif
+}
+
+static bool route_net_would_block(void) {
+#if defined(_WIN32)
+    return WSAGetLastError() == WSAEWOULDBLOCK;
+#else
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+}
+
+static bool route_net_nonblocking(route_net_socket fd) {
+#if defined(_WIN32)
+    u_long enabled = 1u;
+    return ioctlsocket(fd, FIONBIO, &enabled) == 0;
+#else
+    const int flags = fcntl(fd, F_GETFL, 0);
+    return flags >= 0 &&
+           ((flags & O_NONBLOCK) != 0 ||
+            fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0);
+#endif
+}
+
+static native_io_backend_kind route_net_backend(void) {
+#if defined(_WIN32)
+    return NATIVE_IO_BACKEND_IOCP;
+#elif defined(__linux__)
+    return NATIVE_IO_BACKEND_EPOLL;
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || \
+      defined(__NetBSD__) || defined(__DragonFly__)
+    return NATIVE_IO_BACKEND_KQUEUE;
+#else
+    return (native_io_backend_kind)0;
+#endif
+}
+
+static int route_net_send_one(route_net_socket fd, unsigned char value) {
+    const uint64_t deadline =
+        cmeta_monotonic_ms() + ROUTE_TEST_TIMEOUT_MS;
+    for (;;) {
+#if defined(_WIN32)
+        const int sent = send(fd, (const char *)&value, 1, 0);
+        if (sent == SOCKET_ERROR) {
+#elif defined(MSG_NOSIGNAL)
+        const ssize_t sent = send(fd, &value, 1u, MSG_NOSIGNAL);
+        if (sent < 0) {
+#else
+        const ssize_t sent = send(fd, &value, 1u, 0);
+        if (sent < 0) {
+#endif
+            if (!route_net_would_block()) return SALTS_EIO;
+            if (cmeta_monotonic_ms() >= deadline)
+                return SALTS_ETIMEDOUT;
+            cmeta_thread_yield();
+            continue;
+        }
+        return sent == 1 ? SALTS_OK : SALTS_EIO;
+    }
+}
+
+static void route_net_state(
+    void *user, cnet_connection connection,
+    cnet_connection_state state, const cnet_error *error) {
+    route_net_source *s = (route_net_source *)user;
+    (void)error;
+    if (!s) return;
+    if (s->thread_owner != cmeta_thread_current_token())
+        s->wrong_owner = true;
+    if (s->connection.slot != 0u &&
+        (s->connection.slot != connection.slot ||
+         s->connection.generation != connection.generation))
+        s->wrong_owner = true;
+    if (state == CNET_CONNECTION_CONNECTED) s->connected = true;
+    if (state == CNET_CONNECTION_CLOSED ||
+        state == CNET_CONNECTION_FAILED) {
+        s->terminal = true;
+        /* The CNet owner, not the target Actor, settles native terminal
+         * receive credit and seals just this connection's route. */
+        if (s->route && s->route->impl)
+            s->terminal_status =
+                cflow_cnet_domain_route_source_terminal(s->route);
+    }
+}
+
+static void route_net_receive(
+    void *user, cnet_connection connection, const cnet_receive_view *view) {
+    route_net_source *s = (route_net_source *)user;
+    if (!s) return;
+    if (s->thread_owner != cmeta_thread_current_token() ||
+        s->connection.slot != connection.slot ||
+        s->connection.generation != connection.generation)
+        s->wrong_owner = true;
+    if (!view || view->kind != CNET_MESSAGE_BYTES || view->size != 1u) {
+        s->recv_status = SALTS_EPROTO;
+        return;
+    }
+    s->recv_status = cflow_cnet_domain_route_receive(
+        s->route, s->credit, view);
+    ++s->received;
+}
+
+static void route_net_source_run(void *user) {
+    route_net_source *s = (route_net_source *)user;
+    struct sockaddr_in address = {0};
+    route_net_socklen length = (route_net_socklen)sizeof(address);
+    cnet_client_config config = {0};
+    cnet_connect_options options = {0};
+    uint16_t port;
+    char uri[80];
+    int result;
+    const uint64_t deadline =
+        cmeta_monotonic_ms() + ROUTE_TEST_TIMEOUT_MS;
+
+    s->thread_owner = cmeta_thread_current_token();
+    s->listener = ROUTE_NET_BAD_SOCKET;
+    s->peer = ROUTE_NET_BAD_SOCKET;
+    s->terminal_status = SALTS_OK;
+#if defined(_WIN32)
+    {
+        WSADATA winsock;
+        if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) {
+            result = SALTS_EIO;
+            goto done;
+        }
+    }
+#endif
+    s->listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s->listener == ROUTE_NET_BAD_SOCKET) {
+        result = SALTS_EIO;
+        goto cleanup;
+    }
+    address.sin_family = AF_INET;
+    address.sin_port = htons(0u);
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(s->listener, (const struct sockaddr *)&address,
+             (route_net_socklen)sizeof(address)) != 0 ||
+        getsockname(s->listener, (struct sockaddr *)&address,
+                    &length) != 0 ||
+        listen(s->listener, 2) != 0 ||
+        !route_net_nonblocking(s->listener)) {
+        result = SALTS_EIO;
+        goto cleanup;
+    }
+    port = ntohs(address.sin_port);
+
+    config.backend = route_net_backend();
+    config.connection_capacity = 2u;
+    config.command_capacity = 8u;
+    config.request_capacity = 8u;
+    config.completion_batch_capacity = 4u;
+    config.event_capacity = 8u;
+    config.max_send_bytes = 1024u;
+    config.receive_buffer_bytes = 1024u;
+    result = cnet_client_init(&s->client, &config);
+    if (result != SALTS_OK) goto cleanup;
+
+    (void)snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u",
+                   (unsigned)port);
+    options.uri = uri;
+    options.observer = (cnet_observer){
+        .on_state = route_net_state,
+        .on_receive = route_net_receive,
+        .user = s
+    };
+    result = cnet_connect(&s->client, &options, &s->connection);
+    if (result != SALTS_OK) goto cleanup;
+    atomic_store_explicit(
+        &s->connection_created, true, memory_order_release);
+
+    while (!atomic_load_explicit(&s->route_ready, memory_order_acquire) &&
+           cmeta_monotonic_ms() < deadline)
+        cmeta_thread_yield();
+    if (!atomic_load_explicit(&s->route_ready, memory_order_acquire)) {
+        result = SALTS_ETIMEDOUT;
+        goto cleanup;
+    }
+    result = cflow_cnet_domain_route_bind_source(s->route);
+    if (result != SALTS_OK) goto cleanup;
+
+    while ((!s->connected || s->peer == ROUTE_NET_BAD_SOCKET) &&
+           cmeta_monotonic_ms() < deadline) {
+        size_t events = 0u;
+        if (s->peer == ROUTE_NET_BAD_SOCKET) {
+            s->peer = accept(s->listener, NULL, NULL);
+            if (s->peer != ROUTE_NET_BAD_SOCKET &&
+                !route_net_nonblocking(s->peer)) {
+                result = SALTS_EIO;
+                goto cleanup;
+            }
+            if (s->peer == ROUTE_NET_BAD_SOCKET &&
+                !route_net_would_block()) {
+                result = SALTS_EIO;
+                goto cleanup;
+            }
+        }
+        result = cnet_client_poll(&s->client, 1u, &events);
+        if (result != SALTS_OK) goto cleanup;
+    }
+    if (!s->connected || s->peer == ROUTE_NET_BAD_SOCKET) {
+        result = SALTS_ETIMEDOUT;
+        goto cleanup;
+    }
+    route_net_close(s->listener);
+    s->listener = ROUTE_NET_BAD_SOCKET;
+
+    /* Exactly one bounded CNet receive credit on this source owner. */
+    result = cflow_cnet_domain_route_reserve(s->route, &s->credit);
+    if (result != SALTS_OK) goto cleanup;
+    result = cnet_receive(&s->client, s->connection, 1u);
+    if (result != SALTS_OK) {
+        (void)cflow_cnet_domain_route_cancel_credit(s->route, s->credit);
+        goto cleanup;
+    }
+    result = route_net_send_one(s->peer, s->sent_byte);
+    if (result != SALTS_OK) goto cleanup;
+    while (s->received == 0u && !s->terminal &&
+           cmeta_monotonic_ms() < deadline) {
+        size_t events = 0u;
+        result = cnet_client_poll(&s->client, 1u, &events);
+        if (result != SALTS_OK) goto cleanup;
+    }
+    if (s->received != 1u) {
+        result = SALTS_ETIMEDOUT;
+        goto cleanup;
+    }
+    if (s->recv_status != SALTS_OK &&
+        !(s->allow_full && s->recv_status == SALTS_ENOBUFS)) {
+        result = s->recv_status;
+        goto cleanup;
+    }
+    result = SALTS_OK;
+
+cleanup:
+    if (s->client.impl != NULL) {
+        if (!s->terminal && s->connection.slot != 0u) {
+            int close_status = cnet_close(&s->client, s->connection);
+            if (result == SALTS_OK &&
+                close_status != SALTS_OK &&
+                close_status != SALTS_EALREADY &&
+                close_status != SALTS_ENOENT)
+                result = close_status;
+        }
+        while (!s->terminal && cmeta_monotonic_ms() < deadline) {
+            size_t events = 0u;
+            const int poll_status =
+                cnet_client_poll(&s->client, 1u, &events);
+            if (poll_status != SALTS_OK) {
+                if (result == SALTS_OK) result = poll_status;
+                break;
+            }
+        }
+        if (!s->terminal && result == SALTS_OK)
+            result = SALTS_ETIMEDOUT;
+        {
+            int stop_status =
+                cnet_client_stop(&s->client, ROUTE_TEST_TIMEOUT_MS);
+            if (stop_status == SALTS_ETIMEDOUT)
+                stop_status = cnet_client_stop(
+                    &s->client, ROUTE_TEST_TIMEOUT_MS);
+            if (stop_status != SALTS_OK && result == SALTS_OK)
+                result = stop_status;
+            if (stop_status == SALTS_OK) {
+                const int destroy_status =
+                    cnet_client_destroy(&s->client);
+                if (destroy_status != SALTS_OK && result == SALTS_OK)
+                    result = destroy_status;
+            }
+        }
+    }
+    route_net_close(s->peer);
+    route_net_close(s->listener);
+    s->peer = ROUTE_NET_BAD_SOCKET;
+    s->listener = ROUTE_NET_BAD_SOCKET;
+#if defined(_WIN32)
+    (void)WSACleanup();
+#endif
+    if (s->wrong_owner && result == SALTS_OK)
+        result = SALTS_EPERM;
+    if (s->terminal_status != SALTS_OK && result == SALTS_OK)
+        result = s->terminal_status;
+done:
+    s->result = result;
+    atomic_store_explicit(&s->completed, true, memory_order_release);
+}
+
+static void route_net_multi_source_case(size_t owner_count,
+                                        size_t mailbox_capacity) {
+    route_test_fixture f;
+    route_net_source sources[ROUTE_TEST_OWNERS] = {0};
+    cmeta_thread_t threads[ROUTE_TEST_OWNERS] = {0};
+    const uint64_t deadline =
+        cmeta_monotonic_ms() + ROUTE_TEST_TIMEOUT_MS;
+    size_t admitted = 0u;
+    size_t staged = 0u;
+    size_t full = 0u;
+    int expected_checksum = 0;
+
+    check_true(route_test_init_mode(
+        &f, owner_count, mailbox_capacity, 2u, true));
+    for (size_t i = 0u; i < owner_count; ++i) {
+        sources[i].route = &f.routes[i];
+        sources[i].owner_id = (uint32_t)(i + 1u);
+        sources[i].sent_byte = (unsigned char)((i + 1u) * 10u);
+        sources[i].allow_full = mailbox_capacity == 1u;
+        expected_checksum += sources[i].sent_byte;
+        check_equal(cmeta_thread_create(
+            &threads[i], route_net_source_run, &sources[i]), 0);
+    }
+
+    for (size_t i = 0u; i < owner_count; ++i) {
+        cflow_cnet_domain_route_config config = {0};
+        while (!atomic_load_explicit(
+                   &sources[i].connection_created,
+                   memory_order_acquire) &&
+               !atomic_load_explicit(
+                   &sources[i].completed, memory_order_acquire) &&
+               cmeta_monotonic_ms() < deadline)
+            cmeta_thread_yield();
+        check_true(atomic_load_explicit(
+            &sources[i].connection_created, memory_order_acquire));
+        config.actor = &f.actor_ref;
+        config.event_id = ROUTE_TEST_EVENT;
+        config.source_owner = (uint32_t)(i + 1u);
+        config.connection = sources[i].connection;
+        config.slot_capacity = 2u;
+        config.max_receive_bytes = 16u;
+        check_equal(cflow_cnet_domain_route_init(
+            &f.routes[i], &config), SALTS_OK);
+        atomic_store_explicit(
+            &sources[i].route_ready, true, memory_order_release);
+    }
+
+    /* No target Actor quantum yet; real CNet callbacks race across four
+     * independent NativeIO owner/client threads and fill only Actor's FIFO. */
+    for (size_t i = 0u; i < owner_count; ++i) {
+        check_equal(cmeta_thread_join(&threads[i]), 0);
+        check_true(atomic_load(&sources[i].completed));
+        check_equal(sources[i].result, SALTS_OK);
+        check_true(sources[i].terminal);
+        check_equal(sources[i].received, (size_t)1u);
+        cflow_cnet_domain_route_stats stats = {0};
+        check_equal(cflow_cnet_domain_route_get_stats(
+            &f.routes[i], &stats), SALTS_OK);
+        check_true(stats.source_terminal);
+        check_false(stats.receive_credit_live);
+        check_equal(stats.active_slots, (size_t)1u);
+        admitted += stats.actor_accepted;
+        full += stats.actor_full;
+        staged += stats.staged;
+    }
+    if (mailbox_capacity == 1u) {
+        check_equal(admitted, (size_t)1u);
+        check_equal(staged, owner_count - 1u);
+        check_equal(full, owner_count - 1u);
+    } else {
+        check_equal(admitted, owner_count);
+        check_equal(staged, (size_t)0u);
+        check_equal(full, (size_t)0u);
+    }
+
+    const uint64_t drive_deadline =
+        cmeta_monotonic_ms() + ROUTE_TEST_TIMEOUT_MS;
+    while (atomic_load(&f.values) < (int)owner_count &&
+           cmeta_monotonic_ms() < drive_deadline) {
+        /* The target advances only a finite Executor quantum before checking
+         * retained route FULL. It never polls a foreign CNet client. */
+        (void)cflow_executor_run_one(&f.executor);
+        for (size_t i = 0u; i < owner_count; ++i) {
+            cflow_cnet_domain_route_stats stats = {0};
+            size_t worked = 0u;
+            check_equal(cflow_cnet_domain_route_get_stats(
+                &f.routes[i], &stats), SALTS_OK);
+            if (stats.staged != 0u) {
+                const int status = cflow_cnet_domain_route_retry_staged(
+                    &f.routes[i], &worked);
+                check_true(status == SALTS_OK || status == SALTS_ENOBUFS);
+                check_true(worked <= (size_t)1u);
+            }
+        }
+    }
+    check_equal(atomic_load(&f.values), (int)owner_count);
+    check_equal(atomic_load(&f.actions), (int)owner_count);
+    check_equal(atomic_load(&f.checksum), expected_checksum);
+    check_equal(atomic_load(&f.errors), 0);
+    check_equal(atomic_load(&f.wrong_owner), 0);
+    for (size_t i = 0u; i < owner_count; ++i) {
+        cflow_cnet_domain_route_stats stats = {0};
+        check_equal(cflow_cnet_domain_route_get_stats(
+            &f.routes[i], &stats), SALTS_OK);
+        check_equal(stats.active_slots, (size_t)0u);
+        check_equal(stats.acknowledged, (uint64_t)1u);
+        check_equal(stats.retained_bytes, (size_t)0u);
+    }
+    route_test_finish(&f);
+}
+
 suite("CNet cross-owner domain Actor retained lease routing") {
     it("routes four concurrent CNet source owners to one target Actor without a second FIFO") {
         route_test_fixture f;
