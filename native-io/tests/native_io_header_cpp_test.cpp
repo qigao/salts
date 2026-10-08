@@ -83,11 +83,26 @@ suite("NativeIO C++ headers") {
       completion.endpoint = endpoint;
       completion.kind = NATIVE_IO_COMPLETION_CANCELLED;
       completion.user_data = 22u;
+      ace_cpp_request_token invalid{};
+      const native_io_request bad_request{0u, 0u};
+      check_equal(ace_cpp_request_token_bind(&invalid, bad_request, endpoint,
+                                             22u, &context), SALTS_EINVAL);
+      check_true(!invalid.active);
       check_equal(ace_cpp_request_token_bind(&token, request, endpoint,
                                              22u, &context), SALTS_OK);
       ace_cpp_request_token copied = token;
       check_equal(ace_cpp_request_token_settle(&copied, &completion, &settled),
                   SALTS_EINVAL);
+      completion.endpoint.generation = 6u;
+      check_equal(ace_cpp_request_token_settle(&token, &completion, &settled),
+                  SALTS_ENOENT);
+      check_null(settled);
+      completion.endpoint.generation = 5u;
+      completion.kind = static_cast<native_io_completion_kind>(0);
+      check_equal(ace_cpp_request_token_settle(&token, &completion, &settled),
+                  SALTS_EINVAL);
+      check_null(settled);
+      completion.kind = NATIVE_IO_COMPLETION_CANCELLED;
       completion.user_data = 23u;
       check_equal(ace_cpp_request_token_settle(&token, &completion, &settled),
                   SALTS_ENOENT);

@@ -57,6 +57,10 @@ static cmeta_status ace_sync_add_body(ace_sync_operation *operation) {
     operation->result = operation->counter->value;
     return CMETA_OK;
 }
+static cmeta_status ace_sync_fail_body(ace_sync_operation *operation) {
+    (void)operation;
+    return CMETA_CALLBACK_ERROR;
+}
 static cmeta_status ace_sync_read_body(ace_sync_operation *operation) {
     operation->result = operation->counter->value;
     return CMETA_OK;
@@ -196,6 +200,17 @@ static void ace_sync_monitor_worker(void *user) {
                                                   &consumer->value);
 }
 
+typedef struct ace_sync_producer {
+    ace_sync_monitor_port monitor;
+    cmeta_status status;
+    int value;
+} ace_sync_producer;
+static void ace_sync_producer_worker(void *user) {
+    ace_sync_producer *producer = ACE_SYNC_CAST(ace_sync_producer *, user);
+    producer->status = ace_sync_monitor_port_put(&producer->monitor,
+                                                 producer->value);
+}
+
 #ifdef __cplusplus
 static cmeta_status ace_sync_throws(ace_sync_operation *operation) {
     (void)operation;
@@ -301,6 +316,88 @@ suite("CMeta ACE concurrent pattern composition") {
         check_equal(consumer.value, -1);
         check_equal(monitor.waiters, 0u);
         ace_sync_monitor_destroy(&monitor);
+    }
+
+
+    it("rechecks full predicate after Monitor broadcast and drains blocked producer") {
+        ace_sync_monitor monitor;
+        ace_sync_monitor_init(&monitor);
+        ace_sync_monitor_port port =
+            ace_sync_monitor_impl_as_ace_sync_monitor_port(&monitor);
+        check_equal(ace_sync_monitor_port_put(&port, 11), CMETA_OK);
+        ace_sync_producer producer = {port, CMETA_BUSY, 22};
+        cmeta_thread_t thread = NULL;
+        bool waiting = false;
+        check_equal(cmeta_thread_create(&thread, ace_sync_producer_worker,
+                                        &producer), 0);
+        for (unsigned i = 0u; i < 800u; ++i) {
+            cmeta_mutex_lock(&monitor.mutex);
+            waiting = monitor.waiters != 0u;
+            cmeta_mutex_unlock(&monitor.mutex);
+            if (waiting) break;
+            cmeta_sleep_ms(1u);
+        }
+        cmeta_mutex_lock(&monitor.mutex);
+        cmeta_cond_broadcast(&monitor.changed); /* Predicate remains false. */
+        bool still_full = monitor.full;
+        int initial = monitor.value;
+        cmeta_mutex_unlock(&monitor.mutex);
+        int first = 0, second = 0;
+        check_equal(ace_sync_monitor_port_take(&port, &first), CMETA_OK);
+        check_equal(cmeta_thread_join(&thread), 0);
+        check_true(waiting);
+        check_true(still_full);
+        check_equal(initial, 11);
+        check_equal(producer.status, CMETA_OK);
+        check_equal(first, 11);
+        check_equal(ace_sync_monitor_port_take(&port, &second), CMETA_OK);
+        check_equal(second, 22);
+        ace_sync_monitor_port_close(&port);
+        ace_sync_monitor_destroy(&monitor);
+    }
+
+    it("rejects a blocked Monitor producer on close without losing prior value") {
+        ace_sync_monitor monitor;
+        ace_sync_monitor_init(&monitor);
+        ace_sync_monitor_port port =
+            ace_sync_monitor_impl_as_ace_sync_monitor_port(&monitor);
+        check_equal(ace_sync_monitor_port_put(&port, 30), CMETA_OK);
+        ace_sync_producer producer = {port, CMETA_OK, 40};
+        cmeta_thread_t thread = NULL;
+        bool waiting = false;
+        check_equal(cmeta_thread_create(&thread, ace_sync_producer_worker,
+                                        &producer), 0);
+        for (unsigned i = 0u; i < 800u; ++i) {
+            cmeta_mutex_lock(&monitor.mutex);
+            waiting = monitor.waiters != 0u;
+            cmeta_mutex_unlock(&monitor.mutex);
+            if (waiting) break;
+            cmeta_sleep_ms(1u);
+        }
+        ace_sync_monitor_port_close(&port);
+        check_equal(cmeta_thread_join(&thread), 0);
+        check_true(waiting);
+        check_equal(producer.status, CMETA_BUSY);
+        int value = 0;
+        check_equal(ace_sync_monitor_port_take(&port, &value), CMETA_OK);
+        check_equal(value, 30);
+        check_equal(ace_sync_monitor_port_take(&port, &value), CMETA_BUSY);
+        check_equal(monitor.waiters, 0u);
+        ace_sync_monitor_destroy(&monitor);
+    }
+
+    it("releases Thread-Safe Interface guard after a failed private body") {
+        cmeta_mutex_t mutex = NULL;
+        cmeta_mutex_init(&mutex);
+        cmeta_ace_lockable lock = ace_sync_mutex_policy_as_cmeta_ace_lockable(&mutex);
+        ace_sync_counter counter = {lock, 0, 0u};
+        ace_sync_operation operation = {&counter, 3, 0};
+        check_equal(ace_sync_counter_gate_run(&lock, &operation,
+            ace_sync_fail_body), CMETA_CALLBACK_ERROR);
+        check_equal(ace_sync_counter_gate_run(&lock, &operation,
+            ace_sync_add_body), CMETA_OK);
+        check_equal(counter.value, 6);
+        cmeta_mutex_destroy(&mutex);
     }
 
 #ifdef __cplusplus
