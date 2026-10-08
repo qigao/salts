@@ -55,7 +55,9 @@ if(NOT CMAKE_CROSSCOMPILING)
   # FunctionAbi result-carrier runtime facts are checked by cmeta_pattern_test.
   # No custom pattern facade or duplicate signature ABI is introduced.
   set(_salts_ace_good_interface_source [=[
-#include <cmeta/interface.h>
+#include <cmeta/function.h>
+#include <cmeta/object.h>
+#include <cmeta/object_interface.h>
 #define ACE_SCORE_METHODS(X,I) \
   X(I,R0,int,get,_)
 CMETA_INTERFACE(ace_freeze_score, ACE_SCORE_METHODS);
@@ -65,7 +67,9 @@ CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(
 int main(void) { return 0; }
 ]=])
   set(_salts_ace_bad_interface_source [=[
-#include <cmeta/interface.h>
+#include <cmeta/function.h>
+#include <cmeta/object.h>
+#include <cmeta/object_interface.h>
 #define ACE_SCORE_METHODS(X,I) \
   X(I,R0,int,get,_)
 CMETA_INTERFACE(ace_freeze_score, ACE_SCORE_METHODS);
@@ -101,6 +105,24 @@ int main(void) { return 0; }
 
   if(NOT SALTS_ACE_GOOD_C11_COMPILES OR SALTS_ACE_BAD_C11_COMPILES OR
      NOT SALTS_ACE_GOOD_CPP17_COMPILES OR SALTS_ACE_BAD_CPP17_COMPILES)
+    # Make a false-negative positive sample actionable on all hosts.
+    set(_ace_compiler_log "${CMAKE_BINARY_DIR}/CMakeFiles/CMakeConfigureLog.yaml")
+    if(NOT EXISTS "${_ace_compiler_log}")
+      set(_ace_compiler_log "${CMAKE_BINARY_DIR}/CMakeFiles/CMakeError.log")
+    endif()
+    if(EXISTS "${_ace_compiler_log}")
+      file(READ "${_ace_compiler_log}" _ace_diagnostics)
+      string(FIND "${_ace_diagnostics}" "SALTS_ACE_GOOD_C11_COMPILES" _ace_start)
+      if(_ace_start GREATER_EQUAL 0)
+        string(LENGTH "${_ace_diagnostics}" _ace_log_size)
+        math(EXPR _ace_remain "${_ace_log_size} - ${_ace_start}")
+        if(_ace_remain GREATER 5500)
+          set(_ace_remain 5500)
+        endif()
+        string(SUBSTRING "${_ace_diagnostics}" ${_ace_start} ${_ace_remain} _ace_excerpt)
+        message(WARNING "ACE positive compile probe diagnostic:\n${_ace_excerpt}")
+      endif()
+    endif()
     message(FATAL_ERROR
       "ACE CMeta Interface native signature compile admission failed: "
       "valid C11=${SALTS_ACE_GOOD_C11_COMPILES}, invalid C11=${SALTS_ACE_BAD_C11_COMPILES}, "
