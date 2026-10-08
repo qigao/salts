@@ -351,6 +351,40 @@ done:
     atomic_store(&source->done, true);
 }
 
+typedef struct route_terminal_source {
+    cflow_cnet_domain_route *route;
+    bool oversized;
+    atomic_int status;
+    atomic_bool done;
+} route_terminal_source;
+
+static void route_source_terminal_case(void *user) {
+    route_terminal_source *source = (route_terminal_source *)user;
+    cflow_cnet_domain_route_credit credit = {0};
+    int status = cflow_cnet_domain_route_bind_source(source->route);
+    if (status != SALTS_OK) goto done;
+    status = cflow_cnet_domain_route_reserve(source->route, &credit);
+    if (status != SALTS_OK) goto done;
+    if (source->oversized) {
+        const unsigned char data[17] = {0};
+        const cnet_receive_view view = {
+            data, sizeof(data), CNET_MESSAGE_BYTES
+        };
+        status = cflow_cnet_domain_route_receive(source->route, credit, &view);
+        if (status != SALTS_EMSGSIZE) goto done;
+    }
+    status = cflow_cnet_domain_route_source_terminal(source->route);
+    if (status != SALTS_OK) goto done;
+    if (!source->oversized) {
+        if (cflow_cnet_domain_route_cancel_credit(
+                source->route, credit) != SALTS_ENOENT)
+            status = SALTS_EPROTO;
+    }
+done:
+    atomic_store(&source->status, status);
+    atomic_store(&source->done, true);
+}
+
 suite("CNet cross-owner domain Actor retained lease routing") {
     it("routes four concurrent CNet source owners to one target Actor without a second FIFO") {
         route_test_fixture f;
@@ -479,6 +513,80 @@ suite("CNet cross-owner domain Actor retained lease routing") {
             check_equal(stats.active_slots, (size_t)0u);
             check_equal(stats.acknowledged, (uint64_t)1u);
         }
+        route_test_finish(&f);
+    }
+
+    it("isolates an oversized receive on one owner without sealing neighbors") {
+        route_test_fixture f;
+        route_terminal_source oversized = {0};
+        route_source_fixture healthy = {0};
+        cmeta_thread_t threads[2] = {0};
+        cflow_cnet_domain_route_stats bad_stats = {0};
+        cflow_cnet_domain_route_stats good_stats = {0};
+
+        check_true(route_test_init(&f, 2u, 4u, 2u));
+        oversized.route = &f.routes[0];
+        oversized.oversized = true;
+        healthy.route = &f.routes[1];
+        healthy.owner_id = 2u;
+        healthy.messages = 1;
+        check_equal(cmeta_thread_create(
+            &threads[0], route_source_terminal_case, &oversized), 0);
+        check_equal(cmeta_thread_create(
+            &threads[1], route_source_send, &healthy), 0);
+        check_equal(cmeta_thread_join(&threads[0]), 0);
+        check_equal(cmeta_thread_join(&threads[1]), 0);
+        check_equal(atomic_load(&oversized.status), SALTS_OK);
+        check_equal(atomic_load(&healthy.status), SALTS_OK);
+        check_true(atomic_load(&oversized.done));
+        check_true(atomic_load(&healthy.done));
+
+        check_equal(cflow_cnet_domain_route_get_stats(
+            &f.routes[0], &bad_stats), SALTS_OK);
+        check_equal(bad_stats.fatal_status, SALTS_EMSGSIZE);
+        check_true(bad_stats.sealed);
+        check_true(bad_stats.source_terminal);
+        check_equal(bad_stats.actor_accepted, (uint64_t)0u);
+        check_equal(bad_stats.active_slots, (size_t)1u);
+        check_equal(cflow_cnet_domain_route_get_stats(
+            &f.routes[1], &good_stats), SALTS_OK);
+        check_equal(good_stats.fatal_status, SALTS_OK);
+        check_equal(good_stats.actor_accepted, (uint64_t)1u);
+        check_true(route_drive_until(&f, 1));
+        check_equal(atomic_load(&f.actions), 1);
+        check_equal(atomic_load(&f.checksum), 20);
+        check_equal(atomic_load(&f.errors), 0);
+        check_equal(cflow_cnet_domain_route_get_stats(
+            &f.routes[1], &good_stats), SALTS_OK);
+        check_equal(good_stats.acknowledged, (uint64_t)1u);
+        check_equal(good_stats.active_slots, (size_t)0u);
+        /* Target-owned abort only happens after Actor and source quiescence
+         * in route_test_finish(), preserving the one failed source lease. */
+        route_test_finish(&f);
+    }
+
+    it("retires a source CNet credit on terminal without fabricating an Actor ACK") {
+        route_test_fixture f;
+        route_terminal_source terminal = {0};
+        cmeta_thread_t worker = NULL;
+        cflow_cnet_domain_route_stats stats = {0};
+
+        check_true(route_test_init(&f, 1u, 2u, 1u));
+        terminal.route = &f.routes[0];
+        check_equal(cmeta_thread_create(
+            &worker, route_source_terminal_case, &terminal), 0);
+        check_equal(cmeta_thread_join(&worker), 0);
+        check_equal(atomic_load(&terminal.status), SALTS_OK);
+        check_equal(cflow_cnet_domain_route_get_stats(
+            &f.routes[0], &stats), SALTS_OK);
+        check_true(stats.sealed);
+        check_true(stats.source_terminal);
+        check_false(stats.receive_credit_live);
+        check_equal(stats.reserved_credits, (uint64_t)1u);
+        check_equal(stats.active_slots, (size_t)0u);
+        check_equal(stats.actor_accepted, (uint64_t)0u);
+        check_equal(stats.acknowledged, (uint64_t)0u);
+        check_equal(atomic_load(&f.actions), 0);
         route_test_finish(&f);
     }
 
