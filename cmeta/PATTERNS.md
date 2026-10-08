@@ -1,5 +1,8 @@
 # CMeta pattern layer
 
+See [ACE/CMeta functional freeze contract](ACE_FREEZE.md) for the bounded
+ownership model, N-to-N+1 fencing, executable acceptance and release separation.
+
 > The next public Salts release is **2.3.0** (latest published: 2.2.0).
 > The planned 3.0.0 Release was withdrawn; the temporary 4.0.0 proposal was
 > superseded. Component/Configurator and ACE patterns remain under
