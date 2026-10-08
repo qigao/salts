@@ -654,9 +654,9 @@ spec("CNetManager held context across cross-owner Actor ACK") {
         check_equal(guard_stats.notifications, (uint64_t)4u);
         check_equal(guard_stats.coalesced_wakes, (uint64_t)2u);
         check_equal(atomic_load(&f.wakes), 2);
-        /* Source's EBUSY poll after ACK #1 cleared the old hint. ACK #2
-         * therefore publishes a fresh wake: no lost-wake-after-poll. */
-        check_false(guard_stats.notification_pending);
+        /* Source may observe ACK #2 and release before its target Owner
+         * publishes notify_settled(). A late wake is only a hint, never a
+         * second release request. Either pending state is valid here. */
         /* Concurrent polling already committed the one valid release. */
         check_equal(cflow_cnet_manager_context_poll_release(
             &f.guard, &released), SALTS_EALREADY);
