@@ -200,6 +200,14 @@ Actor owns state and bounded mailbox, Scheduler/Executor own progress, and
 borrowed Strategy/provider storage outlives Actor destruction. No new
 `cmeta_active_object`, hidden thread, Plugin lease, or second registry.
 
+An independent installed consumer in
+`cflow/tests/package_config/ace_actor` also builds through
+`find_package(Salts ... EXACT CONFIG REQUIRED)` and links only
+`Salts::CFlow`. Its executable creates a real Actor from installed headers,
+invokes reflected CMeta producer/Strategy methods, observes one terminal
+message and safely drains/destroys the Actor. This is run through the shared
+installed-SDK CMake test harness, not an additional CI orchestration wrapper.
+
 ## Admission test for a new pattern helper
 
 Add a new CMeta pattern-level macro/inline helper only if at least one condition
