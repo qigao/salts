@@ -596,8 +596,12 @@ suite("ACE Half-Sync/Half-Async CNet-to-CFlow owner handoff") {
         ace_handoff_finish(&fixture);
     }
 
-    it("cancels pending downstream demand before quiescent teardown") {
+    it("cancels pending demand, rejects STOPPING sends and drains one in-flight action") {
         ace_handoff_fixture fixture;
+        const int rejected = 8;
+        const cflow_event_view rejected_event = {
+            100u, &cmeta_type_int, &rejected
+        };
 
         check_true(ace_handoff_init(&fixture));
         check_true(ace_handoff_network(&fixture));
@@ -613,10 +617,21 @@ suite("ACE Half-Sync/Half-Async CNet-to-CFlow owner handoff") {
         check_equal(fixture.sink_values, (size_t)1u);
         check_equal(fixture.sink_full, (size_t)0u);
 
+        /* Stop admission while the kickoff action is still blocked.
+         * The one queued TCP-sourced Event is cancelled, never replayed. */
+        check_equal(cflow_actor_request_stop(&fixture.actor), CFLOW_ACTOR_OK);
+        check_equal(cflow_actor_current_state(&fixture.actor),
+                    CFLOW_ACTOR_STATE_STOPPING);
+        check_equal(cflow_actor_ref_try_send(
+            &fixture.producer, &rejected_event), CFLOW_ACTOR_SEND_STOPPING);
+
         atomic_store(&fixture.gate_release, true);
-        check_true(ace_handoff_wait_actor_values(&fixture, 2));
-        check_equal(atomic_load(&fixture.actor_action_calls), 2);
-        check_equal(atomic_load(&fixture.actor_last_value), 1);
+        check_equal(cflow_actor_wait(&fixture.actor), CFLOW_ACTOR_STATE_STOPPED);
+        check_true(ace_handoff_wait_actor_values(&fixture, 1));
+        check_equal(atomic_load(&fixture.actor_action_calls), 1);
+        check_equal(atomic_load(&fixture.actor_values), 1);
+        check_equal(atomic_load(&fixture.actor_last_value), 99);
+        check_equal(fixture.sink_accepted, (size_t)1u);
         ace_handoff_finish(&fixture);
     }
 }
