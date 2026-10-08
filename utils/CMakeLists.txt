@@ -43,7 +43,7 @@ target_compile_definitions(
     "$<$<PLATFORM_ID:Windows>:SALTS_API=__declspec(dllimport)>")
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
 target_compile_options(${TARGET_NAME}
-  PUBLIC $<$<COMPILE_LANG_AND_ID:C,MSVC>:/experimental:c11atomics>)
+  PUBLIC $<$<COMPILE_LANG_AND_ID:C,MSVC>:-experimental:c11atomics>)
 if(APPLE)
   target_compile_definitions(${TARGET_NAME} PRIVATE _DARWIN_C_SOURCE=1)
 elseif(UNIX)

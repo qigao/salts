@@ -42,11 +42,11 @@ payload 越过 destroy、线程退出或可能迁移线程的 suspension。线�
 与 [TRACEPOINTS.md](TRACEPOINTS.md)。
 
 Manifest 只借 canonical descriptor。Fingerprint 从 canonical struct/enum/function/
-interface/plugin rows 计算，不 hash 地址、padding、路径、时间戳。无 mutable registry、
+interface/component rows 计算，不 hash 地址、padding、路径、时间戳。无 mutable registry、
 constructor registration 或隐式模块 retention。Portable immutable table 是 ELF/Mach-O/
 COFF 的共同参考；未实现 optional linker aggregation，无需 backend-specific 对等证明。
 详见 [STATIC_MANIFESTS.md](STATIC_MANIFESTS.md)、[FINGERPRINTS.md](FINGERPRINTS.md)
-与 [PLUGIN_MANIFESTS.md](PLUGIN_MANIFESTS.md)。
+与 [COMPONENT_MANIFESTS.md](COMPONENT_MANIFESTS.md)。
 
 ## 验证与回滚
 

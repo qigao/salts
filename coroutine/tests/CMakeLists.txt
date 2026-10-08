@@ -1,3 +1,8 @@
+cmake_add_test(cmeta_coroutine_completion_test
+  SOURCES cmeta_coroutine_completion_test.c
+  LIBS Salts::Coroutine Salts::TinyTest
+  FOLDER "coroutine/tests")
+
 cmake_add_test(coro_executor_test
   SOURCES coro_executor_test.c
   LIBS Salts::Coroutine Salts::Platform Salts::TinyTest

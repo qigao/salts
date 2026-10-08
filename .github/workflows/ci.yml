@@ -26,8 +26,6 @@ jobs:
       builds: ${{ steps.select.outputs.builds }}
       has_builds: ${{ steps.select.outputs.has_builds }}
       version: ${{ steps.version.outputs.version }}
-      tests: ${{ steps.select.outputs.tests }}
-      has_tests: ${{ steps.select.outputs.has_tests }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -40,8 +38,9 @@ jobs:
           CI_EVENT: ${{ github.event_name }}
           CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           CI_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          CI_BRANCH: ${{ github.head_ref || github.ref_name }}
           PREPARE_RELEASE: ${{ inputs.prepare_release || false }}
-        run: ./cmake/ci/select-ci-scope.ps1 -EventName $env:CI_EVENT -BaseRef $env:CI_BASE -HeadRef $env:CI_HEAD -PrepareRelease ($env:PREPARE_RELEASE -eq "true")
+        run: ./cmake/ci/select-ci-scope.ps1 -EventName $env:CI_EVENT -BaseRef $env:CI_BASE -HeadRef $env:CI_HEAD -HeadBranch $env:CI_BRANCH -PrepareRelease ($env:PREPARE_RELEASE -eq "true")
       - name: Read package version
         shell: pwsh
         id: version
@@ -56,14 +55,6 @@ jobs:
       builds: ${{ needs.scope.outputs.builds }}
       version: ${{ needs.scope.outputs.version }}
     secrets: inherit
-  tests:
-    needs:
-      - scope
-      - native
-    if: needs.scope.outputs.has_tests == 'true'
-    uses: ./.github/workflows/native-tests.yml
-    with:
-      tests: ${{ needs.scope.outputs.tests }}
   formal:
     needs: scope
     if: fromJSON(needs.scope.outputs.checks).lean == 'true'
@@ -94,7 +85,6 @@ jobs:
     needs:
       - scope
       - native
-      - tests
       - formal
       - benchmarks
       - package

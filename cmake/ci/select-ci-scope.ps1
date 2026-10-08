@@ -3,6 +3,7 @@ param(
   [string]$EventName,
   [AllowEmptyString()][string]$BaseRef,
   [Parameter(Mandatory)][string]$HeadRef,
+  [AllowEmptyString()][string]$HeadBranch = "",
   [bool]$PrepareRelease = $false
 )
 $ErrorActionPreference = "Stop"
@@ -11,6 +12,8 @@ Set-StrictMode -Version Latest
 # PR coverage follows the whole proposed change; push coverage follows the
 # delivered commit range. Never skip unqualified code using only the last commit.
 $full = $EventName -eq "workflow_dispatch"
+# Keep complete Linux coverage alongside the normal multi-platform matrix.
+$componentIntegration = $HeadBranch -eq 'feature/cmeta-pattern-component-runtime' -and -not $PrepareRelease
 $changed = @()
 if (-not $full) {
   if ([string]::IsNullOrWhiteSpace($BaseRef)) { throw "Missing comparison base for $EventName" }
@@ -30,10 +33,12 @@ function Test-Changed([string]$Pattern) {
 
 # Shared build inputs invalidate all native suites. Formal checks only depend
 # on the Lean package, checked-in generated outputs, and their workflow.
-$shared = $full -or (Test-Changed '^(CMakeLists\.txt|CMakeOptions\.cmake|CMake(User)?Presets\.json|vcpkg(-configuration)?\.json|presets/|vendor/|\.github/actions/|\.github/workflows/(ci|native-build|native-tests|sdk-package|sdk-tests)\.yml|cmake/(?!ci/)|cmake/ci/select-ci-scope\.ps1)')
-$mobile = $shared -or (Test-Changed '^(tools|tinytest|platform|concurrency|coroutine|native-io|uri|cmeta|plugin|simd|tinymock|cflow|cstl|cnet|cserde|utils)/')
+$shared = $full -or (Test-Changed '^(CMakeLists\.txt|CMakeOptions\.cmake|CMake(User)?Presets\.json|vcpkg(-configuration)?\.json|presets/|vendor/|\.github/actions/|\.github/workflows/(ci|native-build|sdk-package|sdk-tests)\.yml|cmake/(?!ci/)|cmake/ci/select-ci-scope\.ps1)')
+$mobile = $shared -or (Test-Changed '^(tools|tinytest|platform|concurrency|coroutine|native-io|uri|cmeta|component|component-plugin|plugin|simd|tinymock|cflow|cstl|cnet|cserde|utils)/')
 $contractsChanged = Test-Changed '^\.github/workflows/cmeta-cflow-calculus\.yml$'
 $cmetaRuntime = Test-Changed '^cmeta/(include/|src/|native/|CMakeLists\.txt$|tests/CMakeLists\.txt$)'
+$componentRuntime = Test-Changed '^component/(include/|src/|CMakeLists\.txt$|tests/)'
+$componentPluginRuntime = Test-Changed '^component-plugin/(include/|src/|CMakeLists\.txt$|tests/)'
 $platformRuntime = Test-Changed '^platform/(include/|src/|arch/|CMakeLists\.txt$)'
 $concurrencyRuntime = Test-Changed '^concurrency/(include/|src/|CMakeLists\.txt$)'
 $coroutineRuntime = Test-Changed '^coroutine/(include/|src/|arch/|CMakeLists\.txt$)'
@@ -41,7 +46,7 @@ $cflowRuntime = Test-Changed '^cflow/(include/|src/|CMakeLists\.txt$|tests/CMake
 $pluginRuntime = Test-Changed '^plugin/(include/|src/|CMakeLists\.txt$)'
 $utilsRuntime = Test-Changed '^utils/(include/|src/|CMakeLists\.txt$)'
 $harness = Test-Changed '^(tinytest|tinymock)/'
-$nativeCommon = $shared -or $contractsChanged -or $cmetaRuntime -or $platformRuntime -or $harness
+$nativeCommon = $shared -or $contractsChanged -or $cmetaRuntime -or $componentRuntime -or $componentPluginRuntime -or $platformRuntime -or $harness
 $native = $nativeCommon -or $concurrencyRuntime -or $pluginRuntime -or $utilsRuntime -or
   (Test-Changed '^(coroutine/|platform/tests/|plugin/|cmeta/(tests/|benchmarks/))')
 $execution = $nativeCommon -or $utilsRuntime -or $cflowRuntime -or $coroutineRuntime -or
@@ -85,7 +90,8 @@ $coroutine = $benchmarkChanged -and $coroutine
 $nativeUring = $benchmarkChanged -and $nativeUring
 $forensic = $benchmarkChanged -and $forensic
 $compare = $benchmarkChanged -and $compare
-$work = $nativeOwner -or $nativeStyle -or $cnetOwner -or $cnetIo -or $cnetSg -or $coroutine -or $nativeUring -or $forensic
+$transportOwner = $PrepareRelease -or (Test-Changed '^(cnet|native-io)/')
+$work = $nativeOwner -or $nativeStyle -or $cnetOwner -or $cnetIo -or $cnetSg -or $coroutine -or $nativeUring -or $forensic -or $transportOwner
 
 $checks = [ordered]@{
   contracts = $native -or $execution -or $projection -or $lean
@@ -95,6 +101,7 @@ $checks = [ordered]@{
   lean = $lean
   mobile = $mobile
   work = $work
+  transport_owner = $transportOwner
   evidence = $work
   cnet_compare = $compare
   native_owner = $nativeOwner
@@ -105,6 +112,7 @@ $checks = [ordered]@{
   coroutine = $coroutine
   native_uring = $nativeUring
   forensic = $forensic
+  full_tests = $componentIntegration
 }
 foreach ($key in @($checks.Keys)) {
   $checks[$key] = $checks[$key].ToString().ToLowerInvariant()
@@ -117,26 +125,25 @@ Write-Output $json
 if ($env:GITHUB_OUTPUT) { Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "checks=$json" }
 
 # CI build/run matrices contain only Release profiles.
-# Test consumers select suites from the uploaded build without rebuilding modules.
+# Each host job runs its selected suites directly after building the profile.
 if ($PrepareRelease -and -not $full) { throw "Release preparation requires a manual CI run" }
 $profiles = @(
   @{ id = 'linux-release'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-release-ci'; build_dir = 'build/linux-gcc-release'; sdk = 'linux-x64' },
+  @{ id = 'linux-arm64-release'; runner = 'ubuntu-24.04-arm'; family = 'linux'; preset = 'linux-arm64-release-ci'; build_dir = 'build/linux-arm64-release'; sdk = 'linux-arm64' },
   @{ id = 'linux-clang-release'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-clang-release-ci'; build_dir = 'build/linux-clang-release'; sdk = '' },
   @{ id = 'windows-release'; runner = 'windows-2025'; family = 'windows'; preset = 'win-release-ci'; build_dir = 'build/Msvc-Release'; sdk = 'windows-x64' },
   @{ id = 'macos-release'; runner = 'macos-15'; family = 'mac'; preset = 'mac-arm64-release-ci'; build_dir = 'build/mac-arm64-gcc-release'; sdk = 'macos-arm64' },
   @{ id = 'macos-clang-release'; runner = 'macos-15'; family = 'mac'; preset = 'mac-arm64-clang-release-ci'; build_dir = 'build/mac-arm64-clang-release'; sdk = '' },
   @{ id = 'android-arm64-v8a-release'; runner = 'ubuntu-24.04'; family = 'android'; preset = 'android-arm64-v8a-release-ci'; build_dir = 'build/android-arm64-v8a-release'; sdk = 'android-arm64-v8a' },
-  @{ id = 'ios-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-arm64-release-ci'; build_dir = 'build/ios-arm64'; sdk = 'ios-arm64'; triplet = 'arm64-ios' },
-  @{ id = 'ios-simulator-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-simulator-arm64-release-ci'; build_dir = 'build/ios-simulator-arm64'; sdk = 'ios-simulator-arm64'; triplet = 'arm64-ios-simulator' }
+  @{ id = 'ios-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-arm64-release-ci'; build_dir = 'build/ios-arm64'; sdk = 'ios-arm64'; triplet = 'arm64-ios' }
 )
-if ($PrepareRelease) {
-  $profiles += @{ id = 'linux-arm64-release'; runner = 'ubuntu-24.04-arm'; family = 'linux'; preset = 'linux-arm64-release-ci'; build_dir = 'build/linux-arm64-release'; sdk = 'linux-arm64' }
-}
 $builds = @()
 foreach ($profile in $profiles) {
   # Clang profiles qualify the same portable/native contracts in isolated trees;
-  # their build artifacts are test inputs, not additional release packages.
+  # they do not produce additional release packages.
   $profile.clang = $profile.id -in @('linux-clang-release', 'macos-clang-release')
+  # The connection-manager integration branch uses GCC for Linux and macOS.
+  if ($HeadBranch -eq 'codex/cnet-manager-1001' -and $profile.clang) { continue }
   $entry = $profile.Clone()
   $entry.cross = $entry.family -in @('android', 'ios')
   # Core semantic qualification must also pass without the optional #981 backend.
@@ -144,37 +151,30 @@ foreach ($profile in $profiles) {
   $entry.native_thunks = if ($PrepareRelease -and $entry.id -in @('linux-release', 'linux-clang-release', 'windows-release')) { 'ON' } else { 'OFF' }
   $entry.native = $native -and -not $entry.cross -and $entry.id -ne 'linux-arm64-release'
   $entry.execution = $execution -and -not $entry.cross -and $entry.id -ne 'linux-arm64-release'
-  $entry.armheaders = $entry.id -eq 'linux-arm64-release'
+  $entry.armcontracts = $entry.id -eq 'linux-arm64-release' -and ($native -or $execution)
   $entry.projection = $projection -and $entry.id -in @('linux-release', 'linux-clang-release', 'macos-clang-release')
   $entry.benchmarks = if ($entry.id -in @('linux-release', 'windows-release', 'macos-release')) { 'ON' } else { 'OFF' }
   $entry.package = $PrepareRelease -and [bool]$entry.sdk
   $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
   $entry.artifact = if ($entry.cross) { $mobile } else { $work -and [bool]$entry.sdk }
-  if ($entry.native -or $entry.execution -or $entry.projection -or $entry.package -or $entry.artifact) {
+  $entry.full_tests = $componentIntegration -and $entry.id -eq 'linux-release'
+  if ($entry.full_tests) {
+    $entry.native = $false
+    $entry.execution = $false
+    $entry.projection = $false
+    $entry.benchmarks = 'OFF'
+    $entry.compare = $false
+    $entry.artifact = $false
+  }
+  if ($entry.full_tests -or $entry.native -or $entry.execution -or $entry.projection -or $entry.armcontracts -or $entry.package -or $entry.artifact) {
     $builds += $entry
   }
 }
 $matrix = ConvertTo-Json -InputObject @{ include = $builds } -Depth 5 -Compress
-$testRuns = @()
-$suites = @('native', 'execution', 'projection', 'armheaders')
-foreach ($build in $builds) {
-  foreach ($suite in $suites) {
-    if (-not $build[$suite]) { continue }
-    $testRun = $build.Clone()
-    foreach ($selection in $suites) {
-      $testRun[$selection] = $selection -eq $suite
-    }
-    $testRun.suite = $suite
-    $testRuns += $testRun
-  }
-}
-$testMatrix = ConvertTo-Json -InputObject @{ include = $testRuns } -Depth 5 -Compress
 Write-Output $matrix
 if ($env:GITHUB_OUTPUT) {
   Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "builds=$matrix"
   Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "has_builds=$($builds.Count -gt 0)".ToLowerInvariant()
-  Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "tests=$testMatrix"
-  Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "has_tests=$($testRuns.Count -gt 0)".ToLowerInvariant()
 }
 if ($env:GITHUB_STEP_SUMMARY) {
   Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "| Check | Selected |`n|---|---|"

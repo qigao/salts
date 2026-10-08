@@ -68,9 +68,13 @@ typedef struct cnet_datagram_impl {
   bool callback_active;
   bool stopping;
   bool stopped;
+  bool backend_borrowed;
+  bool receive_rearm;
 #if defined(CNET_INTERNAL_TESTING)
   int test_drive_status;
   int test_persistent_drive_status;
+  int test_cancel_status;
+  int test_release_status;
 #endif
 } cnet_datagram_impl;
 
@@ -83,6 +87,20 @@ static const cnet_datagram_impl *cnet_datagram_const_get(const cnet_datagram *da
 }
 
 #if defined(CNET_INTERNAL_TESTING)
+int cnet_test_datagram_fail_next_cancel(cnet_datagram *datagram, int status) {
+  cnet_datagram_impl *impl = cnet_datagram_get(datagram);
+  if (impl == NULL || status >= SALTS_OK || impl->test_cancel_status != SALTS_OK) return SALTS_EINVAL;
+  impl->test_cancel_status = status;
+  return SALTS_OK;
+}
+
+int cnet_test_datagram_fail_next_release(cnet_datagram *datagram, int status) {
+  cnet_datagram_impl *impl = cnet_datagram_get(datagram);
+  if (impl == NULL || status >= SALTS_OK || impl->test_release_status != SALTS_OK) return SALTS_EINVAL;
+  impl->test_release_status = status;
+  return SALTS_OK;
+}
+
 int cnet_test_datagram_fail_next_drive(cnet_datagram *datagram, int status) {
   cnet_datagram_impl *impl = cnet_datagram_get(datagram);
   if (impl == NULL || status >= SALTS_OK || status == SALTS_ETIMEDOUT ||
@@ -189,8 +207,12 @@ static int cnet_datagram_arm_receive(cnet_datagram_impl *impl) {
   native_io_operation operation;
   int status;
   /* A callback still borrows receive_buffer; reentrant demand must wait for its return. */
-  if (impl->receive_active || impl->callback_active || impl->receive_demand == 0u || impl->stopping)
+  if (impl->receive_active || impl->receive_demand == 0u || impl->stopping)
     return SALTS_OK;
+  if (impl->callback_active) {
+    impl->receive_rearm = true;
+    return SALTS_OK;
+  }
   memset(&impl->receive_peer, 0, sizeof(impl->receive_peer));
   operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_UDP_RECV_FROM,
                                     .endpoint = impl->endpoint,
@@ -201,6 +223,7 @@ static int cnet_datagram_arm_receive(cnet_datagram_impl *impl) {
                                     .address_capacity = sizeof(impl->receive_peer)};
   status = native_io_backend_submit(&impl->backend, &operation, &impl->receive_request);
   if (status == SALTS_OK) impl->receive_active = true;
+  impl->receive_rearm = impl->backend_borrowed && status == SALTS_ENOBUFS;
   return status;
 }
 
@@ -222,18 +245,48 @@ static int cnet_datagram_completion_status(const native_io_completion *completio
   return completion->status < SALTS_OK ? completion->status : SALTS_EIO;
 }
 
+/* The local tag is not an identity on a shared backend. Receive uses the
+ * sentinel send_capacity; only retained request identities can claim a terminal. */
+static bool cnet_datagram_find_request(const cnet_datagram_impl *impl,
+                                       native_io_request request, size_t *out_index) {
+  if (impl->receive_active && request.slot == impl->receive_request.slot &&
+      request.generation == impl->receive_request.generation) {
+    *out_index = impl->send_capacity;
+    return true;
+  }
+  for (size_t index = 0u; index < impl->send_capacity; ++index) {
+    const cnet_datagram_send_slot *slot = &impl->send_slots[index];
+    if (slot->active && request.slot == slot->request.slot &&
+        request.generation == slot->request.generation) {
+      *out_index = index;
+      return true;
+    }
+  }
+  return false;
+}
+
 static int cnet_datagram_complete(cnet_datagram_impl *impl,
                                   const native_io_completion *completion,
                                   size_t *callback_count) {
-  if (completion->user_data == 0u) {
+  size_t index;
+  bool malformed;
+  if (!cnet_datagram_find_request(impl, completion->request, &index)) return SALTS_EPROTO;
+  malformed = completion->endpoint.slot != impl->endpoint.slot ||
+              completion->endpoint.generation != impl->endpoint.generation ||
+              completion->user_data != (index == impl->send_capacity ? 0u : index + 1u) ||
+              (completion->kind != NATIVE_IO_COMPLETION_OK &&
+               completion->kind != NATIVE_IO_COMPLETION_CANCELLED &&
+               completion->kind != NATIVE_IO_COMPLETION_FAILED) ||
+              (completion->kind == NATIVE_IO_COMPLETION_OK && completion->status != SALTS_OK) ||
+              (completion->kind == NATIVE_IO_COMPLETION_FAILED && completion->status >= SALTS_OK);
+  if (index == impl->send_capacity) {
     cnet_datagram_peer peer;
     cnet_receive_view view;
     int status;
-    if (!impl->receive_active || completion->request.slot != impl->receive_request.slot ||
-        completion->request.generation != impl->receive_request.generation)
-      return SALTS_EPROTO;
     impl->receive_active = false;
+    impl->receive_rearm = false;
     memset(&impl->receive_request, 0, sizeof(impl->receive_request));
+    if (malformed) return SALTS_EPROTO;
     if (completion->kind == NATIVE_IO_COMPLETION_CANCELLED && impl->stopping) return SALTS_OK;
     status = cnet_datagram_completion_status(completion);
     if (status != SALTS_OK) return status;
@@ -251,20 +304,15 @@ static int cnet_datagram_complete(cnet_datagram_impl *impl,
     return cnet_datagram_arm_receive(impl);
   }
   {
-    const size_t index = (size_t)completion->user_data - 1u;
     cnet_datagram_peer peer;
     size_t size;
     size_t prior_receive_demand;
     uint64_t tag;
     int status;
-    if (index >= impl->send_capacity || !impl->send_slots[index].active ||
-        completion->request.slot != impl->send_slots[index].request.slot ||
-        completion->request.generation != impl->send_slots[index].request.generation)
-      return SALTS_EPROTO;
     peer = impl->send_slots[index].peer;
     size = impl->send_slots[index].size;
     tag = impl->send_slots[index].tag;
-    status = cnet_datagram_completion_status(completion);
+    status = malformed ? SALTS_EPROTO : cnet_datagram_completion_status(completion);
     if (status == SALTS_OK && completion->bytes != size) status = SALTS_EIO;
     cnet_datagram_send_slot_release(impl, index);
     prior_receive_demand = impl->receive_demand;
@@ -272,7 +320,11 @@ static int cnet_datagram_complete(cnet_datagram_impl *impl,
     impl->observer.on_send(impl->observer.user, impl->public_datagram, &peer, size, status, tag);
     impl->callback_active = false;
     ++*callback_count;
-    return impl->receive_demand > prior_receive_demand ? cnet_datagram_arm_receive(impl) : SALTS_OK;
+    {
+      const int rearm_status = impl->receive_demand > prior_receive_demand
+                                   ? cnet_datagram_arm_receive(impl) : SALTS_OK;
+      return malformed ? SALTS_EPROTO : rearm_status;
+    }
   }
 }
 
@@ -359,14 +411,23 @@ static int cnet_datagram_drive(cnet_datagram_impl *impl, uint32_t timeout_ms,
                                            out_callbacks);
 }
 
-int cnet_datagram_init(cnet_datagram *datagram, const cnet_datagram_config *config) {
+static int cnet_datagram_init_impl(cnet_datagram *datagram, const cnet_datagram_config *config,
+                                    native_io_backend *borrowed_backend) {
   cnet_datagram_impl *impl = NULL;
+  native_io_backend_config borrowed_config = {0};
+  native_io_backend_stats borrowed_stats = {0};
   unsigned char native_address[sizeof(struct sockaddr_storage)];
   size_t native_address_size = 0u;
   int family;
   int status;
   if (datagram == NULL || config == NULL || config->size != sizeof(*config)) return SALTS_EINVAL;
   if (datagram->impl != NULL) return SALTS_EALREADY;
+  if (borrowed_backend != NULL &&
+      (!native_io_backend_get_config(borrowed_backend, &borrowed_config) ||
+       !native_io_backend_get_stats(borrowed_backend, &borrowed_stats) ||
+       borrowed_config.kind != config->backend))
+    return SALTS_EINVAL;
+  if (borrowed_backend != NULL && !borrowed_stats.admission_open) return SALTS_ESHUTDOWN;
   if (config->host == NULL || config->host[0] == '\0' || config->send_capacity == 0u ||
       config->request_capacity <= config->send_capacity ||
       config->completion_batch_capacity == 0u ||
@@ -380,6 +441,13 @@ int cnet_datagram_init(cnet_datagram *datagram, const cnet_datagram_config *conf
       !native_io_backend_kind_supported(config->backend) ||
       config->send_capacity > SIZE_MAX / config->max_datagram_bytes)
     return SALTS_EINVAL;
+  if (config->send_capacity > UINT32_MAX ||
+      config->send_capacity > SIZE_MAX / sizeof(cnet_datagram_send_slot) ||
+      config->send_capacity > SIZE_MAX / sizeof(uint32_t) ||
+      config->completion_batch_capacity > SIZE_MAX / sizeof(native_io_completion))
+    return SALTS_ERANGE;
+  if (borrowed_backend != NULL && borrowed_config.request_capacity < config->request_capacity)
+    return SALTS_ENOBUFS;
 #if !defined(SO_REUSEPORT)
   if (config->reuse_port) return SALTS_ENOTSUP;
 #endif
@@ -397,6 +465,7 @@ int cnet_datagram_init(cnet_datagram *datagram, const cnet_datagram_config *conf
   impl->socket_value = CNET_DATAGRAM_INVALID_SOCKET;
   impl->public_datagram = datagram;
   impl->observer = config->observer;
+  impl->backend_borrowed = borrowed_backend != NULL;
   impl->send_capacity = config->send_capacity;
   impl->free_send_count = config->send_capacity;
   impl->request_capacity = config->request_capacity;
@@ -408,10 +477,11 @@ int cnet_datagram_init(cnet_datagram *datagram, const cnet_datagram_config *conf
   impl->free_sends = (uint32_t *)calloc(config->send_capacity, sizeof(*impl->free_sends));
   impl->send_storage = (unsigned char *)calloc(config->send_capacity, config->max_datagram_bytes);
   impl->receive_buffer = (unsigned char *)malloc(config->receive_buffer_bytes);
-  impl->completions = (native_io_completion *)calloc(config->completion_batch_capacity,
-                                                      sizeof(*impl->completions));
+  if (!impl->backend_borrowed)
+    impl->completions = (native_io_completion *)calloc(config->completion_batch_capacity,
+                                                        sizeof(*impl->completions));
   if (impl->send_slots == NULL || impl->free_sends == NULL || impl->send_storage == NULL ||
-      impl->receive_buffer == NULL || impl->completions == NULL) {
+      impl->receive_buffer == NULL || (!impl->backend_borrowed && impl->completions == NULL)) {
     status = SALTS_ENOMEM;
     goto fail;
   }
@@ -419,10 +489,15 @@ int cnet_datagram_init(cnet_datagram *datagram, const cnet_datagram_config *conf
     impl->send_slots[index].data = impl->send_storage + index * config->max_datagram_bytes;
     impl->free_sends[index] = (uint32_t)(config->send_capacity - index - 1u);
   }
-  status = native_io_backend_init(
-      &impl->backend,
-      &(native_io_backend_config){config->backend, 1u, config->request_capacity,
-                                  config->completion_batch_capacity});
+  if (impl->backend_borrowed) {
+    impl->backend = *borrowed_backend;
+    status = SALTS_OK;
+  } else {
+    status = native_io_backend_init(
+        &impl->backend,
+        &(native_io_backend_config){config->backend, 1u, config->request_capacity,
+                                    config->completion_batch_capacity});
+  }
   if (status != SALTS_OK) goto fail;
 #if defined(_WIN32)
   if (config->backend != NATIVE_IO_BACKEND_IOCP) {
@@ -469,8 +544,10 @@ fail:
   cnet_datagram_close_socket(impl);
   if (native_io_endpoint_valid(impl->endpoint))
     (void)native_io_backend_release_socket(&impl->backend, impl->endpoint);
-  (void)native_io_backend_close(&impl->backend);
-  (void)native_io_backend_destroy(&impl->backend);
+  if (!impl->backend_borrowed) {
+    (void)native_io_backend_close(&impl->backend);
+    (void)native_io_backend_destroy(&impl->backend);
+  }
   free(impl->completions);
   free(impl->receive_buffer);
   free(impl->send_storage);
@@ -479,6 +556,16 @@ fail:
   free(impl);
   (void)cnet_module_shutdown();
   return status;
+}
+
+int cnet_datagram_init(cnet_datagram *datagram, const cnet_datagram_config *config) {
+  return cnet_datagram_init_impl(datagram, config, NULL);
+}
+
+int cnet_datagram_init_external(cnet_datagram *datagram, const cnet_datagram_config *config,
+                                 native_io_backend *backend) {
+  if (backend == NULL) return SALTS_EINVAL;
+  return cnet_datagram_init_impl(datagram, config, backend);
 }
 
 int cnet_datagram_port(const cnet_datagram *datagram, uint16_t *out_port) {
@@ -496,10 +583,14 @@ int cnet_datagram_receive(cnet_datagram *datagram, size_t demand) {
   if (impl == NULL || demand == 0u) return SALTS_EINVAL;
   if (impl->stopping) return SALTS_ESHUTDOWN;
   if (demand > SIZE_MAX - impl->receive_demand) return SALTS_ERANGE;
-  impl->receive_demand += demand;
   {
+    const bool prior_rearm = impl->receive_rearm;
+    impl->receive_demand += demand;
     const int status = cnet_datagram_arm_receive(impl);
-    if (status != SALTS_OK) impl->receive_demand -= demand;
+    if (status != SALTS_OK) {
+      impl->receive_demand -= demand;
+      impl->receive_rearm = prior_rearm;
+    }
     return status;
   }
 }
@@ -554,6 +645,7 @@ int cnet_datagram_poll(cnet_datagram *datagram, uint32_t timeout_ms, size_t *out
   if (out_events == NULL) return SALTS_EINVAL;
   *out_events = 0u;
   if (impl == NULL) return SALTS_EINVAL;
+  if (impl->backend_borrowed) return SALTS_ENOTSUP;
   if (impl->stopping) return SALTS_ESHUTDOWN;
   if (impl->polling || impl->callback_active) return SALTS_EBUSY;
   impl->polling = true;
@@ -569,26 +661,136 @@ int cnet_datagram_wake(cnet_datagram *datagram) {
   return native_io_backend_wake(&impl->backend);
 }
 
+static void cnet_datagram_cancel_status(cnet_datagram_impl *impl, int status) {
+  /* In borrowed mode observe may already have retired the native slot while
+   * its terminal is still in the host's batch. CNet retains its own record. */
+  if (status == SALTS_OK || status == SALTS_EALREADY ||
+      (impl->backend_borrowed && status == SALTS_ENOENT)) return;
+  if (impl->stop_status == SALTS_OK) impl->stop_status = status;
+}
+
+static int cnet_datagram_cancel_request(cnet_datagram_impl *impl, native_io_request request) {
+#if defined(CNET_INTERNAL_TESTING)
+  if (impl->test_cancel_status != SALTS_OK) {
+    const int status = impl->test_cancel_status;
+    impl->test_cancel_status = SALTS_OK;
+    return status;
+  }
+#endif
+  return native_io_backend_cancel(&impl->backend, request);
+}
+
+static void cnet_datagram_begin_stop(cnet_datagram_impl *impl) {
+  impl->stopping = true;
+  impl->receive_demand = 0u;
+  impl->receive_rearm = false;
+  if (impl->receive_active) {
+    const int status = cnet_datagram_cancel_request(impl, impl->receive_request);
+    cnet_datagram_cancel_status(impl, status);
+  }
+  for (size_t index = 0u; index < impl->send_capacity; ++index) {
+    if (impl->send_slots[index].active) {
+      const int status = cnet_datagram_cancel_request(impl, impl->send_slots[index].request);
+      cnet_datagram_cancel_status(impl, status);
+    }
+  }
+}
+
+static int cnet_datagram_finish_stop(cnet_datagram_impl *impl) {
+  int status;
+  if (impl->stopped) return impl->stop_status;
+  if (impl->receive_active || impl->active_send_count != 0u) return SALTS_EBUSY;
+  cnet_datagram_close_socket(impl);
+  if (native_io_endpoint_valid(impl->endpoint)) {
+#if defined(CNET_INTERNAL_TESTING)
+    if (impl->test_release_status != SALTS_OK) {
+      status = impl->test_release_status;
+      impl->test_release_status = SALTS_OK;
+    } else
+#endif
+    status = native_io_backend_release_socket(&impl->backend, impl->endpoint);
+    if (status != SALTS_OK) {
+      if (impl->stop_status == SALTS_OK) impl->stop_status = status;
+      return impl->stop_status;
+    }
+    impl->endpoint = (native_io_endpoint){0};
+  }
+  if (!impl->backend_borrowed) {
+    status = native_io_backend_close(&impl->backend);
+    if (status != SALTS_OK) {
+      if (impl->stop_status == SALTS_OK) impl->stop_status = status;
+      return impl->stop_status;
+    }
+  }
+  impl->stopped = true;
+  return impl->stop_status;
+}
+
+int cnet_datagram_stop_external(cnet_datagram *datagram, bool *out_stopped) {
+  cnet_datagram_impl *impl = cnet_datagram_get(datagram);
+  int status;
+  if (out_stopped == NULL) return SALTS_EINVAL;
+  *out_stopped = false;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (!impl->backend_borrowed) return SALTS_ENOTSUP;
+  if (impl->callback_active || impl->polling) return SALTS_EBUSY;
+  if (!impl->stopped) cnet_datagram_begin_stop(impl);
+  status = cnet_datagram_finish_stop(impl);
+  *out_stopped = impl->stopped;
+  return impl->stop_status != SALTS_OK ? impl->stop_status : status;
+}
+
+int cnet_datagram_advance_external(cnet_datagram *datagram, size_t *out_events) {
+  cnet_datagram_impl *impl = cnet_datagram_get(datagram);
+  int status = SALTS_OK;
+  if (out_events == NULL) return SALTS_EINVAL;
+  *out_events = 0u;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (!impl->backend_borrowed) return SALTS_ENOTSUP;
+  if (impl->callback_active || impl->polling) return SALTS_EBUSY;
+  impl->polling = true;
+  if (impl->stopping) {
+    if (!impl->stopped) cnet_datagram_begin_stop(impl);
+    status = cnet_datagram_finish_stop(impl);
+    if (status == SALTS_EBUSY) status = SALTS_OK;
+    if (impl->stop_status != SALTS_OK) status = impl->stop_status;
+  } else if (impl->receive_rearm) {
+    status = cnet_datagram_arm_receive(impl);
+  }
+  impl->polling = false;
+  return status;
+}
+
+int cnet_datagram_route_external_completion(cnet_datagram *datagram,
+                                             const native_io_completion *completion,
+                                             bool *out_consumed, size_t *out_events) {
+  cnet_datagram_impl *impl = cnet_datagram_get(datagram);
+  size_t index;
+  int status;
+  if (out_consumed != NULL) *out_consumed = false;
+  if (out_events != NULL) *out_events = 0u;
+  if (impl == NULL || completion == NULL || out_consumed == NULL || out_events == NULL)
+    return SALTS_EINVAL;
+  if (!impl->backend_borrowed) return SALTS_ENOTSUP;
+  if (impl->callback_active || impl->polling) return SALTS_EBUSY;
+  if (!cnet_datagram_find_request(impl, completion->request, &index)) return SALTS_OK;
+  *out_consumed = true;
+  impl->polling = true;
+  status = cnet_datagram_complete(impl, completion, out_events);
+  if (impl->stopping && status != SALTS_OK && impl->stop_status == SALTS_OK)
+    impl->stop_status = status;
+  impl->polling = false;
+  return status;
+}
+
 int cnet_datagram_stop(cnet_datagram *datagram, uint32_t timeout_ms) {
   cnet_datagram_impl *impl = cnet_datagram_get(datagram);
   const uint64_t started_ms = cmeta_monotonic_ms();
   if (impl == NULL) return SALTS_EINVAL;
+  if (impl->backend_borrowed) return SALTS_ENOTSUP;
   if (impl->callback_active || impl->polling) return SALTS_EBUSY;
   if (impl->stopped) return SALTS_OK;
-  impl->stopping = true;
-  impl->receive_demand = 0u;
-  if (impl->receive_active) {
-    const int status = native_io_backend_cancel(&impl->backend, impl->receive_request);
-    if (impl->stop_status == SALTS_OK && status != SALTS_OK && status != SALTS_EALREADY)
-      impl->stop_status = status;
-  }
-  for (size_t index = 0u; index < impl->send_capacity; ++index) {
-    if (impl->send_slots[index].active) {
-      const int status = native_io_backend_cancel(&impl->backend, impl->send_slots[index].request);
-      if (impl->stop_status == SALTS_OK && status != SALTS_OK && status != SALTS_EALREADY)
-        impl->stop_status = status;
-    }
-  }
+  cnet_datagram_begin_stop(impl);
   while (impl->receive_active || impl->active_send_count != 0u) {
     const uint64_t elapsed_ms = cmeta_monotonic_ms() - started_ms;
     uint32_t remaining_ms;
@@ -607,17 +809,7 @@ int cnet_datagram_stop(cnet_datagram *datagram, uint32_t timeout_ms) {
       cmeta_sleep_ms(retry_delay_ms);
     }
   }
-  cnet_datagram_close_socket(impl);
-  {
-    const int status = native_io_backend_release_socket(&impl->backend, impl->endpoint);
-    if (impl->stop_status == SALTS_OK && status != SALTS_OK) impl->stop_status = status;
-  }
-  {
-    const int status = native_io_backend_close(&impl->backend);
-    if (impl->stop_status == SALTS_OK && status != SALTS_OK) impl->stop_status = status;
-  }
-  impl->stopped = true;
-  return impl->stop_status;
+  return cnet_datagram_finish_stop(impl);
 }
 
 int cnet_datagram_destroy(cnet_datagram *datagram) {
@@ -625,9 +817,12 @@ int cnet_datagram_destroy(cnet_datagram *datagram) {
   int status;
   if (datagram == NULL) return SALTS_EINVAL;
   if (impl == NULL) return SALTS_OK;
+  if (impl->callback_active || impl->polling) return SALTS_EBUSY;
   if (!impl->stopped) return SALTS_EBUSY;
-  status = native_io_backend_destroy(&impl->backend);
-  if (status != SALTS_OK) return status;
+  if (!impl->backend_borrowed) {
+    status = native_io_backend_destroy(&impl->backend);
+    if (status != SALTS_OK) return status;
+  }
   free(impl->completions);
   free(impl->receive_buffer);
   free(impl->send_storage);

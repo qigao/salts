@@ -105,7 +105,7 @@ Linux installed suite 复用 ObjectRef RAII、operation、invokable 源码，提
 
 ### G5 — LOW：Plugin 文档混用旧 ABI 数字
 
-**事实：**[PLUGIN_MANIFESTS.md](PLUGIN_MANIFESTS.md) 同时提及 ABI 5 admission、
+**事实：**[历史 PLUGIN_MANIFESTS.md](https://github.com/qigao/salts/blob/8d19c98e1d0d208ae148bd1404fe59eca875f9ce/cmeta/PLUGIN_MANIFESTS.md) 同时提及 ABI 5 admission、
 “query 只接受 ABI 4”及“Reflection ABI 3 不变”。
 当前 [Plugin ABI 常量](../plugin/include/salts/plugin.h) 为 5，
 [Reflection ABI 常量](include/cmeta/abi.h) 为 4。

@@ -305,11 +305,14 @@ static void test_external_tls_listener_shared_progress(void) {
     check_equal(cnet_connection_tcp_option_get(
                     &server, accepted, CNET_TCP_SOCKET_RECEIVE_BUFFER_BYTES, &inherited),
                 SALTS_OK);
-    check_equal(inherited, listener_receive_buffer);
+    /* Socket getters report live kernel values: Darwin can grow an accepted
+     * socket's buffers during the TLS handshake. The client policy must not
+     * replace the larger listener budget with CLIENT_BUFFER_BYTES. */
+    check_greater_equal(inherited, listener_receive_buffer);
     check_equal(cnet_connection_tcp_option_get(
                     &server, accepted, CNET_TCP_SOCKET_SEND_BUFFER_BYTES, &inherited),
                 SALTS_OK);
-    check_equal(inherited, listener_send_buffer);
+    check_greater_equal(inherited, listener_send_buffer);
   }
 
   check(cnet_close(&client, outbound) == SALTS_OK);

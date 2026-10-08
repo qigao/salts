@@ -579,5 +579,5 @@ Typed tracepoint、一次性 fault point 和 disabled fast path 的使用与生�
 
 Portable discovery and ABI contracts are documented in
 [STATIC_MANIFESTS.md](STATIC_MANIFESTS.md), [FINGERPRINTS.md](FINGERPRINTS.md)
-and [PLUGIN_MANIFESTS.md](PLUGIN_MANIFESTS.md). Runtime ownership and installed
+and [COMPONENT_MANIFESTS.md](COMPONENT_MANIFESTS.md). Runtime ownership and installed
 Reflection-only qualification follow [BOUNDARIES.md](BOUNDARIES.md).

@@ -13,7 +13,8 @@ typedef enum cnet_uri_scheme {
   CNET_URI_TLS,
   CNET_URI_UDP,
   CNET_URI_PIPE,
-  CNET_URI_VSOCK
+  CNET_URI_VSOCK,
+  CNET_URI_IPC
 } cnet_uri_scheme;
 
 typedef struct cnet_uri {

@@ -524,6 +524,74 @@ static int cnet_tls_network_drive(cnet_client *client, cnet_client *server, cnet
 
 spec("CNet bounded TLS engine") {
 
+  group("plaintext and transport receive ownership") {
+    static cnet_tls_test_pair pair;
+    const cnet_tls_protocol_version versions[] = {
+        CNET_TLS_PROTOCOL_VERSION_1_2, CNET_TLS_PROTOCOL_VERSION_1_3};
+
+    before_each() {
+      memset(&pair, 0, sizeof(pair));
+      check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
+    }
+
+    after_each() { cnet_tls_test_pair_destroy(&pair); }
+
+    for (size_t version = 0u; version < sizeof(versions) / sizeof(versions[0]); ++version) {
+      for (int probe = 0; probe <= 1; ++probe) {
+        it("keeps TLS %d plaintext independent of transport storage, probe=%d",
+            (int)versions[version], probe) {
+          enum { payload_bytes = 64, prefix_bytes = 17, transport_fill = 0x5a,
+                 completion_fill = 0xa5 };
+          unsigned char payload[payload_bytes];
+          unsigned char received[payload_bytes] = {0};
+          unsigned char transport_expected[payload_bytes];
+          unsigned char *transport = cnet_tls_state_read_buffer(&pair.server);
+          const size_t transport_bytes = cnet_tls_state_io_buffer_bytes(&pair.server);
+          size_t size = 0u;
+          bool complete = false;
+          bool peer_closed = false;
+          bool plaintext_pending = false;
+
+          check_equal(cnet_tls_state_set_protocol_range(&pair.client, versions[version],
+                                                         versions[version]), SALTS_OK);
+          check_equal(cnet_tls_state_set_protocol_range(&pair.server, versions[version],
+                                                         versions[version]), SALTS_OK);
+          check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+          for (size_t i = 0u; i < sizeof(payload); ++i) payload[i] = (unsigned char)i;
+          check_equal(cnet_tls_write(&pair.client, payload, sizeof(payload), &complete), SALTS_OK);
+          check_true(complete);
+          check_equal(cnet_tls_test_transfer(&pair.client, &pair.server), SALTS_OK);
+
+          /* Outstanding transport bytes may coexist with buffered TLS records.
+           * Neither ordinary decryption nor a no-demand probe owns these bytes. */
+          memset(transport, transport_fill, transport_bytes);
+          memset(transport_expected, transport_fill, sizeof(transport_expected));
+          if (probe) {
+            check_equal(cnet_tls_probe_peer_close(&pair.server, &peer_closed, &plaintext_pending),
+                        SALTS_OK);
+            check_true(plaintext_pending);
+            check_false(peer_closed);
+            check_equal(transport, transport_expected, sizeof(transport_expected));
+          }
+          check_equal(cnet_tls_read(&pair.server, received, prefix_bytes, &size, &peer_closed),
+                      SALTS_OK);
+          check_equal(size, (size_t)prefix_bytes);
+          check_false(peer_closed);
+          check_equal(transport, transport_expected, sizeof(transport_expected));
+
+          /* A subsequent transport completion must not overwrite an unread
+           * plaintext suffix retained by a partial application read. */
+          memset(transport, completion_fill, transport_bytes);
+          check_equal(cnet_tls_read(&pair.server, received + prefix_bytes,
+                                     sizeof(received) - prefix_bytes, &size, &peer_closed), SALTS_OK);
+          check_equal(size, sizeof(received) - prefix_bytes);
+          check_false(peer_closed);
+          check_equal(received, payload, sizeof(payload));
+        }
+      }
+    }
+  }
+
   it("round-trips repeated TLS records across plaintext boundaries") {
     static const size_t sizes[] = {1024u, 16383u, 16384u, 16385u, 65535u, 65536u, 131072u};
     cnet_tls_test_pair pair;

@@ -1,4 +1,5 @@
 #include <cnet/cnet.h>
+#include <cnet/ipc.h>
 
 #include "cnet_client_internal.h"
 #include "cnet_dispatcher.h"
@@ -550,6 +551,10 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
   if ((options->tls != NULL || options->tls_client != NULL) && uri.scheme != CNET_URI_TLS)
     return SALTS_EINVAL;
   if (uri.scheme == CNET_URI_TLS && impl->tls_io_buffer_bytes == 0u) return SALTS_ENOTSUP;
+  if (uri.scheme == CNET_URI_IPC &&
+      (impl->socket_options.receive_buffer_bytes != 0u || impl->socket_options.send_buffer_bytes != 0u ||
+       impl->socket_options.keepalive || impl->socket_options.linger || impl->socket_options.nodelay))
+    return SALTS_ENOTSUP;
   if (uri.scheme == CNET_URI_VSOCK && !cnet_transport_vsock_supported(impl->backend_kind))
     return SALTS_ENOTSUP;
   payload.scheme = uri.scheme;
@@ -576,6 +581,14 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
   }
   if (uri.scheme == CNET_URI_PIPE) {
     memcpy(payload.pipe_name, uri.path, strlen(uri.path) + 1u);
+  } else if (uri.scheme == CNET_URI_IPC) {
+#if defined(_WIN32)
+    memcpy(payload.pipe_name, uri.path, strlen(uri.path) + 1u);
+#else
+    status = cnet_transport_ipc_address(uri.path, payload.address, sizeof(payload.address),
+                                      &payload.address_length);
+    if (status != SALTS_OK) return status;
+#endif
   } else if (uri.scheme == CNET_URI_VSOCK) {
     status = cnet_transport_parse_vsock_address(uri.vsock_cid, uri.vsock_port, false,
                                                 payload.address, sizeof(payload.address),
@@ -940,6 +953,39 @@ int cnet_start_tls_server(cnet_client *client, cnet_connection connection,
   payload.tls_server = true;
   status = cnet_client_admit_start_tls(impl, connection, &payload);
   if (status != SALTS_OK) cnet_tls_context_release(payload.tls_context);
+  return status;
+}
+
+int cnet_client_adopt_ipc(cnet_client *client, cnet_ipc_accepted *accepted,
+                         const cnet_observer *observer, cnet_connection *out_connection) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_owner_connect_payload payload = {0};
+  cnet_ipc_accepted owned;
+  bool transferred = false;
+  int status;
+  if (out_connection != NULL) *out_connection = (cnet_connection){0};
+  if (accepted == NULL || accepted->native_handle == UINTPTR_MAX ||
+      (accepted->kind != CNET_IPC_RESOURCE_PIPE && accepted->kind != CNET_IPC_RESOURCE_SOCKET))
+    return SALTS_EINVAL;
+  owned = *accepted;
+  *accepted = (cnet_ipc_accepted){0};
+  if (impl == NULL || observer == NULL || observer->on_state == NULL || out_connection == NULL
+#if defined(_WIN32)
+      || owned.kind != CNET_IPC_RESOURCE_PIPE
+#else
+      || owned.kind != CNET_IPC_RESOURCE_SOCKET
+#endif
+  ) {
+    (void)cnet_ipc_accepted_close(&owned);
+    return SALTS_EINVAL;
+  }
+  payload.scheme = CNET_URI_IPC;
+  payload.adopted_socket = owned.native_handle;
+  payload.read_timeout_ms = impl->read_timeout_ms;
+  payload.write_timeout_ms = impl->write_timeout_ms;
+  payload.adopted = true;
+  status = cnet_client_admit(impl, &payload, CNET_URI_IPC, observer, out_connection, &transferred);
+  if (!transferred) (void)cnet_ipc_accepted_close(&owned);
   return status;
 }
 

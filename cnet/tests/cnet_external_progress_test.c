@@ -24,6 +24,24 @@ typedef struct external_probe {
   size_t eofs;
 } external_probe;
 
+static cnet_datagram mixed_udp[2];
+static size_t mixed_sends;
+static size_t mixed_receives;
+
+static void mixed_received(void *user, cnet_datagram *datagram, const cnet_datagram_peer *peer,
+                           const cnet_receive_view *view) {
+  (void)user; (void)datagram; (void)peer;
+  check_warn(view->size == 4u && memcmp(view->data, "mix!", 4u) == 0);
+  ++mixed_receives;
+}
+
+static void mixed_sent(void *user, cnet_datagram *datagram, const cnet_datagram_peer *peer,
+                       size_t size, int status, uint64_t tag) {
+  (void)user; (void)datagram; (void)peer; (void)tag;
+  check_warn(size == 4u && status == SALTS_OK);
+  ++mixed_sends;
+}
+
 static native_io_backend_kind test_backend_kind(void) {
 #if defined(_WIN32)
   return NATIVE_IO_BACKEND_IOCP;
@@ -104,13 +122,13 @@ static int drive_external_once(cnet_client *client,
   size_t i;
   int status;
 
-  status = cnet_client_advance_external(client, &events);
+  status = client->impl != NULL ? cnet_client_advance_external(client, &events) : SALTS_OK;
   if (status != SALTS_OK) return status;
 
   status = native_io_backend_observe(
       backend, completions, TEST_BATCH, wait_ms, &completion_count);
   if (status == SALTS_ETIMEDOUT) {
-    status = cnet_client_advance_external(client, &events);
+    status = client->impl != NULL ? cnet_client_advance_external(client, &events) : SALTS_OK;
     return status;
   }
   if (status != SALTS_OK) return status;
@@ -118,8 +136,15 @@ static int drive_external_once(cnet_client *client,
   for (i = 0u; i < completion_count; ++i) {
     bool consumed = false;
     size_t routed_events = 0u;
-    status = cnet_client_route_external_completion(
-        client, &completions[i], &consumed, &routed_events);
+    for (size_t udp = 0u; udp < 2u && !consumed; ++udp) {
+      if (mixed_udp[udp].impl == NULL) continue;
+      status = cnet_datagram_route_external_completion(
+          &mixed_udp[udp], &completions[i], &consumed, &routed_events);
+      if (status != SALTS_OK) return status;
+    }
+    if (!consumed && client->impl != NULL)
+      status = cnet_client_route_external_completion(
+          client, &completions[i], &consumed, &routed_events);
     if (status != SALTS_OK) return status;
     if (!consumed) return SALTS_EPROTO;
   }
@@ -135,6 +160,25 @@ static cnet_connection peer_connection;
 static external_probe probe;
 static external_probe peer_probe;
 static mem_buffer_t *send_buffer;
+
+static void stop_mixed_udp(void) {
+  const uint64_t deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
+  bool done = false;
+  while (!done && cmeta_monotonic_ms() < deadline) {
+    done = true;
+    for (size_t i = 0u; i < 2u; ++i) {
+      bool stopped;
+      int status;
+      if (mixed_udp[i].impl == NULL) continue;
+      status = cnet_datagram_stop_external(&mixed_udp[i], &stopped);
+      check_warn(status == SALTS_OK || status == SALTS_EBUSY);
+      if (stopped) check_warn(cnet_datagram_destroy(&mixed_udp[i]) == SALTS_OK);
+      else done = false;
+    }
+    if (!done) check_warn(drive_external_once(&client, &backend, 1u) == SALTS_OK);
+  }
+  check_warn(done);
+}
 
 static void test_external_native_io_progress(bool preserve_eof) {
   native_io_backend_config backend_config = {
@@ -155,6 +199,19 @@ static void test_external_native_io_progress(bool preserve_eof) {
 
   check(native_io_backend_init(
              &backend, &backend_config) == SALTS_OK);
+  for (size_t udp = 0u; udp < 2u; ++udp) {
+    cnet_datagram_config config = CNET_DATAGRAM_CONFIG_INIT;
+    cnet_datagram_peer peer = {0};
+    config.backend = test_backend_kind(); config.host = "127.0.0.1";
+    config.send_capacity = 1u; config.request_capacity = 2u; config.completion_batch_capacity = 2u;
+    config.max_datagram_bytes = 4u; config.receive_buffer_bytes = 4u;
+    config.observer = (cnet_datagram_observer){mixed_received, mixed_sent, NULL};
+    check_equal(cnet_datagram_init_external(&mixed_udp[udp], &config, &backend), SALTS_OK);
+    peer.family = CNET_DATAGRAM_ADDRESS_IPV4; peer.address[0] = 127u; peer.address[3] = 1u;
+    check_equal(cnet_datagram_port(&mixed_udp[udp], &peer.port), SALTS_OK);
+    check_equal(cnet_datagram_receive(&mixed_udp[udp], 1u), SALTS_OK);
+    check_equal(cnet_datagram_send(&mixed_udp[udp], &peer, "mix!", 4u, 1u), SALTS_OK);
+  }
   check(native_io_backend_get_config(
              &backend, &observed_config));
   check(observed_config.kind == test_backend_kind());
@@ -246,6 +303,11 @@ static void test_external_native_io_progress(bool preserve_eof) {
       check(cmeta_monotonic_ms() < deadline);
     }
   }
+  while (mixed_sends != 2u || mixed_receives != 2u) {
+    check_equal(drive_external_once(&client, &backend, 1u), SALTS_OK);
+    check(cmeta_monotonic_ms() < deadline);
+  }
+  stop_mixed_udp();
 
   /*
    * A live connection may own receive and send NativeIO requests
@@ -429,8 +491,10 @@ suite("CNet external progress") {
         peer_connection = (cnet_connection){0};
         probe = (external_probe){0};
         peer_probe = (external_probe){0};
+        mixed_sends = mixed_receives = 0u;
     }
     after_each() {
+        stop_mixed_udp();
         if (send_buffer != NULL) {
             mem_buffer_release(send_buffer);
             send_buffer = NULL;
