@@ -808,7 +808,7 @@ jobs:
           vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
           EOF
       - uses: actions/upload-artifact@v4
-        if: matrix.family == 'android'
+        if: ${{ false }} # duplicate android artifact upload already performed above
         with:
           name: salts-sdk-android-arm64-v8a
           path: stage/sdk
@@ -844,7 +844,7 @@ jobs:
           vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
           EOF
       - uses: actions/upload-artifact@v4
-        if: matrix.family == 'ios'
+        if: ${{ false }} # duplicate ios artifact upload already performed above
         with:
           name: salts-sdk-${{ matrix.sdk }}
           path: stage/sdk
@@ -1169,7 +1169,7 @@ jobs:
           vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
           EOF
       - uses: actions/upload-artifact@v4
-        if: matrix.family == 'android'
+        if: ${{ false }} # duplicate android artifact upload already performed above
         with:
           name: salts-sdk-android-arm64-v8a
           path: stage/sdk
@@ -1205,7 +1205,7 @@ jobs:
           vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
           EOF
       - uses: actions/upload-artifact@v4
-        if: matrix.family == 'ios'
+        if: ${{ false }} # duplicate ios artifact upload already performed above
         with:
           name: salts-sdk-${{ matrix.sdk }}
           path: stage/sdk
@@ -1530,7 +1530,7 @@ jobs:
           vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
           EOF
       - uses: actions/upload-artifact@v4
-        if: matrix.family == 'android'
+        if: ${{ false }} # duplicate android artifact upload already performed above
         with:
           name: salts-sdk-android-arm64-v8a
           path: stage/sdk
@@ -1566,7 +1566,7 @@ jobs:
           vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
           EOF
       - uses: actions/upload-artifact@v4
-        if: matrix.family == 'ios'
+        if: ${{ false }} # duplicate ios artifact upload already performed above
         with:
           name: salts-sdk-${{ matrix.sdk }}
           path: stage/sdk
