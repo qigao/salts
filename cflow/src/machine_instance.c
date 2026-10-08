@@ -1388,7 +1388,7 @@ void cflow_machine_instance_destroy(cflow_machine_instance *instance) {
         while (cflow_executor_pending(impl->executor) != 0u) {
             if (!cflow_executor_run_one(impl->executor)) {
                 assert(!"owner-bound Machine has unprogressable tasks");
-                return;
+                abort(); /* never free a queued task's borrowed Machine state */
             }
         }
     } else {
