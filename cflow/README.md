@@ -105,6 +105,40 @@ For the long-lived CNet connection-strategy / domain-Actor integration, see
 This is an opt-in host composition design, not a new mandatory CNet dependency
 or an assertion that built-in serial-worker Actors are owner-affine.
 
+#### Owner-bound SerialExecutor (experimental branch)
+
+[Phase 2a candidate PR #1016](https://github.com/qigao/salts/pull/1016)
+provides an owner-thread-bound, bounded SerialExecutor backed by the existing
+CFlow typed Mailbox. It advertises `SERIAL|MANUAL|OWNER_AFFINE`: the host
+initializes it on the final owner thread, posts may come from other threads,
+and **only that owner** calls `cflow_executor_run_one()` under a finite
+fairness budget. It creates no worker, CNet instance, or backend wait loop.
+
+```c
+cflow_executor owner_executor = {0};
+/* host_wake is optional and must only signal an already initialized owner
+ * wake target. It cannot reenter Executor driving. */
+if (!cflow_executor_owner_init_with_capacity(
+        &owner_executor, 128u, host_wake, host_context))
+    return false;
+/* Supply &owner_executor to a CFlow Machine-backed Actor.
+ * Only the host owner thread calls cflow_executor_run_one().
+ * The host must check pending before sleeping. */
+```
+
+This is an API illustration, not a standalone compilable example:
+`host_wake` and `host_context` are supplied by the embedding host.
+`cflow_actor_init()` still requires a CONCURRENT Scheduler; using the
+existing worker Scheduler makes **Machine transitions**, not the entire
+Subscription/sink callback path, owner-affine. Generic Manual Executors
+remain invalid for Machine instances. Statechart remains invalid for this
+caller-driven Executor because its synchronous initial stabilization currently
+waits for worker progression; it needs a separate safe contract.
+
+Shutdown stops admission, but accepted tasks must be driven and settled on
+the owner. Producers (including post/wake tails) must quiesce before destroy.
+Do not run Executor callbacks recursively or destroy from one of them.
+
 NativeIO execution style is an orthogonal mechanism dimension. Direct/Coroutine and the planned Sharded/SMP style share NativeIO request/completion truth; Reactive and Actor remain CFlow semantic models above thin adapters. See [NativeIO execution and endpoint architecture](../native-io/ARCHITECTURE.md).
 
 ### I/O portability and execution-policy boundary

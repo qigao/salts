@@ -63,6 +63,7 @@ add_library(${TARGET_NAME}
   src/effect.c
   src/event.c
   src/executor.c
+  src/executor_owner.c
   src/function_projection.c
   src/graph.c
   src/interfaces.c
