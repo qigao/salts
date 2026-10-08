@@ -18,6 +18,13 @@ static void pattern_destroy_owned_value(void *context, void *object) {
 }
 
 
+/* Exact C11/C++17 native context cast; keep strict C++17 -Werror=old-style-cast. */
+#ifdef __cplusplus
+#define PATTERN_INTERCEPT_CONTEXT(type_, ptr_) static_cast<type_ *>(ptr_)
+#else
+#define PATTERN_INTERCEPT_CONTEXT(type_, ptr_) ((type_ *)(ptr_))
+#endif
+
 /* Typed ACE Interceptor: deliberately no erased call ABI or hidden retain. */
 CMETA_INTERCEPTOR_TYPE(pattern_interceptor, int, int);
 
@@ -36,7 +43,7 @@ typedef struct pattern_interceptor_stage {
 
 static cmeta_status pattern_intercept_target(
     void *user, const int *request, int *out) {
-    pattern_interceptor_probe *probe = (pattern_interceptor_probe *)user;
+    pattern_interceptor_probe *probe = PATTERN_INTERCEPT_CONTEXT(pattern_interceptor_probe, user);
     probe->trace[probe->count++] = 9;
     ++probe->target_calls;
     if (probe->fail_target) return CMETA_CALLBACK_ERROR;
@@ -45,7 +52,7 @@ static cmeta_status pattern_intercept_target(
 }
 static cmeta_status pattern_intercept_before(
     void *user, const int *request, bool *proceed) {
-    pattern_interceptor_stage *stage = (pattern_interceptor_stage *)user;
+    pattern_interceptor_stage *stage = PATTERN_INTERCEPT_CONTEXT(pattern_interceptor_stage, user);
     (void)request;
     stage->probe->trace[stage->probe->count++] = stage->id;
     *proceed = !stage->probe->reject;
@@ -53,13 +60,13 @@ static cmeta_status pattern_intercept_before(
 }
 static void pattern_intercept_after(
     void *user, const int *request, const int *response) {
-    pattern_interceptor_stage *stage = (pattern_interceptor_stage *)user;
+    pattern_interceptor_stage *stage = PATTERN_INTERCEPT_CONTEXT(pattern_interceptor_stage, user);
     (void)request; (void)response;
     stage->probe->trace[stage->probe->count++] = stage->id + 10;
 }
 static void pattern_intercept_error(
     void *user, const int *request, cmeta_status status) {
-    pattern_interceptor_stage *stage = (pattern_interceptor_stage *)user;
+    pattern_interceptor_stage *stage = PATTERN_INTERCEPT_CONTEXT(pattern_interceptor_stage, user);
     (void)request; (void)status;
     stage->probe->trace[stage->probe->count++] = stage->id + 20;
 }
@@ -246,5 +253,7 @@ suite("CMeta pattern composition") {
     }
 
 }
+
+#undef PATTERN_INTERCEPT_CONTEXT
 
 #endif /* CMETA_PATTERN_CASES_H */
