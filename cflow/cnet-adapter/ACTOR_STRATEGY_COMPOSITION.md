@@ -276,6 +276,68 @@ This remains an explicit host-composed **single owner**, not a new CFlow
 scheduler/backend, implicit listener handoff, 2/4-owner routing or proof of
 performance superiority.
 
+### Phase 3c: bounded source-owner to domain-owner routing (Draft PR)
+
+An optional `<cflow/cnet_domain_route.h>` router in `Salts::CFlowCNet`
+extends Phase 3a without relaxing its owner-local ABI. The **target Actor
+owner** creates one fixed-capacity route **per source connection and selected
+domain Actor**, with an independent retained producer ref. The **source CNet
+owner** explicitly binds itself once and cannot migrate. Multiple distinct
+source routes may all target the same domain Actor or independent Raft groups
+sharing a CNet peer connection (the host coordinates that connection's single
+authoritative receive credit stream).
+
+```text
+NativeIO completion → CNet source Owner A ─┐
+                            reserve slot   │  only copied bytes / tickets
+                            receive bytes  ├→ bounded target-owned payload slots
+NativeIO completion → CNet source Owner B ─┘               │
+                                      Actor MPMC try_send(event token)
+                                                          │
+                                              Target Owner T: Machine / sink
+                                                          │
+                                          borrow bytes → business process
+                                                          │
+                                               explicit target-owner ACK
+                                                          │
+                                          same bounded payload slot reusable
+```
+
+The target Owner's Actor Mailbox is the **sole business message FIFO**. Route
+slots are preallocated payload ownership records, *not* a second FIFO or
+worker. `cflow_actor_ref_try_send` is already MPMC and publishes the
+generation-checked delivery envelope, with no connection/Actor raw pointer.
+The route mutex only coordinates the fixed-size payload/credit ledger.
+`borrow()` and `acknowledge()` run on the target Owner, so no foreign thread
+reads/writes borrowed CNet callback buffers.
+
+The source owner drives its existing CNet loop; it must
+`route_reserve() → cnet_receive(1)` and rollback a refused admission.
+After the CNet callback, `route_receive()` copies bounded view bytes into
+a target-owned slot before returning, and attempts one Actor admission.
+Mailbox FULL returns ENOBUFS, retains **one staged payload** per route, and
+prevents additional receive credits for that route; target-owner
+`route_retry_staged()` does at most one attempt per host fairness quantum.
+No busy spin, automatic CNet demand, silent message loss or new global Actor
+Registry is introduced. Different routes' FULL/oversize statuses remain
+independent, and the selected strict-key target is never silently changed.
+
+A route's `source_terminal()` retires any still-outstanding **CNet receive
+credit only** and seals subsequent receive admission. It does **not** invent
+domain ACKs or discard accepted Actor events. Business-side ACK frees the
+retained payload only after the target's selected processing/commit point.
+Stale incarnation/generation/source-owner/connection tokens and duplicate ACKs
+are rejected. The host must stop/join source producers **and** settle/stop Actor
+callbacks before destination destruction; discarded Actor Mailbox events
+require an explicit `abort_after_quiescence()` to settle their leases.
+
+This slice qualifies **2/4 independent source OS threads with one fixed
+destination Actor lane** and synthetic CNet borrowed callback views. It is a
+cross-owner semantic-message ownership proof, not a completed CNet network
+multi-owner integration: multiple live CNet clients, CNetManager retention,
+real detached listener handoff, 2/4-owner network benchmarks and strict
+placement/failover policy remain follow-up #1022/#1001 gates.
+
 ## 5. Execution placement and fairness
 
 Two legitimate integration topologies must be measured, not conflated:
