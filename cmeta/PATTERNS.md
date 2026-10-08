@@ -236,6 +236,37 @@ against one exact installed `Salts::CFlow`. It shares the existing out-of-tree
 `find_package(Salts ... EXACT)` and SDK install test with the ACE Actor
 consumer; no second packaging workflow or fallback SDK is introduced.
 
+### ACE Half-Sync/Half-Async over CNet and CFlow
+
+The executable integration fixture
+`cflow/cnet-adapter/tests/cflow_ace_half_sync_async_test.c` exercises a
+real loopback TCP input and deliberately distinct progress owners:
+
+```text
+CNet / NativeIO TCP owner
+  borrowed receive callback
+    -> copied int via capacity-2 CFlow Channel (FULL is explicit)
+    -> demand-driven CFlow Subscription / canonical Subscriber Interface
+    -> retained Actor producer try_send (one-slot Mailbox, FULL explicit)
+    -> CFlow Actor worker + serialized Machine action
+```
+
+CNet invokes only short, nonblocking callbacks under its poll owner; neither
+Actor stop/wait nor CFlow Scheduler execution is reentered from the network
+callback. Source bytes are borrowed only for that callback and become bounded
+Channel-owned values on accepted admission. CFlow Subscription drives one
+item at a time under explicit downstream demand, and a rejected Actor send is
+reported through the existing Subscriber failure/terminal path, never
+automatically retried or silently buffered.
+
+The tests force both a Channel `FULL` and an Actor Mailbox `FULL` while
+the Actor worker is stalled, plus a separate cancellation path. Teardown first
+quiesces CNet/listener callbacks; then it closes Subscription and its moved
+Publisher before Channel; finally it stops/destroys Actor and releases its
+retained producer before destroying borrowed scheduler/executor/graph storage.
+No new CMeta reactor, scheduling runtime, registry, Plugin lease, or fallback
+queue is introduced.
+
 ## Admission test for a new pattern helper
 
 Add a new CMeta pattern-level macro/inline helper only if at least one condition
