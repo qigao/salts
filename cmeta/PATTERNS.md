@@ -136,9 +136,10 @@ registry.
 The canonical `<cmeta/component.h>` declaration is static metadata only:
 
 ```text
-name
-+ provides Interface rows
-+ requires Interface rows
+stable component/provider identity
++ optional typed config DataDesc (valid native storage_type)
++ ordered provides Interface rows
++ ordered requires Interface rows
 ```
 
 It does not load modules, resolve dependencies, select providers, own leases, or
