@@ -77,6 +77,37 @@ suite("Salts static Component Configurator") {
         check_equal(logger.creates, 0u);
     }
 
+
+    it("releases an owned partial ObjectRef on create failure") {
+        test_provider_state logger;
+        salts_component_provider_binding provider;
+        salts_component_deployment deployment;
+        salts_component_instance instance;
+        size_t order;
+        salts_component_context context;
+
+        test_provider_state_init(&logger, 7, NULL);
+        provider = TEST_PROVIDER_BINDING(
+            TestLogger, &logger, test_logger_create_then_fail);
+        deployment = TEST_DEPLOYMENT(&provider, NULL, NULL);
+
+        check_equal(salts_component_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_resolve(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_start(&context),
+                    SALTS_COMPONENT_CREATE_FAILED);
+        check_equal(logger.creates, 1u);
+        check_equal(logger.activates, 0u);
+        check_equal(logger.deactivates, 0u);
+        check_equal(logger.destroys, 1u);
+        check_equal(logger.resource_acquires, 0u);
+        check_equal(logger.resource_releases, 0u);
+        check_equal(context.state, SALTS_COMPONENT_CONTEXT_FAILED);
+        check_equal(salts_component_context_failure(&context)->phase,
+                    SALTS_COMPONENT_PHASE_CREATE);
+    }
+
     it("fails closed when a required provider is missing") {
         int config = 1;
         test_provider_state app;
@@ -265,6 +296,9 @@ suite("Salts static Component Configurator") {
         check_equal(broken.activates, 1u);
         check_equal(broken.deactivates, 1u);
         check_equal(broken.destroys, 1u);
+        check_equal(broken.resource_acquires, 1u);
+        check_equal(broken.resource_releases, 1u);
+        check_false(broken.resource_live);
         check_equal(salts_component_context_failure(&context)->phase,
                     SALTS_COMPONENT_PHASE_PROVIDE);
     }
@@ -357,6 +391,12 @@ suite("Salts static Component Configurator") {
         check_equal(logger.destroys, 1u);
         check_equal(app.deactivates, 0u);
         check_equal(app.destroys, 1u);
+        check_equal(logger.resource_acquires, 1u);
+        check_equal(logger.resource_releases, 1u);
+        check_false(logger.resource_live);
+        check_equal(app.resource_acquires, 1u);
+        check_equal(app.resource_releases, 1u);
+        check_false(app.resource_live);
         check_equal(context.state, SALTS_COMPONENT_CONTEXT_FAILED);
         check_equal(salts_component_context_failure(&context)->phase,
                     SALTS_COMPONENT_PHASE_ACTIVATE);

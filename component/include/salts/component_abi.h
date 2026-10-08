@@ -40,6 +40,14 @@ typedef enum salts_component_status {
 
 typedef struct salts_component_dependency salts_component_dependency;
 
+/* Failure ownership:
+ * A valid partially returned ObjectRef is released when create() fails.
+ * On activate() failure, Component releases that ObjectRef but does not call
+ * deactivate() on the failed instance. Any partial external side effects must
+ * either be undone by activate() before returning an error or be covered by
+ * the owned ObjectRef's destroy authority. Only a successfully activated
+ * instance receives deactivate() (including a subsequent PROVIDES preflight
+ * failure), and owned resources must settle exactly once. */
 typedef cmeta_status (SALTS_COMPONENT_CALL *salts_component_create_fn)(
     void *provider_context,
     const cmeta_data_desc *config_data,

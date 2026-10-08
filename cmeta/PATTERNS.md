@@ -1,8 +1,9 @@
 # CMeta pattern layer
 
-> Development status: experimental integration work on
-> `feature/cmeta-pattern-component-runtime`. This document does not describe a
-> released `master` API.
+> Salts 3.0.0 ships the canonical CMeta pattern primitives, Component
+> Configurator and ComponentPlugin integration. Post-3.0 ACE pattern conformance
+> develops under [#1012](https://github.com/qigao/salts/issues/1012) on
+> `feature/cmeta-ace-patterns`; changes there are not yet a released API.
 
 ## Purpose
 
@@ -24,9 +25,10 @@ pattern authoring
 
 Runtime mechanism remains with its existing owner.
 
-The first target consumer is the ACE-style Component Configurator tracked by
-#1003. CHttp, TurboFlow and TurboSCXML are downstream conformance profiles, not
-sources of consumer-private component semantics.
+The first implemented runtime consumer is the ACE-style Component Configurator
+specified in #1003 and integrated by PR #1010. CHttp, TurboFlow and TurboSCXML
+remain downstream conformance profiles, not sources of consumer-private
+component semantics.
 
 ## Canonical decomposition
 
@@ -142,7 +144,7 @@ name
 It does not load modules, resolve dependencies, select providers, own leases, or
 advance lifecycle.
 
-This metadata is the canonical component/provider capability declaration. Dynamic module publication and lease ownership remain under `Salts::Plugin`. There is no second static plugin declaration vocabulary on the integration branch.
+This metadata is the canonical component/provider capability declaration. Dynamic module publication and lease ownership remain under `Salts::Plugin`. There is no second static plugin declaration vocabulary in Salts 3.0.0.
 
 ## Patterns that do not belong in CMeta runtime
 
@@ -158,7 +160,7 @@ mechanism remains outside CMeta:
 | Half-Sync/Half-Async | domain runtime + bounded handoff |
 | Streams execution | CFlow / domain runtime |
 | Plugin module lifecycle | Salts::Plugin |
-| Component resolution/lifecycle graph | future Salts::Component |
+| Component resolution/lifecycle graph | Salts::Component |
 
 CMeta may describe typed policies, messages, interfaces, factories and
 lifecycle contracts for these mechanisms.
@@ -176,9 +178,9 @@ holds:
 
 Do not add a helper solely to introduce a pattern name.
 
-## Component Configurator target
+## Component Configurator integration
 
-The intended composition is:
+The shipped composition is:
 
 ```text
 Interface / Function / Object / Lifecycle / Manifest
@@ -188,17 +190,18 @@ Interface / Function / Object / Lifecycle / Manifest
              provides / requires
                         |
                         v
-              bounded Configurator
+              Salts::Component
              resolver / lifecycle graph
                         |
                         v
-             generation-scoped runtime
+            Salts::ComponentPlugin
+                generation scopes
                         |
                         v
-                    Plugin
+                 Salts::Plugin
 ```
 
-The Configurator should add only the runtime semantics not already owned by
+The Configurator adds only the runtime semantics not already owned by
 CMeta:
 
 - provider selection/resolution;
@@ -211,8 +214,9 @@ lifecycle, ownership, or metadata model, the pattern decomposition is wrong.
 
 ## No-fallback rule
 
-Integration-branch experiments may change before release. Once a canonical
-pattern/component contract is selected:
+Post-3.0 experiments on the long-lived development branch may change before
+release. Salts 3.0.0 remains the canonical baseline; when a new contract is
+selected:
 
 - migrate integration-branch consumers;
 - delete superseded experimental spellings;
@@ -220,5 +224,5 @@ pattern/component contract is selected:
   used them;
 - do not merge partial duplicate semantic models to `master`.
 
-Formal proof may be added later, but is not a prerequisite for the engineering
-path in #1005–#1009.
+Formal proof may be added later, but is not a prerequisite for engineering
+work under #1012 or the already integrated #1005–#1009 foundation.
