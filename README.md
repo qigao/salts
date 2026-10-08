@@ -454,3 +454,8 @@ Higher-level parsers, QueryVM, crypto, filesystem/process adapters, and related 
 Salts first-party code is licensed under the Apache License 2.0. See
 [LICENSE](LICENSE). Bundled third-party components retain their upstream
 licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+ICU source builds on Linux require `autoconf`, `automake`, `autoconf-archive`
+and `libtool`, in addition to the existing Ninja/pkg-config tools. CI installs
+these through the shared build-host action; macOS already installs the same
+autotools prerequisites through Homebrew.
