@@ -1111,4 +1111,69 @@ suite("CNet cross-owner domain Actor retained lease routing") {
         check_equal(stats.acknowledged, (uint64_t)2u);
         route_test_finish(&f);
     }
+
+    it("stops before business execution and explicitly settles retained payload") {
+        route_test_fixture f;
+        route_source_fixture source = {0};
+        cmeta_thread_t thread = NULL;
+        cflow_cnet_domain_route_stats stats = {0};
+        const uint64_t deadline =
+            cmeta_monotonic_ms() + ROUTE_TEST_TIMEOUT_MS;
+
+        check_true(route_test_init(&f, 1u, 2u, 1u));
+        source.route = &f.routes[0];
+        source.owner_id = 1u;
+        source.messages = 1;
+        check_equal(cmeta_thread_create(
+            &thread, route_source_send, &source), SALTS_OK);
+        check_equal(cmeta_thread_join(&thread), SALTS_OK);
+        check_equal(atomic_load(&source.status), SALTS_OK);
+        check_equal(cflow_cnet_domain_route_get_stats(
+            &f.routes[0], &stats), SALTS_OK);
+        check_true(stats.sealed);
+        check_true(stats.source_terminal);
+        check_equal(stats.awaiting_ack, (size_t)1u);
+        check_equal(stats.acknowledged, (uint64_t)0u);
+        check_equal(atomic_load(&f.actions), 0);
+
+        /* Request stop before any target executor quantum. This must not
+         * manufacture a business ACK or free the independent lease ledger. */
+        check_equal(cflow_actor_request_stop(&f.actor), CFLOW_ACTOR_OK);
+        check_equal(cflow_cnet_domain_route_get_stats(
+            &f.routes[0], &stats), SALTS_OK);
+        check_equal(stats.awaiting_ack, (size_t)1u);
+        check_equal(stats.acknowledged, (uint64_t)0u);
+
+        while (cflow_actor_current_state(&f.actor) !=
+                   CFLOW_ACTOR_STATE_STOPPED &&
+               cflow_actor_current_state(&f.actor) !=
+                   CFLOW_ACTOR_STATE_FAILED &&
+               cmeta_monotonic_ms() < deadline) {
+            if (!cflow_executor_run_one(&f.executor))
+                cmeta_sleep_ms(1u);
+        }
+        check_equal(cflow_actor_current_state(&f.actor),
+                    CFLOW_ACTOR_STATE_STOPPED);
+        check_equal(atomic_load(&f.actions), 0);
+        check_equal(atomic_load(&f.values), 0);
+        check_equal(atomic_load(&f.errors), 0);
+        check_equal(cflow_cnet_domain_route_get_stats(
+            &f.routes[0], &stats), SALTS_OK);
+        check_equal(stats.acknowledged, (uint64_t)0u);
+        check_equal(stats.awaiting_ack, (size_t)1u);
+
+        /* Stop and source terminal are quiescent. Only this explicit
+         * post-quiescence abort may release canceled mailbox payloads. */
+        check_equal(cflow_cnet_domain_route_abort_after_quiescence(
+            &f.routes[0]), SALTS_OK);
+        check_equal(cflow_cnet_domain_route_get_stats(
+            &f.routes[0], &stats), SALTS_OK);
+        check_equal(stats.acknowledged, (uint64_t)0u);
+        check_equal(stats.abandoned, (uint64_t)1u);
+        check_equal(stats.active_slots, (size_t)0u);
+        check_equal(stats.awaiting_ack, (size_t)0u);
+        check_equal(stats.retained_bytes, (size_t)0u);
+        route_test_finish(&f);
+    }
+
 }
