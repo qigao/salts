@@ -336,6 +336,8 @@ static void native_io_test_readiness_vector_cancel(native_io_backend_kind kind) 
   native_io_endpoint endpoint = {0};
   native_io_request request = {0};
   native_io_completion event = {0};
+  native_io_test_ace_read act = {0};
+  unsigned char *context = NULL;
   native_io_vector_operation operation;
   size_t filled = 0u;
   size_t count = 0u;
@@ -350,6 +352,9 @@ static void native_io_test_readiness_vector_cancel(native_io_backend_kind kind) 
   operation = (native_io_vector_operation){
       NATIVE_IO_OPERATION_PIPE_WRITE, endpoint, spans, 2u, 111u};
   check_equal(native_io_backend_submit_vector(&backend, &operation, &request), SALTS_OK);
+  /* ACT binds the already admitted request; cancel does not settle it. */
+  check_equal(native_io_test_ace_read_bind(&act, request, endpoint,
+                                          operation.user_data, &first), SALTS_OK);
   check_equal(native_io_backend_cancel(&backend, request), SALTS_OK);
   check_equal(native_io_backend_release_pipe(&backend, endpoint), SALTS_EBUSY);
   check_equal(native_io_backend_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS, &count),
@@ -358,6 +363,10 @@ static void native_io_test_readiness_vector_cancel(native_io_backend_kind kind) 
   check_equal(event.kind, NATIVE_IO_COMPLETION_CANCELLED);
   check_equal(event.status, SALTS_ECANCELED);
   check_equal(event.user_data, (uintptr_t)111u);
+  check_equal(native_io_test_ace_read_settle(&act, &event, &context), SALTS_OK);
+  check_true(context == &first);
+  check_equal(native_io_test_ace_read_settle(&act, &event, &context), SALTS_EALREADY);
+  check_null(context);
 
   (void)close(descriptors[0]);
   (void)close(descriptors[1]);

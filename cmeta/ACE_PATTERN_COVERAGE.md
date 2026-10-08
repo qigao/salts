@@ -68,6 +68,24 @@ Every missing or unqualified pattern must specify: **Intent → ACE participants
 - All bounded admission, no implicit retries, no hidden queues/thread pools, no global mutable CMeta registry. Do not dispatch every network packet through pattern reflection.
 - Documentation-only evidence changes do not reopen ACE functional freeze. **Any new source/public ABI work is post-freeze and requires separate approval, a precise issue/regression test, and the appropriate CI/SDK gates; do not silently merge into the frozen 2.3 candidate.**
 
+## Post-freeze implementation candidates — not yet qualified
+
+The five patterns below have **actual source plus executable fixtures** on the
+existing ACE branch. All remain **GAP** in the qualification totals until the
+*latest source head* compiles and the acceptance gates are reviewed. Existing
+frozen SHA `02b741a` does **not** qualify these new commits.
+
+| Pattern | Source / conformance | Remaining gate |
+|---|---|---|
+| Interceptor | [typed finite chain](include/cmeta/ace_interceptor.h) + C11/C++17 [pattern cases](tests/cmeta_pattern_cases.h) | Exact native FunctionAbi alignment, callback/Plugin lifetime and latest-head CI |
+| ACT | [NativeIO typed token](../native-io/include/salts/native_io_ace_token.h) + [real read/cancel tests](../native-io/tests/native_io_test.c) + [C++ test](../native-io/tests/native_io_header_cpp_test.cpp) | Further close/race, installed consumer and latest-head CI |
+| Strategized Locking | [fully reflected Lockable Interface](include/cmeta/ace_synchronization.h) + [mutex/RW tests](tests/cmeta_ace_sync_cases.h) | Additional policy-admission/lock ordering checks, CI |
+| Thread-Safe Interface | [typed guarded public call](include/cmeta/ace_synchronization.h) + [concurrent counter](tests/cmeta_ace_sync_cases.h) | Negative native ABI and thread-safety contract/TSan, CI |
+| Monitor Object | [real guarded monitor fixture](tests/cmeta_ace_sync_cases.h), using Platform condition | More cancellation/timeout/fairness cases, CI |
+
+No new Reactor, Proactor, Actor, worker pool or CMeta scheduler was created.
+Leader/Followers remains a separate scoped design under #1064.
+
 ## Active pattern-gap tracking
 
 Umbrella: [#1058 — POSA2 17-pattern coverage and conformance](https://github.com/qigao/salts/issues/1058). Missing semantic/composition slices:

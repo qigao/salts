@@ -1,4 +1,11 @@
 # Salts 2.3 — ACE / CMeta functional freeze contract
+> **Post-freeze development notice (2026-10-09):** the existing long-lived
+> branch now contains **additional unqualified** Interceptor, ACT, locking,
+> Thread-Safe Interface and Monitor code *after* the frozen `02b741a` SHA.
+> This historical freeze evidence certifies only that exact code snapshot;
+> subsequent commits require new CI and acceptance. PR #1013 remains Draft,
+> **DO NOT MERGE / DO NOT PUBLISH**.
+
 
 **Status:** **ACE FUNCTIONALLY FROZEN** at source HEAD
 [`02b741a7f2ebceaeed68c681898d09072c5323d1`](https://github.com/qigao/salts/commit/02b741a7f2ebceaeed68c681898d09072c5323d1),

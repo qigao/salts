@@ -5,6 +5,16 @@ ownership model, N-to-N+1 fencing, executable acceptance and release separation.
 See [POSA2 17-pattern coverage matrix](ACE_PATTERN_COVERAGE.md) for the exact
 CMeta composition evidence, already-reused runtimes and post-freeze gaps.
 
+> **Post-freeze development in progress:** on `feature/cmeta-ace-patterns`,
+> the five typed composition slices Interceptor, ACT, Strategized Locking,
+> Thread-Safe Interface, and Monitor Object now have branch code and tests.
+> They are **not** part of the separately qualified `02b741a` ACE freeze;
+> latest-HEAD CI, packaging and ABI decisions are still outstanding.
+> The Pattern interfaces are `<cmeta/ace_interceptor.h>` and
+> `<cmeta/ace_synchronization.h>`; ACT is a thin typed adapter over
+> NativeIO in `<salts/native_io_ace_token.h>`. Monitor uses an existing
+> CMeta Interface with Platform mutex/condition instead of a new runtime.
+
 > The next public Salts release is **2.3.0** (latest published: 2.2.0).
 > The planned 3.0.0 Release was withdrawn; the temporary 4.0.0 proposal was
 > superseded. Component/Configurator and ACE patterns remain under
