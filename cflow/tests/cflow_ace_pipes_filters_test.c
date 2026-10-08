@@ -258,6 +258,39 @@ suite("ACE Pipes and Filters typed Graph / demand / ownership") {
         cflow_graph_destroy(&surface);
     }
 
+    it("rejects incompatible source metadata without moving its owner") {
+        const bool wrong_value = true;
+        ace_pipe_sink_state sink_state = {0};
+        cflow_subscriber sink =
+            ace_pipe_sink_impl_as_cflow_subscriber(&sink_state);
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        cflow_scheduler scheduler = {0};
+        cflow_publisher source = {0};
+        cflow_subscription run = {0};
+
+        sink_state.live = true;
+        check_true(ace_pipes_graph_init(&surface, &normalized));
+        check_true(cflow_scheduler_test_init(&scheduler));
+        check_true(cflow_publisher_from_array(
+            &source, &cmeta_type_bool, &wrong_value, 1u));
+        check_equal(cflow_subscribe_with_options(
+            &run, &normalized, &source, &scheduler, &sink, NULL).status,
+            CFLOW_STATUS_TYPE_MISMATCH);
+        check_null(run.impl);
+        check_true(cflow_publisher_valid(&source));
+        check_equal(sink_state.count, (size_t)0u);
+        check_equal(sink_state.errors, (size_t)0u);
+        check_equal(sink_state.dones, (size_t)0u);
+
+        /* Failed typed admission leaves ownership with the caller. */
+        cflow_publisher_destroy(&source);
+        sink_state.live = false;
+        cflow_scheduler_destroy(&scheduler);
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
     it("uses a real capacity-two Channel as the bounded pipeline source") {
         cflow_channel channel = {0};
         cflow_channel_stats stats = {0};
