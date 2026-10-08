@@ -8,16 +8,178 @@ to depend on NativeIO directly.
 
 The canonical lower-layer contract is [NativeIO execution and endpoint architecture](../native-io/ARCHITECTURE.md). CNet is an optional network/session semantic consumer: raw TCP/UDP/VSOCK/PIPE data paths do not require CNet, and CNet does not own NativeIO execution-style or terminal-completion truth.
 
-CNet is built unconditionally. Its source-tree target is `cmeta_cnet`; installed
+CNet is built unconditionally. Its source-tree target is `cnet`; installed
 consumers link `Salts::CNet` and include `<cnet/cnet.h>`. The independent
 WebSocket session API is declared by `<cnet/websocket.h>`.
+
+The [IPC, WebSocket, and KCP evolution design](#ipc-websocket-and-kcp-evolution-design)
+records the consumer contract, implementation boundaries, and release gates.
+The implemented additive capabilities are listed below; downstream integration
+and release gates in the design remain separate work.
+Its [WS and IPC multicore design](#ws-and-ipc-multicore-design) specifies fixed
+connection placement, bounded handoff, cross-owner commands, and shutdown.
+
+## Owner-local connection management
+
+The owner-local slice of [#1001](https://github.com/qigao/salts/issues/1001) is available
+through `<cnet/manager.h>` and the optional `Salts::CNetManager` shared library.
+The architecture proposal is [PR #1002](https://github.com/qigao/salts/pull/1002).
+CNet does not link back to the helper. The shared library keeps identity epochs
+and owner-thread checks consistent when a manager crosses consumer DSO boundaries.
+
+One manager borrows an initialized client on its progress owner. Initialization
+allocates a fixed record table; admission and management progress never grow it.
+`connection_capacity` bounds RESERVED plus BOUND records; `record_capacity`
+also includes RETIRED contexts. These are helper credits, not reservations of
+the client's transport slots: unmanaged users can still exhaust that client.
+
+The lifecycle is `reserve -> connect/adopt -> real terminal -> recycle`, or
+`reserve -> cancel -> recycle`. Each successful reserve must be consumed or
+canceled. Connect/adopt retire a valid reservation even on immediate rejection;
+they never fabricate state callbacks. A valid adopt attempt consumes the
+detached stream on success or failure. Invalid identities leave it untouched.
+TCP and TLS are supported in this stage; other transport URIs return ENOTSUP.
+
+The attachment copies an observer and optionally a once-only cleanup callback.
+Its user pointer remains borrowed. Transport terminal returns the helper credit
+before forwarding the real state callback. With `hold_context=true`, the host
+aggregates business references and calls `release_context` once when they end.
+That hold consumes record storage without retaining a transport slot. Cleanup
+runs only in a later `advance`, after callbacks and the extra hold end. Retained
+identity values neither retain storage nor authorize raw CNet operations.
+
+For example, after initializing `client` and preparing `observer`:
+
+```c
+cnet_manager manager = {0};
+const cnet_manager_config config = {
+    sizeof(config), CNET_MANAGER_VERSION, &client, 64u, 32u};
+int status = cnet_manager_init(&manager, &config);
+if (status != SALTS_OK) return status;
+const cnet_manager_attachment attachment = {.observer = observer};
+cnet_managed_connection managed = {0};
+cnet_connection connection = {0};
+status = cnet_manager_reserve(&manager, &attachment, &managed);
+if (status == SALTS_OK) {
+  const cnet_connect_options options = {.uri = "tcp://127.0.0.1:8080"};
+  status = cnet_manager_connect(&manager, managed, &options, &connection);
+}
+/* Preserve status. The owner continues its normal CNet poll and bounded
+ * manager advance, including recycling an immediately rejected attempt. */
+```
+
+Send, receive demand, TLS policy and protocol state remain on existing CNet and
+host APIs. Install owned receive handlers through the manager adapter so its
+callback guard also covers transferred slices. `seal` blocks admission without
+closing. `request_close` seals and schedules closes only for this manager's
+subset. `advance(budget)` visits at most that many records round-robin, without
+polling or waiting; rejected closes retain their obligations for retry. The
+snapshot reports runnable work separately from drained obligations. Destroy is
+owner-only and returns EBUSY until drained; it never stops the borrowed client.
+Keep that client initialized through manager destruction.
+
+CHTTP maps one manager and one optional admission inbox to each existing owner
+lane. HTTP/1 deferred responses and HTTP/2 deferred
+streams delay context release. FlowMQ maps one manager to each socket client;
+queued parts delay peer context release, and external owners drive explicit
+close progress. These integrations retain protocol state in their consumers.
+
+This additive stage changes no wire format or base CNet ABI and adds no external
+dependency. It trades one bounded record per managed context for explicit
+lifetime accounting; no performance gain is claimed. Rollback removes the
+consumer's helper adapter and link dependency while retaining raw CNet calls.
+Placement and retention policies remain later stages. The owner-local manager
+creates no worker, timer or cross-thread queue; handoff is a separate opt-in helper.
+
+The formal `cnet_manager_test` covers full capacities, immediate admission
+failure, real TCP terminal/owned receive callbacks, detached ownership, stale
+identities, owner affinity, callback reentrancy, explicit holds and subset close.
+Downstream suites cover HTTP deferred work and TCP/TLS messaging integration.
+
+### Optional final-owner handoff
+
+`<cnet/handoff.h>` in the same `Salts::CNetManager` library supplies a bounded
+MPSC admission inbox. It extracts CHTTP's detached-stream queue and final-owner
+credits without moving the listener, owner threads, backend, protocol state or
+service stop machinery into CNet. FlowMQ's caller-driven single-owner path does
+not need this queue. A host chooses a destination before reserving its credit;
+no established connection moves between owners.
+
+Each inbox preallocates `connection_capacity` generation-checked records and
+`queue_capacity + 1` index entries (the extra ring entry distinguishes full from
+empty). Queue capacity must be positive and no greater than connection capacity;
+all size arithmetic is checked. Credits cover RESERVED + QUEUED + TAKEN, while
+the queue limit covers only QUEUED. They are independent of the manager's
+owner-local record/context budget and the raw client's transport capacity.
+
+The lifecycle is `reserve -> publish -> take -> release`, or `reserve -> release`.
+Publication copies the peer endpoint and moves the descriptor only on success.
+Every rejected publication leaves both descriptor and reservation with the
+producer. Taking an item returns queue space but keeps its credit until the
+owner releases the ticket; in CHTTP that is transport terminal. A taken stream
+must be adopted or closed exactly once. Adoption through `cnet_manager_adopt`
+consumes the detached stream on any valid reserved attempt, including immediate
+TCP/TLS failure. The host then returns handoff credit on failure and continues
+manager context retirement. The final owner retains its immutable TLS policy;
+no borrowed TLS/configuration pointer is stored in an inbox entry.
+
+For example, on a producer with an active `accepted` stream and initialized inbox:
+
+```c
+cnet_handoff_ticket ticket = {0};
+int status = cnet_handoff_reserve(&inbox, &ticket);
+if (status == SALTS_OK) {
+  status = cnet_handoff_publish(&inbox, ticket, &accepted);
+  if (status != SALTS_OK) {
+    int release_status = cnet_handoff_release(&inbox, ticket);
+    if (release_status != SALTS_OK) return release_status;
+  }
+}
+if (status != SALTS_OK) {
+  /* accepted is still owned here: close it or retry per host policy. */
+  return status;
+}
+/* accepted is empty. Wake the final owner using the host's existing mechanism.
+ * Even if that wake fails, do not republish, close or release this ticket.
+ * Arrange bounded owner progress or service shutdown to drain the inbox. */
+```
+
+The owner uses `cnet_handoff_take` to obtain a ticket and detached stream, then
+its existing TCP/TLS adoption and real terminal path. `seal` atomically rejects
+new reserves/publications but permits take/release so all old obligations can
+finish. It neither revokes outstanding producer reservations nor closes sockets.
+The snapshot reports the three credit states coherently in O(1). All operations
+are allocation-free after init, with one mutex protecting the lifecycle table
+and the existing Core byte ring; no ring view escapes that critical section.
+This deliberately favors a small admission-only critical section over an extra
+lock-free publication protocol. No throughput or latency improvement is claimed.
+The helper does not participate in steady send/receive data paths.
+
+**Shutdown requires explicit producer quiescence.** Seal admission, arrange
+completion/join of all producer calls **including their publish-to-wake tails**,
+drain/cancel queued entries, and finish taken connections and credits before
+destroying the inbox or any wake target. `snapshot.drained` proves only that
+credits are returned, not that a producer cannot still issue a wake. Tickets
+are values, not retained references: no ticket/raw pointer may be used after
+inbox destruction. CHTTP enforces this with its existing `listener_done` barrier
+before owner backend teardown, then joins all threads before storage destruction.
+
+The formal `cnet_handoff_test` covers capacity one/full/overflow, foreign and
+stale tickets, FIFO wrapping, rejected publication ownership, each sealed state,
+MPSC publication, seal races, failed wake and delayed wake-tail shutdown.
+`cnet_manager_test` also verifies adoption and invalid TLS adoption after handoff.
+CHTTP's existing topology, stalled-owner, TLS, HTTP/2 and deferred suites exercise
+the real consumer. This additive helper changes no wire format or raw CNet ABI.
+Rollback drains active work, restores the consumer's old admission adapter and
+removes its optional helper use; live inbox/backend replacement is unsupported.
 
 ## Base API
 
 Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
 
 - `cnet_connect` with `tcp://host:port`, `tls://host:port`, `udp://host:port`,
-  `pipe://name`, or Linux `vsock://CID:PORT`;
+  `pipe://name`, `ipc://name` (Windows), `ipc:///absolute/path` (POSIX),
+  or Linux `vsock://CID:PORT`;
 - `cnet_send_buffer` for retained contiguous payload ownership;
 - `cnet_send_slice` / `cnet_send_slicev` for retained subrange and scatter/gather ownership;
 - `cnet_send_buffer_and_close` / `cnet_send_slicev_and_close` for retained final writes;
@@ -29,6 +191,151 @@ Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
 - `cnet_close` for one connection;
 - `cnet_client_poll` to advance I/O and invoke callbacks on the caller;
 - `cnet_client_stop` followed by `cnet_client_destroy` for shutdown.
+
+## Additive transport capabilities (#999 / #1000)
+
+These capabilities are present in the source tree, not a claim about a published
+2.1 SDK. Existing config layouts, `pipe://` semantics and owned APIs are preserved.
+
+| Header capability | Implemented surface |
+| --- | --- |
+| `CNET_DATAGRAM_EXTERNAL_PROGRESS_VERSION == 1` | `cnet_datagram_init_external`, `advance_external`, `route_external_completion`, `stop_external` in `<cnet/cnet.h>` |
+| `CNET_IPC_VERSION == 1` | Versioned listener, typed detached child, wait snapshot, stop/drain, `cnet_client_adopt_ipc` in `<cnet/ipc.h>`; `cnet_connect` accepts the local IPC URI |
+| `CNET_WEBSOCKET_TAGGED_SEND_VERSION == 1` | Versioned `cnet_websocket_init_tagged` policy, copied `send_tagged`, bounded `advance`, one logical-message terminal in `<cnet/websocket.h>` |
+
+### Borrowed UDP progress
+
+One fixed owner initializes the backend and each datagram, advances deferred
+rearms, observes one batch, then routes **every** completion to its consumer.
+Routing first matches the retained request `(slot,generation)`, then validates
+the local tag and endpoint. A matched malformed terminal is consumed and returns
+an error; finish routing the rest of the batch. Never route across backends.
+The bounded scan costs O(send_capacity + 1) per instance and completion.
+
+Budget one endpoint and at most `send_capacity + 1` active requests per UDP
+instance, plus the other consumers' budgets. Borrowed mode allocates no private
+completion batch. Full admission returns `ENOBUFS`; a deferred receive rearm can
+be retried with `advance_external` after host capacity recovers. Receive views
+remain borrowed only through their callback, including reentrant demand updates.
+
+`stop_external` cancels only that datagram's requests and never observes or
+closes the host backend. An already-observed, not-yet-routed terminal still owns
+its storage and callback obligation: `ENOENT` from cancel in this race is not
+permission to free it. Continue routing until `out_stopped` is true; actual
+errors are reported independently of that flag. Old `poll`/blocking `stop`
+return `ENOTSUP` in borrowed mode. See the executable
+[external UDP tests](tests/cnet_datagram_external_test.c).
+
+### Local IPC lifecycle
+
+The [public IPC header](include/cnet/ipc.h) defines every parameter and ownership
+result. A typical sequence, with error handling at each call, is:
+
+```c
+cnet_ipc_listener listener = {0};
+cnet_ipc_accepted child = {0};
+cnet_ipc_listener_config cfg = {
+    sizeof(cfg), CNET_IPC_VERSION, backend_kind, local_uri,
+    8, 16, 4096, 4096
+};
+int status = cnet_ipc_listener_init(&listener, &cfg);
+/* Each host turn: advance, detach available children, then snapshot wait sources.
+ * Transfer child ownership only after successful bounded queue publication. */
+status = cnet_ipc_listener_advance(&listener, 8, &events);
+status = cnet_ipc_listener_accept_detached(&listener, &child);
+/* On the destination client owner, after a successful detach: */
+status = cnet_client_adopt_ipc(client, &child, &observer, &connection);
+/* child is empty after every valid consuming attempt, including failure. */
+```
+
+The [IPC tests](tests/cnet_ipc_test.c) provide complete runnable connect/adopt,
+duplex send/receive, bounded wait, failure cleanup and two-owner examples.
+Windows accepts retain their OVERLAPPED/event in NativeIPC until completion;
+only the destination client first associates the child with IOCP. POSIX children
+are nonblocking Unix streams. Listener-owned pending plus ready children cannot
+exceed `child_capacity`; detached children require a separate host lane budget.
+Pipe buffer sizes are Windows OS hints; POSIX data-buffer budgets belong to the
+destination client. Nondefault TCP socket policy rejects IPC connect with `ENOTSUP`.
+
+`wait_sources` exposes borrowed pending Windows events or the POSIX readable
+listener fd, plus an immediate-work flag. Refresh after each mutation; unregister
+before events/fds can close. The host supplies its own command/stop wake and
+honors native wait limits. This API does not merge Windows events into IOCP or
+provide a hidden thread. Stop cancels pending accepts; advance drains them, and
+`out_stopped` determines when destroy is safe. Detached children survive stop.
+POSIX pathnames are never unlinked by the library, even on bind/listen failure;
+the caller must manage only paths it owns. IPC adds no authentication identity.
+
+### Tagged WebSocket output
+
+Opt in only with a writer whose `SALTS_OK` means complete local transport success.
+An asynchronous writer retains the frame and returns `WRITE_PENDING`, then calls
+`write_complete` exactly once at its authoritative terminal. Legacy adapters that
+return success after copying into a queue must keep the ordinary WS init path.
+
+`send_tagged` copies one complete validated message and reserves one terminal;
+it performs no write or callback. `advance(max_frames, &events)` drives bounded
+frame attempts, including control responses, and dispatches at most one logical
+terminal after admission has returned. One message buffer, one output frame and
+one terminal record stay bounded; busy output is retried, asynchronous output is
+never resubmitted. Final success requires all data fragments, not control writes.
+Close/error still settles the accepted tag once. Destroy remains busy until the
+tag is dispatched and native output borrows have drained. Graceful `close` returns
+`EBUSY` while a tag is active: keep advancing and retry under the adapter's close
+deadline. `transport_closed`
+must only be called after the adapter has established that drain.
+
+CHTTP's H1/H2 authoritative-terminal adapters remain a downstream integration.
+In particular, H2 stream backpressure must retain bounded stream DATA/credit while
+continuing connection reads and control-frame processing; do not pause the whole
+connection while waiting for a blocked WS write. HTTP policy does not enter CNet.
+
+Validation on Windows IOCP: Debug/ASan and Release each passed all 40 selected
+CNet/NativeIPC regression targets. In an x64 VS developer shell,
+the focused capability checks can be repeated with:
+
+```powershell
+cmake --build --preset win-dev-user --target cnet_datagram_external_test cnet_ipc_test cnet_websocket_tagged_test native_ipc_test
+ctest --preset win-dev-user -R '^(cnet_(datagram_external|ipc|websocket_tagged)|native_ipc)_test$' --output-on-failure
+```
+
+Linux epoll and explicit io_uring variants, macOS kqueue (GCC and AppleClang),
+Windows Release, and the six-platform SDK package passed
+[the cross-platform acceptance run](https://github.com/qigao/salts/actions/runs/37628231430).
+Android and iOS evidence is cross-compilation/packaging, not device execution.
+That preliminary package used 2.1.2; the additive release candidate is 2.2.0 and
+must be rebuilt from its own exact commit before publication. Existing CHTTP
+Windows Debug/ASan regression passed 93/93 tests against the installed SDK;
+this proves compatibility, not completion of the downstream tagged adapter.
+
+`cnet_transport_owner_benchmark` measures four independent duplex pairs on
+1/2/4 owners with a fixed total of 4096 measured 1024-byte messages per run.
+Each owner owns its backend and both ends of its assigned pairs. IPC rendezvous
+is performed before warmup, then the listener is stopped before payload timing;
+this measures established connections, not a central acceptor's saturation or
+handoff throughput. A separate dual-owner IPC test covers detached handoff.
+The benchmark uses 32 warmup exchanges and three independent lifecycle samples.
+Steady wall time spans the earliest owner start through the latest owner finish;
+CPU sums owner-thread usage. Windows also reports thread cycles because CPU time
+has coarse resolution. P95/P99 measure complete bidirectional pair exchanges,
+including byte validation. Setup and drain durations are reported separately.
+Zero loss is reported only after all expected receive bytes and send terminals
+are verified; timeout, corruption or rejected admission fails the measurement.
+Configured payload budgets exclude allocator/native metadata; `rss_at_ready` is
+a process RSS sample, not a peak or a hard memory limit. Owner count increases
+per-owner metadata and command capacity even though traffic is fixed.
+
+Run from the matching developer environment (the preset normally excludes the
+benchmark label, hence the explicit empty exclusion):
+
+```powershell
+cmake --build --preset win-release-user --target cnet_transport_owner_benchmark
+ctest --preset win-release-user -LE '^$' -R '^cnet_transport_owner_benchmark$' -V
+```
+
+Release preparation runs this same CTest workload on IOCP, epoll, io_uring and
+kqueue and retains its raw output in `io-benchmark-*` artifacts. No multicore
+speedup or production capacity is inferred from this loopback workload.
 
 ## Execution ownership and multicore composition
 
@@ -450,6 +757,13 @@ exports that target in CNet's public CMake link interface. The overlay packages
 GmSSL statically, so the Windows native SDK ships no private TLS-provider DLL
 beside `cnet.dll`.
 
+The pinned provider includes bounded encrypted TLS 1.3 handshake reassembly and
+variable-width ECDSA DER scalar decoding fixes (GmSSL 3.2.0 port revision 4).
+Rebuild the SDK with matching provider headers and libraries; the connection
+layout changed internally. `cnet_tls_handshake_framing_test` and
+`cnet_tls_signature_test` cover record boundaries, transcript progression,
+malformed records, and valid short-scalar CertificateVerify signatures.
+
 `cnet_connect()` accepts either a one-shot `cnet_tls_client_config` or a reusable
 `cnet_tls_client`; the two fields are mutually exclusive. NULL uses the platform
 trust store and the URI host as the verified identity. An explicit configuration
@@ -862,3 +1176,662 @@ requires a concrete consumer and paired evidence before it can change this bound
 
 Cross-owner work remains explicit and bounded. CNet never hides live connection migration,
 work-stealing, or an implicit worker-pool hop behind its public send/receive APIs.
+
+## IPC, WebSocket, and KCP evolution design
+
+Status: joint design, recorded 2026-10-07. The additive UDP, IPC and tagged WS
+engine capabilities are implemented as described above; the remaining adapter,
+platform, benchmark and SDK release gates below are not declared complete.
+`cnet_connect()` supports `ipc://`, but does not add `ws://` or `kcp://`.
+Current headers and executable tests remain the implementation authority.
+
+Prerequisite and governing progress contract:
+[Salts #999: UDP multi-owner composition and datagram external progress](https://github.com/qigao/salts/issues/999).
+Its datagram external APIs are present in the current headers and implementation.
+This section extends their owner/completion rules to IPC/WS/KCP; it does not
+claim that all platform, performance and release gates of #999 have passed.
+
+### Problem and current evidence
+
+FlowMQ currently admits only TCP/TLS and directly owns a CNet client/listener.
+Before it can add IPC, WS, and KCP, CNet must provide complete connection,
+ownership, backpressure, terminal, and shutdown contracts for each transport.
+Adding URI cases in FlowMQ alone would leave these contracts incomplete.
+
+| Path | Existing implementation | Remaining work for this design |
+| --- | --- | --- |
+| TCP/TLS | `cnet_client`, `cnet_listener`, retained sends, demand, owner-local callbacks | Preserve behavior and use as the byte-stream reference |
+| Pipe / IPC | Legacy `pipe://` remains unchanged; `ipc.h` adds typed detached listener/adoption and a distinct Unix-domain-socket path | Validate remaining POSIX platform gates and downstream consumption |
+| NativeIPC | `native_ipc.h`: bounded Windows accepts, host event snapshots and move-owned endpoints; POSIX FIFO open | Reuse rendezvous and terminal drain, not a new payload engine |
+| WS | `websocket.h`: framing/session engine, retained output and opt-in tagged logical-message terminals | Integrate authoritative terminals into HTTP adapters and validate H1/H2 backpressure |
+| KCP | `cnet_packet_endpoint`: bounded sessions, explicit admission, tagged terminals, timers, optional PSK/FEC | First compose #999 external progress; then add protocol deadlines and consumption/backpressure policy suitable for bounded upper-layer queues |
+
+Evidence locations: [client admission](src/cnet_client.c),
+[listener](src/cnet_listener.c), [URI parser](src/cnet_uri.c),
+[Pipe transport](src/cnet_transport_pipe.c),
+[NativeIPC contract](../native-io/include/salts/native_ipc.h),
+[POSIX IPC implementation](../native-io/src/native_ipc_posix.c),
+[WebSocket engine](src/cnet_websocket.c), and
+[packet endpoint](src/cnet_packet_endpoint.c).
+
+The current `cnet_listener` accepts TCP/VSOCK streams; it is not a named-pipe
+acceptor. The current POSIX NativeIPC server returns `SALTS_ENOTSUP`. Neither
+fact may be hidden behind a new URI alias. Existing behavior is covered by
+[API tests](tests/cnet_api_test.c), [URI tests](tests/cnet_uri_test.c),
+[WebSocket tests](tests/cnet_websocket_test.c), and
+[packet endpoint tests](tests/cnet_packet_endpoint_test.c).
+
+### Layering and alternatives
+
+Keep three existing composition boundaries:
+
+```text
+FlowMQ protocol / patterns / application acknowledgements
+  byte-stream adapter       binary-message adapter       message adapter
+  CNet TCP/TLS/IPC           CHTTP WS route/client        CNet packet endpoint
+                            CNet WebSocket engine        CNet KCP / security / FEC
+  NativeIO STREAM/PIPE      NativeIO STREAM via CNet     NativeIO DATAGRAM
+```
+
+NativeIPC owns named-pipe rendezvous; NativeIO owns payload I/O and native
+terminals; CNet owns session policy. CHTTP owns HTTP Upgrade, routing, header
+validation, subprotocol negotiation, and HTTP/2 Extended CONNECT. CNet must
+not depend on CHTTP. Adding a WS convenience facade in the future must preserve
+this dependency direction; it cannot make CNet parse HTTP or access CHTTP's
+private owner state.
+
+The target host-composed topology follows #999. This is not a claim that the
+current CHTTP public server exposes a borrowed-backend constructor:
+
+```text
+owner lane 0                        owner lane 1
+  NativeIO backend 0                  NativeIO backend 1
+    TCP/TLS client + WS sessions         TCP/TLS client + WS sessions
+    IPC established connections         IPC established connections
+    UDP datagrams + KCP endpoints        UDP datagrams + KCP endpoints
+  one host observe/route loop          one host observe/route loop
+```
+
+Each live instance stays on its final owner. A packet endpoint owns its datagram
+composition and sessions, but borrows the lane backend in external mode. Separate
+owners use separate backends. Do not create a worker pool, public shard-count
+knob, same-instance cross-thread poll, or transparent live migration. Existing
+owned-mode APIs remain available; a live object cannot switch modes in place.
+
+The chosen common contract is lifecycle, bounded ownership, ordered delivery,
+and explicit completion meaning. Keep byte streams and messages distinguishable.
+Use the existing CNet client, WS engine, and packet endpoint as state owners.
+A consumer may have a small fixed adapter table; it must not create a parallel
+connection table in CNet or pretend all existing handles are `cnet_connection`.
+
+Alternatives considered:
+
+- One universal `cnet_connect(uri)` plus a new transport runtime: convenient
+  spelling, but duplicates packet/WS owners and pulls HTTP policy into the wrong
+  layer. Do not introduce it for this work.
+- FlowMQ implementing pipes, WS framing, or KCP directly: duplicates lower-layer
+  lifecycle and failure handling. Complete reusable CNet contracts first.
+- Reinterpret POSIX `pipe://` as Unix sockets: breaks the established paired-FIFO
+  wire/rendezvous contract. Add IPC independently.
+- Shared-memory IPC: requires a separate synchronization, crash-recovery, and
+  mapping-lifetime design. It is outside this socket/pipe IPC change.
+
+### Common consumer contract
+
+| Concern | Required behavior |
+| --- | --- |
+| Owner | One non-overlapping progress owner per client/endpoint/session composition; no hidden worker, owner migration, or concurrent callback invocation |
+| Identity | Retain existing generation checks; asynchronous tags include enough session identity to reject stale completions after slot reuse |
+| Admission | Failure retains no new logical operation and produces no logical terminal; success commits exactly one later success/failure/cancellation terminal in the new terminal-capable adapters |
+| Input ownership | URI/configuration copied during successful admission; borrowed callback payload valid only until callback return; retain or copy before deferral |
+| Output ownership | Retained CNet slices follow their existing lease contract; WS owns its frozen frame until authoritative completion; KCP copies into bounded session storage |
+| Ordering | Per-session ordered byte/message delivery; no ordering promise across sessions |
+| Capacity | Separate hard limits for connections, pending accepts, logical sends, input/output bytes, and maximum message size; checked arithmetic before allocation |
+| Backpressure | Report explicit full/busy status without accepting a second copy; resume only when the owning resource becomes available |
+| Errors | Keep first concrete error and stage; distinguish invalid input, unsupported mode, size limit, capacity, timeout, cancellation, and peer close |
+| Shutdown | Stop admission, request close/cancel, drain native and logical terminals, publish terminal state, then release storage; timeout leaves the owner alive for continued progress |
+
+Do not retroactively change the existing CNet callback ABI to implement this
+contract. Add size/versioned options or new entry points where existing APIs do
+not provide a logical-send terminal. A close notification alone is not proof
+that retained buffers can be reclaimed.
+
+Successful completion must carry or document its strength:
+
+| Path | Successful send terminal proves | It does not prove |
+| --- | --- | --- |
+| TCP/TLS/IPC | The complete logical write reached its local transport terminal | Peer application consumption |
+| WS | Every data fragment of the logical message reached the underlying write terminal | Peer WS/application consumption |
+| KCP tagged send | Peer KCP acknowledged all segments of the logical message | Peer application consumption or persistence |
+
+Application acknowledgement, persistence, deduplication, and exactly-once
+processing remain above CNet. There is no automatic retry of application sends
+on a newly established session.
+
+### IPC design
+
+The additive `ipc://` byte-stream transport uses this platform mapping:
+Windows uses local byte-mode overlapped named pipes; POSIX uses pathname
+`AF_UNIX/SOCK_STREAM`. Preserve `pipe://` exactly. Abstract-namespace Unix
+sockets, descriptor passing, shared memory, and peer-credential policy are not
+part of the initial IPC contract.
+
+Use `ipc://name` on Windows and `ipc:///absolute/path` on POSIX. The endpoint
+name/path is copied and never sent to DNS. Validate the platform-specific
+length before native calls; reject truncation, query/fragment syntax, invalid
+names, and unsupported backend combinations. Windows mapping produces a local
+named-pipe name and does not accept a remote machine/UNC endpoint. POSIX requires
+an absolute pathname; there is no percent decoding or implicit directory creation.
+
+`cnet_connect()` now composes the IPC client path with a separate opaque
+`cnet_ipc_listener` and size/versioned configuration, preserving
+`cnet_listener_config`. The public `<cnet/ipc.h>` provides init, bounded advance,
+detached accept/adopt, host wait snapshots, stop and destroy. Executable
+client/server and two-owner examples are in `tests/cnet_ipc_test.c`.
+
+The listener owns a bounded number of pending accepts and accepted-but-not-yet-
+transferred children. A detached accept moves one child into a descriptor with
+no active I/O. Queue publication moves that descriptor to the destination owner;
+failed publication leaves it with the producer. Adoption consumes the descriptor
+on every valid consuming attempt, including capacity failure, matching the
+existing TCP detached-adoption contract. Failure closes the child exactly once;
+it is not retried using the emptied descriptor. Applications compose detached
+accept and client adoption explicitly. Transferred connections may outlive the
+listener. See the multicore contract below for credits and shutdown races.
+
+Windows composes the existing NativeIPC accept service and NativeIO PIPE
+attachment. Its accepted handles need a pipe-specific CNet adoption path and
+pipe-specific cleanup in every rejected command and terminal path; socket
+`closesocket` cleanup cannot be reused for these handles. POSIX uses NativeIO
+STREAM operations and the existing family-neutral CNet connect/adopt helpers.
+Socket options that have no IPC meaning must fail explicitly instead of being
+silently applied or ignored.
+
+The IPC listener remains caller-driven and creates no thread. Windows accept
+progress is observed through NativeIPC; POSIX accepts are nonblocking. The first
+release exposes nonblocking listener progress with explicit work counts and
+typed host wait snapshots. The existing external TCP accept API does not drive
+Windows pipe accepts; the host integrates their explicit event sources.
+
+Established IPC children use the selected CNet client's owned or borrowed
+backend; they never create a per-child backend. For a #999-style host, POSIX
+listener readiness must participate in the host wait and Windows NativeIPC
+accept readiness uses the explicit event snapshot and host wake source. A host
+must not add a second blocking wait to its data lane; it can keep rendezvous in
+a separate, explicit acceptor/control lane. Stopping an IPC listener or child never
+closes the lane backend or neighboring TCP/UDP endpoints.
+
+POSIX bind must not unlink an existing path, including a stale socket. Existing
+paths fail explicitly and remain untouched. The path lifecycle is caller-owned:
+close releases the socket but does not unlink its pathname; examples clean up
+their exclusively owned temporary directory after all endpoints close. This
+avoids deleting a replacement pathname during shutdown. Windows preserves the
+NativeIPC local-only accept policy and OS access checks; POSIX preserves directory
+permissions and the caller's umask. IPC is not automatically an authenticated
+FlowMQ identity.
+
+Listener stop cancels pending accepts and drains each authoritative terminal;
+destroy before quiescence returns busy. Configure a hard pending-accept bound
+and explicit pipe buffer limits. Listener capacity and active CNet connection
+capacity are separate budgets. No silent TCP fallback is permitted.
+
+### WS/WSS design
+
+Reuse `cnet_websocket`, including its role checks, masking, fragmentation,
+control frames, bounded reassembly, and close state. Do not add HTTP ownership
+to that engine. CHTTP's current client/server WS implementations already consume
+it; audit those public APIs for terminal visibility before adding another wrapper.
+The checked sibling checkout is `http-services`, with public headers under
+`http_client/include/http_client/` and `http_server/include/http_server/`.
+
+The WS engine now provides an additive, versioned
+tagged-send policy: reserve one bounded operation record before
+admitting its first fragment, record the message tag, and settle it exactly once
+after the final fragment's transport terminal. Initial tagged sends allow one
+logical message in flight and serialize fragments through the existing one-frame
+output slot; control writes never settle or reuse a data-message tag. Mixing
+legacy untagged data sends with a live tagged message is rejected explicitly.
+
+An asynchronous write callback returns `CNET_WEBSOCKET_WRITE_PENDING` only with
+configured retained output. The embedding transport reports the authoritative
+frame terminal through `cnet_websocket_write_complete()`. `SALTS_OK` from
+`cnet_websocket_send_binary()` alone remains admission, including a retained
+frame waiting behind backpressure; it cannot be reported as logical completion.
+Synchronous write completion must defer the new logical callback until the
+admitting operation has returned, so admission and terminal ownership do not
+race through reentrancy.
+
+Provide an explicit owner-local, bounded dispatch/advance operation for that
+deferred terminal; a later application send must not be required to release the
+previous operation. Adapters must report real asynchronous retention as pending:
+a CHTTP adapter that copies into an asynchronous transport buffer and returns
+`SALTS_OK` to the old engine cannot be used as evidence of a new tagged message's
+transport terminal. Update and test that handoff before enabling tagged WS sends.
+
+Retain a bounded copy or lease for the complete tagged input until all required
+fragments are encoded. Incoming events remain borrowed. When feed returns busy
+without consuming input, an H1 adapter retains that chunk and pauses that
+connection's new reads under its bounded receive contract. An H2 adapter retains
+bounded stream DATA/credit while continuing connection reads and control frames;
+it must not pause the whole connection for one blocked stream. Upgrade response bytes
+and following WS bytes must be handed off in order without loss or duplicate
+delivery. This is a CHTTP integration gate, not a new HTTP parser in CNet.
+
+Graceful close drains admitted data under an explicit deadline, sends/observes
+the WS close handshake, and then closes the transport. Abort or deadline expiry
+fails/cancels pending logical sends and drains native writes before releasing
+output storage. WSS continues to use the existing verified TLS policy. HTTP/2
+WS progress belongs to the HTTP stream owner; no adapter polls or closes the
+whole connection independently of sibling streams.
+
+In external mode, the host routes NativeIO completions to the owning CNet/CHTTP
+transport; that owner then feeds the WS engine or reports its retained write
+terminal. The WS engine does not claim native requests, observe a backend, or
+create its own completion registry. Close/heartbeat deadlines are advanced on
+the same lane and included in the host's minimum wait deadline where configured.
+
+### KCP design
+
+Use `cnet_packet_endpoint_init_ex()` with `CNET_PACKET_KCP` and a bounded terminal
+policy, then `cnet_packet_send_tagged()`. Preserve packet-session handles, peer
+admission, optional PSK/FEC, and owned-mode `cnet_packet_poll()` timer ownership. A new KCP
+thread, second peer table, or KCP-as-TCP handle is unnecessary. FlowMQ-facing
+URI parsing belongs to its eventual adapter; security keys and tuning parameters
+are structured configuration, never URI text.
+
+For external mode, complete #999's datagram constructor, bounded advance,
+completion routing, and stop/drain first. Then add versioned/additive packet
+endpoint operations for external initialization, advance, completion routing,
+next protocol deadline, and nonblocking stop with an independent quiescence
+result. Exact names/signatures remain design proposals. Both modes share packet,
+KCP, and shutdown state; external mode must reject the old blocking poll/stop
+entry points rather than observing the borrowed backend.
+
+Raw UDP has no protocol retransmission deadline and must not gain an empty
+timeout API. KCP does have retransmission, probing, and optional secure-handshake
+deadlines: expose their minimum from existing `cnet_kcp_check()` and
+`cnet_secure_kcp_check()` state, and advance due work without blocking. Specify
+clock units and wrap-safe conversion between the host clock and KCP's 32-bit
+millisecond clock. The host waits for the minimum across TCP/TLS, KCP, and other
+services, with a bounded amount of work per instance each turn.
+
+Only the composed datagram matches a native request. Follow #999 by matching
+active `(slot, generation)` in the correct backend before interpreting local
+`user_data`; foreign completions return unconsumed with zero events. Once matched,
+malformed completion contents remain consumed with an error. One error must not
+discard other completions already observed in the host batch. Protocol sessions
+are selected only after the correct datagram accepts the completion.
+
+Require message mode for the tagged contract. Validate maximum logical message
+size against configured message/segment limits before admission; preserve the
+existing per-send 127-new-segment limit and reject oversize messages. Do not
+silently split an application message into independently completed KCP messages.
+The upper protocol must choose an explicit fragmentation envelope if larger
+messages are required.
+
+Use fixed session, logical-send, segment, datagram, and receive-message budgets.
+Local queue pressure does not settle a message successfully or discard retained
+segments. Continue ACK/retransmission/handshake timers while application output
+is blocked. Packet receive callbacks currently deliver borrowed views without
+an application-demand return value; do not advertise pull backpressure that
+ does not exist. Before bounded FlowMQ integration, add explicit per-session
+receive credit/pause in CNet, retain complete messages within configured bounds,
+and verify that window/protocol progress continues without admitting unbounded
+application data. Capacity exhaustion must have a tested terminal/rejection
+policy, not silent message loss.
+
+The current KCP engine already has receive-window and message-size bounds; the
+gap is application delivery control, not a claim that existing KCP storage is
+unbounded. Define credit in complete messages, with the existing maximum message
+bytes remaining a separate hard bound. Zero credit retains messages inside
+bounded protocol storage and suppresses application delivery while continuing
+protocol control traffic. Apply the same rule through authenticated/FEC paths.
+
+Plain KCP and authenticated KCP remain explicit choices. Peer creation stays
+behind `on_admit`; authenticated mode must preserve its handshake checks and
+must not fall back to plaintext. ACK completion does not authorize reuse of a
+different session's generation or tag. Close/stop cancels unacknowledged logical
+sends, drains native UDP terminals, and delivers those logical terminals before
+the session CLOSED notification, as the existing endpoint contract requires.
+
+External stop follows OPEN -> STOPPING -> QUIESCENT -> DESTROYED. It suppresses
+new application receive delivery, cancels pending logical sends, and keeps
+advance/route callable while the host drains requests. Report the first concrete
+cancel/release error independently from `out_stopped`; neither timeout nor error
+authorizes freeing active requests. Destroy requires drained requests and callback
+borrows. The host alone closes/destroys the shared backend after all users drain.
+
+Follow #999's bounded request scan initially; do not add a second routing index
+without measurement. For D datagrams and send capacities S_i, reserve at least
+D UDP endpoints and sum(S_i + 1) UDP requests, plus the actual TCP/IPC and other
+service endpoint/request budgets. Check all sums/products for overflow. A bounded
+completion batch need not hold all in-flight requests.
+
+Multi-owner UDP does not imply same-port session routing. Preserve #999's
+explicit `reuse_port` platform policy; multiple ephemeral binds do not form a
+same-port group. KCP `(peer, conversation)` state must stay on its chosen owner;
+NAT rebinding and live reuseport-group changes are not transparent migration.
+If a consumer explicitly chooses an ingress owner, its cross-owner queues must
+be bounded and own their packets, and replies remain on the source socket owner.
+This is a separate topology, never an automatic fallback or UDP detached accept.
+
+### WS and IPC multicore design
+
+Status: IPC primitives are implemented; host/CHTTP composition and release gates
+remain as described below. The CHTTP server's fixed WS owner lanes already exist.
+Multicore here means parallel progress of distinct
+connections on distinct owner threads. One WS/IPC connection has one transport,
+protocol, and callback owner for its entire admitted lifetime. CPU pinning is an
+optional host scheduling policy, not a requirement or a CNet worker API.
+
+#### Existing capabilities and remaining boundaries
+
+| Area | Current evidence | Design action |
+| --- | --- | --- |
+| CNet stream placement | `cnet_listener_accept_detached()`, `cnet_client_adopt_accepted()`, and `cnet_client_adopt_accepted_tls()` in [cnet.h](include/cnet/cnet.h); TLS state starts on the final owner | Reuse unchanged for WS/WSS connection admission |
+| CHTTP WS server | Versioned `chttp_server_execution_options.owner_count`, fixed connection ranges, bounded owner admission queues, and copied WS commands | Reuse its configured lanes and thread-safe captured-session entry points; no second WS worker pool |
+| CHTTP WS client | `chttp_websocket_client` and H2 pool are single-owner, internally driven facades | Independent clients/pools can live on independent threads; sharing one host loop additionally needs a nonblocking CHTTP adapter |
+| CNet IPC | Typed listener, detached IPC descriptor, adoption and wait snapshots exist in `ipc.h` | Complete remaining platform and consumer gates before publishing an SDK |
+| External progress | CNet TCP and datagram external APIs exist | Apply the same fixed-owner rules to IPC; KCP timer/credit integration remains separate |
+
+CHTTP evidence in the sibling checkout:
+[server public contracts](../../http-services/http_server/include/http_server/http.h),
+[owner admission](../../http-services/http_server/src/chttp_server.c),
+[WS command routing](../../http-services/http_server/src/chttp_websocket_server.c),
+[owner topology tests](../../http-services/http_server/tests/chttp_server_owner_topology_test.c),
+and [WS generation tests](../../http-services/http_common/tests/integration/chttp_websocket_test.c).
+These tests are source evidence here, not a claim that they were run for this
+documentation change.
+
+There are two explicit hosting modes. Existing CHTTP owns its configured server
+threads and pollers; callers use its public server/session APIs. A future
+application-hosted CHTTP adapter borrows the application's lane backend and
+exposes nonblocking advance/route/deadline/stop operations. It must be additive
+and complete, not an assumption that passing `cnet_client_init_external()` to
+today's public CHTTP server changes its execution model. Do not block a shared
+lane inside the current WS client/pool facade.
+
+#### Topology and placement
+
+```text
+WS TCP listener / IPC rendezvous owner (explicit host control lane)
+       | accept terminal; no child payload I/O or protocol state yet
+       | select READY lane with available connection credit
+       +-- move-owned admission queue --> owner 0 thread
+       |                                  NativeIO backend 0
+       |                                  CNet client 0
+       |                                  TLS/HTTP/WS or IPC sessions
+       +-- move-owned admission queue --> owner 1 thread
+                                          NativeIO backend 1
+                                          CNet client 1
+                                          TLS/HTTP/WS or IPC sessions
+
+application producers -- bounded copied commands + wake --> owning lane
+```
+
+The host chooses N and per-lane capacities before startup. Each thread creates
+its backend and owner-local state on that final thread, publishes READY only
+after successful initialization, and stays alive through its drain. If one lane
+fails startup, stop admission and drain already-created lanes; do not silently
+reduce N. N=1 preserves the single-owner topology. CNet creates no threads; CHTTP
+may create threads only under its existing explicit execution policy.
+
+Use the existing CHTTP round-robin-with-capacity-leases policy for WS. Use the
+same policy in the host IPC accept dispatcher: scan at most N READY lanes and
+reserve one destination connection credit, then publish to its bounded queue.
+Queued, adopting, active, and closing connections all consume that credit until
+failure cleanup or terminal drain releases it. Queue fullness or a destination
+that has stopped admission closes/rejects the still-detached child and releases
+the reservation; it never silently grows a backlog. A different application
+placement policy can be selected before admission, without migrating live peers.
+
+One listener owner per address is the initial portable IPC topology. POSIX does
+not bind N listeners to the same pathname; Windows uses bounded pipe instances
+under one explicit rendezvous owner. The listener may share a data lane only
+when its readiness participates in that lane's wait. Otherwise the host explicitly
+provides a control lane; this is not a hidden accept thread or a fallback. The
+acceptor's capacity/CPU is a separate measurable limit; established payloads
+never pass back through it.
+
+Outbound WS/IPC connections choose their lane before connect. WSS creates TLS
+state there before the HTTP handshake. For WS servers, detached TCP adoption
+precedes TLS, HTTP Upgrade, and WS engine creation; no live handshake or parser
+state crosses owners. With H2, the TCP/TLS connection, H2 flow-control and header
+state, and all WS streams remain on the same owner. To use more I/O cores, create
+multiple physical connections; a single large stream is not split across owners.
+
+#### Detached IPC transfer and native completion ownership
+
+Use the IPC-specific move-owned `cnet_ipc_accepted` descriptor, separate from the TCP-only
+`cnet_accepted_stream`. It identifies a Windows pipe or POSIX Unix stream,
+owns exactly one native resource, and contains no outstanding request, callback
+borrow, attached data endpoint, or protocol state. CNet API roles:
+
+| Operation | Required result and ownership |
+| --- | --- |
+| IPC listener detached accept | Success moves one completed child into an empty descriptor; no-ready reports an explicit non-success without publishing a child |
+| IPC descriptor close | Closes only a still-detached child and empties the descriptor; repeated close has a documented result |
+| IPC client adopt | Runs only on the destination client's owner; consumes a valid descriptor on every consuming attempt, closing on failure and emptying the source |
+| IPC listener advance/stop | Nonblocking, bounded; retains pending native accept state until its terminal; stop completion is independent of the first concrete error |
+
+These operations are declared in `<cnet/ipc.h>`. Keep the descriptor's
+platform identity private, validate its kind, and use the matching close path.
+Never cast a pipe descriptor to `cnet_accepted_stream` or use socket cleanup for
+a pipe. Keep existing unversioned public structs unchanged.
+
+The ownership transitions are:
+
+```text
+ACCEPT_PENDING -> DETACHED -> QUEUED -> ADOPTING -> ACTIVE -> CLOSING -> CLOSED
+      |              |          |          |
+      +-- cancel     +-- reject +-- stop   +-- fail
+          then terminal       each ends in exactly one native close
+```
+
+ACCEPT_PENDING belongs to the rendezvous owner; no transfer is legal yet.
+DETACHED belongs to the producer; successful queue publication empties its local
+descriptor and commits QUEUED ownership. Failed publication leaves the descriptor
+untouched with the producer. The consumer moves it out and empties the slot before
+adoption. Once publication succeeds, an acceptor must not close its old copy even
+if wake fails. Destination shutdown drains queued children without adopting them.
+The connection reservation follows the same ownership transfer and is released
+exactly once, including a stop/adopt race.
+
+On Windows, the existing NativeIPC accept service uses event-backed overlapped
+accepts. Its [terminal dispatcher](../native-io/src/native_ipc_windows.c) releases
+the completed accept slot before passing a move-owned pipe endpoint to its callback.
+Build detached transfer at that terminal boundary. Do not associate a pending
+child with the acceptor's IOCP and later try to attach it to another lane: a handle
+remains associated with its completion port until closed
+([Microsoft CreateIoCompletionPort contract](https://learn.microsoft.com/en-us/windows/win32/api/ioapiset/nf-ioapiset-createiocompletionport)).
+The destination performs the first data-backend attachment after accept completion.
+The accept `OVERLAPPED` and event stay with NativeIPC until the native terminal;
+an early connected notification never authorizes their reuse
+([Microsoft overlapped pipe example](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-server-using-overlapped-i-o)).
+
+NativeIPC now exposes `cmeta_ipc_pipe_server_wait_sources`; CNet exposes the typed
+`cnet_ipc_listener_wait_sources` snapshot. Hosts integrate these borrowed events
+with their own control wake and native wait limits. Preserve event-based detached accepts for central placement;
+any future accept-on-IOCP variant must select the final owner before association
+and keep that handle there. It is a distinct, explicit admission topology.
+This does not introduce helper threads, arbitrary timer polling or an event-to-IOCP bridge.
+
+On POSIX, accept a nonblocking Unix stream, finish listener-owned accept work,
+and transfer it before attaching it to the destination NativeIO backend. The
+listener pathname remains under the previously defined caller-owned lifecycle.
+For every platform, endpoints and `(slot, generation)` request identities are
+backend-local: the host routes completions only within that backend, matches
+active identity before interpreting local tags, and continues the remainder of
+an observed batch after a consumed error, following #999.
+
+#### Cross-owner sends, application work, and backpressure
+
+Reuse CHTTP's `chttp_server_websocket_session_capture()` and
+`chttp_server_websocket_send_*()` for server WS cross-thread submission. A captured
+session does not retain its server. Direct `chttp_websocket*` and CNet/WS engine
+calls remain owner-only. The existing implementation may admit a stale copied
+command and reject it when the owner checks its generation; its integration test
+explicitly exercises that behavior. Preserve that admission contract.
+
+For IPC, a host routing token carries runtime lifetime/epoch, owner identity,
+and the owner-local connection slot/generation. It is not a live object pointer
+or permission to invoke `cnet_send_*()` from another thread. An H2 WS token also
+identifies its stream within the generation-checked physical connection. Reuse
+the existing server-global WS session identity instead of wrapping it in another
+mutable routing table. Producers must finish before the owning runtime is freed;
+an epoch cannot make a freed server pointer safe.
+
+Use bounded MPSC command admission and one consumer per lane. Reuse the existing
+CHTTP copied-command queues and Salts queue/synchronization primitives as appropriate;
+do not require a new lock-free queue. Reserve entry and byte credits before copy
+or retain, release them on rejected publication, and transfer them on success.
+Copied input is independent after admission. A retained immutable payload must
+hold a real lease whose allocator/pool survives every final release. Callback
+views and mutable WS output buffers cannot be enqueued as borrowed pointers.
+
+Queue admission success means ownership transfer only. For the proposed tagged
+adapter, a command invalidated after queue admission still receives exactly one
+failure terminal on the target owner; reserve terminal storage with the command.
+Queue admission failure receives no terminal. Underlying CNet/WS transport
+admission is a later step: busy leaves one bounded queued operation for retry,
+with no duplicate send. Terminal bytes/strength follow the earlier common
+contract. Keep this additive; do not change legacy CHTTP send callbacks implicitly.
+
+Publication precedes wake. Use the owning backend/client's existing concurrent
+wake capability and ensure the consumer checks published work before sleeping.
+If wake fails after publication, the command remains accepted; report the
+infrastructure error without returning a retryable admission failure or freeing
+queue-owned data. The host must restore progress or execute coordinated drain
+before destroying the lane. Keep queue and backend lifetimes protected against
+concurrent publishers. Test the publish/wait transition for lost wakeups.
+
+Serialize commands by destination queue publication order; racing producers
+have no predetermined relative order. Close is an ordered command that ends
+later send admission. Reserve bounded control capacity or an explicit stop flag
+plus wake so full data queues cannot block shutdown. Bound work per connection
+and per loop turn; a slow WS/IPC connection must not block unrelated connections
+behind an indefinitely retried head entry. Preserve per-connection FIFO while
+scheduling other runnable connections.
+
+Broadcast is per-recipient admission with a bounded result for each recipient,
+not an implicit atomic all-or-nothing send. Share only immutable retained data;
+account for every recipient's queue/terminal entry and total retained bytes.
+Do not let one slow recipient pin unbounded producer storage. Define application
+policy for individual backpressure rather than dropping messages silently.
+
+CPU-heavy application work may be sent to a host-supplied bounded executor.
+Jobs contain copied/retained input and a generation-checked reply token; workers
+return owned results through the lane queue and never mutate WS/TLS/IPC state.
+If replies require input order, include a sequence and bound the reorder window;
+otherwise complete in the application's documented order. Disconnect invalidates
+reply delivery, not the worker's obligation to release its input/result leases.
+
+#### Capacity, stop, and validation gates
+
+For lane i configure connection budget C_i, detached queue H_i, command entries
+Q_i, and queued/retained byte budget B_i. Let R be the rendezvous accept bound.
+Maintain `reserved_i + queued_i + adopting_i + active_i + closing_i <= C_i`
+with credits, counting a selected but not-yet-published child as reserved, and
+`queued_i <= H_i`; total pending native accepts never exceeds R. Application job
+and terminal budgets are additional explicit bounds. Charge transient producer
+copies to admission credit; do not multiply an unaccounted max-sized allocation
+by an unbounded number of producers. All budget arithmetic is checked.
+
+Total connection capacity is sum(C_i), not N copies of a global limit. Preserve
+CHTTP's existing partitioned connection ranges; report separately which existing
+command/buffer budgets are per lane. Backend endpoint/request budgets include
+the actual TCP/IPC/UDP users on that lane and handshake/close work. Closing a
+connection does not release its credit before native and logical terminals drain.
+Placement costs at most O(N) per new connection; steady-state owner routing is
+fixed and does not rescan N owners for every frame or write.
+
+Stop is coordinated by the host: close new connection and command admission;
+quiesce producers; cancel pending accepts and collect their terminals; move/close
+queued descriptors on their current owners; cancel or deadline-drain active
+protocol sessions; continue native completion routing and terminal delivery;
+release leases; then destroy clients, backends, queues, and join owned threads.
+Keep the rendezvous and destination lanes alive until all in-flight handoffs
+settle. A timeout or concrete error leaves needed state available for continued
+drain; never force-free it. Stop one lane without stopping peers on other lanes.
+Application jobs that finish after command admission closes release rejected
+results on their documented allocator owner; shutdown must not wait for a result
+that can only enter a closed queue. Already-admitted operation terminals use their
+reserved completion path through drain, independent of new-send admission.
+
+Owner-count changes apply only to a stopped runtime in the initial design.
+Rolling deployment uses a new runtime and explicitly drains the old one. There
+is no owner-index remapping or replay of in-flight sends during resize/restart.
+
+| Gate | Required evidence before advertising support |
+| --- | --- |
+| Real WS multicore | Two physical H1 WS/WSS connections execute on distinct owners; each connection's TLS/HTTP/WS callbacks stay on one owner; H2 streams stay together while two H2 connections can use two owners |
+| Real IPC multicore | Windows named-pipe and POSIX Unix-stream duplex sessions run on two final owners; no data I/O occurs on the acceptor after transfer; IOCP association happens only on the final owner |
+| Handoff | Empty/full queues, failed startup, adoption failure, stop after native completion but before queue publication, stop after publication, pending accept cancellation, and exactly one native close/credit release |
+| Commands | Multiple producers, per-connection ordering, stale slots/runtime lifetimes/H2 streams, full byte and entry limits, disconnect after admission, tagged one-terminal behavior, publish/wake races, and a slow peer alongside a runnable peer |
+| Drain | Stop one lane while others continue; partial send and WS close/control interleaving; outstanding application jobs and retained buffers; observed-but-unrouted completions; retryable timeout with no early destroy |
+| Platforms | Formal Windows IOCP, Linux epoll/io_uring, and macOS kqueue tests; unsupported capabilities fail explicitly; C/C++ header and existing TCP/TLS/Pipe/CHTTP regression suites |
+
+Extend the existing CHTTP topology/WS integration tests and CNet/NativeIPC tests,
+not source-marker checks. Add sanitizer coverage appropriate to memory and
+cross-thread lifetime behavior. For performance, extend the existing
+`chttp_server_ws_owner_benchmark` and add a formal IPC benchmark: compare 1/2/4
+owners with equal total connections, messages, byte budgets, and payload sizes;
+report per-owner CPU, throughput, P95/P99, queue rejection/high-water marks, memory,
+and drain time. Measure connection/handshake churn separately from established
+payload traffic. Record machine/core placement and run variance; no linear-scaling
+claim follows merely from adding threads.
+
+**HIGH / design risks:** transferring a pending/already-associated pipe handle,
+double ownership after handoff, stale command delivery, premature backend/pool
+destruction, and confusing queue admission with transport completion.
+**MED / design risks:** centralized accept saturation, mailbox contention,
+unfair retry scheduling, and a single physical H2 connection limiting I/O parallelism.
+The chosen fixed-owner design bounds these responsibilities; it does not remove
+the need for the executable gates above.
+
+### Implementation sequence, validation, and compatibility
+
+1. Complete #999's datagram external APIs and formal mixed UDP/TCP ownership,
+   completion routing, and shutdown tests. Publish an explicit SDK capability;
+   existing Salts 2.1 APIs do not establish that capability.
+   This is a dependency for mixed UDP/KCP hosting; WS and IPC work can reuse the
+   existing TCP external-progress contract without waiting for UDP implementation.
+2. Complete IPC client/listener/adoption as one usable feature, including Windows
+   and POSIX paths, ownership cleanup, examples, public C/C++ headers, and tests.
+   Track nonblocking rendezvous and full host-wait integration separately.
+3. Add WS logical-message terminals and their lifecycle tests, then verify CHTTP
+   client/server terminal propagation, upgrade leftovers, and WSS/H2 ownership.
+4. Compose external KCP progress/deadlines on #999 and add bounded receive-credit
+   control, preserving existing tagged send and security/FEC behavior. Verify
+   slow consumers, host fairness, and timer progress together.
+5. Only after these gates, add FlowMQ adapters using its existing protocol and
+   pattern state. Define binary-message framing and maximum-size policy there;
+   keep the current TCP/TLS path intact.
+
+| Gate | Required executable coverage |
+| --- | --- |
+| IPC | Real client/server duplex bytes; multiple clients; missing/busy endpoint; full listener/client; invalid/long names; pending-accept stop; adoption failure; partial writes; stale handle; ordinary and replaced pathname preservation; Windows IOCP and POSIX supported backends |
+| WS | Tagged complete/fragmented messages; synchronous/asynchronous transport; busy retry without duplicate admission; control/data interleaving; partial/failing transport writes; close/abort with retained output; exactly one terminal; real CHTTP H1/WSS/H2 handoff |
+| KCP | Tagged ACK completion; bounded slow receiver; loss/reordering/retransmission; full session/send/receive budgets; maximum message and one over; timer progress under pressure; close/cancel; stale generations; explicit PSK/FEC regressions |
+| Shared | First-error propagation; no terminal after admission failure; no resource release before drain; callback reentrancy rejection; C++ header compilation; existing TCP/TLS/Pipe tests unchanged |
+| #999 composition | Multiple UDP instances plus TCP/IPC on one backend; local user_data collisions; foreign/duplicate/stale requests; matched malformed completion followed by valid terminals in the same batch; observed-but-not-routed stop; cancellation races; neighbor survival after stop; actual dual-owner callback affinity |
+| External protocol progress | KCP deadlines expire with no UDP input; zero receive credit still permits bounded ACK/probe progress; WS/control and TCP work are not starved; borrowed mode never observes or destroys the host backend |
+
+Use the current user presets and CTest registrations, starting with affected
+formal suites and then neighboring transport/lifecycle suites. Windows-only
+results cannot certify POSIX IPC; unexecuted platform and integration gates must
+be reported as such. Performance improvements require separate measurements.
+
+These changes are additive. Do not resize unversioned public structs or change
+existing URI, error, send, or stop semantics. Implement each complete feature
+with tests before exporting its entry points; no placeholder public APIs.
+The consumer migration is opt-in. Rollback removes new adapter selection while
+leaving existing TCP/TLS/Pipe/WS/KCP APIs intact; drain active new sessions before
+changing SDK/runtime versions. There is no data-format migration in this CNet
+design and no new external dependency is required by the selected approach.
+
+Risk classification: **HIGH** for wrong native-handle cleanup, borrowed payload
+retention, incorrect logical terminals, or premature destruction; **HIGH** for
+an unbounded KCP receive path under a stalled consumer; **MED** for the additional
+listener progress surface and cross-platform integration burden. The ownership
+and validation gates above are required before FlowMQ can advertise support.

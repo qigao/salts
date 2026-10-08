@@ -50,6 +50,21 @@ typedef struct cnet_websocket_impl {
   bool callback_active;
   bool write_active;
   bool output_async_pending;
+  cnet_websocket_tagged_policy tagged_policy;
+  uint8_t *tagged_data;
+  size_t tagged_size;
+  size_t tagged_offset;
+  size_t tagged_frame_size;
+  uint64_t tagged_tag;
+  cnet_websocket_message_type tagged_type;
+  int tagged_status;
+  bool tagged_active;
+  bool tagged_ready;
+  bool tagged_emitting;
+  bool output_tagged;
+  bool tagged_frame_final;
+  bool advance_active;
+  size_t advance_write_budget;
 } cnet_websocket_impl;
 
 static cnet_websocket_impl *cnet_websocket_get(cnet_websocket *websocket) {
@@ -152,18 +167,37 @@ static void cnet_websocket_emit_event(cnet_websocket_impl *impl, cnet_websocket_
   impl->callback_active = false;
 }
 
+static void cnet_websocket_tagged_frame_terminal(cnet_websocket_impl *impl, int status) {
+  if (!impl->output_tagged) return;
+  impl->output_tagged = false;
+  if (!impl->tagged_active || impl->tagged_ready) return;
+  if (status != SALTS_OK) {
+    impl->tagged_status = status;
+    impl->tagged_ready = true;
+  } else {
+    impl->tagged_offset += impl->tagged_frame_size;
+    if (impl->tagged_frame_final) impl->tagged_ready = true;
+  }
+}
+
 static int cnet_websocket_write_output(cnet_websocket_impl *impl) {
   int status;
   if (impl->output_size == 0u) return SALTS_OK;
   if (impl->output_async_pending) return SALTS_EBUSY;
+  if (impl->advance_active) {
+    if (impl->advance_write_budget == 0u) return SALTS_EBUSY;
+    --impl->advance_write_budget;
+  }
   if (impl->output_buffer != NULL) mem_set_used(impl->output_buffer, impl->output_size);
   impl->write_active = true;
   status = impl->write(impl->user, impl->output, impl->output_size);
   impl->write_active = false;
   if (status == SALTS_OK) {
+    cnet_websocket_tagged_frame_terminal(impl, SALTS_OK);
     impl->output_size = 0u;
   } else if (status == CNET_WEBSOCKET_WRITE_PENDING) {
     if (impl->output_buffer == NULL) {
+      cnet_websocket_tagged_frame_terminal(impl, SALTS_EPROTO);
       impl->output_size = 0u;
       cnet_websocket_record_error(impl, SALTS_EPROTO);
       impl->state = CNET_WEBSOCKET_FAILED;
@@ -171,6 +205,7 @@ static int cnet_websocket_write_output(cnet_websocket_impl *impl) {
     }
     impl->output_async_pending = true;
   } else if (status != SALTS_EBUSY) {
+    cnet_websocket_tagged_frame_terminal(impl, status);
     impl->output_size = 0u;
     cnet_websocket_record_error(impl, status);
     impl->state = CNET_WEBSOCKET_FAILED;
@@ -206,6 +241,7 @@ static int cnet_websocket_emit_frame(cnet_websocket_impl *impl, uint8_t opcode, 
     if (status != WS_PARSE_OK) return SALTS_EPROTO;
   }
   impl->output_size = header_size + payload_size;
+  impl->output_tagged = impl->tagged_emitting;
   status = cnet_websocket_write_output(impl);
   return status == SALTS_EBUSY || status == CNET_WEBSOCKET_WRITE_PENDING ? SALTS_OK : status;
 }
@@ -440,16 +476,45 @@ int cnet_websocket_init(cnet_websocket *websocket, const cnet_websocket_config *
   return SALTS_OK;
 }
 
+int cnet_websocket_init_tagged(cnet_websocket *websocket, const cnet_websocket_config *config,
+                                const cnet_websocket_tagged_policy *policy) {
+  cnet_websocket_impl *impl;
+  size_t remaining;
+  int status;
+  if (config == NULL || policy == NULL || policy->size != sizeof(*policy) ||
+      policy->version != CNET_WEBSOCKET_TAGGED_SEND_VERSION || policy->on_send == NULL ||
+      policy->fragment_bytes == 0u || policy->fragment_bytes > config->max_frame_bytes)
+    return SALTS_EINVAL;
+  /* Include both receive and send message buffers in the aggregate budget. */
+  remaining = SIZE_MAX - CNET_WEBSOCKET_MAX_HEADER_BYTES;
+  if (config->max_frame_bytes > remaining) return SALTS_ERANGE;
+  remaining -= config->max_frame_bytes;
+  if (config->max_buffered_input_bytes > remaining) return SALTS_ERANGE;
+  remaining -= config->max_buffered_input_bytes;
+  if (config->max_message_bytes > remaining / 2u) return SALTS_ERANGE;
+  status = cnet_websocket_init(websocket, config);
+  if (status != SALTS_OK) return status;
+  impl = cnet_websocket_get(websocket);
+  impl->tagged_data = (uint8_t *)malloc(config->max_message_bytes);
+  if (impl->tagged_data == NULL) {
+    (void)cnet_websocket_destroy(websocket);
+    return SALTS_ENOMEM;
+  }
+  impl->tagged_policy = *policy;
+  return SALTS_OK;
+}
+
 int cnet_websocket_destroy(cnet_websocket *websocket) {
   cnet_websocket_impl *impl;
   if (websocket == NULL) return SALTS_EINVAL;
   impl = cnet_websocket_get(websocket);
   if (impl == NULL) return SALTS_OK;
   if (impl->operation_active || impl->callback_active || impl->write_active ||
-      impl->output_async_pending)
+      impl->output_async_pending || impl->tagged_active)
     return SALTS_EBUSY;
   if (impl->output_buffer != NULL) mem_buffer_release(impl->output_buffer);
   else free(impl->output);
+  free(impl->tagged_data);
   free(impl->message);
   free(impl->input);
   free(impl);
@@ -530,6 +595,7 @@ int cnet_websocket_write_complete(cnet_websocket *websocket, size_t bytes, int s
   impl->operation_active = true;
   impl->output_async_pending = false;
   if (status != SALTS_OK) {
+    cnet_websocket_tagged_frame_terminal(impl, status);
     impl->output_size = 0u;
     cnet_websocket_record_error(impl, status);
     impl->state = CNET_WEBSOCKET_FAILED;
@@ -537,6 +603,7 @@ int cnet_websocket_write_complete(cnet_websocket *websocket, size_t bytes, int s
     return status;
   }
   if (bytes != impl->output_size) {
+    cnet_websocket_tagged_frame_terminal(impl, SALTS_EPROTO);
     impl->output_size = 0u;
     cnet_websocket_record_error(impl, SALTS_EPROTO);
     impl->state = CNET_WEBSOCKET_FAILED;
@@ -544,6 +611,7 @@ int cnet_websocket_write_complete(cnet_websocket *websocket, size_t bytes, int s
     return SALTS_EPROTO;
   }
 
+  cnet_websocket_tagged_frame_terminal(impl, SALTS_OK);
   impl->output_size = 0u;
   if (impl->sent_close && impl->received_close && impl->state == CNET_WEBSOCKET_CLOSING)
     impl->state = CNET_WEBSOCKET_CLOSED;
@@ -559,6 +627,110 @@ static int cnet_websocket_send_frame(cnet_websocket_impl *impl, uint8_t opcode, 
     return SALTS_EMSGSIZE;
   if (data == NULL && size != 0u) return SALTS_EINVAL;
   return cnet_websocket_emit_frame(impl, opcode, true, (const uint8_t *)data, size);
+}
+
+int cnet_websocket_send_tagged(cnet_websocket *websocket,
+                                cnet_websocket_message_type message_type,
+                                const void *data, size_t size, uint64_t tag) {
+  cnet_websocket_impl *impl = cnet_websocket_get(websocket);
+  if (impl == NULL || (data == NULL && size != 0u) ||
+      (message_type != CNET_WEBSOCKET_MESSAGE_TEXT &&
+       message_type != CNET_WEBSOCKET_MESSAGE_BINARY)) return SALTS_EINVAL;
+  if (impl->tagged_data == NULL) return SALTS_ENOTSUP;
+  if (impl->write_active || (impl->operation_active && !impl->callback_active)) return SALTS_EBUSY;
+  if (impl->state != CNET_WEBSOCKET_OPEN) return SALTS_ESHUTDOWN;
+  if (impl->tagged_active || impl->output_size != 0u ||
+      impl->outbound_message_type != CNET_WEBSOCKET_MESSAGE_NONE) return SALTS_EBUSY;
+  if (size > impl->max_message_bytes) return SALTS_EMSGSIZE;
+  if (message_type == CNET_WEBSOCKET_MESSAGE_TEXT &&
+      !cnet_websocket_utf8_valid((const uint8_t *)data, size)) return SALTS_ECHARSET;
+  if (size != 0u) memcpy(impl->tagged_data, data, size);
+  impl->tagged_size = size;
+  impl->tagged_offset = 0u;
+  impl->tagged_tag = tag;
+  impl->tagged_type = message_type;
+  impl->tagged_status = SALTS_OK;
+  impl->tagged_ready = false;
+  impl->tagged_active = true;
+  return SALTS_OK;
+}
+
+static void cnet_websocket_tagged_check_close(cnet_websocket_impl *impl) {
+  if (!impl->tagged_active || impl->tagged_ready || impl->state == CNET_WEBSOCKET_OPEN) return;
+  impl->tagged_status = impl->last_error != SALTS_OK ? impl->last_error : SALTS_ECANCELED;
+  impl->tagged_ready = true;
+  /* A rejected frame owns no transport borrow. Pending native writes remain
+   * frozen until their authoritative terminal, even after protocol failure. */
+  if (impl->output_tagged && !impl->output_async_pending) {
+    impl->output_tagged = false;
+    impl->output_size = 0u;
+  }
+}
+
+int cnet_websocket_advance(cnet_websocket *websocket, size_t max_frames, size_t *out_events) {
+  cnet_websocket_impl *impl = cnet_websocket_get(websocket);
+  int status = SALTS_OK;
+  if (out_events != NULL) *out_events = 0u;
+  if (impl == NULL || out_events == NULL || max_frames == 0u) return SALTS_EINVAL;
+  if (impl->tagged_data == NULL) return SALTS_ENOTSUP;
+  if (impl->operation_active || impl->callback_active || impl->write_active) return SALTS_EBUSY;
+  impl->operation_active = true;
+  impl->advance_active = true;
+  impl->advance_write_budget = max_frames;
+  cnet_websocket_tagged_check_close(impl);
+  for (size_t frame = 0u; frame < max_frames && !impl->output_async_pending; ++frame) {
+    if (impl->state == CNET_WEBSOCKET_FAILED || impl->state == CNET_WEBSOCKET_CLOSED) break;
+    if (impl->output_size != 0u) {
+      status = cnet_websocket_write_output(impl);
+      if (status == SALTS_EBUSY || status == CNET_WEBSOCKET_WRITE_PENDING) {
+        status = SALTS_OK;
+        break;
+      }
+      if (status != SALTS_OK) break;
+      if (impl->sent_close && impl->received_close) impl->state = CNET_WEBSOCKET_CLOSED;
+      continue;
+    }
+    /* Give already-buffered control/input work a chance between data frames. */
+    status = cnet_websocket_process_input(impl);
+    if (status != SALTS_OK) break;
+    cnet_websocket_tagged_check_close(impl);
+    if (impl->output_size != 0u) continue;
+    if (impl->state != CNET_WEBSOCKET_OPEN || !impl->tagged_active || impl->tagged_ready) break;
+    {
+      const size_t remaining = impl->tagged_size - impl->tagged_offset;
+      const size_t size = remaining < impl->tagged_policy.fragment_bytes
+                              ? remaining : impl->tagged_policy.fragment_bytes;
+      const uint8_t opcode = impl->tagged_offset != 0u ? WS_OPCODE_CONTINUATION
+          : impl->tagged_type == CNET_WEBSOCKET_MESSAGE_TEXT ? WS_OPCODE_TEXT : WS_OPCODE_BINARY;
+      impl->tagged_frame_size = size;
+      impl->tagged_frame_final = size == remaining;
+      impl->tagged_emitting = true;
+      status = cnet_websocket_emit_frame(impl, opcode, impl->tagged_frame_final,
+                                          impl->tagged_data + impl->tagged_offset, size);
+      impl->tagged_emitting = false;
+      if (status != SALTS_OK) {
+        impl->tagged_status = status;
+        impl->tagged_ready = true;
+        break;
+      }
+      if (impl->output_size != 0u) break;
+    }
+  }
+  cnet_websocket_tagged_check_close(impl);
+  if (impl->tagged_active && impl->tagged_ready && !impl->output_async_pending) {
+    const size_t size = impl->tagged_size;
+    const uint64_t tag = impl->tagged_tag;
+    const int terminal = impl->tagged_status;
+    impl->tagged_active = false;
+    impl->tagged_ready = false;
+    impl->callback_active = true;
+    impl->tagged_policy.on_send(impl->tagged_policy.user, websocket, tag, size, terminal);
+    impl->callback_active = false;
+    *out_events = 1u;
+  }
+  impl->advance_active = false;
+  impl->operation_active = false;
+  return status;
 }
 
 int cnet_websocket_send_fragment(cnet_websocket *websocket,
@@ -579,6 +751,7 @@ int cnet_websocket_send_fragment(cnet_websocket *websocket,
     return SALTS_EINVAL;
   if (impl->write_active || (impl->operation_active && !impl->callback_active)) return SALTS_EBUSY;
   if (impl->state != CNET_WEBSOCKET_OPEN) return SALTS_ESHUTDOWN;
+  if (impl->tagged_active) return SALTS_EBUSY;
   if (impl->output_size != 0u) return SALTS_EBUSY;
   if (size > impl->max_frame_bytes) return SALTS_EMSGSIZE;
   if (impl->outbound_message_type != CNET_WEBSOCKET_MESSAGE_NONE &&
@@ -663,7 +836,7 @@ int cnet_websocket_close(cnet_websocket *websocket, uint16_t code, const void *r
   if (impl->write_active || (impl->operation_active && !impl->callback_active)) return SALTS_EBUSY;
   if (impl->state == CNET_WEBSOCKET_CLOSING) return SALTS_EALREADY;
   if (impl->state != CNET_WEBSOCKET_OPEN) return SALTS_ESHUTDOWN;
-  if (impl->output_size != 0u) return SALTS_EBUSY;
+  if (impl->output_size != 0u || impl->tagged_active) return SALTS_EBUSY;
 
   if (code != 0u) {
     payload[0] = (uint8_t)(code >> 8u);

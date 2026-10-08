@@ -4,6 +4,27 @@
 #include <string.h>
 
 spec("CNet strict transport URI") {
+  it("keeps local IPC distinct from legacy pipes and network authorities") {
+    cnet_uri uri = {0};
+#if defined(_WIN32)
+    check_equal(cnet_uri_parse("ipc://remote/service", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("ipc://name:port", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("ipc://service", &uri), SALTS_OK);
+    check_equal(strcmp(uri.path, "service"), 0);
+#else
+    check_equal(cnet_uri_parse("ipc://relative", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("ipc:///tmp/service", &uri), SALTS_OK);
+    check_equal(strcmp(uri.path, "/tmp/service"), 0);
+#endif
+    check_equal(uri.scheme, CNET_URI_IPC);
+    check_equal(uri.host[0], '\0');
+    check_equal(uri.port, 0u);
+    check_equal(cnet_uri_parse("ipc://", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("ipc:///tmp/name?query", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("ipc:///tmp/name%00", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("pipe://service/control", &uri), SALTS_OK);
+    check_equal(uri.scheme, CNET_URI_PIPE);
+  }
   it("parses bounded TCP UDP and TLS authorities") {
     cnet_uri uri = {0};
 

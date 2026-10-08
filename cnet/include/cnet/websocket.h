@@ -101,6 +101,64 @@ typedef struct cnet_websocket_config {
  */
 int cnet_websocket_init(cnet_websocket *websocket, const cnet_websocket_config *config);
 
+#define CNET_WEBSOCKET_TAGGED_SEND_VERSION 1u
+
+/** One terminal per admitted logical message; size is the original payload size.
+ * Runs only from advance(), after send_tagged() has returned. Success proves
+ * local transport completion, not peer application receipt. No payload is borrowed.
+ */
+typedef void (*cnet_websocket_send_complete_fn)(void *user, cnet_websocket *websocket,
+                                                uint64_t tag, size_t size, int status);
+
+/** Explicit opt-in to authoritative write terminals; legacy copied-admission
+ * writers must not enable this policy. SALTS_OK from write must mean complete
+ * synchronous transport success; async adapters use WRITE_PENDING/write_complete.
+ */
+typedef struct cnet_websocket_tagged_policy {
+  size_t size;
+  uint32_t version;
+  size_t fragment_bytes;
+  cnet_websocket_send_complete_fn on_send;
+  void *user;
+} cnet_websocket_tagged_policy;
+
+/**
+ * Initializes a tagged-send session with one extra max_message_bytes owned
+ * buffer and one terminal record. fragment_bytes must be in [1,max_frame_bytes].
+ * Existing config layout is unchanged. Returns init errors, SALTS_ERANGE for
+ * total storage overflow, or SALTS_EINVAL for an invalid policy/version.
+ * Failure leaves the wrapper uninitialized; existing live wrappers are unchanged.
+ */
+int cnet_websocket_init_tagged(cnet_websocket *websocket, const cnet_websocket_config *config,
+                                const cnet_websocket_tagged_policy *policy);
+
+/**
+ * Copies one complete text/binary message into bounded owned storage; performs
+ * no write and no callback. Empty messages are valid. Strict UTF-8 is validated
+ * before text admission. Exactly one terminal follows successful admission,
+ * including close/error; rejected admission has no terminal.
+ * Returns SALTS_OK, SALTS_EINVAL, SALTS_ENOTSUP without tagged policy,
+ * SALTS_EMSGSIZE, SALTS_ECHARSET, SALTS_ESHUTDOWN, or SALTS_EBUSY while a prior
+ * tag/legacy fragment/output is pending. Legacy data sends cannot interleave.
+ */
+int cnet_websocket_send_tagged(cnet_websocket *websocket,
+                                cnet_websocket_message_type message_type,
+                                const void *data, size_t size, uint64_t tag);
+
+/**
+ * Owner-local nonblocking progress for tagged sessions. Attempts at most
+ * max_frames queued/new output frames, processes bounded buffered input, and
+ * dispatches at most one logical send terminal into *out_events. Both arguments
+ * are required (max_frames > 0). Call after admission, writer capacity recovery,
+ * write_complete, and close/transport_closed, even without another send.
+ * Async-pending output is never retried. Busy transport is normal zero-event
+ * progress; other transport/protocol errors are returned after preserving the
+ * reserved terminal. Continue advance/drain on error until terminals dispatch.
+ * Returns SALTS_OK, SALTS_EINVAL, SALTS_ENOTSUP, SALTS_EBUSY for recursion, or
+ * the progress error. Destroy remains busy while an accepted tag is unsettled.
+ */
+int cnet_websocket_advance(cnet_websocket *websocket, size_t max_frames, size_t *out_events);
+
 /** Destroy all fixed storage. Active callback/feed/write execution returns SALTS_EBUSY. */
 int cnet_websocket_destroy(cnet_websocket *websocket);
 
@@ -171,6 +229,9 @@ int cnet_websocket_send_pong(cnet_websocket *websocket, const void *data, size_t
 /**
  * Start the closing handshake. Code zero sends an empty Close payload and
  * requires an empty reason; a non-empty reason must be strict UTF-8.
+ * An accepted tagged message returns EBUSY until advance dispatches its terminal;
+ * continue progress then retry close. The adapter owns the close deadline and
+ * drains transport writes before reporting an abort through transport_closed.
  * SALTS_OK includes admission into the retained slot after transport
  * backpressure; inspect cnet_websocket_has_pending_output().
  */
@@ -184,6 +245,9 @@ int cnet_websocket_close(cnet_websocket *websocket, uint16_t code, const void *r
  * wire data. Active/reentrant execution returns SALTS_EBUSY; an already CLOSED
  * session returns SALTS_EALREADY.
  */
+/* Call only after the adapter has drained all transport borrows of output.
+ * In tagged mode this cancels an unfinished message; advance dispatches its
+ * terminal. Notification of a socket error alone does not prove drain. */
 int cnet_websocket_transport_closed(cnet_websocket *websocket);
 
 #ifdef __cplusplus

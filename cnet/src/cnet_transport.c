@@ -24,6 +24,7 @@ typedef SOCKET cnet_native_socket;
     #include <linux/vm_sockets.h>
   #endif
   #include <sys/socket.h>
+  #include <sys/un.h>
   #include <unistd.h>
 typedef int cnet_native_socket;
   #define CNET_INVALID_SOCKET (-1)
@@ -407,6 +408,11 @@ static int cnet_transport_address_family(const void *address, size_t address_len
     if (address_length < sizeof(struct sockaddr_in)) return SALTS_EINVAL;
   } else if (native_address->sa_family == AF_INET6) {
     if (address_length < sizeof(struct sockaddr_in6)) return SALTS_EINVAL;
+#if !defined(_WIN32)
+  } else if (native_address->sa_family == AF_UNIX) {
+    if (address_length <= offsetof(struct sockaddr_un, sun_path) ||
+        address_length > sizeof(struct sockaddr_un)) return SALTS_EINVAL;
+#endif
 #if defined(__linux__)
   } else if (native_address->sa_family == AF_VSOCK) {
     if (address_length < sizeof(struct sockaddr_vm)) return SALTS_EINVAL;

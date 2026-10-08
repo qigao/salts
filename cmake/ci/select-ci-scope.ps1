@@ -3,6 +3,7 @@ param(
   [string]$EventName,
   [AllowEmptyString()][string]$BaseRef,
   [Parameter(Mandatory)][string]$HeadRef,
+  [AllowEmptyString()][string]$HeadBranch = "",
   [bool]$PrepareRelease = $false
 )
 $ErrorActionPreference = "Stop"
@@ -85,7 +86,8 @@ $coroutine = $benchmarkChanged -and $coroutine
 $nativeUring = $benchmarkChanged -and $nativeUring
 $forensic = $benchmarkChanged -and $forensic
 $compare = $benchmarkChanged -and $compare
-$work = $nativeOwner -or $nativeStyle -or $cnetOwner -or $cnetIo -or $cnetSg -or $coroutine -or $nativeUring -or $forensic
+$transportOwner = $PrepareRelease -or (Test-Changed '^(cnet|native-io)/')
+$work = $nativeOwner -or $nativeStyle -or $cnetOwner -or $cnetIo -or $cnetSg -or $coroutine -or $nativeUring -or $forensic -or $transportOwner
 
 $checks = [ordered]@{
   contracts = $native -or $execution -or $projection -or $lean
@@ -95,6 +97,7 @@ $checks = [ordered]@{
   lean = $lean
   mobile = $mobile
   work = $work
+  transport_owner = $transportOwner
   evidence = $work
   cnet_compare = $compare
   native_owner = $nativeOwner
@@ -134,6 +137,8 @@ foreach ($profile in $profiles) {
   # Clang profiles qualify the same portable/native contracts in isolated trees;
   # they do not produce additional release packages.
   $profile.clang = $profile.id -in @('linux-clang-release', 'macos-clang-release')
+  # The connection-manager integration branch uses GCC for Linux and macOS.
+  if ($HeadBranch -eq 'codex/cnet-manager-1001' -and $profile.clang) { continue }
   $entry = $profile.Clone()
   $entry.cross = $entry.family -in @('android', 'ios')
   # Core semantic qualification must also pass without the optional #981 backend.

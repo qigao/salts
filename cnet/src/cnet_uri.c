@@ -118,6 +118,7 @@ static int cnet_uri_parse_vsock(const char *endpoint, size_t endpoint_length,
 
 int cnet_uri_parse(const char *text, cnet_uri *out_uri) {
   static const char pipe_prefix[] = "pipe://";
+  static const char ipc_prefix[] = "ipc://";
   static const char vsock_prefix[] = "vsock://";
   cnet_uri parsed = {0};
   uri_t generic;
@@ -129,6 +130,18 @@ int cnet_uri_parse(const char *text, cnet_uri *out_uri) {
   *out_uri = (cnet_uri){0};
   status = cnet_uri_bounded_length(text, &length);
   if (status != SALTS_OK) return status;
+  if (length >= sizeof(ipc_prefix) - 1u &&
+      memcmp(text, ipc_prefix, sizeof(ipc_prefix) - 1u) == 0) {
+    const char *name = text + sizeof(ipc_prefix) - 1u;
+    const size_t name_length = length - (sizeof(ipc_prefix) - 1u);
+    status = cnet_transport_ipc_validate_name(name, name_length);
+    if (status != SALTS_OK) return status;
+    if (name_length >= sizeof(parsed.path)) return SALTS_ERANGE;
+    parsed.scheme = CNET_URI_IPC;
+    memcpy(parsed.path, name, name_length + 1u);
+    *out_uri = parsed;
+    return SALTS_OK;
+  }
   if (length >= sizeof(pipe_prefix) - 1u &&
       memcmp(text, pipe_prefix, sizeof(pipe_prefix) - 1u) == 0) {
     status = cnet_uri_parse_pipe(text + sizeof(pipe_prefix) - 1u,

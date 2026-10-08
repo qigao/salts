@@ -20,7 +20,9 @@ typedef enum cflow_io_native_backend_kind {
     CFLOW_IO_NATIVE_KQUEUE,
     CFLOW_IO_NATIVE_IOCP,
     CFLOW_IO_NATIVE_IO_URING,
-    CFLOW_IO_NATIVE_POLL
+    CFLOW_IO_NATIVE_POLL,
+    /** macOS regular-file AIO only; socket operations are unsupported. */
+    CFLOW_IO_NATIVE_DARWIN_AIO
 } cflow_io_native_backend_kind;
 
 typedef enum cflow_io_native_operation_kind {

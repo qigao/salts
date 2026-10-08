@@ -11,12 +11,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
 #if defined(_WIN32)
 #if defined(interface)
 #undef interface
 #endif
 #include <windows.h>
-#elif defined(__linux__)
+#elif defined(__linux__) || (defined(__APPLE__) && TARGET_OS_OSX)
 #include <errno.h>
 #include <unistd.h>
 #endif
@@ -64,6 +68,8 @@ static cflow_io_native_backend_kind cflow_file_example_backend(void) {
     return CFLOW_IO_NATIVE_IOCP;
 #elif defined(__linux__)
     return CFLOW_IO_NATIVE_IO_URING;
+#elif defined(__APPLE__) && TARGET_OS_OSX
+    return CFLOW_IO_NATIVE_DARWIN_AIO;
 #else
     return CFLOW_IO_NATIVE_POLL;
 #endif
@@ -84,7 +90,7 @@ static int cflow_file_example_make_path(
             (unsigned long long)cmeta_hrtime()) < 0)
         return SALTS_ERANGE;
     return SALTS_OK;
-#elif defined(__linux__)
+#elif defined(__linux__) || (defined(__APPLE__) && TARGET_OS_OSX)
     const int written = snprintf(
         path, CFLOW_FILE_EXAMPLE_PATH_CAPACITY,
         "/tmp/cflow-native-file-%ld-%llu.bin", (long)getpid(),
@@ -102,7 +108,7 @@ static int cflow_file_example_remove(const char *path) {
         return SALTS_EINVAL;
 #if defined(_WIN32)
     return DeleteFileA(path) ? SALTS_OK : -(int)GetLastError();
-#elif defined(__linux__)
+#elif defined(__linux__) || (defined(__APPLE__) && TARGET_OS_OSX)
     return unlink(path) == 0 ? SALTS_OK : -errno;
 #else
     return SALTS_ENOTSUP;
@@ -175,7 +181,7 @@ int main(void) {
     int status;
     int result = EXIT_FAILURE;
 
-#if !defined(_WIN32) && !defined(__linux__)
+#if !defined(_WIN32) && !defined(__linux__) && !(defined(__APPLE__) && TARGET_OS_OSX)
     fprintf(stderr,
             "native file example: this host has no declared asynchronous "
             "regular-file backend; no fallback was attempted\n");
