@@ -208,6 +208,27 @@ invokes reflected CMeta producer/Strategy methods, observes one terminal
 message and safely drains/destroys the Actor. This is run through the shared
 installed-SDK CMake test harness, not an additional CI orchestration wrapper.
 
+### ACE Pipes and Filters / Streams (post-3.0 conformance)
+
+The test-only `cflow/tests/cflow_ace_pipes_filters_test.c` composes
+canonical CMeta `cmeta_function` FILTER and MAP declarations into
+a real CFlow Surface Graph, normalized Graph and Subscription.
+The source and sink are existing fully reflected `cflow_publisher` and
+`cflow_subscriber` Interfaces; no second filter/stream DSL is introduced.
+
+Demand is **downstream output demand**: with no request, no source item is
+consumed; a request for one even value pulls two upstream integers through
+FILTER before MAP produces its result. Incremental demand never triggers an
+unbounded eager queue. Early cancellation stops delivery, and closing
+Subscription destroys the moved Publisher exactly once before borrowed source
+and Subscriber context storage can expire.
+
+A separate real CFlow Channel with capacity two demonstrates explicit
+producer-side `CFLOW_CHANNEL_FULL` rather than conflating Channel admission
+with reactive demand. The Channel is owned outside the Subscription and is
+closed/destroyed after its Publisher and Subscription are quiescent. Neither
+CMeta nor CFlow automatically retries failed admission.
+
 ## Admission test for a new pattern helper
 
 Add a new CMeta pattern-level macro/inline helper only if at least one condition

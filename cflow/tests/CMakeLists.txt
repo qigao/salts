@@ -30,6 +30,15 @@ cmake_add_test(cflow_pipeline_test
   LIBS Salts::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
+# ACE Pipes/Filters: canonical reflected publisher/subscriber + CMeta filter/map
+# over the real demand-driven CFlow Graph and bounded Channel implementation.
+cmake_add_test(cflow_ace_pipes_filters_test
+  SOURCES cflow_ace_pipes_filters_test.c
+  LIBS Salts::CFlow Salts::TinyTest
+  FOLDER "cflow/tests")
+set_target_properties(cflow_ace_pipes_filters_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
 cmake_add_test(cflow_plan_managed_test
   SOURCES cflow_plan_managed_test.c
   LIBS Salts::CFlow Salts::TinyTest
