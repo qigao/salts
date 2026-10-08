@@ -81,7 +81,7 @@ suite("CMeta pattern composition") {
         check_equal(cmeta_cleanup_object_result(
             &cleanup, CMETA_RESULT_SHARED, &object),
             CMETA_TYPE_MISMATCH);
-        check_null(cleanup.release);
+        check_true(cleanup.release == NULL);
         check_true(cmeta_object_ref_valid(&object));
         check_equal(destroys, 0u);
 
@@ -104,7 +104,7 @@ suite("CMeta pattern composition") {
             &object, &value, &cmeta_data_int, NULL), CMETA_OK);
         check_equal(cmeta_cleanup_object_result(
             &cleanup, CMETA_RESULT_BORROWED, &object), CMETA_OK);
-        check_null(cleanup.release);
+        check_true(cleanup.release == NULL);
         check_true(cmeta_object_ref_valid(&object));
         check_equal(cmeta_cleanup_object_result(
             &cleanup, CMETA_RESULT_OWNED, &object), CMETA_TYPE_MISMATCH);
