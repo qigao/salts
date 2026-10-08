@@ -19,6 +19,11 @@ if(WIN32)
   target_link_libraries(cflow_cnet_domain_route_test PRIVATE ws2_32)
 endif()
 
+cmake_add_test(cflow_cnet_manager_context_test
+  SOURCES cflow_cnet_manager_context_test.c
+  LIBS Salts::CFlowCNetManager Salts::Platform Salts::TinyTest
+  FOLDER "cflow/cnet-adapter/tests")
+
 cmake_add_test(cflow_cnet_header_cpp_test
   SOURCES cflow_cnet_header_cpp_test.cpp
   LIBS Salts::CFlowCNet Salts::TinyTest
@@ -28,6 +33,7 @@ set_target_properties(
   cflow_io_cnet_adapter_test
   cflow_cnet_domain_actor_test
   cflow_cnet_domain_route_test
+  cflow_cnet_manager_context_test
   PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON

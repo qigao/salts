@@ -381,6 +381,79 @@ payload lifetime **without** adding a manager, routing registry, new worker,
 or implicit connection-per-Raft-group policy. Do not conflate a routed
 Actor message ACK with `CNetManager` final context recycling.
 
+### Phase 3e: source-owner CNetManager context hold after domain ACK (PR #1031)
+
+A new opt-in `Salts::CFlowCNetManager` target publishes
+[`<cflow/cnet_manager_context.h>`](../include/cflow/cnet_manager_context.h)
+and depends on `Salts::CFlowCNet` plus `Salts::CNetManager`. The ordinary
+`Salts::CFlowCNet` target does **not** gain a mandatory manager dependency.
+This is a **bounded host-driven lifetime guard**, not a new admission layer,
+worker, managed connection registry, dispatch queue or completion source.
+
+A **single** `cnet_manager_attachment.hold_context = true` pins the
+connection's post-terminal managed context. A host on that actual CNet source
+owner first calls `cnet_manager_reserve/connect`, initializes its domain
+route(s) on each target Actor owner, binds each route to its source owner,
+then creates one `cflow_cnet_manager_context` for the managed identity.
+Guard initialization performs an actual source-owner
+`cnet_manager_lookup()` and verifies the manager is BOUND, context_held
+and all participating source-bound semantic routes name that exact managed
+connection **generation** and same declared source owner. Several
+Raft-group routes may share one physical peer/one manager attachment.
+
+```text
+  CNet source Owner A                    Domain Actor target Owner B
+  -------------------                   ---------------------------
+  manager.reserve(hold_context=true)
+  manager.connect --> exact connection
+  route(s).bind_source                   route(s) + Actor initialized
+  guard.init(manager, managed, routes)
+        |
+  CNet receive callback ─────copied bounded payload──────> Mailbox token
+  CNet CLOSED / FAILED                   business read / processing
+    manager record RETIRED                  route.acknowledge(token)
+    route.source_terminal                   guard.notify_settled()
+    guard.poll_release() <────coalesced wake hint─────────┘
+      if ANY route active -> EBUSY
+      when RETIRED + ALL routes drained:
+         manager.release_context() exactly once
+         manager.advance() -> on_recycle exactly once
+```
+
+An ACK only changes its corresponding **route's** payload-lease state.
+It never releases CNetManager directly from a target action. The target may
+call `guard.notify_settled()` after a successful ACK (or the explicit
+post-Actor-quiescence route abort), which atomically publishes a **coalesced
+wake hint**. The optional host-provided callback must be signal-only and
+non-reentrant. The source caller resets the hint *before* reading route
+snapshots, so an ACK racing the inspection publishes a fresh hint. The host
+must also poll on real CNet terminal: neither missing wake nor a hint by
+itself can authorize release. There is **no second queue** and no extra
+payload reference in the manager guard.
+
+The source's `guard.poll_release()` checks an authoritative manager
+`RETIRED` record with outstanding `context_held`, then scans only the
+configured fixed list of routes. All must be sealed, source-terminal,
+without pending receive credit, staged mailbox item, unacknowledged payload
+or live slot. Any outstanding obligation returns `SALTS_EBUSY` without
+releasing manager context. The source then calls manager release once and
+the host drives `cnet_manager_advance()` to perform `on_recycle`, after
+CNet callback tails have returned. Guard destruction waits for target
+ACK/wake publishers to stop, and does not destroy Actor, CNet or manager.
+
+The first acceptance test creates a **real managed TCP connection**,
+pauses a Machine Actor running on another OS thread, inserts a bounded
+synthetic borrowed business message through the cross-owner route, closes
+the real managed CNet connection, then confirms the RETIRED manager context
+cannot recycle before business ACK. Only after the target processes its
+copied payload, ACKs and notifies may the source release the manager
+hold; the wrong-owner release must fail, duplicate notifications coalesce,
+and cleanup occurs once. **The receive payload in this first guard test is
+synthetic**; Phase 3d already tests 2/4 real CNet TCP source owners
+separately. A combined manager-managed *real receive* integration and
+full 2/4-owner placement/performance qualification remain open in #1030/
+#1022. WAL durability is explicitly out of scope for CNet.
+
 ## 5. Execution placement and fairness
 
 Two legitimate integration topologies must be measured, not conflated:

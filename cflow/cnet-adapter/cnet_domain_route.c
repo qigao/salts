@@ -253,6 +253,25 @@ int cflow_cnet_domain_route_bind_source(cflow_cnet_domain_route *route) {
     return SALTS_OK;
 }
 
+int cflow_cnet_domain_route_get_source_binding(
+    cflow_cnet_domain_route *route,
+    cnet_connection *out_connection,
+    uint32_t *out_source_owner) {
+    route_impl *s = route_get(route);
+    if (out_connection) *out_connection = (cnet_connection){0};
+    if (out_source_owner) *out_source_owner = 0u;
+    if (!s || !out_connection || !out_source_owner) return SALTS_EINVAL;
+    cmeta_mutex_lock(&s->mutex);
+    if (!route_on_source(s)) {
+        cmeta_mutex_unlock(&s->mutex);
+        return SALTS_EPERM;
+    }
+    *out_connection = s->connection;
+    *out_source_owner = s->source_owner;
+    cmeta_mutex_unlock(&s->mutex);
+    return SALTS_OK;
+}
+
 int cflow_cnet_domain_route_reserve(
     cflow_cnet_domain_route *route,
     cflow_cnet_domain_route_credit *out) {
