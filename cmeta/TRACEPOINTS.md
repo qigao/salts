@@ -70,7 +70,7 @@ int main(void) {
 
 采用已有 portable atomic gate，而不是在这里增加汇编、JIT 或全局注册器。替换 backend 所需的一次 typed 间接调用由 enabled-path benchmark 测量；disabled 路径在 backend load、payload 初始化和调用前返回。纯 fault 控制归 Platform；#957 删除无 metadata 价值的 CMeta 同义入口（HIGH source compatibility）。回滚须成套恢复调用点与 owner，不迁移数据。
 
-正式测试覆盖默认关闭、参数不求值/只求值一次、精确 payload metadata、immutable manifest 借用、未绑定 enable、NULL bind 保留原后端、替换/关闭、并发发布与一次性 fault、C++ opaque 消费以及错误签名编译拒绝。五平台 gate 和 portable TSan 使用这些正式测试；Release benchmark 比较 plain branch、static key、tracepoint 和 fault point，不设置机器相关阈值。Plugin/capability manifest 和 canonical fingerprint 已通过同版本组合验证，契约见 PLUGIN_MANIFESTS.md 与 FINGERPRINTS.md。
+正式测试覆盖默认关闭、参数不求值/只求值一次、精确 payload metadata、immutable manifest 借用、未绑定 enable、NULL bind 保留原后端、替换/关闭、并发发布与一次性 fault、C++ opaque 消费以及错误签名编译拒绝。五平台 gate 和 portable TSan 使用这些正式测试；Release benchmark 比较 plain branch、static key、tracepoint 和 fault point，不设置机器相关阈值。Component/capability manifest 和 canonical fingerprint 已通过同版本组合验证，契约见 [COMPONENT_MANIFESTS.md](COMPONENT_MANIFESTS.md) 与 [FINGERPRINTS.md](FINGERPRINTS.md)。
 
 本地验证在 Visual Studio `VsDevCmd.bat -arch=x64 -host_arch=x64` 环境中使用版本化 user preset。设置该环境要求的 `PROJECT_ROOT`、`VCPKG_ROOT`、`VCPKG_WINDOWS_TRIPLET` 和 `VCPKG_WINDOWS_HOST_TRIPLET` 后，复验命令为：
 

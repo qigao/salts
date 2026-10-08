@@ -77,6 +77,30 @@ CFlow operator declarations use structured `Operators(...)` rows grouped by
 call, function, flow, semantic, and effect metadata. `Operators(...)` normalizes
 those rows back to the established flat consumer ABI.
 
+## Pattern composition layer (integration branch)
+
+The pattern layer is a composition discipline over canonical CMeta primitives,
+not a second alias vocabulary. See [PATTERNS.md](PATTERNS.md).
+
+Current canonical decompositions include:
+
+```text
+Strategy            = Interface
+Factory             = FunctionDesc/FunctionAbi + explicit result ownership
+Adapter             = exact typed Interface implementation mapping
+Extension Interface = ObjectRef + provider-authorized Interface projection
+```
+
+Do not add `cmeta_strategy`, `cmeta_factory`, or equivalent names merely to
+rename an existing semantic authority. New pattern helpers are admitted only
+when they generate/check a new descriptor relation or remove repeated glue
+without introducing a second runtime.
+
+The ACE-style Component Configurator tracked by #1003 is the first composition
+target. Resolution, component graph lifecycle and generation publication belong
+to the future Component runtime rather than CMeta.
+
+
 ## Finite compile-time computation
 
 CMeta provides explicit finite relations for type and integer-constant

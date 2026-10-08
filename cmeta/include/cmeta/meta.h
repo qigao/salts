@@ -18,7 +18,7 @@
 #include <cmeta/manifest_view.h>
 #include <cmeta/object.h>
 #include <cmeta/operation.h>
-#include <cmeta/plugin.h>
+#include <cmeta/component.h>
 #include <cmeta/pp.h>
 #include <cmeta/status.h>
 #include <cmeta/struct.h>

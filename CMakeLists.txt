@@ -8,7 +8,7 @@ endif()
 
 project(
   Salts
-  VERSION 2.2.0
+  VERSION 3.0.0
   LANGUAGES C CXX)
 
 # Project configuration - output directories
@@ -32,7 +32,9 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if(MSVC)
-  add_compile_options("$<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>")
+  # MSVC accepts either prefix. sccache 0.18 treats an unknown slash switch
+  # as an input filename; the dash spelling preserves the option and caching.
+  add_compile_options("$<$<COMPILE_LANGUAGE:C>:-experimental:c11atomics>")
 endif()
 # Enable folder organization in IDEs
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
@@ -71,7 +73,9 @@ add_subdirectory(coroutine)
 add_subdirectory(native-io)
 add_subdirectory(uri)
 add_subdirectory(cmeta)
+add_subdirectory(component)
 add_subdirectory(plugin)
+add_subdirectory(component-plugin)
 add_subdirectory(simd)
 add_subdirectory(tinymock)
 add_subdirectory(cflow)
@@ -98,7 +102,7 @@ configure_package_config_file(
 write_basic_package_version_file(
   "${CMAKE_BINARY_DIR}/SaltsConfigVersion.cmake"
   VERSION ${PROJECT_VERSION}
-  COMPATIBILITY AnyNewerVersion)
+  COMPATIBILITY SameMajorVersion)
 
 # Install the config files
 install(FILES "${CMAKE_BINARY_DIR}/SaltsConfig.cmake"

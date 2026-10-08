@@ -138,33 +138,46 @@ static cmeta_status enum_valid(const cmeta_enum_domain *desc, manifest_budget *b
     return cmeta_enum_domain_valid(desc) ? CMETA_OK : CMETA_INVALID_ARGUMENT;
 }
 
-static cmeta_status plugin_valid(const cmeta_plugin_desc *desc, manifest_budget *budget) {
-    if (desc == NULL || desc->size != sizeof(*desc) || desc->name == NULL ||
-        desc->name[0] == '\0') return CMETA_INVALID_ARGUMENT;
-    if (desc->format_version != CMETA_PLUGIN_DECLARATION_VERSION) return CMETA_TYPE_MISMATCH;
-    if (desc->count > budget->limits->max_items) return CMETA_CAPACITY_EXCEEDED;
-    if ((desc->count != 0u && desc->capabilities == NULL) ||
-        desc->count > SIZE_MAX / sizeof(*desc->capabilities)) return CMETA_INVALID_ARGUMENT;
-    for (size_t i = 0u; i < desc->count; ++i) {
-        const cmeta_plugin_capability *row = &desc->capabilities[i];
-        if ((row->role != CMETA_PLUGIN_PROVIDES && row->role != CMETA_PLUGIN_REQUIRES) ||
-            row->interface_desc == NULL) return CMETA_INVALID_ARGUMENT;
-        cmeta_status status = interface_valid(row->interface_desc, budget);
+static cmeta_status component_valid(const cmeta_component_desc *desc,
+    manifest_budget *budget) {
+    if (desc == NULL || desc->size != sizeof(*desc))
+        return CMETA_INVALID_ARGUMENT;
+    if (desc->format_version != CMETA_COMPONENT_DECLARATION_VERSION)
+        return CMETA_TYPE_MISMATCH;
+    if (desc->capability_count > budget->limits->max_items)
+        return CMETA_CAPACITY_EXCEEDED;
+    if ((desc->capability_count != 0u && desc->capabilities == NULL) ||
+        desc->capability_count > SIZE_MAX / sizeof(*desc->capabilities))
+        return CMETA_INVALID_ARGUMENT;
+    if (desc->config != NULL) {
+        cmeta_status status;
+        if (!cmeta_data_desc_valid(desc->config))
+            return CMETA_INVALID_ARGUMENT;
+        if (desc->config->storage_type != NULL) {
+            status = type_valid(desc->config->storage_type, budget);
+            if (status != CMETA_OK) return status;
+        }
+    }
+    for (size_t i = 0u; i < desc->capability_count; ++i) {
+        cmeta_status status =
+            interface_valid(desc->capabilities[i].interface_desc, budget);
         if (status != CMETA_OK) return status;
     }
-    return CMETA_OK;
+    return cmeta_component_desc_valid(desc)
+        ? CMETA_OK
+        : CMETA_INVALID_ARGUMENT;
 }
 
-cmeta_status cmeta_plugin_get_capability(const cmeta_plugin_desc *desc, size_t index,
-    cmeta_plugin_role role, const cmeta_manifest_limits *limits,
+cmeta_status cmeta_component_get_capability(const cmeta_component_desc *desc, size_t index,
+    cmeta_component_role role, const cmeta_manifest_limits *limits,
     const cmeta_interface_desc **out) {
     if (out == NULL || !limits_valid(limits) ||
-        (role != CMETA_PLUGIN_PROVIDES && role != CMETA_PLUGIN_REQUIRES))
+        (role != CMETA_COMPONENT_PROVIDES && role != CMETA_COMPONENT_REQUIRES))
         return CMETA_INVALID_ARGUMENT;
     manifest_budget budget = {limits, limits->max_identity_nodes};
-    cmeta_status status = plugin_valid(desc, &budget);
+    cmeta_status status = component_valid(desc, &budget);
     if (status != CMETA_OK) return status;
-    if (index >= desc->count) return CMETA_INVALID_ARGUMENT;
+    if (index >= desc->capability_count) return CMETA_INVALID_ARGUMENT;
     if (desc->capabilities[index].role != role) return CMETA_TYPE_MISMATCH;
     *out = desc->capabilities[index].interface_desc;
     return CMETA_OK;
@@ -194,4 +207,4 @@ MANIFEST_GETTER(interface, cmeta_interface_desc, CMETA_MANIFEST_INTERFACE, inter
 MANIFEST_GETTER(trace, cmeta_struct_desc, CMETA_MANIFEST_TRACEPOINT, struct_valid)
 MANIFEST_GETTER(capability, cmeta_interface_desc, CMETA_MANIFEST_CAPABILITY, interface_valid)
 MANIFEST_GETTER(enum, cmeta_enum_domain, CMETA_MANIFEST_ENUM_DOMAIN, enum_valid)
-MANIFEST_GETTER(plugin, cmeta_plugin_desc, CMETA_MANIFEST_PLUGIN, plugin_valid)
+MANIFEST_GETTER(component, cmeta_component_desc, CMETA_MANIFEST_COMPONENT, component_valid)

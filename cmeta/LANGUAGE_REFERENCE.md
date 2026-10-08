@@ -1196,7 +1196,7 @@ Function、Interface、精确 thunk 与 TinyMock 的参数投影共用五字段�
 现在记录展开后的实际类型名，与 `Struct`/`Enum` 前端一致。依赖旧别名字符串的查询需
 改用实际类型名；descriptor 的二进制布局及生命周期没有变化。
 
-静态发现与 Plugin 反射声明也使用同一展开规则：`cmeta_entry(symbol)` 的名称是展开后的
+静态发现与 Component 反射声明也使用同一展开规则：`cmeta_entry(symbol)` 的名称是展开后的
 符号名，`cmeta_registry(name, entries)` 的名称和生成数组使用同一展开后的标识符。
 这会修正旧代码传宏别名时保留别名字符串的行为；显式 `cmeta_manifest_*_entry("name", ...)`
 的名称不变。entry 顺序、kind、descriptor 指针、format version 和 ABI 布局不变。
@@ -1205,10 +1205,10 @@ Function、Interface、精确 thunk 与 TinyMock 的参数投影共用五字段�
 
 `cmeta_registry` 接受非空 entry 流；零项使用 `cmeta_registry_empty(name)`，生成
 `entries == NULL, count == 0` 的普通 `static const cmeta_manifest`。
-`cmeta_plugin` 接受 1–16 个 provides/requires 行，使用共享逗号 map 保留行顺序与重复项；
-零项使用 `cmeta_plugin_empty(name)`，生成 `capabilities == NULL, count == 0`，仍通过
-`cmeta_plugin_meta(name)` 取得描述符。两种空声明都不生成零长数组或占位项。
-空 Plugin 描述符只有放入显式 manifest 才会被该表发现；它不是运行中的 Salts::Plugin。
+`cmeta_component` 接受 1–16 个 provides/requires 行，使用共享逗号 map 保留行顺序与重复项；
+零项使用 `cmeta_component_empty(name)`，生成 `capabilities == NULL, count == 0`，仍通过
+`cmeta_component_meta(name)` 取得描述符。两种空声明都不生成零长数组或占位项。
+空 Component 描述符只有放入显式 manifest 才会被该表发现；它不是运行中的 Salts::Plugin 模块。
 这两个声明宏没有运行时返回值；非法标识符或不合约的非空行在编译期报错。
 空表的索引查询仍返回 `CMETA_INVALID_ARGUMENT`，失败时输出参数保持原值。
 
@@ -1219,14 +1219,14 @@ Function、Interface、精确 thunk 与 TinyMock 的参数投影共用五字段�
 ```c
 #include <cmeta/manifest_view.h>
 cmeta_registry_empty(NoExports);
-cmeta_plugin_empty(NoCapabilities);
+cmeta_component_empty(NoCapabilities);
 cmeta_registry(Discovery,
-    cmeta_manifest_plugin_entry("provider", cmeta_plugin_meta(NoCapabilities)));
+    cmeta_manifest_component_entry("provider", cmeta_component_meta(NoCapabilities)));
 int main(void) {
     const cmeta_manifest_limits limits = {CMETA_MANIFEST_DEFAULT_ITEMS,
         CMETA_MANIFEST_DEFAULT_DEPTH, CMETA_MANIFEST_DEFAULT_NODES};
-    const cmeta_plugin_desc *provider = NULL;
-    return cmeta_manifest_get_plugin(&Discovery, 0u, &limits, &provider) == CMETA_OK
+    const cmeta_component_desc *provider = NULL;
+    return cmeta_manifest_get_component(&Discovery, 0u, &limits, &provider) == CMETA_OK
         && provider->count == 0u && NoExports.count == 0u ? 0 : 1;
 }
 ```

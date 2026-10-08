@@ -43,6 +43,10 @@ jobs:
           mode: read
       - name: Prepare build host
         uses: ./.github/actions/setup-build-host
+      - name: Restore native compiler cache
+        uses: ./.github/actions/setup-compiler-cache
+        with:
+          profile: ${{ matrix.id }}
       - name: Prepare macOS GNU compiler
         if: matrix.family == 'mac' && !matrix.clang
         shell: bash
@@ -118,6 +122,11 @@ jobs:
           cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
       # A failed suite must not skip other selected suites on a successful build.
+      - name: Run complete Linux integration tests
+        if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.full_tests }}
+        timeout-minutes: 30
+        shell: bash
+        run: ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60
       - name: Run Unix native and plugin contracts
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.native }}
         timeout-minutes: 30
@@ -165,7 +174,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ctest --preset linux-arm64-release-ci --no-tests=error --output-on-failure --timeout 60 -R '^(native_io_header_cpp_test|cmeta_header_cpp_test|cflow_header_cpp_test|cnet_header_cpp_test|cmeta_coroutine_completion_test|cmeta_coroutine_facade_test|coro_executor_test|coro_executor_header_cpp_test|cnet_api_test|cnet_tls_test)$'
+          ctest --preset linux-arm64-release-ci --no-tests=error --output-on-failure --timeout 60 -R '^(cmeta_native_component.*|native_io_header_cpp_test|cmeta_header_cpp_test|cflow_header_cpp_test|cnet_header_cpp_test|cmeta_coroutine_completion_test|cmeta_coroutine_facade_test|coro_executor_test|coro_executor_header_cpp_test|cnet_api_test|cnet_tls_test)$'
       - name: Compile PR-base modules for the CNet comparison
         if: matrix.compare
         shell: cmd

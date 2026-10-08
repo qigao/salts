@@ -102,7 +102,7 @@
 
 ### Plugin：声明发布与模块生命周期
 
-- **声明和发布分层**：[`cmeta/plugin.h`](../salts/cmeta/include/cmeta/plugin.h) 的 `cmeta_plugin`、`cmeta_provides`、`cmeta_requires` 描述接口能力关系，属于静态反射元数据，不自动加载模块或解析依赖。真正发布 Function/Interface export 使用 [`salts/plugin_decl.h`](../salts/plugin/include/salts/plugin_decl.h) 的显式声明，复用 CMeta 精确签名和 Interface carrier。
+- **声明和发布分层**：[`cmeta/component.h`](../salts/cmeta/include/cmeta/component.h) 的 `cmeta_component`、`cmeta_provides`、`cmeta_requires` 描述静态组件接口能力关系，属于静态反射元数据，不自动加载模块或解析依赖。动态模块真正发布 Function/Interface export 使用 [`salts/plugin_decl.h`](../salts/plugin/include/salts/plugin_decl.h) 的显式声明，复用 CMeta 精确签名和 Interface carrier。
 - **导出聚合**：默认使用显式 export 表；需要跨 TU 分片时评估 [`plugin_linker.h`](../salts/plugin/include/salts/plugin_linker.h)，遵守平台支持、实际链接、预期数量及按 ID 查找的契约，不另建 constructor 驱动的全局注册表。
 - **宿主运行时**：[`salts/plugin.h`](../salts/plugin/include/salts/plugin.h) 提供 manifest/ABI/contract 校验、动态加载、registry、启动、lease 获取释放、停止、quiescence 检查和卸载。registry 是模块与 lease 状态的事实源；只有满足终止与无在途使用条件才可卸载。
 - **能力边界**：Plugin 复用 CMeta，但独立于 CFlow；反射查询和描述符复制不持有模块 lease。依赖求解、隔离、热重载及状态迁移须按当前实现核实并单独设计，不能把 skill 的通用方案当作现成运行时功能。

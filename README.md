@@ -20,6 +20,21 @@ These abstractions are designed to compile down to ordinary C data structures an
 并用同一版本重新构建库、宿主和插件。部署时使用完整的新 SDK；不要混用旧头文件、
 旧静态库或旧插件。数据布局与错误码没有因前缀迁移改变。
 
+## Component migration for 3.0.0
+
+This integration branch prepares the next major SDK version, 3.0.0. It removes
+the static CMeta Plugin declaration API published in 2.x and replaces it with
+Component metadata and Configurator runtime contracts. This is a source and
+binary compatibility break; CMake and the package manifest use the new major
+version, versioned libraries use SOVERSION 3, and CMake package admission uses
+`SameMajorVersion` to reject 2.x version requests. The branch is not part of the
+published 2.2.0 SDK.
+
+See [the Component migration guide](cmeta/COMPONENT_MANIFESTS.md#migration-from-salts-2x)
+for exact symbol changes, descriptor and fingerprint differences, and the
+rebuild/rollback procedure. Dynamic loading and module leases remain owned by
+`Salts::Plugin`.
+
 ## Why Salts?
 
 Salts is built around a small set of shared semantics instead of independent framework-specific runtimes:
@@ -188,6 +203,24 @@ metadata consume the upstream outputs directly. The local `setup-build-host`
 action only installs platform build prerequisites and maps the upstream Windows
 target triplet to `VCPKG_WINDOWS_TRIPLET` for Salts presets. Explicit toolchain
 arguments use the upstream `QIGAO_VCPKG_TOOLCHAIN_FILE` environment variable.
+
+Native CI and the Linux Component candidate workflow also use
+[sccache](https://github.com/mozilla/sccache) for C/C++ compiler results. Each
+OS, host architecture and matrix profile has a separate 512 MiB cache, partitioned
+by the shared vcpkg contract/revision and preset/dependency configuration. A new
+successful run saves an immutable snapshot; subsequent runs restore the latest
+compatible snapshot across source commits. Compiler identity, compilation flags
+and preprocessed inputs determine individual object reuse. Direct preprocessor
+caching is disabled so generated and newly available headers are evaluated each
+time. Build logs report cache hits, misses and unsupported compilation requests.
+Every run configures and builds the complete graph and executes its selected
+CTest suites. CMake build trees and installed SDKs are not reused across commits.
+Linking, code generation, tool installation and tests still run, so speedups
+depend on the changed files and the observed cache hit rate. GitHub branch access
+rules and cache eviction apply; the first run in a new cache namespace is cold.
+The MSVC C11 atomics switch uses its equivalent dash spelling because sccache
+0.18 does not recognize the slash spelling and treats it as an extra input file.
+This retains C11 atomic support and allows C objects to enter the cache.
 
 The supported project compiler profiles are:
 
