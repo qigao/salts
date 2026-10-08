@@ -3,6 +3,7 @@
 #include <cflow/io_cnet_adapter.h>
 #include <cflow/cnet_domain_actor.h>
 #include <cflow/cnet_domain_route.h>
+#include <cflow/cnet_manager_context.h>
 
 #include <type_traits>
 
@@ -36,6 +37,20 @@ static_assert(
     std::is_standard_layout<cflow_cnet_domain_route_config>::value,
     "Route config must remain a C-compatible POD");
 
+static_assert(
+    std::is_standard_layout<cflow_cnet_manager_context_config>::value,
+    "Manager context config must remain C-compatible");
+static_assert(
+    std::is_standard_layout<cflow_cnet_manager_context_stats>::value,
+    "Manager context stats must remain C-compatible");
+
+using cflow_cnet_manager_release = int (*)(
+    cflow_cnet_manager_context *, bool *);
+static_assert(
+    std::is_same<decltype(&cflow_cnet_manager_context_poll_release),
+                 cflow_cnet_manager_release>::value,
+    "Manager hold release must remain an explicit source-owner operation");
+
 using cflow_cnet_route_recv = int (*)(
     cflow_cnet_domain_route *, cflow_cnet_domain_route_credit,
     const cnet_receive_view *);
@@ -67,6 +82,7 @@ suite("CFlow CNet adapter C++ header") {
     cflow_cnet_domain_delivery delivery = {};
     cflow_cnet_domain_credit credit = {};
     cflow_cnet_domain_route route = {};
+    cflow_cnet_manager_context context = {};
     cflow_cnet_domain_route_credit routed_credit = {};
     cflow_cnet_domain_route_delivery routed_delivery = {};
     cnet_observer observer = {};
@@ -79,6 +95,7 @@ suite("CFlow CNet adapter C++ header") {
     check_true(delivery.generation == 0u);
     check_true(credit.slot == 0u);
     check_null(route.impl);
+    check_null(context.impl);
     check_true(routed_credit.generation == 0u);
     check_true(routed_delivery.source_owner == 0u);
     check_null(operation.buffer);
