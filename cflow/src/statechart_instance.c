@@ -4208,8 +4208,7 @@ static cflow_statechart_instance_status statechart_instance_init_with_hook(
         return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     if (!cflow_executor_valid(config->executor) ||
         !cflow_executor_has(config->executor, CMETA_EXEC_CAP_SERIAL) ||
-        (cflow_executor_has(config->executor, CMETA_EXEC_CAP_MANUAL) &&
-         !cflow_executor_has(config->executor, CMETA_EXEC_CAP_OWNER_AFFINE)) ||
+        cflow_executor_has(config->executor, CMETA_EXEC_CAP_MANUAL) ||
         cflow_executor_is_current_internal(config->executor))
         return CFLOW_STATECHART_INSTANCE_INVALID_EXECUTOR;
 
