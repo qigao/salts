@@ -338,6 +338,41 @@ multi-owner integration: multiple live CNet clients, CNetManager retention,
 real detached listener handoff, 2/4-owner network benchmarks and strict
 placement/failover policy remain follow-up #1022/#1001 gates.
 
+### Phase 3d: real 2/4 CNet source Owners → one Domain Actor Owner (Draft PR)
+
+The Phase 3c route now receives additional conformance using **real, separate
+CNet clients**, rather than treating synthetic borrowed callback views as
+equivalent to network ingress. Each source OS thread creates its own loopback
+TCP listener/peer and `cnet_client`, owns its NativeIO backend through
+`cnet_client_poll()`, reserves a generation-tagged route credit before
+`cnet_receive(1)`, and forwards only the real `on_receive` borrowed view.
+
+The target Actor Owner initializes each bounded route *after* receiving the
+source's exact CNet connection identity and then arms its fixed source binder.
+Four CNet owners progress independently; the target intentionally does not
+drive its Executor until **after** source CNet connections have closed,
+reported their genuine terminal callbacks, and been destroyed. This verifies
+that target-owned byte leases, not the CNet connection/receive view, preserve
+business payload across network resource teardown.
+
+Two complementary cases exercise:
+
+- **2 real CNet Owners → 1 target Actor:** room in the Actor Mailbox;
+  independently admitted payloads survive source CNet destruction and are
+  later ACKed exactly once on the target lane.
+- **4 real CNet Owners → 1 target Actor:** a one-slot Actor Mailbox; only one
+  message enters the Actor queue, three per-source bounded payload records
+  remain STAGED on FULL, then the target drives one finite Owner quantum and
+  retries at most one pending event per route until all events are settled.
+
+This proves the target-side route and source-side client/connection lifecycle
+can coexist without a global callback thread, extra dispatch FIFO, worker
+fallback or mistaken native-IO-terminal application ACK. The real TCP test is
+not a claim of record framing, 2/4-owner CNet Sharded Graph policy selection,
+`cnet_client_init_external()` per each source, `CNetManager` context-hold
+retention, multi-Raft-group multiplexing, WAL durable commit, or measured
+latency/throughput gains. Those remain tracked in #1022/#1001.
+
 ## 5. Execution placement and fairness
 
 Two legitimate integration topologies must be measured, not conflated:
