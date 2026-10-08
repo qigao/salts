@@ -1,8 +1,9 @@
 # CMeta pattern layer
 
-> Development status: experimental integration work on
-> `feature/cmeta-pattern-component-runtime`. This document does not describe a
-> released `master` API.
+> Release status: the canonical Component/Configurator baseline is staged
+> in master source for next **Salts 2.3.0**. The latest published Release
+> remains 2.2.0; the former 3.0.0 Release was withdrawn. The ACE pattern and
+> lifecycle extensions in Draft PR #1013 remain **DO NOT MERGE**.
 
 ## Purpose
 
