@@ -80,7 +80,6 @@ add_subdirectory(tinymock)
 add_subdirectory(cflow)
 add_subdirectory(cstl)
 add_subdirectory(cnet)
-add_subdirectory(cflow/cnet-adapter)
 add_subdirectory(cserde)
 add_subdirectory(utils)
 
