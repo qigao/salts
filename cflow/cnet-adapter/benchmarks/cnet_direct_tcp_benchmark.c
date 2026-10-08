@@ -193,7 +193,17 @@ int main(void) {
     status = cflow_cnet_bench_summarize(f->latencies, SAMPLES, f->scratch,
                                          SAMPLES, &summary);
     if (status != SALTS_OK) goto done;
-    if (f->settled != WARMUP + SAMPLES) { status = SALTS_EPROTO; goto done; }
+    if (f->settled != WARMUP + SAMPLES || f->received != WARMUP + SAMPLES) {
+        status = SALTS_EPROTO; goto done;
+    }
+    {
+        uint64_t expected_checksum = 0u;
+        for (size_t i = 0u; i < WARMUP + SAMPLES; ++i)
+            expected_checksum += (unsigned char)(i % 251u);
+        if (f->checksum != expected_checksum || elapsed == 0u) {
+            status = SALTS_EPROTO; goto done;
+        }
+    }
     printf("mode,backend,warmup,samples,received,settled,checksum,elapsed_ns,p50_ns,p95_ns,p99_ns,max_ns\n");
     printf("direct-cnet,%s,%u,%u,%zu,%zu,%llu,%llu,%llu,%llu,%llu,%llu\n",
 #if defined(_WIN32)
