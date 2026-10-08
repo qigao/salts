@@ -299,7 +299,10 @@ static void owner_destroy(void *self) {
 
     /* Same contract as other Executors: all producers and callback/wake tails
      * must be quiescent before destroy. No callback may destroy its executor. */
-    assert(owner_on_thread(s) && owner_current != s && !s->running);
+    if (!owner_on_thread(s) || owner_current == s || s->running) {
+        assert(!"owner-affine Executor destroy requires quiescent owner");
+        abort(); /* release builds must not free borrowed pending task state */
+    }
     if (s->lifecycle == CFLOW_EXECUTOR_OPEN)
         (void)owner_control_shutdown(s, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING);
     while (owner_run_one(s)) {}
