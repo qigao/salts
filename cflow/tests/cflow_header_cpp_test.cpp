@@ -1,4 +1,5 @@
 #include "tinytest.hpp"
+#include "cflow_ace_active_object_pattern.h"
 #include <cflow/cflow.h>
 #include <cflow/time.h>
 
@@ -69,6 +70,13 @@ static_assert(std::is_standard_layout<cflow_statechart_instance_hooks>::value,
               "Statechart hooks must remain a C-compatible ABI boundary");
 static_assert(std::is_standard_layout<cflow_statechart_external_settlement>::value,
               "Statechart settlement must remain a C-compatible record");
+static_assert(std::is_standard_layout<ace_actor_port>::value,
+              "ACE port is a C-compatible typed Interface");
+static_assert(std::is_standard_layout<ace_actor_strategy>::value,
+              "ACE Strategy is a C-compatible typed Interface");
+static_assert(std::is_same<decltype(ace_actor_port_try_send(
+                               static_cast<ace_actor_port *>(nullptr), 1)), int>::value,
+              "ACE port must keep an exact typed send signature");
 static_assert(std::is_standard_layout<cflow_actor>::value,
               "cflow_actor must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_actor_ref>::value,

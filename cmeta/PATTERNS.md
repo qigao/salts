@@ -180,6 +180,26 @@ This qualifies a composition of existing primitives: **it does not authorize**
 a `cmeta_acceptor`, `cmeta_connector`, hidden reactor, global registration
 or implicit handler lifetime extension.
 
+### ACE Active Object / Half-Sync-Half-Async conformance
+
+The focused ACE Active Object suite in `cflow/tests/cflow_actor_test.c`
+uses the real `cflow_actor` with its bounded typed Machine mailbox,
+serial Executor, concurrent Scheduler and retained `cflow_actor_ref`.
+The local test-only `cflow_ace_active_object_pattern.h` contains two fully
+reflected CMeta Interfaces: an exact typed producer port and an action
+Strategy. The borrowed Strategy is invoked only for admitted events by the
+existing Actor action; CMeta does not own scheduling or queued work.
+
+The test blocks an in-flight action to prove `ACCEPTED` then capacity
+`FULL` without a hidden retry, exact FIFO typed observation, `STOPPING`
+and `STOPPED` admission rejection, and `STALE` producer refs after Actor
+destruction without invoking borrowed callbacks. The same Interface schemas
+compile under C11 and C++17.
+
+Actor owns state and bounded mailbox, Scheduler/Executor own progress, and
+borrowed Strategy/provider storage outlives Actor destruction. No new
+`cmeta_active_object`, hidden thread, Plugin lease, or second registry.
+
 ## Admission test for a new pattern helper
 
 Add a new CMeta pattern-level macro/inline helper only if at least one condition
