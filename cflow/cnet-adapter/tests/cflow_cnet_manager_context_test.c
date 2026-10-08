@@ -612,13 +612,28 @@ spec("CNetManager held context across cross-owner Actor ACK") {
             &f.manager, &manager_stats), SALTS_OK);
         check_equal(manager_stats.context_holds, (size_t)1u);
         check_equal(atomic_load(&f.recycled), 0);
+        /* Target ACK #2 now executes on its real other OS thread while the
+         * source actively polls. One scan may observe outstanding work and
+         * return EBUSY; a later scan must observe the settled route and
+         * release once. The source never fabricates a target ACK. */
         atomic_store_explicit(&f.target_run, true, memory_order_release);
         {
             const uint64_t ack_deadline =
                 cmeta_monotonic_ms() + MANAGER_LEASE_TIMEOUT_MS;
-            while (atomic_load(&f.values) < 2 &&
-                   cmeta_monotonic_ms() < ack_deadline)
-                cmeta_sleep_ms(1u);
+            int poll_status = SALTS_EBUSY;
+            while (cmeta_monotonic_ms() < ack_deadline) {
+                released = false;
+                poll_status = cflow_cnet_manager_context_poll_release(
+                    &f.guard, &released);
+                if (poll_status == SALTS_OK) {
+                    check_true(released);
+                    break;
+                }
+                check_equal(poll_status, SALTS_EBUSY);
+                check_false(released);
+                cmeta_thread_yield();
+            }
+            check_equal(poll_status, SALTS_OK);
         }
         check_equal(atomic_load(&f.values), 2);
         check_equal(atomic_load(&f.action_count), 2);
@@ -635,10 +650,7 @@ spec("CNetManager held context across cross-owner Actor ACK") {
         /* Source's EBUSY poll after ACK #1 cleared the old hint. ACK #2
          * therefore publishes a fresh wake: no lost-wake-after-poll. */
         check_true(guard_stats.notification_pending);
-        released = false;
-        check_equal(cflow_cnet_manager_context_poll_release(
-            &f.guard, &released), SALTS_OK);
-        check_true(released);
+        /* Concurrent polling already committed the one valid release. */
         check_equal(cflow_cnet_manager_context_poll_release(
             &f.guard, &released), SALTS_EALREADY);
         check_false(released);
