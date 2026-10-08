@@ -1,7 +1,7 @@
 #ifndef CMETA_ACE_INTERCEPTOR_H
 #define CMETA_ACE_INTERCEPTOR_H
 
-#include <cmeta/compiler.h>
+#include <cmeta/function.h>
 #include <cmeta/status.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -43,6 +43,28 @@
         const name_##_hook *hooks; \
         size_t hook_count; \
     } name_; \
+    /* Optional metadata-aware admission. Native function pointer typing is \
+     * checked independently by C/C++; canonical ABI metadata is borrowed. \
+     * Both views are caller-trusted contracts: no erased ABI reconstruction \
+     * or implicit Plugin/provider retention. Failure leaves *out unchanged. */ \
+    CMETA_INLINE cmeta_status name_##_admit( \
+        name_ *out, void *target_context, name_##_target_fn target, \
+        const name_##_hook *hooks, size_t count, \
+        const cmeta_function_abi_desc *expected, \
+        const cmeta_function_abi_desc *provider) { \
+        if (out == NULL || target == NULL || \
+            (count != 0u && hooks == NULL)) return CMETA_INVALID_ARGUMENT; \
+        if (count > 16u) return CMETA_CAPACITY_EXCEEDED; \
+        for (size_t index = 0u; index < count; ++index) { \
+            if (hooks[index].before == NULL && hooks[index].after == NULL && \
+                hooks[index].on_error == NULL) return CMETA_INVALID_ARGUMENT; \
+        } \
+        if (!cmeta_function_abi_contract_compatible(expected, provider)) \
+            return CMETA_TYPE_MISMATCH; \
+        const name_ admitted = {target_context, target, hooks, count}; \
+        *out = admitted; \
+        return CMETA_OK; \
+    } \
     CMETA_INLINE cmeta_status name_##_invoke( \
         const name_ *chain, const request_type_ *request, response_type_ *response) { \
         size_t entered = 0u; \

@@ -71,6 +71,26 @@ static void pattern_intercept_error(
     stage->probe->trace[stage->probe->count++] = stage->id + 20;
 }
 
+
+/* Canonical FunctionDesc + FunctionAbi for this exact native target.
+ * cmeta_status is an enum: never alias its reflection to an int type. */
+static const cmeta_type_desc pattern_intercept_status_type = {
+    "cmeta_status", sizeof(cmeta_status), CMETA_ALIGNOF(cmeta_status),
+    CMETA_T_INTEGER, NULL, NULL, NULL
+};
+CMETA_FUNCTION_METADATA_AS_ABI_RESULT(
+    pattern_intercept_target_contract, "pattern.interceptor.target",
+    io, &pattern_intercept_status_type, CMETA_ABI_ENUM, CMETA_RESULT_VALUE,
+    (void *, context, CMETA_PARAM_IN | CMETA_PARAM_BORROWED,
+     &cmeta_type_void_ptr, CMETA_ABI_OBJECT_POINTER),
+    (const int *, request, CMETA_PARAM_IN | CMETA_PARAM_BORROWED,
+     &cmeta_type_int_ptr, CMETA_ABI_OBJECT_POINTER),
+    (int *, response, CMETA_PARAM_OUT | CMETA_PARAM_BORROWED,
+     &cmeta_type_int_ptr, CMETA_ABI_OBJECT_POINTER));
+CMETA_STATIC_ASSERT(
+    CMETA_TYPE_MATCHES(&pattern_intercept_target, pattern_interceptor_target_fn),
+    "Interceptor target must match the exact canonical native signature");
+
 suite("CMeta pattern composition") {
     it("uses Interface directly as the Strategy dispatch primitive") {
         int value = 7;
@@ -186,6 +206,59 @@ suite("CMeta pattern composition") {
         check_false(pattern_owning_valid(&owning));
 
         cmeta_object_release(&object);
+    }
+
+
+    it("admits only matching native-typed Interceptor FunctionAbi") {
+        const cmeta_function_abi_desc *expected =
+            &pattern_intercept_target_contract__function_abi_meta;
+        cmeta_function_abi_desc provider = *expected;
+        cmeta_function_desc renamed = *expected->function;
+        cmeta_function_desc wrong_result = renamed;
+        cmeta_abi_carrier wrong_carriers[] = {
+            CMETA_ABI_OBJECT_POINTER, CMETA_ABI_OBJECT_POINTER, CMETA_ABI_UNSPECIFIED
+        };
+        pattern_interceptor_probe probe = {0};
+        pattern_interceptor chain = {0};
+        int request = 3, response = 0;
+
+        check_true(cmeta_function_abi_desc_valid(expected));
+        check_equal(expected->param_count, 3u);
+        check_equal(expected->return_carrier, CMETA_ABI_ENUM);
+        check_true(cmeta_function_abi_contract_compatible(expected, expected));
+
+        renamed.name = "provider renamed this entry";
+        provider.function = &renamed;
+        check_equal(pattern_interceptor_admit(
+            &chain, &probe, pattern_intercept_target, NULL, 0u,
+            expected, &provider), CMETA_OK);
+        check_equal(pattern_interceptor_invoke(&chain, &request, &response), CMETA_OK);
+        check_equal(response, 6);
+        check_equal(probe.target_calls, 1);
+
+        check_equal(pattern_interceptor_admit(
+            &chain, &probe, NULL, NULL, 0u, expected, &provider),
+            CMETA_INVALID_ARGUMENT);
+        check_true(chain.target == pattern_intercept_target);
+
+        wrong_result.result_flags = CMETA_RESULT_OWNED;
+        provider.function = &wrong_result;
+        check_equal(pattern_interceptor_admit(
+            &chain, &probe, pattern_intercept_target, NULL, 0u,
+            expected, &provider), CMETA_TYPE_MISMATCH);
+        check_true(chain.target == pattern_intercept_target);
+
+        provider.function = &renamed;
+        provider.param_carriers = wrong_carriers;
+        check_equal(pattern_interceptor_admit(
+            &chain, &probe, pattern_intercept_target, NULL, 0u,
+            expected, &provider), CMETA_TYPE_MISMATCH);
+        check_true(chain.target == pattern_intercept_target);
+
+        check_equal(pattern_interceptor_admit(
+            &chain, &probe, pattern_intercept_target, NULL, 0u,
+            NULL, &provider), CMETA_TYPE_MISMATCH);
+        check_true(chain.target == pattern_intercept_target);
     }
 
     it("invokes typed Interceptor hooks forward and after hooks in reverse") {

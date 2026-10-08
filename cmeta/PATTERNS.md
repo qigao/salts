@@ -46,6 +46,22 @@ specified in #1003 and integrated by PR #1010. CHttp, TurboFlow and TurboSCXML
 remain downstream conformance profiles, not sources of consumer-private
 component semantics.
 
+### Interceptor native signature and FunctionAbi admission (post-freeze)
+
+`CMETA_INTERCEPTOR_TYPE(Name, Request, Response)` declares an exact native
+`Name_target_fn` and optional `Name_admit` accepting borrowed
+`cmeta_function_abi_desc` expected/provider views. Admission reuses
+`cmeta_function_abi_contract_compatible` and rejects mismatched types,
+carriers, parameter flags, effects and result ownership without inventing
+a dynamic invocation ABI. The native target pointer is independently
+qualified by C11 and C++17 positive/negative compile tests.
+
+A declared FunctionAbi is only trustworthy when the provider guarantees
+it matches the executable native function. Descriptor equality alone cannot
+prove that correspondence. Neither CMeta nor Interceptor retains a callable,
+ObjectRef, data buffer or Plugin module: callers hold the corresponding Scope
+through the entire invocation.
+
 ## Canonical decomposition
 
 Patterns should reduce to the smallest existing semantic primitives.

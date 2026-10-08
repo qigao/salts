@@ -131,6 +131,41 @@ int main(void) { return 0; }
   check_cxx_source_compiles("${_salts_ace_bad_interface_source}"
     SALTS_ACE_BAD_CPP17_COMPILES)
 
+  # No erased call ABI: reject native callback constness mismatches at configure
+  # time in both C11 and C++17 before creating any interceptor chain.
+  set(_salts_ace_intercept_good [=[
+#include <cmeta/ace_interceptor.h>
+CMETA_INTERCEPTOR_TYPE(ace_intercept_probe, int, int);
+cmeta_status exact_target(void *, const int *, int *);
+CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(&exact_target, ace_intercept_probe_target_fn),
+                    "exact Interceptor signature");
+int main(void) { return 0; }
+]=])
+  set(_salts_ace_intercept_bad [=[
+#include <cmeta/ace_interceptor.h>
+CMETA_INTERCEPTOR_TYPE(ace_intercept_probe, int, int);
+cmeta_status mutable_target(void *, int *, int *);
+CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(&mutable_target, ace_intercept_probe_target_fn),
+                    "mutable request cannot satisfy borrowed const request");
+int main(void) { return 0; }
+]=])
+  foreach(_check IN ITEMS
+      SALTS_ACE_INTERCEPT_GOOD_C11 SALTS_ACE_INTERCEPT_BAD_C11
+      SALTS_ACE_INTERCEPT_GOOD_CPP17 SALTS_ACE_INTERCEPT_BAD_CPP17)
+    unset("${_check}" CACHE)
+  endforeach()
+  check_c_source_compiles("${_salts_ace_intercept_good}" SALTS_ACE_INTERCEPT_GOOD_C11)
+  check_c_source_compiles("${_salts_ace_intercept_bad}" SALTS_ACE_INTERCEPT_BAD_C11)
+  check_cxx_source_compiles("${_salts_ace_intercept_good}" SALTS_ACE_INTERCEPT_GOOD_CPP17)
+  check_cxx_source_compiles("${_salts_ace_intercept_bad}" SALTS_ACE_INTERCEPT_BAD_CPP17)
+  if(NOT SALTS_ACE_INTERCEPT_GOOD_C11 OR SALTS_ACE_INTERCEPT_BAD_C11 OR
+     NOT SALTS_ACE_INTERCEPT_GOOD_CPP17 OR SALTS_ACE_INTERCEPT_BAD_CPP17)
+    message(FATAL_ERROR
+      "ACE typed Interceptor C11/C++17 signature admission failed: "
+      "good-C=${SALTS_ACE_INTERCEPT_GOOD_C11}, bad-C=${SALTS_ACE_INTERCEPT_BAD_C11}, "
+      "good-C++=${SALTS_ACE_INTERCEPT_GOOD_CPP17}, bad-C++=${SALTS_ACE_INTERCEPT_BAD_CPP17}")
+  endif()
+
   set(CMAKE_REQUIRED_INCLUDES "${_salts_ace_previous_required_includes}")
   if("${_salts_ace_previous_try_type}" STREQUAL "")
     unset(CMAKE_TRY_COMPILE_TARGET_TYPE)
