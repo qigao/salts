@@ -11,6 +11,14 @@
 #define ACE_SYNC_CAST(type_, ptr_) ((type_)(ptr_))
 #endif
 
+/* CMeta reflects the actual enum status type rather than pretending the
+ * native cmeta_status return carrier is an int. This is a test-local
+ * canonical declaration, not a new global metadata registry. */
+static const cmeta_type_desc ace_sync_status_type = {
+    "cmeta_status", sizeof(cmeta_status), CMETA_ALIGNOF(cmeta_status),
+    CMETA_T_INTEGER, NULL, NULL, NULL
+};
+
 /* One canonical CMeta Interface with two real native strategies. */
 static void ace_sync_mutex_acquire(void *user) {
     cmeta_mutex_lock(ACE_SYNC_CAST(cmeta_mutex_t *, user));
@@ -67,8 +75,11 @@ static cmeta_status ace_sync_read_body(ace_sync_operation *operation) {
 }
 
 #define ACE_SYNC_COUNTER_METHODS(X,I) \
-    X(I,R1,cmeta_status,add,int,increment) \
-    X(I,R0,int,get,_)
+    X(I,FR1,cmeta_status,add,stateful, \
+      &ace_sync_status_type,CMETA_ABI_ENUM,CMETA_RESULT_VALUE, \
+      (int,increment,CMETA_PARAM_IN,&cmeta_type_int,CMETA_ABI_SCALAR)) \
+    X(I,FR0,int,get,stateful, \
+      &cmeta_type_int,CMETA_ABI_SCALAR,CMETA_RESULT_VALUE)
 CMETA_INTERFACE(ace_sync_counter_port, ACE_SYNC_COUNTER_METHODS);
 
 static cmeta_status ace_sync_counter_add(void *self, int increment) {
@@ -133,9 +144,15 @@ static int ace_sync_monitor_wait(ace_sync_monitor *monitor) {
 }
 
 #define ACE_SYNC_MONITOR_METHODS(X,I) \
-    X(I,R1,cmeta_status,put,int,value) \
-    X(I,R1,cmeta_status,take,int*,out) \
-    X(I,V0,void,close,_)
+    X(I,FR1,cmeta_status,put,stateful, \
+      &ace_sync_status_type,CMETA_ABI_ENUM,CMETA_RESULT_VALUE, \
+      (int,value,CMETA_PARAM_IN,&cmeta_type_int,CMETA_ABI_SCALAR)) \
+    X(I,FR1,cmeta_status,take,stateful, \
+      &ace_sync_status_type,CMETA_ABI_ENUM,CMETA_RESULT_VALUE, \
+      (int *,out,CMETA_PARAM_OUT | CMETA_PARAM_BORROWED, \
+       &cmeta_type_int_ptr,CMETA_ABI_OBJECT_POINTER)) \
+    X(I,FV0,void,close,stateful, \
+      &cmeta_type_void,CMETA_ABI_VOID)
 CMETA_INTERFACE(ace_sync_monitor_port, ACE_SYNC_MONITOR_METHODS);
 
 static cmeta_status ace_sync_monitor_put(void *self, int value) {
@@ -264,6 +281,12 @@ suite("CMeta ACE concurrent pattern composition") {
             check_equal(cmeta_thread_join(&threads[i]), 0);
             check_equal(workers[i].failures, 0);
         }
+        const cmeta_interface_desc *counter_contract =
+            ace_sync_counter_port_interface();
+        check_true(cmeta_interface_desc_valid(counter_contract));
+        for (size_t method = 0u; method < counter_contract->method_count; ++method)
+            check_true(cmeta_interface_method_reflection_valid(
+                &counter_contract->methods[method]));
         check_equal(ace_sync_counter_port_get(&port), 1000);
         check_equal(counter.private_calls, 1000u);
         /* Policy switch is legal only when all concurrent callers are joined. */
@@ -280,6 +303,12 @@ suite("CMeta ACE concurrent pattern composition") {
         ace_sync_monitor_init(&monitor);
         ace_sync_monitor_port port =
             ace_sync_monitor_impl_as_ace_sync_monitor_port(&monitor);
+        const cmeta_interface_desc *monitor_contract =
+            ace_sync_monitor_port_interface();
+        check_true(cmeta_interface_desc_valid(monitor_contract));
+        for (size_t method = 0u; method < monitor_contract->method_count; ++method)
+            check_true(cmeta_interface_method_reflection_valid(
+                &monitor_contract->methods[method]));
         int value = -1;
         check_equal(ace_sync_monitor_port_take(&port, NULL), CMETA_INVALID_ARGUMENT);
         check_equal(ace_sync_monitor_port_put(&port, 42), CMETA_OK);

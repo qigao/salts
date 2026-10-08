@@ -98,6 +98,15 @@ Scope release, generation drain frees the sole module lease. Real NativeIO
 read/cancel completions are tested separately under NativeIO; this test does
 not claim a synthetic completion is real kernel I/O.
 
+### Fully reflected Thread-Safe Interface and Monitor contracts (post-freeze)
+
+`cmeta_ace_sync_cases.h` now declares both user-facing typed Interface ports
+with **canonical FR/FV method metadata** (FunctionDesc + FunctionAbi), including
+an explicit enum status carrier and borrowed output-parameter semantics.
+The test asserts every method's reflection validity in both C11 and C++17.
+These are test-local declarations over Platform's existing mutex/condition;
+there is no new synchronization runtime or global Interface registry.
+
 ## Active pattern-gap tracking
 
 Umbrella: [#1058 — POSA2 17-pattern coverage and conformance](https://github.com/qigao/salts/issues/1058). Missing semantic/composition slices:
