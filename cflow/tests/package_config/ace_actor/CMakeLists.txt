@@ -31,3 +31,18 @@ target_link_libraries(cflow_ace_pipes_installed_consumer PRIVATE Salts::CFlow)
 target_compile_features(cflow_ace_pipes_installed_consumer PRIVATE c_std_11)
 add_test(NAME cflow_ace_pipes_installed_consumer
   COMMAND cflow_ace_pipes_installed_consumer)
+
+# Existing exact installed SDK fixture also qualifies the CNet/CFlow exported
+# integration target: no separate CMake install orchestration and no fallback.
+if(NOT TARGET Salts::CFlowCNet)
+  message(FATAL_ERROR "installed package is missing Salts::CFlowCNet")
+endif()
+add_executable(cflow_ace_half_sync_installed_consumer half_sync.c)
+target_link_libraries(cflow_ace_half_sync_installed_consumer
+  PRIVATE Salts::CFlowCNet)
+target_compile_features(cflow_ace_half_sync_installed_consumer PRIVATE c_std_11)
+if(WIN32)
+  target_link_libraries(cflow_ace_half_sync_installed_consumer PRIVATE ws2_32)
+endif()
+add_test(NAME cflow_ace_half_sync_installed_consumer
+  COMMAND cflow_ace_half_sync_installed_consumer)

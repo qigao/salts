@@ -267,6 +267,14 @@ retained producer before destroying borrowed scheduler/executor/graph storage.
 No new CMeta reactor, scheduling runtime, registry, Plugin lease, or fallback
 queue is introduced.
 
+The independent installed SDK consumer
+`cflow/tests/package_config/ace_actor/half_sync.c` additionally exercises
+public CNet TCP receive callbacks feeding the fixed-capacity CFlow Channel,
+then an explicit-demand Subscription using a canonical Subscriber. It links
+only exported `Salts::CFlowCNet` after exact `find_package(Salts ... EXACT)`
+and shares the same out-of-tree install verification harness as the ACE Actor
+and Pipes/Filters consumers; no separate packaging workflow is added.
+
 ## Admission test for a new pattern helper
 
 Add a new CMeta pattern-level macro/inline helper only if at least one condition
