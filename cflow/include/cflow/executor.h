@@ -254,8 +254,10 @@ bool cflow_executor_worker_init_with_capacity(cflow_executor *executor,
  * NOT change an accepted admission into a rejection.
  *
  * This Executor advertises SERIAL|MANUAL|OWNER_AFFINE. The explicit owner
- * capability permits Machine/Statechart execution without misrepresenting
- * a generic caller-driven Manual Executor as a worker Executor. No live task
+ * capability permits Machine execution without misrepresenting
+ * a generic caller-driven Manual Executor as a worker Executor.
+ * Statechart initialization is still synchronous and rejects caller-driven
+ * Executors until an owner-safe initial stabilization contract is available. No live task
  * can migrate to another owner. It owns no CNet backend, connection, or loop.
  *
  * Successful descriptor admission copies the descriptor. Accepted callbacks
