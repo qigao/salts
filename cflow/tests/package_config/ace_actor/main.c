@@ -1,6 +1,7 @@
 #include <cflow/actor.h>
 #include <cmeta/interface.h>
 #include <salts/clock.h>
+#include <salts/thread.h>
 
 #include <stdatomic.h>
 #include <stdbool.h>

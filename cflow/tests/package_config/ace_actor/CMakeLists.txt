@@ -46,3 +46,15 @@ if(WIN32)
 endif()
 add_test(NAME cflow_ace_half_sync_installed_consumer
   COMMAND cflow_ace_half_sync_installed_consumer)
+# Fail early on undeclared C APIs on every supported GCC/Clang host.
+# The installed SDK consumer must include each API's declaring public header;
+# GNU C11 warning permissiveness must not hide macOS Clang errors.
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+  foreach(ace_consumer IN ITEMS
+      cflow_ace_actor_installed_consumer
+      cflow_ace_pipes_installed_consumer
+      cflow_ace_half_sync_installed_consumer)
+    target_compile_options(${ace_consumer} PRIVATE
+      -Werror=implicit-function-declaration)
+  endforeach()
+endif()
