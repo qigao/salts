@@ -54,7 +54,7 @@ cmeta_registry(drivers,
 `CMETA_MANIFEST_COMPONENT` retains numeric kind 1 from the 2.x static Plugin
 declaration API, but its public semantic name and descriptor layout are now
 Component. Numeric equality does not make the old descriptor compatible. There
-is no `CMETA_MANIFEST_PLUGIN` compatibility alias in the 3.0.0 integration SDK.
+is no `CMETA_MANIFEST_PLUGIN` compatibility alias in the 2.3.0 candidate SDK.
 
 Use:
 
@@ -112,13 +112,14 @@ provider-owned code or metadata.
 
 ## Migration from Salts 2.x
 
-The static `<cmeta/plugin.h>` declarations were published in Salts 2.x, including
-2.2.0. Replacing them is an intentional source and binary compatibility break
-scheduled for Salts **3.0.0**. The integration branch does not supply legacy
-aliases: keeping two names for one static capability model would preserve the
-ambiguity between declaration metadata and the dynamic Plugin runtime.
+The most recent published Salts Release is **2.2.0**. The 3.0.0 Release
+was withdrawn and the next release identifier is **2.3.0**, not 3.0.0 or
+the former interim 4.0.0 proposal. The static `<cmeta/plugin.h>`
+declarations shipped in 2.2.x are replaced with Component metadata in the
+2.3.0 candidate. This is an intentional **source and native ABI break
+within major 2**; no legacy aliases or runtime fallback are provided.
 
-| Salts 2.x static metadata | Salts 3.0.0 replacement |
+| Salts 2.2.x static metadata | 2.3.0 candidate replacement |
 | --- | --- |
 | `<cmeta/plugin.h>` | `<cmeta/component.h>` |
 | `cmeta_plugin`, `cmeta_plugin_empty`, `cmeta_plugin_meta` | `cmeta_component`, `cmeta_component_empty`, `cmeta_component_meta` |
@@ -129,38 +130,32 @@ ambiguity between declaration metadata and the dynamic Plugin runtime.
 | `cmeta_manifest_get_plugin`, `cmeta_plugin_get_capability` | `cmeta_manifest_get_component`, `cmeta_component_get_capability` |
 | `cmeta_contract_fingerprint_plugin` | `cmeta_contract_fingerprint_component` |
 
-`cmeta_provides` and `cmeta_requires` keep their spelling but now declare
-Component role rows. Existing dynamic APIs in `<salts/plugin.h>` and
-`<salts/plugin_decl.h>` are not renamed by this migration.
+`cmeta_provides` and `cmeta_requires` retain their spellings for
+Component roles. Dynamic `<salts/plugin.h>` and `<salts/plugin_decl.h>`
+remain the sole module-load/lease authority.
 
-For generated declarations, update the header, declaration macro, metadata
-accessor and manifest entry together. The declaration example above is the
-replacement for `cmeta_plugin(PostgresDriver, ...)`. For manual descriptors,
-rebuild the initializer against format 2: `name` becomes `stable_id`, which is
-now semantic provider identity rather than a diagnostic name; `count` becomes
-`capability_count`; the new `config` field is NULL for an unconfigured provider
-or borrows the exact canonical DataDesc for its native configuration. Never
-cast a format-1 descriptor to `cmeta_component_desc` or reuse its serialized
-layout.
+Migrate the generated declaration header, macro, metadata accessor and
+manifest entry together. Manual format-1 descriptors must be rebuilt for
+format 2: `name` becomes `stable_id`, `count` becomes
+`capability_count`, and optional `config` borrows a canonical typed
+DataDesc with a valid native `storage_type`. Kind-only Sequence/Set/Map
+schema descriptors cannot be admitted as Component configurations. Never
+cast a format-1 record into a format-2 record.
 
-Regenerate stored contract fingerprints. Domain 6 retains its numeric value,
-but format 2 includes configuration and declaration-format semantics; a 2.x
-static Plugin digest is not a 3.0.0 Component admission token. Stable identity
-still needs a separate check and is excluded from the shape fingerprint.
+Regenerate all stored contract fingerprints. Format 2's domain-6 digest
+includes config and declaration-format semantics, while stable identity
+is validated independently. A 2.2.x fingerprint is not a 2.3.0 token.
 
-Rebuild the host, libraries, provider DSOs and downstream consumers against one
-complete 3.0.0 SDK, then qualify their ordinary Plugin exports and provider
-bindings before deployment. Do not mix 2.x headers, libraries, descriptors or
-cached fingerprints with 3.0.0. CMake's project version and the package manifest
-both identify 3.0.0; versioned native libraries use SOVERSION 3. CMake's
-`SameMajorVersion` package admission rejects `find_package(Salts 2 CONFIG)`
-against this SDK; consumers must request the 3.x major explicitly. Reflection ABI
-and the ordinary Plugin ABI retain their own negotiated versions; they do not
-override the Component descriptor format or establish 2.x SDK compatibility.
+CMake package admission uses `SameMinorVersion`; even a non-EXACT
+`find_package(Salts 2.2 CONFIG)` request against the 2.3 SDK must
+fail. SDK-owned shared targets use SONAME epoch `2.3` rather than the
+released 2.2 epoch. CFlow's independently versioned ABI and negotiated
+Reflection/Plugin protocol epochs are not tied to SDK SemVer. Rebuild
+each consumer, provider DSO, host and contract cache with one immutable
+2.3.0 candidate; do not mix 2.2 and 2.3 headers, layouts or binaries.
 
-Rollback replaces the complete SDK, rebuilt host and provider set with the
-previous 2.x deployment and its original contract cache. There is no in-place
-descriptor conversion or mixed-version compatibility path.
+Rollback restores the entire matching 2.2.x deployment and its caches.
+There is no in-place conversion or raw runtime-state migration.
 
 ## Generation concurrency and resource admission
 
@@ -200,6 +195,6 @@ External YAML/JSON/XML/CLI parsing remains outside CMeta. Factory and lifecycle
 execution authority are deliberately not embedded in the descriptor; they
 belong to the Component runtime binding under #1008.
 
-Development remains on
-`feature/cmeta-pattern-component-runtime`; this contract is not yet a
-released master API.
+The Component baseline is integrated in master source for the planned Salts
+2.3.0 SDK, but not part of the last published 2.2.0 Release. The separate
+ACE lifecycle hardening lives in Draft PR #1013 (DO NOT MERGE).
