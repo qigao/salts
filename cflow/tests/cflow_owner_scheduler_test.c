@@ -1,0 +1,252 @@
+#include <cflow/executor.h>
+#include <cflow/scheduler.h>
+#include <salts/thread.h>
+#include "scheduler_internal.h"
+#include <tinytest.h>
+
+#include <stdatomic.h>
+#include <stdint.h>
+
+enum { SCHED_TEST_PRODUCERS = 4, SCHED_TEST_POSTS = 8 };
+
+typedef struct owner_scheduler_probe {
+    const void *owner;
+    atomic_int runs;
+    atomic_int wrong_owner;
+    atomic_int cancels;
+    atomic_int finalizers;
+    atomic_int wakes;
+    atomic_int cancel_off_owner;
+} owner_scheduler_probe;
+
+typedef struct owner_scheduler_sender {
+    cflow_scheduler *scheduler;
+    owner_scheduler_probe *probe;
+    int count;
+    atomic_int rejected;
+    atomic_int foreign_drive;
+} owner_scheduler_sender;
+
+typedef struct owner_cancel_sender {
+    cflow_scheduler *scheduler;
+    cflow_task_id task_id;
+    atomic_bool accepted;
+} owner_cancel_sender;
+
+static void owner_sched_signal(void *user) {
+    owner_scheduler_probe *probe = (owner_scheduler_probe *)user;
+    atomic_fetch_add(&probe->wakes, 1);
+}
+
+static void owner_sched_run(void *user) {
+    owner_scheduler_probe *probe = (owner_scheduler_probe *)user;
+    if (probe->owner != cmeta_thread_current_token())
+        atomic_fetch_add(&probe->wrong_owner, 1);
+    atomic_fetch_add(&probe->runs, 1);
+}
+
+static void owner_sched_cancel(void *user) {
+    owner_scheduler_probe *probe = (owner_scheduler_probe *)user;
+    if (probe->owner != cmeta_thread_current_token())
+        atomic_fetch_add(&probe->cancel_off_owner, 1);
+    atomic_fetch_add(&probe->cancels, 1);
+}
+
+static void owner_sched_finalize(void *user) {
+    owner_scheduler_probe *probe = (owner_scheduler_probe *)user;
+    atomic_fetch_add(&probe->finalizers, 1);
+}
+
+static void owner_sched_produce(void *user) {
+    owner_scheduler_sender *p = (owner_scheduler_sender *)user;
+    for (int i = 0; i < p->count; ++i) {
+        cflow_schedule_result admitted = cflow_scheduler_try_post_after(
+            p->scheduler, 0u, owner_sched_run, p->probe);
+        if (admitted.status != CFLOW_ADMISSION_ACCEPTED)
+            atomic_fetch_add(&p->rejected, 1);
+    }
+    if (cflow_scheduler_run_one(p->scheduler))
+        atomic_fetch_add(&p->foreign_drive, 1);
+}
+
+static void owner_sched_cancel_foreign(void *user) {
+    owner_cancel_sender *p = (owner_cancel_sender *)user;
+    atomic_store(&p->accepted,
+                 cflow_scheduler_cancel(p->scheduler, p->task_id));
+}
+
+suite("CFlow shared-owner Concurrent Scheduler") {
+    it("rejects unsupported bindings and shares the existing Executor queue") {
+        cflow_executor executor = {0};
+        cflow_executor manual = {0};
+        cflow_scheduler scheduler = {0};
+        cflow_schedule_result result;
+        owner_scheduler_probe probe = {0};
+
+        probe.owner = cmeta_thread_current_token();
+        check_true(cflow_executor_manual_init_with_capacity(&manual, 8u));
+        check_false(cflow_scheduler_owner_bind(&scheduler, &manual, 4u));
+        check_false(cflow_scheduler_valid(&scheduler));
+        check_true(cflow_executor_owner_init_with_capacity(
+            &executor, 8u, owner_sched_signal, &probe));
+        check_false(cflow_scheduler_owner_bind(&scheduler, &executor, 0u));
+        check_false(cflow_scheduler_owner_bind(&scheduler, &executor, 9u));
+        check_true(cflow_scheduler_owner_bind(&scheduler, &executor, 4u));
+        check_false(cflow_scheduler_owner_bind(&scheduler, &executor, 4u));
+        check_true((cflow_scheduler_capabilities(&scheduler) &
+                    CMETA_SCHED_CAP_CONCURRENT) != 0u);
+        check_true((cflow_scheduler_capabilities(&scheduler) &
+                    CMETA_SCHED_CAP_CALLER_DRIVEN_ZERO_DELAY) != 0u);
+        check_false((cflow_scheduler_capabilities(&scheduler) &
+                     CMETA_SCHED_CAP_DELAYED) != 0u);
+
+        result = cflow_scheduler_try_post_after(
+            &scheduler, 1u, owner_sched_run, &probe);
+        check_equal(result.status, CFLOW_ADMISSION_INVALID_ARGUMENT);
+        check_equal(result.task_id, (cflow_task_id)0u);
+        result = cflow_scheduler_try_post_after(
+            &scheduler, 0u, owner_sched_run, &probe);
+        check_equal(result.status, CFLOW_ADMISSION_ACCEPTED);
+        check_not_equal(result.task_id, (cflow_task_id)0u);
+        check_equal(atomic_load(&probe.runs), 0);
+        check_equal(cflow_executor_pending(&executor), (size_t)1u);
+        check_equal(cflow_scheduler_pending(&scheduler), (size_t)1u);
+        check_equal(cflow_scheduler_run_until_idle(&scheduler, 1u), (size_t)1u);
+        check_equal(atomic_load(&probe.runs), 1);
+        check_equal(atomic_load(&probe.wrong_owner), 0);
+        check_true(cflow_scheduler_wait_idle(&scheduler));
+
+        cflow_scheduler_destroy(&scheduler);
+        check_false(cflow_scheduler_valid(&scheduler));
+        check_true(cflow_executor_try_post(
+            &executor, owner_sched_run, &probe) == CFLOW_ADMISSION_ACCEPTED);
+        check_true(cflow_executor_run_one(&executor));
+        check_equal(atomic_load(&probe.runs), 2);
+        cflow_executor_destroy(&executor);
+        cflow_executor_destroy(&manual);
+    }
+
+    it("accepts concurrent producers and only the owner dispatches callbacks") {
+        cflow_executor executor = {0};
+        cflow_scheduler scheduler = {0};
+        owner_scheduler_probe probe = {0};
+        cmeta_thread_t producers[SCHED_TEST_PRODUCERS] = {0};
+        owner_scheduler_sender senders[SCHED_TEST_PRODUCERS] = {0};
+        cflow_scheduler_stats stats = {0};
+        int i;
+
+        probe.owner = cmeta_thread_current_token();
+        check_true(cflow_executor_owner_init_with_capacity(
+            &executor, SCHED_TEST_PRODUCERS * SCHED_TEST_POSTS,
+            owner_sched_signal, &probe));
+        check_true(cflow_scheduler_owner_bind(
+            &scheduler, &executor, SCHED_TEST_PRODUCERS * SCHED_TEST_POSTS));
+
+        for (i = 0; i < SCHED_TEST_PRODUCERS; ++i) {
+            senders[i].scheduler = &scheduler;
+            senders[i].probe = &probe;
+            senders[i].count = SCHED_TEST_POSTS;
+            check_equal(cmeta_thread_create(
+                &producers[i], owner_sched_produce, &senders[i]), 0);
+        }
+        for (i = 0; i < SCHED_TEST_PRODUCERS; ++i)
+            check_equal(cmeta_thread_join(&producers[i]), 0);
+        for (i = 0; i < SCHED_TEST_PRODUCERS; ++i) {
+            check_equal(atomic_load(&senders[i].rejected), 0);
+            check_equal(atomic_load(&senders[i].foreign_drive), 0);
+        }
+        check_equal(atomic_load(&probe.runs), 0);
+        check_equal(cflow_scheduler_pending(&scheduler),
+                    (size_t)(SCHED_TEST_PRODUCERS * SCHED_TEST_POSTS));
+        check_equal(cflow_scheduler_try_post_after(
+            &scheduler, 0u, owner_sched_run, &probe).status,
+            CFLOW_ADMISSION_FULL);
+        check_equal(cflow_scheduler_run_until_idle(&scheduler, 7u), (size_t)7u);
+        check_equal(atomic_load(&probe.runs), 7);
+        check_equal(cflow_scheduler_run_until_idle(&scheduler, 0u),
+                    (size_t)(SCHED_TEST_PRODUCERS * SCHED_TEST_POSTS - 7));
+        check_equal(atomic_load(&probe.runs),
+                    SCHED_TEST_PRODUCERS * SCHED_TEST_POSTS);
+        check_equal(atomic_load(&probe.wrong_owner), 0);
+        check_true(cflow_scheduler_get_stats(&scheduler, &stats));
+        check_equal(stats.ready_capacity,
+                    (size_t)(SCHED_TEST_PRODUCERS * SCHED_TEST_POSTS));
+        check_equal(stats.rejected_full, (size_t)1u);
+        check_equal(stats.ready_pending, (size_t)0u);
+        check_true(cflow_scheduler_wait_idle(&scheduler));
+        cflow_scheduler_destroy(&scheduler);
+        cflow_executor_destroy(&executor);
+    }
+
+    it("settles a foreign-thread cancel immediately and retains bounded tombstone") {
+        cflow_executor executor = {0};
+        cflow_scheduler scheduler = {0};
+        owner_scheduler_probe probe = {0};
+        owner_cancel_sender cancel = {0};
+        cmeta_thread_t canceller = NULL;
+        cflow_schedule_result posted;
+        cflow_executor_task task = {
+            .run = owner_sched_run,
+            .cancel = owner_sched_cancel,
+            .finalize = owner_sched_finalize,
+            .user = &probe
+        };
+
+        probe.owner = cmeta_thread_current_token();
+        check_true(cflow_executor_owner_init_with_capacity(
+            &executor, 2u, NULL, NULL));
+        check_true(cflow_scheduler_owner_bind(&scheduler, &executor, 1u));
+        posted = (cflow_schedule_result){0};
+        check_true(cflow_scheduler_try_post_task_after_internal(
+            &scheduler, 0u, &task, &posted));
+        check_equal(posted.status, CFLOW_ADMISSION_ACCEPTED);
+        cancel.scheduler = &scheduler;
+        cancel.task_id = posted.task_id;
+        check_equal(cmeta_thread_create(
+            &canceller, owner_sched_cancel_foreign, &cancel), 0);
+        check_equal(cmeta_thread_join(&canceller), 0);
+        check_true(atomic_load(&cancel.accepted));
+        check_false(cflow_scheduler_cancel(&scheduler, posted.task_id));
+        check_equal(atomic_load(&probe.runs), 0);
+        check_equal(atomic_load(&probe.cancels), 1);
+        check_equal(atomic_load(&probe.finalizers), 1);
+        check_equal(atomic_load(&probe.cancel_off_owner), 1);
+
+        check_equal(cflow_scheduler_pending(&scheduler), (size_t)1u);
+        check_equal(cflow_scheduler_try_post_after(
+            &scheduler, 0u, owner_sched_run, &probe).status,
+            CFLOW_ADMISSION_FULL);
+        check_equal(cflow_scheduler_run_until_idle(&scheduler, 1u), (size_t)1u);
+        check_equal(cflow_scheduler_pending(&scheduler), (size_t)0u);
+        check_true(cflow_scheduler_wait_idle(&scheduler));
+        check_equal(atomic_load(&probe.cancels), 1);
+        check_equal(atomic_load(&probe.finalizers), 1);
+        cflow_scheduler_destroy(&scheduler);
+        cflow_executor_destroy(&executor);
+    }
+
+    it("does not shut down the borrowed Executor when Scheduler admission seals") {
+        cflow_executor executor = {0};
+        cflow_scheduler scheduler = {0};
+        owner_scheduler_probe probe = {0};
+        probe.owner = cmeta_thread_current_token();
+        check_true(cflow_executor_owner_init_with_capacity(
+            &executor, 4u, NULL, NULL));
+        check_true(cflow_scheduler_owner_bind(&scheduler, &executor, 2u));
+        check_not_equal(cflow_scheduler_post(
+            &scheduler, owner_sched_run, &probe), (cflow_task_id)0u);
+        check_true(cflow_scheduler_shutdown(&scheduler));
+        check_true(cflow_scheduler_shutdown(&scheduler));
+        check_equal(cflow_scheduler_try_post_after(
+            &scheduler, 0u, owner_sched_run, &probe).status,
+            CFLOW_ADMISSION_CLOSED);
+        check_equal(cflow_scheduler_run_until_idle(&scheduler, 1u), (size_t)1u);
+        check_equal(atomic_load(&probe.runs), 1);
+        check_true(cflow_executor_try_post(
+            &executor, owner_sched_run, &probe) == CFLOW_ADMISSION_ACCEPTED);
+        check_true(cflow_executor_run_one(&executor));
+        check_equal(atomic_load(&probe.runs), 2);
+        cflow_scheduler_destroy(&scheduler);
+        cflow_executor_destroy(&executor);
+    }
+}
