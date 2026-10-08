@@ -5,14 +5,23 @@ if(NOT DEFINED SALTS_TEST_PREFIX OR NOT DEFINED SALTS_TEST_VERSION)
   message(FATAL_ERROR "the SDK prefix and expected version are required")
 endif()
 
-# Exercise find_package admission against the installed SDK itself. A request
-# for a previous major must not silently load incompatible descriptors/symbols.
-string(REGEX MATCH "^[0-9]+" sdk_major "${SALTS_TEST_VERSION}")
-math(EXPR previous_major "${sdk_major} - 1")
-find_package(Salts ${previous_major} CONFIG QUIET
+# A 2.3 SDK contains an incompatible Component ABI relative to 2.2.
+# Reject non-EXACT previous-minor requests (SameMajorVersion is too permissive).
+string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.[0-9]+$" sdk_semver "${SALTS_TEST_VERSION}")
+if(NOT sdk_semver)
+  message(FATAL_ERROR "expected exact numeric SDK version")
+endif()
+set(sdk_major "${CMAKE_MATCH_1}")
+set(sdk_minor "${CMAKE_MATCH_2}")
+if(sdk_minor LESS 1)
+  message(FATAL_ERROR "this ABI admission fixture requires a nonzero minor version")
+endif()
+math(EXPR previous_minor "${sdk_minor} - 1")
+set(previous_minor_version "${sdk_major}.${previous_minor}")
+find_package(Salts ${previous_minor_version} CONFIG QUIET
   PATHS "${SALTS_TEST_PREFIX}" NO_DEFAULT_PATH)
 if(Salts_FOUND)
-  message(FATAL_ERROR "SDK ${SALTS_TEST_VERSION} accepted a ${previous_major}.x request")
+  message(FATAL_ERROR "SDK ${SALTS_TEST_VERSION} accepted older ${previous_minor_version}.x request")
 endif()
 find_package(Salts ${SALTS_TEST_VERSION} EXACT CONFIG REQUIRED
   PATHS "${SALTS_TEST_PREFIX}" NO_DEFAULT_PATH)

@@ -20,20 +20,26 @@ These abstractions are designed to compile down to ordinary C data structures an
 并用同一版本重新构建库、宿主和插件。部署时使用完整的新 SDK；不要混用旧头文件、
 旧静态库或旧插件。数据布局与错误码没有因前缀迁移改变。
 
-## Component migration for 3.0.0
+## Component migration for Salts 2.3.0
 
-This integration branch prepares the next major SDK version, 3.0.0. It removes
-the static CMeta Plugin declaration API published in 2.x and replaces it with
-Component metadata and Configurator runtime contracts. This is a source and
-binary compatibility break; CMake and the package manifest use the new major
-version, versioned libraries use SOVERSION 3, and CMake package admission uses
-`SameMajorVersion` to reject 2.x version requests. The branch is not part of the
-published 2.2.0 SDK.
+**Next release version: 2.3.0** (latest published: 2.2.0). The earlier
+3.0.0 GitHub Release was withdrawn; historical 3.0 tags/commits do not
+define the next package version. This source contains the incoming Component
+metadata/Configurator model, replacing 2.2.x static CMeta Plugin declarations.
+
+This is a **source and native ABI transition within major 2**, so no 2.2
+headers, providers, old Component fingerprints or binaries may be reused.
+SDK-owned shared libraries use native SONAME epoch 2.3 (the independent
+CFlow ABI is unchanged). Generated CMake package version admission uses
+`SameMinorVersion`, rejecting even non-EXACT 2.2 requests. Consumers must
+be rebuilt and pinned to the complete exact 2.3.0 SDK.
 
 See [the Component migration guide](cmeta/COMPONENT_MANIFESTS.md#migration-from-salts-2x)
-for exact symbol changes, descriptor and fingerprint differences, and the
-rebuild/rollback procedure. Dynamic loading and module leases remain owned by
-`Salts::Plugin`.
+for descriptors and rebuild/rollback. No static Plugin compatibility alias,
+implicit runtime migration or fallback is introduced. ACE lifecycle hardening
+is developed separately in long-lived Draft PR #1013 and must **not** be
+merged as part of this version-baseline correction. No stable tag or package
+publication is authorized by this change.
 
 ## Why Salts?
 
