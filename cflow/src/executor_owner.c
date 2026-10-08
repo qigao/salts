@@ -343,6 +343,12 @@ static bool owner_project_control(void *self, cflow_executor_control *out) {
     return true;
 }
 
+bool cflow_executor_owner_is_thread_internal(const cflow_executor *executor) {
+    return executor != NULL &&
+           executor->vtable == &owner_affine_executor_vtable &&
+           owner_on_thread((const cflow_owner_executor_state *)executor->self);
+}
+
 bool cflow_executor_owner_init_with_capacity(
     cflow_executor *executor, size_t capacity,
     cflow_task_fn wake, void *wake_user) {
