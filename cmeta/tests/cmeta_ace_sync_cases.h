@@ -212,6 +212,11 @@ suite("CMeta ACE concurrent pattern composition") {
         cmeta_mutex_init(&mutex);
         check_equal(cmeta_rwlock_init(&rw), 0);
         cmeta_ace_lockable lock = ace_sync_mutex_policy_as_cmeta_ace_lockable(&mutex);
+        const cmeta_interface_desc *lock_desc = cmeta_ace_lockable_interface();
+        check_true(cmeta_interface_desc_valid(lock_desc));
+        check_equal(lock_desc->method_count, 2u);
+        check_true(cmeta_interface_method_reflection_valid(&lock_desc->methods[0]));
+        check_true(cmeta_interface_method_reflection_valid(&lock_desc->methods[1]));
         check_equal(cmeta_ace_guard_enter(&guard, &missing), CMETA_INVALID_ARGUMENT);
         check_equal(cmeta_ace_guard_enter(&guard, &lock), CMETA_OK);
         check_equal(cmeta_ace_guard_enter(&guard, &lock), CMETA_BUSY);
