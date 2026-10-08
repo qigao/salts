@@ -152,6 +152,76 @@ provide a carefully reviewed coordinated reservation protocol later. Both
 the stage and the Actor mailbox must have explicit capacity. Do **not**
 pretend a callback-time SEND_FULL is safe to fix with an unbounded retry queue.
 
+### Phase 3a: bounded one-credit delivery into a domain Actor (PR #1024)
+
+The optional `Salts::CFlowCNet` target now includes
+[`<cflow/cnet_domain_actor.h>`](../include/cflow/cnet_domain_actor.h).
+It retains a producer ref to an already existing Machine Actor and allocates a
+fixed number of **payload leases**, but no second Actor queue. Phase 3a is an
+explicit owner-driven staging primitive, not yet a CNet client/observer runtime
+adapter or cross-owner router.
+
+Its host receives a normal CNet callback, never a new I/O terminal. The
+host's protocol must obey one outstanding receive demand and no direct
+`cnet_receive()` calls outside this single-credit path:
+
+```c
+/* The host has already initialized its domain Actor and bridge, installed
+ * a CNet observer that forwards on_receive to the bridge, and bound the
+ * generation-checked connection; this snippet shows only one demand. */
+cflow_cnet_domain_credit credit = {0};
+int status = cflow_cnet_domain_reserve_credit(&bridge, &credit);
+if (status == SALTS_OK) {
+    status = cnet_receive(&client, connection, 1u);
+    if (status != SALTS_OK)
+        (void)cflow_cnet_domain_cancel_credit(&bridge, credit);
+}
+/* CNet on_receive (borrowed view):
+ *     cflow_cnet_domain_receive(&bridge, connection, view)
+ * return ENOBUFS => staged bytes preserved; stop new receive demand.
+ * After owner drives Actor progress, call retry_actor once per budget.
+ * The Actor's business action obtains bytes through borrow(delivery) and
+ * acknowledges only after its chosen application-processing boundary.
+ * CNet CLOSED/FAILED calls transport_terminal; it never implies Actor ACK.
+ */
+```
+
+Admission is **tentative** until `cnet_receive()` succeeds, so the host must
+use exactly one of rejection rollback or authoritative receive/terminal
+settlement for that credit. `cflow_cnet_domain_receive()` copies an entire
+borrowed CNet receive *chunk*, not an application protocol frame. Oversize
+is a hard `SALTS_EMSGSIZE` failure with new receive demand sealed; the host
+chooses the application-level close policy and cannot pretend the bytes were
+delivered. Actor Mailbox FULL keeps exactly one staged event/owned buffer
+and may be retried only by explicit owner progress. The typed
+`cflow_cnet_domain_delivery` contains incarnation, generation, slot, session
+identity, size and kind but **not** a borrowed payload pointer.
+
+Application ACK is a separate capability: successful Actor Mailbox admission
+does not reclaim a stage slot or establish processing/commit durability.
+The host must settle all accepted domain events; if its Actor mailbox closes
+and discards trivial events, it may invoke
+`cflow_cnet_domain_abort_after_quiescence()` only after the Actor and CNet
+callbacks have **actually quiesced**. The bridge never polls, closes, owns,
+migrates or retries CNet resources on its own, and does not introduce a second
+transport terminal authority.
+
+Phase 3a validation now exercises a real Machine Actor on the shared Owner
+Executor / Concurrent Scheduler against both **synthetic borrowed CNet views**
+(for deterministic rejection, terminal and retry tests) and a **real TCP
+loopback**, using host-owned `cnet_connect()`, `cnet_receive()`,
+`cnet_client_poll()`, and callback forwarding. The real loopback test drives
+multiple receive credits, Actor Mailbox FULL, bounded retry, ACK-based slot
+reuse, and a second outstanding receive credit retiring on peer EOF without
+releasing the already delivered business lease.
+
+This remains one host-selected CNet owner and one co-located Actor owner;
+the bridge does **not** install its own CNet observer, frame the application
+protocol, call `cnet_receive()` automatically or claim business durability.
+**True `cnet_client_init_external()` / NativeIO external-progress integration,
+CNetManager retention, 2/4-owner handoff, explicit policy placement and
+representative consumer qualification remain later #1022 slices.**
+
 ## 5. Execution placement and fairness
 
 Two legitimate integration topologies must be measured, not conflated:
