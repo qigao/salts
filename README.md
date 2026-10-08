@@ -205,7 +205,7 @@ target triplet to `VCPKG_WINDOWS_TRIPLET` for Salts presets. Explicit toolchain
 arguments use the upstream `QIGAO_VCPKG_TOOLCHAIN_FILE` environment variable.
 
 Native CI and the Linux Component candidate workflow also use
-[sccache](https://github.com/mozilla/sccache) for C/C++ compiler results. Each
+[ccache](https://ccache.dev/) for C/C++ compiler results. Each
 OS, host architecture and matrix profile has a separate 512 MiB cache, partitioned
 by the shared vcpkg contract/revision and preset/dependency configuration. A new
 successful run saves an immutable snapshot; subsequent runs restore the latest
@@ -218,9 +218,8 @@ CTest suites. CMake build trees and installed SDKs are not reused across commits
 Linking, code generation, tool installation and tests still run, so speedups
 depend on the changed files and the observed cache hit rate. GitHub branch access
 rules and cache eviction apply; the first run in a new cache namespace is cold.
-The MSVC C11 atomics switch uses its equivalent dash spelling because sccache
-0.18 does not recognize the slash spelling and treats it as an extra input file.
-This retains C11 atomic support and allows C objects to enter the cache.
+The MSVC C11 atomics switch uses its equivalent dash spelling for consistent compiler flags across Windows builds. This retains C11
+atomic support and allows eligible C objects to enter the ccache cache.
 
 The supported project compiler profiles are:
 
