@@ -176,7 +176,7 @@ static salts_component_plugin_status domain_bind_service(
 static int domain_read(
     exclusive_domain_owner *domain,
     const salts_component_plugin_scope *scope,
-    const exclusive_bound_service *bound) {
+    exclusive_bound_service *bound) {
     if (!domain->resource_open || !bound->live ||
         domain->epoch != bound->generation_id ||
         salts_component_plugin_scope_generation_id(scope) !=
@@ -244,6 +244,14 @@ suite("ACE exclusive domain resource across Component generations") {
         check_equal(build_exclusive_generation(
             &next, &domain, UINT64_C(8), 18),
             SALTS_COMPONENT_PLUGIN_OK);
+        /* Macro-generated canonical Strategy must use the same native
+         * method signature; it does not create resource/module ownership. */
+        {
+            component_plugin_value strategy =
+                exclusive_writer_impl_as_component_plugin_value(&n.provider.value);
+            check_true(component_plugin_value_valid(&strategy));
+            check_equal(component_plugin_value_get(&strategy), 17);
+        }
         check_equal(n.provider.activates, 1u);
         check_equal(next.provider.activates, 1u);
         check_equal(domain.bind_count, 1u);
