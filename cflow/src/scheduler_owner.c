@@ -21,6 +21,7 @@ typedef enum owner_schedule_phase {
     OWNER_SCHEDULE_FREE = 0,
     OWNER_SCHEDULE_PENDING,
     OWNER_SCHEDULE_RUNNING,
+    OWNER_SCHEDULE_CANCEL_SETTLING,
     OWNER_SCHEDULE_CANCELLED
 } owner_schedule_phase;
 
@@ -32,6 +33,7 @@ typedef struct owner_schedule_slot {
     cflow_task_id id;
     size_t index;
     owner_schedule_phase phase;
+    bool owner_consumed; /* Executor terminal already observed during cancel. */
 } owner_schedule_slot;
 
 struct owner_schedule_state {
@@ -60,6 +62,7 @@ static void slot_return_locked(owner_schedule_slot *slot) {
     assert(slot->phase != OWNER_SCHEDULE_FREE &&
            s->free_count < s->capacity && s->pending > 0u);
     slot->phase = OWNER_SCHEDULE_FREE;
+    slot->owner_consumed = false;
     slot->id = 0u;
     slot->task = (cflow_executor_task){0};
     s->free_indices[s->free_count++] = slot->index;
@@ -84,7 +87,20 @@ static void owner_slot_settle(void *user, bool cancelled_by_executor) {
         have_task = true;
         if (cancelled_by_executor) ++s->settling;
         else ++s->dispatching;
-    } else if (slot->phase != OWNER_SCHEDULE_CANCELLED) {
+    } else if (slot->phase == OWNER_SCHEDULE_CANCEL_SETTLING) {
+        /* A foreign cancel/finalize still owns this slot's task lease.
+         * Mark the Executor side terminal, but do not recycle the record
+         * until that caller finishes its synchronous callbacks. */
+        slot->owner_consumed = true;
+        cmeta_mutex_unlock(&s->lock);
+        return;
+    } else if (slot->phase == OWNER_SCHEDULE_CANCELLED) {
+        /* Cancel/finalize already returned; this Executor terminal completes
+         * the other half of the slot's bounded obligation. */
+        slot_return_locked(slot);
+        cmeta_mutex_unlock(&s->lock);
+        return;
+    } else {
         cmeta_mutex_unlock(&s->lock);
         abort(); /* Duplicate settlement or unexpected slot reuse. */
     }
@@ -154,6 +170,7 @@ static cflow_schedule_result owner_try_post_task_after(
     slot->task = *task;
     slot->id = id;
     slot->phase = OWNER_SCHEDULE_PENDING;
+    slot->owner_consumed = false;
     posted.user = slot;
 
     /* The Executor owns the ONLY task queue. The Scheduler lock serializes
@@ -197,7 +214,7 @@ static cflow_task_id owner_post_after(
 static bool owner_cancel(void *self, cflow_task_id id) {
     owner_schedule_state *s = (owner_schedule_state *)self;
     cflow_executor_task task = {0};
-    bool found = false;
+    owner_schedule_slot *cancelled_slot = NULL;
     if (!s || id == 0u) return false;
 
     cmeta_mutex_lock(&s->lock);
@@ -207,19 +224,28 @@ static bool owner_cancel(void *self, cflow_task_id id) {
             continue;
         task = slot->task;
         slot->task = (cflow_executor_task){0};
-        slot->phase = OWNER_SCHEDULE_CANCELLED;
+        slot->phase = OWNER_SCHEDULE_CANCEL_SETTLING;
         ++s->settling;
-        found = true;
+        cancelled_slot = slot;
         break;
     }
     cmeta_mutex_unlock(&s->lock);
-    if (!found) return false;
+    if (!cancelled_slot) return false;
 
     if (task.cancel) task.cancel(task.user);
     if (task.finalize) task.finalize(task.user);
 
     cmeta_mutex_lock(&s->lock);
     --s->settling;
+    if (cancelled_slot->phase != OWNER_SCHEDULE_CANCEL_SETTLING) {
+        cmeta_mutex_unlock(&s->lock);
+        abort(); /* No slot recycling while cancel/finalize is in flight. */
+    }
+    if (cancelled_slot->owner_consumed) {
+        slot_return_locked(cancelled_slot);
+    } else {
+        cancelled_slot->phase = OWNER_SCHEDULE_CANCELLED;
+    }
     cmeta_mutex_unlock(&s->lock);
     return true;
 }
