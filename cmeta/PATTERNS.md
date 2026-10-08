@@ -1,9 +1,10 @@
 # CMeta pattern layer
 
-> Salts 3.0.0 ships the canonical CMeta pattern primitives, Component
-> Configurator and ComponentPlugin integration. Post-3.0 ACE pattern conformance
-> develops under [#1012](https://github.com/qigao/salts/issues/1012) on
-> `feature/cmeta-ace-patterns`; changes there are not yet a released API.
+> The next public Salts release is **2.3.0** (latest published: 2.2.0).
+> The planned 3.0.0 Release was withdrawn; the temporary 4.0.0 proposal was
+> superseded. Component/Configurator and ACE patterns remain under
+> [#1012](https://github.com/qigao/salts/issues/1012) on long-lived Draft
+> [PR #1013](https://github.com/qigao/salts/pull/1013): **DO NOT MERGE**.
 
 ## Purpose
 
@@ -145,7 +146,7 @@ stable component/provider identity
 It does not load modules, resolve dependencies, select providers, own leases, or
 advance lifecycle.
 
-This metadata is the canonical component/provider capability declaration. Dynamic module publication and lease ownership remain under `Salts::Plugin`. There is no second static plugin declaration vocabulary in Salts 3.0.0.
+This metadata is the canonical component/provider capability declaration. Dynamic module publication and lease ownership remain under `Salts::Plugin`. There is no second static Plugin declaration vocabulary in the 2.3.0 candidate.
 
 ## Patterns that do not belong in CMeta runtime
 
@@ -168,7 +169,7 @@ lifecycle contracts for these mechanisms.
 
 ### ACE Acceptor–Connector composition conformance
 
-The post-3.0 ACE integration suite in
+The 2.3 ACE integration suite in
 `cnet/tests/cnet_ace_acceptor_connector_test.c` uses a real loopback TCP
 connection, not a simulated acceptor. `cnet_listener` and `cnet_client`
 own listener/connection admission and deterministic callback progress.
@@ -209,7 +210,7 @@ invokes reflected CMeta producer/Strategy methods, observes one terminal
 message and safely drains/destroys the Actor. This is run through the shared
 installed-SDK CMake test harness, not an additional CI orchestration wrapper.
 
-### ACE Pipes and Filters / Streams (post-3.0 conformance)
+### ACE Pipes and Filters / Streams (2.3 candidate conformance)
 
 The test-only `cflow/tests/cflow_ace_pipes_filters_test.c` composes
 canonical CMeta `cmeta_function` FILTER and MAP declarations into
@@ -291,7 +292,7 @@ Do not add a helper solely to introduce a pattern name.
 
 ## Component Configurator integration
 
-The shipped composition is:
+The candidate composition is:
 
 ```text
 Interface / Function / Object / Lifecycle / Manifest
@@ -325,8 +326,8 @@ lifecycle, ownership, or metadata model, the pattern decomposition is wrong.
 
 ## No-fallback rule
 
-Post-3.0 experiments on the long-lived development branch may change before
-release. Salts 3.0.0 remains the canonical baseline; when a new contract is
+The unmerged 2.3.0 development branch may change before release. Published
+Salts 2.2.0 is the prior binary baseline; when a new contract is
 selected:
 
 - migrate integration-branch consumers;
