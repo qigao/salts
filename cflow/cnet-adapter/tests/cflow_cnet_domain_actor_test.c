@@ -518,21 +518,45 @@ static void domain_loopback_finish(domain_loopback *s) {
                        status == SALTS_EALREADY ||
                        status == SALTS_ENOENT);
         }
-        for (size_t i = 0u; !s->terminal &&
-                i < (size_t)DOMAIN_TEST_TIMEOUT_MS; ++i) {
-            size_t events = 0u;
-            int status = cnet_client_poll(&s->client, 1u, &events);
-            if (status != SALTS_OK) break;
-        }
-        {
-            int status = cnet_client_stop(
-                &s->client, DOMAIN_TEST_TIMEOUT_MS);
-            if (status == SALTS_ETIMEDOUT)
-                status = cnet_client_stop(
+        if (s->external) {
+            /* Stop CNet while the borrowed backend remains live. Only the
+             * host observes and routes true NativeIO terminals. */
+            const uint64_t deadline =
+                cmeta_monotonic_ms() + DOMAIN_TEST_TIMEOUT_MS;
+            bool stopped = false;
+            while (!stopped && cmeta_monotonic_ms() < deadline) {
+                int status = cnet_client_stop_external(&s->client);
+                if (status == SALTS_OK) {
+                    stopped = true;
+                    break;
+                }
+                check_equal(status, SALTS_EBUSY);
+                status = domain_loopback_progress(s, 1u);
+                check_equal(status, SALTS_OK);
+                if (status != SALTS_OK) break;
+            }
+            check_true(stopped);
+        } else {
+            for (size_t i = 0u; !s->terminal &&
+                    i < (size_t)DOMAIN_TEST_TIMEOUT_MS; ++i) {
+                int status = domain_loopback_progress(s, 1u);
+                if (status != SALTS_OK) break;
+            }
+            {
+                int status = cnet_client_stop(
                     &s->client, DOMAIN_TEST_TIMEOUT_MS);
-            check_equal(status, SALTS_OK);
+                if (status == SALTS_ETIMEDOUT)
+                    status = cnet_client_stop(
+                        &s->client, DOMAIN_TEST_TIMEOUT_MS);
+                check_equal(status, SALTS_OK);
+            }
         }
         check_equal(cnet_client_destroy(&s->client), SALTS_OK);
+    }
+    if (s->external && s->backend.impl != NULL) {
+        /* CNet does not destroy the NativeIO backend borrowed from the host. */
+        check_equal(native_io_backend_close(&s->backend), SALTS_OK);
+        check_equal(native_io_backend_destroy(&s->backend), SALTS_OK);
     }
     domain_socket_close(s->peer);
     domain_socket_close(s->listener);
@@ -626,7 +650,8 @@ suite("CNet to CFlow Domain Actor bounded credit bridge") {
 
         while (!s.terminal && cmeta_monotonic_ms() < deadline) {
             size_t events = 0u;
-            check_equal(cnet_client_poll(&s.client, 1u, &events), SALTS_OK);
+            (void)events;
+            check_equal(domain_loopback_progress(&s, 1u), SALTS_OK);
         }
         check_true(s.terminal);
         check_equal(cflow_cnet_domain_get_stats(
