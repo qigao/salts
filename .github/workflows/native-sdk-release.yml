@@ -143,6 +143,18 @@ jobs:
               manifests = [name for name in archive.namelist() if name.endswith('/salts-sdk-manifest.txt')]
               if {name.split('/')[1] for name in manifests} != expected_rids or len(manifests) != len(expected_rids):
                   raise SystemExit('Incomplete or unexpected SDK platform set')
+              # MSVC C11 atomics must use the sccache-compatible dash
+              # spelling in installed target usage requirements.
+              windows_targets = [name for name in archive.namelist()
+                                 if name.startswith('sdk/windows-x64/lib/cmake/Salts/')
+                                 and name.rsplit('/', 1)[-1].startswith('SaltsTargets')
+                                 and name.endswith('.cmake')]
+              if not windows_targets:
+                  raise SystemExit('Missing Windows SaltsTargets export')
+              for target in windows_targets:
+                  contents = archive.read(target).decode('utf-8-sig')
+                  if '/experimental:c11atomics' in contents:
+                      raise SystemExit(f'{target}: sccache-incompatible MSVC atomics switch')
               for name in manifests:
                   values = dict(line.split('=', 1) for line in archive.read(name).decode('utf-8-sig').splitlines() if '=' in line)
                   for key, expected in [('version', version), ('commit', os.environ['RELEASE_SHA']), ('profile', 'release')]:
