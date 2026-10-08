@@ -50,8 +50,21 @@
         "CMeta reflection does not support volatile storage"); \
     static_assert((mode_) == CMETA_DATA_REFLECTION_VIEW || !std::is_const<native_>::value, \
         "CMeta value reflection requires writable fields");
+/* Prove the builtin *type witness*, not the address of its extern
+ * descriptor object. GCC/Clang are not required to treat a pointer to an
+ * externally defined descriptor as an integral constant expression (and the
+ * sanitizer Debug compilation correctly refuses to do so). This exact
+ * schema replay matches the C11 _Generic builtin-type admission below. */
+#define CMETA_REFLECT_BUILTIN_TYPE_MATCH_CPP_(builtin_, descriptor_) \
+    || std::is_same<T, builtin_>::value
+template <typename T>
+struct cmeta_reflect_has_builtin_data_cpp
+    : std::integral_constant<bool,
+          false Replay(CMETA_BUILTIN_DATA_SCHEMA,
+                       CMETA_REFLECT_BUILTIN_TYPE_MATCH_CPP_)> {};
+#undef CMETA_REFLECT_BUILTIN_TYPE_MATCH_CPP_
 #define CMETA_REFLECT_BUILTIN_PROOF_(native_) \
-    static_assert(CMETA_DATAOF(native_) != nullptr, \
+    static_assert(cmeta_reflect_has_builtin_data_cpp<native_>::value, \
         "CMeta data reflection requires an explicit data descriptor for this type");
 #else
 #define CMETA_REFLECT_OWNER_PROOF_(owner_, mode_)

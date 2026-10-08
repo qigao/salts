@@ -11,6 +11,17 @@ cmeta_reflect_data(NativeNontrivialView, "test.native.NontrivialView",
     cmeta_field(int, value)
 );
 
+/* Builtin reflection admission is a type-level proof, independent of
+ * external descriptor addresses under ASan/UBSan-enabled Debug builds. */
+static_assert(cmeta_reflect_has_builtin_data_cpp<int>::value,
+              "native int must be admitted");
+static_assert(cmeta_reflect_has_builtin_data_cpp<double>::value,
+              "native double must be admitted");
+static_assert(!cmeta_reflect_has_builtin_data_cpp<NativeNontrivialView>::value,
+              "record data requires an explicitly supplied descriptor");
+static_assert(!cmeta_reflect_has_builtin_data_cpp<const int>::value,
+              "qualified source is not an unqualified builtin schema row");
+
 suite("C++ native reflection lifecycle") {
     it("allows a nontrivial native read view without construction authority") {
         NativeNontrivialView source;
