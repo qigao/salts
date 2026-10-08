@@ -1068,7 +1068,8 @@ cflow_machine_instance_status cflow_machine_instance_init_internal(
         return CFLOW_MACHINE_INSTANCE_INVALID_ARGUMENT;
     if (!cflow_executor_valid(config->executor) ||
         !cflow_executor_has(config->executor, CMETA_EXEC_CAP_SERIAL) ||
-        cflow_executor_has(config->executor, CMETA_EXEC_CAP_MANUAL))
+        (cflow_executor_has(config->executor, CMETA_EXEC_CAP_MANUAL) &&
+         !cflow_executor_has(config->executor, CMETA_EXEC_CAP_OWNER_AFFINE)))
         return CFLOW_MACHINE_INSTANCE_INVALID_EXECUTOR;
 
     initial = find_state(config->machine,
