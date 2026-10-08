@@ -71,6 +71,15 @@ cmake_add_test(cmeta_native_component_plugin_runtime_failure_test
 set_target_properties(cmeta_native_component_plugin_runtime_failure_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 
+# Domain-owned exclusive listener/writer remains stable across N->N+1;
+# a fenced borrowed service cannot accidentally reuse the retired epoch.
+cmake_add_test(cmeta_native_component_plugin_exclusive_fence_test
+  SOURCES component_plugin_exclusive_fence_test.c
+  LIBS Salts::ComponentPlugin Salts::TinyTest
+  FOLDER "component-plugin/tests")
+set_target_properties(cmeta_native_component_plugin_exclusive_fence_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
 cmake_add_test(cmeta_native_component_plugin_concurrency_test
   SOURCES component_plugin_concurrency_test.c
   LIBS Salts::ComponentPlugin Salts::Platform Salts::TinyTest
