@@ -271,8 +271,10 @@ int cflow_cnet_domain_receive(
     uint32_t index;
     if (!s || !view) return SALTS_EINVAL;
     if (!domain_owner(s)) return SALTS_EPERM;
-    if (!domain_connection_eq(s->connection, connection) || !s->credit_live)
-        return SALTS_ENOENT;
+    if (!domain_connection_eq(s->connection, connection))
+        return SALTS_ENOENT; /* Foreign or stale connection identity. */
+    if (!s->credit_live)
+        return domain_fatal(s, SALTS_EPROTO); /* Uncredited receive! */
     index = s->pending_credit;
     slot = &s->slots[index];
     if (slot->phase != DOMAIN_RECEIVE_CREDIT || s->stage_live)
