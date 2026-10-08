@@ -2,7 +2,8 @@ set(TARGET_NAME cmeta_cflow_cnet)
 
 add_library(${TARGET_NAME}
   io_cnet_adapter.c
-  cnet_domain_actor.c)
+  cnet_domain_actor.c
+  cnet_domain_route.c)
 
 cmake_config_target(
   ${TARGET_NAME}
