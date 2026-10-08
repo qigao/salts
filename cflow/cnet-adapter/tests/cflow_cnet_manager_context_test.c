@@ -517,6 +517,10 @@ spec("CNetManager held context across cross-owner Actor ACK") {
         check_equal(cflow_cnet_domain_route_get_stats(
             &f.route, &route_stats), SALTS_OK);
         check_equal(route_stats.awaiting_ack, (size_t)1u);
+        /* A full strict-key route does not borrow credit from another route,
+         * even when both use the same CNetManager attachment. */
+        check_equal(cflow_cnet_domain_route_reserve(
+            &f.route, &credit), SALTS_ENOBUFS);
         /* The same physical CNet connection carries a second independently
          * retained semantic route, not another managed connection. */
         check_equal(cflow_cnet_domain_route_reserve(
@@ -534,6 +538,11 @@ spec("CNetManager held context across cross-owner Actor ACK") {
         check_equal(cflow_cnet_domain_route_get_stats(
             &f.route2, &route_stats), SALTS_OK);
         check_equal(route_stats.awaiting_ack, (size_t)1u);
+        check_equal(cflow_cnet_domain_route_reserve(
+            &f.route2, &credit), SALTS_ENOBUFS);
+        /* FULL is per-route, never a permission to reroute onto another
+         * semantic key or to over-issue receive demand. */
+        check_equal(atomic_load(&f.receives), 2);
 
         check_equal(cnet_close(&f.client, f.connection), SALTS_OK);
         while (!atomic_load(&f.terminal) &&
@@ -570,6 +579,18 @@ spec("CNetManager held context across cross-owner Actor ACK") {
         check_true(manager_lease_wait_bool(&f.first_ack));
         check_equal(atomic_load(&f.action_count), 1);
         check_equal(atomic_load(&f.sink_errors), 0);
+        /* The manager guard clears a pending ACK wake before scanning: the
+         * remaining route is still held, so no premature recycle occurs. */
+        {
+            cflow_cnet_domain_route_stats left = {0};
+            cflow_cnet_domain_route_stats right = {0};
+            check_equal(cflow_cnet_domain_route_get_stats(
+                &f.route, &left), SALTS_OK);
+            check_equal(cflow_cnet_domain_route_get_stats(
+                &f.route2, &right), SALTS_OK);
+            check_equal(left.awaiting_ack + right.awaiting_ack, (size_t)1u);
+            check_equal(left.active_slots + right.active_slots, (size_t)1u);
+        }
         released = true;
         check_equal(cflow_cnet_manager_context_poll_release(
             &f.guard, &released), SALTS_EBUSY);
@@ -598,6 +619,8 @@ spec("CNetManager held context across cross-owner Actor ACK") {
         check_equal(guard_stats.notifications, (uint64_t)4u);
         check_equal(guard_stats.coalesced_wakes, (uint64_t)2u);
         check_equal(atomic_load(&f.wakes), 2);
+        /* Source's EBUSY poll after ACK #1 cleared the old hint. ACK #2
+         * therefore publishes a fresh wake: no lost-wake-after-poll. */
         check_true(guard_stats.notification_pending);
         released = false;
         check_equal(cflow_cnet_manager_context_poll_release(
