@@ -43,6 +43,14 @@ add_dependencies(
 set_target_properties(cmeta_native_component_plugin_generation_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 
+# C++17 public-header/concrete scope layout smoke test: no DSO required.
+cmake_add_test(cmeta_native_component_plugin_scope_cpp_test
+  SOURCES component_plugin_scope_cpp_test.cpp
+  LIBS Salts::ComponentPlugin
+  FOLDER "component-plugin/tests")
+set_target_properties(cmeta_native_component_plugin_scope_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
 cmake_add_test(cmeta_native_component_plugin_publication_test
   SOURCES component_plugin_publication_test.c
   LIBS Salts::ComponentPlugin Salts::TinyTest

@@ -188,6 +188,24 @@ Salts 3.0.0. It must not ship as a silent 3.0.x-compatible behavior change;
 #1014 records the downstream migration and next-major release decision before
 merge. The development branch does not change already published v3.0.0.
 
+## Scope ownership and re-publishing after close (development branch only)
+
+On `feature/cmeta-ace-patterns` (umbrella #1012, follow-up #1017), each live
+ComponentPlugin scope has an owner-address check. A shallow copy is **not**
+another reference: scope release and service lookup reject it without affecting
+the generation's scope count. Live scopes must remain address-stable. This is
+defensive misuse detection, not a C memory-safety/security boundary.
+
+`runtime_close()` removes the current published generation and closes new
+admission, but it does not destroy the runtime. Existing admitted work remains
+pinned to its generation; an explicit, higher-ID `runtime_publish()` may later
+re-open admission within the same two-attached-generation bound. The final
+`runtime_destroy()` requires all attached generations to be fully drained.
+
+The additional owner-address field changes the publicly exposed scope
+structure layout relative to released 3.0.0. It belongs to the **next-major**
+compatibility review rather than a silent 3.0.x ABI update.
+
 ## Generation concurrency and resource admission
 
 `Salts::ComponentPlugin` builds a complete candidate before publication. Its

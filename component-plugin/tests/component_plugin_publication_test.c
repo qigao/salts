@@ -10,10 +10,13 @@ suite("ComponentPlugin generation publication") {
         publication_generation_fixture g1 = {0};
         publication_generation_fixture g2 = {0};
         publication_generation_fixture g3 = {0};
+        publication_generation_fixture g4 = {0};
         salts_component_plugin_runtime runtime = {0};
         salts_component_plugin_scope scope1 = {0};
         salts_component_plugin_scope scope2 = {0};
         salts_component_plugin_scope scope3 = {0};
+        salts_component_plugin_scope copied_scope = {0};
+        salts_component_plugin_scope reopened_scope = {0};
         salts_component_plugin_generation *previous = NULL;
         bool quiet = false;
 
@@ -71,6 +74,26 @@ suite("ComponentPlugin generation publication") {
                     UINT64_C(1));
         check_equal(scope_value(&scope1), COMPONENT_PROVIDER_VALUE);
 
+        /* A copied scope is only a stale byte-value, not a second owner. */
+        copied_scope = scope1;
+        check_equal(salts_component_plugin_scope_generation_id(&copied_scope),
+                    UINT64_C(0));
+        {
+            salts_component_service copied_service;
+            check_equal(salts_component_plugin_scope_find_service(
+                &copied_scope, component_plugin_value_interface(), &copied_service),
+                SALTS_COMPONENT_PLUGIN_INVALID_STATE);
+            check_equal(salts_component_plugin_scope_find_service_from(
+                &copied_scope, "ComponentPluginFixture",
+                component_plugin_value_interface(), &copied_service),
+                SALTS_COMPONENT_PLUGIN_INVALID_STATE);
+        }
+        check_equal(salts_component_plugin_scope_release(
+            &copied_scope), SALTS_COMPONENT_PLUGIN_INVALID_STATE);
+        check_equal(g1.generation.active_scopes, (size_t)1u);
+        check_equal(runtime.active_scopes, (size_t)1u);
+        check_equal(scope_value(&scope1), COMPONENT_PROVIDER_VALUE);
+
         check_equal(salts_component_plugin_runtime_publish(
             &runtime, &g2.generation, &previous),
             SALTS_COMPONENT_PLUGIN_OK);
@@ -105,6 +128,10 @@ suite("ComponentPlugin generation publication") {
             &runtime, &g1.generation), SALTS_COMPONENT_PLUGIN_BUSY);
         check_equal(salts_component_plugin_scope_release(
             &scope1), SALTS_COMPONENT_PLUGIN_OK);
+        check_equal(salts_component_plugin_scope_release(
+            &copied_scope), SALTS_COMPONENT_PLUGIN_INVALID_STATE);
+        check_equal(salts_component_plugin_scope_release(
+            &scope1), SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT);
         check_equal(salts_component_plugin_generation_drain(
             &runtime, &g1.generation), SALTS_COMPONENT_PLUGIN_OK);
 
@@ -154,6 +181,30 @@ suite("ComponentPlugin generation publication") {
         check_equal(cmeta_plugin_registry_get_lifecycle(
             &registry, ref, &info), CMETA_PLUGIN_OK);
         check_equal(info.active_leases, (size_t)0u);
+
+        /* close() unpublishes admission; it is not runtime_destroy(). An
+         * explicit higher generation may be published after a full drain. */
+        check_equal(salts_component_plugin_scope_acquire(
+            &runtime, &reopened_scope), SALTS_COMPONENT_PLUGIN_INVALID_STATE);
+        check_equal(build_generation(
+            &g4, UINT64_C(4), &registry, ref), SALTS_COMPONENT_PLUGIN_OK);
+        check_equal(salts_component_plugin_runtime_publish(
+            &runtime, &g4.generation, &previous), SALTS_COMPONENT_PLUGIN_OK);
+        check_null(previous);
+        check_equal(salts_component_plugin_scope_acquire(
+            &runtime, &reopened_scope), SALTS_COMPONENT_PLUGIN_OK);
+        check_equal(salts_component_plugin_scope_generation_id(
+            &reopened_scope), UINT64_C(4));
+        check_equal(scope_value(&reopened_scope), COMPONENT_PROVIDER_VALUE);
+        check_equal(salts_component_plugin_runtime_close(
+            &runtime, &previous), SALTS_COMPONENT_PLUGIN_OK);
+        check_true(previous == &g4.generation);
+        check_equal(salts_component_plugin_generation_drain(
+            &runtime, &g4.generation), SALTS_COMPONENT_PLUGIN_BUSY);
+        check_equal(salts_component_plugin_scope_release(
+            &reopened_scope), SALTS_COMPONENT_PLUGIN_OK);
+        check_equal(salts_component_plugin_generation_drain(
+            &runtime, &g4.generation), SALTS_COMPONENT_PLUGIN_OK);
 
         check_equal(salts_component_plugin_runtime_destroy(
             &runtime), SALTS_COMPONENT_PLUGIN_OK);
