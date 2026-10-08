@@ -167,6 +167,8 @@ jobs:
           cmake --preset "${{ matrix.preset }}" -DCFLOW_CNET_BUILD_BENCHMARKS=ON
           cmake --build --preset "${{ matrix.preset }}" --target cflow_cnet_direct_tcp_benchmark --parallel 2
           ./build/linux-gcc-release/bin/cflow_cnet_direct_tcp_benchmark
+          cmake --build --preset "${{ matrix.preset }}" --target cflow_cnet_same_owner_actor_benchmark --parallel 2
+          ./build/linux-gcc-release/bin/cflow_cnet_same_owner_actor_benchmark
       - name: Run Windows execution and nested CSTL contracts
         if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.execution }}
         timeout-minutes: 30
