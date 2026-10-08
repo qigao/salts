@@ -140,6 +140,10 @@ suite("ComponentPlugin concurrent admission and drain") {
     }
 
     after_each() {
+        cmeta_plugin_status stop_status = CMETA_PLUGIN_OK;
+        cmeta_plugin_status quiescent_status = CMETA_PLUGIN_OK;
+        cmeta_plugin_status destroy_status = CMETA_PLUGIN_OK;
+        bool quiescent = true;
         /* Fatal runner checks must still wake/join workers before releasing the
          * borrowed generation bundles, DSO leases, or synchronization objects. */
         if (gate.mutex != NULL && gate.changed != NULL) gate_advance(&gate, 2u);
@@ -164,13 +168,30 @@ suite("ComponentPlugin concurrent admission and drain") {
                              SALTS_COMPONENT_PLUGIN_OK);
         }
         if (registry.impl != NULL) {
-            if (plugin_started)
-                check_equal_warn(cmeta_plugin_registry_request_stop(&registry, ref),
-                                 CMETA_PLUGIN_OK);
-            check_equal_warn(cmeta_plugin_registry_destroy(&registry), CMETA_PLUGIN_OK);
+            if (plugin_started) {
+                stop_status = cmeta_plugin_registry_request_stop(&registry, ref);
+                if (stop_status == CMETA_PLUGIN_OK) {
+                    /* The registry's STOPPING state is not yet QUIESCENT.
+                     * Poll after the last reader, generation and DSO lease
+                     * has drained; destroy() otherwise returns BUSY and
+                     * intentionally retains the registry allocation. */
+                    quiescent = false;
+                    quiescent_status = cmeta_plugin_registry_poll_quiescent(
+                        &registry, ref, &quiescent);
+                }
+            }
+            destroy_status = cmeta_plugin_registry_destroy(&registry);
         }
         cmeta_cond_destroy(&gate.changed);
         cmeta_mutex_destroy(&gate.mutex);
+        /* Cleanup failure is not a warning: it is an ownership-contract
+         * violation and must fail even an otherwise successful concurrency
+         * test. Do not suppress LeakSanitizer. */
+        check_equal(stop_status, CMETA_PLUGIN_OK);
+        check_equal(quiescent_status, CMETA_PLUGIN_OK);
+        check_true(quiescent);
+        check_equal(destroy_status, CMETA_PLUGIN_OK);
+        check_null(registry.impl);
     }
 
     it("pins the old DSO generation across publication and the new one across close") {
