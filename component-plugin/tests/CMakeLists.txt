@@ -53,7 +53,7 @@ set_target_properties(cmeta_native_component_plugin_scope_cpp_test PROPERTIES
 
 cmake_add_test(cmeta_native_component_plugin_publication_test
   SOURCES component_plugin_publication_test.c
-  LIBS Salts::ComponentPlugin Salts::TinyTest
+  LIBS Salts::ComponentPlugin Salts::NativeIO Salts::TinyTest
   DEFS "COMPONENT_PROVIDER_PLUGIN_PATH=\"$<TARGET_FILE:cmeta_component_plugin_provider_fixture>\""
   FOLDER "component-plugin/tests")
 add_dependencies(

@@ -86,6 +86,18 @@ frozen SHA `02b741a` does **not** qualify these new commits.
 No new Reactor, Proactor, Actor, worker pool or CMeta scheduler was created.
 Leader/Followers remains a separate scoped design under #1064.
 
+### ACT / Plugin lease test (post-freeze)
+
+[`cmeta_native_component_plugin_publication_test`](../component-plugin/tests/component_plugin_publication_test.c)
+now combines the existing real Plugin DSO + Component generation with a
+**synthetic** typed ACT terminal identity. It demonstrates that closing a
+generation does not release the DSO while the caller still holds a Scope;
+a stale completion cannot settle the token, and terminal settlement alone
+does not implicitly release the Scope or its module lease. After explicit
+Scope release, generation drain frees the sole module lease. Real NativeIO
+read/cancel completions are tested separately under NativeIO; this test does
+not claim a synthetic completion is real kernel I/O.
+
 ## Active pattern-gap tracking
 
 Umbrella: [#1058 — POSA2 17-pattern coverage and conformance](https://github.com/qigao/salts/issues/1058). Missing semantic/composition slices:
