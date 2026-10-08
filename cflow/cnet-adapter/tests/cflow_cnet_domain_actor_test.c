@@ -290,6 +290,23 @@ suite("CNet to CFlow Domain Actor bounded credit bridge") {
         domain_fixture_finish(&f);
     }
 
+    it("rejects an unsolicited receive instead of silently losing bytes") {
+        domain_test_fixture f;
+        cflow_cnet_domain_stats stats = {0};
+        unsigned char byte = 9u;
+        const cnet_receive_view view = {&byte, 1u, CNET_MESSAGE_BYTES};
+
+        check_true(domain_fixture_init(&f, 1u, 1u));
+        check_equal(cflow_cnet_domain_receive(
+            &f.bridge, (cnet_connection){5u, 13u}, &view), SALTS_EPROTO);
+        check_equal(cflow_cnet_domain_get_stats(&f.bridge, &stats), SALTS_OK);
+        check_equal(stats.fatal_status, SALTS_EPROTO);
+        check_true(stats.sealed);
+        check_equal(stats.mailbox_accepted, (uint64_t)0u);
+        check_equal(stats.active_slots, (size_t)0u);
+        domain_fixture_finish(&f);
+    }
+
     it("reports oversize as fatal, never fabricates Actor acceptance") {
         domain_test_fixture f;
         cflow_cnet_domain_credit credit = {0};
