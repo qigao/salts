@@ -373,6 +373,14 @@ not a claim of record framing, 2/4-owner CNet Sharded Graph policy selection,
 retention, multi-Raft-group multiplexing, WAL durable commit, or measured
 latency/throughput gains. Those remain tracked in #1022/#1001.
 
+**Follow-on ownership handoff:** #1030 and Draft PR #1031 separately
+qualify the single `CNetManager` attachment's `hold_context` across
+post-terminal Domain Actor ACK and source-owner-only context release. This
+Phase 3d PR deliberately proves real 2/4 CNet source ingress and target
+payload lifetime **without** adding a manager, routing registry, new worker,
+or implicit connection-per-Raft-group policy. Do not conflate a routed
+Actor message ACK with `CNetManager` final context recycling.
+
 ## 5. Execution placement and fairness
 
 Two legitimate integration topologies must be measured, not conflated:
