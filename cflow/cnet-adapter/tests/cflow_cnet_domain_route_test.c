@@ -531,6 +531,11 @@ static void route_net_state(
         if (s->route && s->route->impl)
             s->terminal_status =
                 cflow_cnet_domain_route_source_terminal(s->route);
+        if (state == CNET_CONNECTION_FAILED &&
+            s->terminal_status == SALTS_OK)
+            s->terminal_status =
+                error != NULL && error->status != SALTS_OK
+                    ? error->status : SALTS_EIO;
     }
 }
 
