@@ -43,6 +43,10 @@ jobs:
           mode: read
       - name: Prepare build host
         uses: ./.github/actions/setup-build-host
+      - name: Restore native compiler cache
+        uses: ./.github/actions/setup-compiler-cache
+        with:
+          profile: ${{ matrix.id }}
       - name: Prepare macOS GNU compiler
         if: matrix.family == 'mac' && !matrix.clang
         shell: bash

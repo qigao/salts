@@ -204,6 +204,21 @@ action only installs platform build prerequisites and maps the upstream Windows
 target triplet to `VCPKG_WINDOWS_TRIPLET` for Salts presets. Explicit toolchain
 arguments use the upstream `QIGAO_VCPKG_TOOLCHAIN_FILE` environment variable.
 
+Native CI and the Linux Component candidate workflow also use
+[sccache](https://github.com/mozilla/sccache) for C/C++ compiler results. Each
+OS, host architecture and matrix profile has a separate 512 MiB cache, partitioned
+by the shared vcpkg contract/revision and preset/dependency configuration. A new
+successful run saves an immutable snapshot; subsequent runs restore the latest
+compatible snapshot across source commits. Compiler identity, compilation flags
+and preprocessed inputs determine individual object reuse. Direct preprocessor
+caching is disabled so generated and newly available headers are evaluated each
+time. Build logs report cache hits, misses and unsupported compilation requests.
+Every run configures and builds the complete graph and executes its selected
+CTest suites. CMake build trees and installed SDKs are not reused across commits.
+Linking, code generation, tool installation and tests still run, so speedups
+depend on the changed files and the observed cache hit rate. GitHub branch access
+rules and cache eviction apply; the first run in a new cache namespace is cold.
+
 The supported project compiler profiles are:
 
 | Target platform | Compiler |

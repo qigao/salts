@@ -1,0 +1,38 @@
+name: Set up native compiler cache
+description: Restore content-addressed C/C++ compilation results for one native profile.
+
+inputs:
+  profile:
+    description: Native matrix profile; isolates target architecture, compiler and configuration.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Select compiler cache storage
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        "SCCACHE_DIR=$(Join-Path $env:RUNNER_TEMP 'salts-compiler-cache')" >> $env:GITHUB_ENV
+        "SCCACHE_CACHE_SIZE=512M" >> $env:GITHUB_ENV
+        "SCCACHE_GHA_ENABLED=false" >> $env:GITHUB_ENV
+        # Always preprocess: generated or newly available headers must affect the key.
+        "SCCACHE_DIRECT=false" >> $env:GITHUB_ENV
+        "CMAKE_C_COMPILER_LAUNCHER=sccache" >> $env:GITHUB_ENV
+        "CMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $env:GITHUB_ENV
+
+    - name: Restore compiler objects
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/salts-compiler-cache
+        # Immutable snapshots need a new writer key; source SHA is deliberately absent
+        # from the restore prefix. sccache validates compiler, flags and input contents.
+        key: salts-sccache-v1-0.18.0-${{ runner.os }}-${{ runner.arch }}-${{ inputs.profile }}-${{ env.VCPKG_CACHE_CONTRACT_VERSION }}-${{ env.VCPKG_CACHE_REVISION }}-${{ hashFiles('CMakeUserPresets.json', 'presets/*.json', 'CMakeOptions.cmake', 'cmake/Sanitizers.cmake', 'vcpkg.json', 'vcpkg-configuration.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          salts-sccache-v1-0.18.0-${{ runner.os }}-${{ runner.arch }}-${{ inputs.profile }}-${{ env.VCPKG_CACHE_CONTRACT_VERSION }}-${{ env.VCPKG_CACHE_REVISION }}-${{ hashFiles('CMakeUserPresets.json', 'presets/*.json', 'CMakeOptions.cmake', 'cmake/Sanitizers.cmake', 'vcpkg.json', 'vcpkg-configuration.json') }}-
+
+    # Register after cache restore so the statistics post step runs before save.
+    - name: Install sccache and report compilation statistics
+      uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      with:
+        version: v0.18.0
