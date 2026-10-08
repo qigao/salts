@@ -206,11 +206,21 @@ callbacks have **actually quiesced**. The bridge never polls, closes, owns,
 migrates or retries CNet resources on its own, and does not introduce a second
 transport terminal authority.
 
-The first validation uses a real Machine Actor on the shared Owner Executor /
-Concurrent Scheduler while simulating the borrowed callback input. **Actual
-CNet loopback/external-progress, Manager interaction, 2/4-owner handoff and
-retention policy remain future #1022 slices.** Do not claim them complete from
-a pure staging test.
+Phase 3a validation now exercises a real Machine Actor on the shared Owner
+Executor / Concurrent Scheduler against both **synthetic borrowed CNet views**
+(for deterministic rejection, terminal and retry tests) and a **real TCP
+loopback**, using host-owned `cnet_connect()`, `cnet_receive()`,
+`cnet_client_poll()`, and callback forwarding. The real loopback test drives
+multiple receive credits, Actor Mailbox FULL, bounded retry, ACK-based slot
+reuse, and a second outstanding receive credit retiring on peer EOF without
+releasing the already delivered business lease.
+
+This remains one host-selected CNet owner and one co-located Actor owner;
+the bridge does **not** install its own CNet observer, frame the application
+protocol, call `cnet_receive()` automatically or claim business durability.
+**True `cnet_client_init_external()` / NativeIO external-progress integration,
+CNetManager retention, 2/4-owner handoff, explicit policy placement and
+representative consumer qualification remain later #1022 slices.**
 
 ## 5. Execution placement and fairness
 
