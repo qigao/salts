@@ -152,7 +152,9 @@ Rebuild the host, libraries, provider DSOs and downstream consumers against one
 complete 3.0.0 SDK, then qualify their ordinary Plugin exports and provider
 bindings before deployment. Do not mix 2.x headers, libraries, descriptors or
 cached fingerprints with 3.0.0. CMake's project version and the package manifest
-both identify 3.0.0; versioned native libraries use SOVERSION 3. Reflection ABI
+both identify 3.0.0; versioned native libraries use SOVERSION 3. CMake's
+`SameMajorVersion` package admission rejects `find_package(Salts 2 CONFIG)`
+against this SDK; consumers must request the 3.x major explicitly. Reflection ABI
 and the ordinary Plugin ABI retain their own negotiated versions; they do not
 override the Component descriptor format or establish 2.x SDK compatibility.
 

@@ -1,7 +1,21 @@
 cmake_minimum_required(VERSION 3.20)
 project(component_installed_consumer LANGUAGES C)
 
-find_package(Salts CONFIG REQUIRED)
+if(NOT DEFINED SALTS_TEST_PREFIX OR NOT DEFINED SALTS_TEST_VERSION)
+  message(FATAL_ERROR "the SDK prefix and expected version are required")
+endif()
+
+# Exercise find_package admission against the installed SDK itself. A request
+# for a previous major must not silently load incompatible descriptors/symbols.
+string(REGEX MATCH "^[0-9]+" sdk_major "${SALTS_TEST_VERSION}")
+math(EXPR previous_major "${sdk_major} - 1")
+find_package(Salts ${previous_major} CONFIG QUIET
+  PATHS "${SALTS_TEST_PREFIX}" NO_DEFAULT_PATH)
+if(Salts_FOUND)
+  message(FATAL_ERROR "SDK ${SALTS_TEST_VERSION} accepted a ${previous_major}.x request")
+endif()
+find_package(Salts ${SALTS_TEST_VERSION} EXACT CONFIG REQUIRED
+  PATHS "${SALTS_TEST_PREFIX}" NO_DEFAULT_PATH)
 
 if(NOT TARGET Salts::ComponentABI)
   message(FATAL_ERROR "installed package is missing Salts::ComponentABI")

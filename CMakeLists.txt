@@ -100,7 +100,7 @@ configure_package_config_file(
 write_basic_package_version_file(
   "${CMAKE_BINARY_DIR}/SaltsConfigVersion.cmake"
   VERSION ${PROJECT_VERSION}
-  COMPATIBILITY AnyNewerVersion)
+  COMPATIBILITY SameMajorVersion)
 
 # Install the config files
 install(FILES "${CMAKE_BINARY_DIR}/SaltsConfig.cmake"

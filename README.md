@@ -26,7 +26,8 @@ This integration branch prepares the next major SDK version, 3.0.0. It removes
 the static CMeta Plugin declaration API published in 2.x and replaces it with
 Component metadata and Configurator runtime contracts. This is a source and
 binary compatibility break; CMake and the package manifest use the new major
-version, and versioned libraries use SOVERSION 3. The branch is not part of the
+version, versioned libraries use SOVERSION 3, and CMake package admission uses
+`SameMajorVersion` to reject 2.x version requests. The branch is not part of the
 published 2.2.0 SDK.
 
 See [the Component migration guide](cmeta/COMPONENT_MANIFESTS.md#migration-from-salts-2x)

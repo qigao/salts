@@ -17,6 +17,7 @@ if(NOT WIN32)
     NAME cmeta_native_component_installed_test
     COMMAND "${CMAKE_COMMAND}"
       "-DSALTS_BINARY_DIR=${CMAKE_BINARY_DIR}"
+      "-DSALTS_TEST_VERSION=${PROJECT_VERSION}"
       "-DCONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_config/component"
       "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed-component"
       "-DCTEST_COMMAND=${CMAKE_CTEST_COMMAND}"
