@@ -3,7 +3,7 @@ set(SALTS_VERSION_COMPONENT_COUNT 4)
 set(SALTS_VERSION_COMPONENT_MAX 65535)
 
 foreach(SALTS_VERSION_TARGET IN ITEMS
-    salts cnet cmeta_cmeta cmeta_cflow cmeta_cflow_cnet cmeta_cstl
+    salts cnet cmeta_cmeta cmeta_cflow cmeta_cstl
     cmeta_cstl_stream cmeta_simd cmeta_cserde)
   get_target_property(SALTS_VERSION_TARGET_TYPE "${SALTS_VERSION_TARGET}" TYPE)
   if(NOT SALTS_VERSION_TARGET_TYPE STREQUAL "SHARED_LIBRARY")

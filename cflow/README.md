@@ -100,10 +100,9 @@ watches are drivers. They publish readiness or completion into Reactive, or
 deliver bounded messages to Actor; they do not own Graph state or Actor
 transition state.
 
-For the long-lived CNet connection-strategy / domain-Actor integration, see
-[the CNet Strategy x Actor composition contract](cnet-adapter/ACTOR_STRATEGY_COMPOSITION.md).
-This is an opt-in host composition design, not a new mandatory CNet dependency
-or an assertion that built-in serial-worker Actors are owner-affine.
+CNet network Server/Client strategy composition is tracked independently in
+[Salts #1050](https://github.com/qigao/salts/issues/1050). CNet does not integrate
+with CFlow Actor or the IO Actor adapter; these remain independent CFlow models.
 
 #### Owner-bound SerialExecutor (experimental branch)
 

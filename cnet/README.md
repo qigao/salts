@@ -91,11 +91,10 @@ consumer's helper adapter and link dependency while retaining raw CNet calls.
 Placement and retention policies remain later stages. The owner-local manager
 creates no worker, timer or cross-thread queue; handoff is a separate opt-in helper.
 
-For an optional composition with CFlow's existing typed Actor/Mailbox (without
-moving strategy evaluation or an Actor runtime into CNet), see the
-[CNet Strategy x Actor Phase 1 contract](../cflow/cnet-adapter/ACTOR_STRATEGY_COMPOSITION.md).
-The contract distinguishes manager/transport credits from Actor message admission
-and records the currently missing owner-bound serial execution capability.
+Server/Client strategy composition and SG Owner progress integration are tracked
+under [CNet strategy umbrella #1050](https://github.com/qigao/salts/issues/1050).
+The CNet x Actor integration path is discontinued; CNet handles network
+lifecycle without any CFlow Actor, Mailbox or Scheduler dependency.
 
 The formal `cnet_manager_test` covers full capacities, immediate admission
 failure, real TCP terminal/owned receive callbacks, detached ownership, stale
