@@ -1,10 +1,13 @@
 #include <salts/native_io.h>
+#include <salts/native_io_ace_token.h>
 #include <salts/native_io_sharded.h>
 #include <tinytest.hpp>
 
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
+
+NATIVE_IO_ACE_TOKEN_TYPE(ace_cpp_request_token, int);
 
 suite("NativeIO C++ headers") {
   group("public handles and operations") {
@@ -65,6 +68,34 @@ suite("NativeIO C++ headers") {
       check_equal(NATIVE_IO_OPERATION_TCP_RECV, NATIVE_IO_OPERATION_STREAM_RECV);
       check_equal(NATIVE_IO_OPERATION_TCP_SEND, NATIVE_IO_OPERATION_STREAM_SEND);
       check_equal(NATIVE_IO_OPERATION_TCP_CONNECT, NATIVE_IO_OPERATION_STREAM_CONNECT);
+    }
+  }
+
+  group("POSA2 ACT typed native association") {
+    it("settles one exact completion but rejects stale and double settlement") {
+      const native_io_request request{1u, 3u};
+      const native_io_endpoint endpoint{2u, 5u};
+      native_io_completion completion{};
+      ace_cpp_request_token token{};
+      int context = 7;
+      int *settled = nullptr;
+      completion.request = request;
+      completion.endpoint = endpoint;
+      completion.kind = NATIVE_IO_COMPLETION_CANCELLED;
+      completion.user_data = 22u;
+      check_equal(ace_cpp_request_token_bind(&token, request, endpoint,
+                                             22u, &context), SALTS_OK);
+      completion.user_data = 23u;
+      check_equal(ace_cpp_request_token_settle(&token, &completion, &settled),
+                  SALTS_ENOENT);
+      check_null(settled);
+      completion.user_data = 22u;
+      check_equal(ace_cpp_request_token_settle(&token, &completion, &settled),
+                  SALTS_OK);
+      check_true(settled == &context);
+      check_equal(ace_cpp_request_token_settle(&token, &completion, &settled),
+                  SALTS_EALREADY);
+      check_null(settled);
     }
   }
 
