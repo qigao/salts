@@ -35,9 +35,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     "$<$<COMPILE_LANGUAGE:CXX>:-Werror=old-style-cast>")
 endif()
 
-# ACE feature-freeze compile admission: one valid Interface/FunctionAbi carrier
-# must compile in strict C11 and C++17; the exact same signature with VOID
-# instead of SCALAR return carrier must be rejected at compile time.
+# ACE feature-freeze compile admission: the canonical Interface method
+# signature must compile under C11 and C++17; an incompatible native
+# return-type assertion must fail. FunctionAbi metadata is covered by the
+# existing C11/C++17 pattern runtime suites.
 # This runs at configure time only on native hosts (mobile cross builds retain
 # the ordinary public-header compile tests).
 if(NOT CMAKE_CROSSCOMPILING)
@@ -58,8 +59,7 @@ if(NOT CMAKE_CROSSCOMPILING)
 #include <cmeta/function.h>
 #include <cmeta/object.h>
 #include <cmeta/object_interface.h>
-#define ACE_SCORE_METHODS(X,I) \
-  X(I,R0,int,get,_)
+#define ACE_SCORE_METHODS(X,I) X(I,R0,int,get,_)
 CMETA_INTERFACE(ace_freeze_score, ACE_SCORE_METHODS);
 CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(
     CMETA_IFACE_MEMBER_ADDRESS_(ace_freeze_score,get),
@@ -70,8 +70,7 @@ int main(void) { return 0; }
 #include <cmeta/function.h>
 #include <cmeta/object.h>
 #include <cmeta/object_interface.h>
-#define ACE_SCORE_METHODS(X,I) \
-  X(I,R0,int,get,_)
+#define ACE_SCORE_METHODS(X,I) X(I,R0,int,get,_)
 CMETA_INTERFACE(ace_freeze_score, ACE_SCORE_METHODS);
 CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(
     CMETA_IFACE_MEMBER_ADDRESS_(ace_freeze_score,get),
