@@ -1,7 +1,7 @@
 /* Phase 3j.3: opt-in real-TCP same-owner Domain Actor experiment.
  * Callback-to-business ACK, not wire latency. */
 #include "cnet_benchmark_stats.h"
-#include <cflow/cnet_domain_route.h>
+#include <cflow/actor.h>
 #include <cflow/executor.h>
 #include <cflow/scheduler.h>
 #include <cnet/cnet.h>
@@ -41,8 +41,6 @@ typedef struct actor_fixture {
     cflow_actor actor;
     cflow_actor_ref ref;
     cflow_machine_action_binding binding;
-    cflow_cnet_domain_route route;
-    cflow_cnet_domain_route_credit credit;
     int initial_state;
     uint64_t receive_started;
     bool actor_initialized;
@@ -98,10 +96,6 @@ static void on_state(void *user, cnet_connection id,
     }
     if (state == CNET_CONNECTION_CONNECTED) f->connected = true;
     if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
-        if (f->route.impl) {
-            int status = cflow_cnet_domain_route_source_terminal(&f->route);
-            if (status != SALTS_OK) f->error = status;
-        }
         f->terminal = true;
     }
     if (state == CNET_CONNECTION_FAILED)
@@ -110,25 +104,16 @@ static void on_state(void *user, cnet_connection id,
 static bool domain_action(void *user, const void *state, const void *event,
                           void *target, void *observation, const char **error) {
     actor_fixture *f = (actor_fixture *)user;
-    const cflow_cnet_domain_route_delivery *delivery =
-        (const cflow_cnet_domain_route_delivery *)event;
-    cnet_receive_view view = {0};
-    if (cflow_cnet_domain_route_borrow(&f->route, delivery, &view) != SALTS_OK ||
-        view.kind != CNET_MESSAGE_BYTES || view.size != 1u ||
-        ((const unsigned char *)view.data)[0] !=
-           (unsigned char)(f->settled % 251u)) {
-        f->failure_stage = "domain_action.borrow_or_validate";
-        *error = "invalid actor delivery";
+    const int *received_byte = (const int *)event;
+    if (!received_byte || *received_byte != (int)(f->settled % 251u)) {
+        f->failure_stage = "domain_action.validate";
+        *error = "invalid typed mailbox payload";
         f->error = SALTS_EPROTO;
         return false;
     }
-    f->checksum += ((const unsigned char *)view.data)[0];
-    if (cflow_cnet_domain_route_acknowledge(&f->route, delivery) != SALTS_OK) {
-        f->failure_stage = "domain_action.ack";
-        *error = "actor ACK failed";
-        f->error = SALTS_EPROTO;
-        return false;
-    }
+    f->checksum += (unsigned char)*received_byte;
+    /* Completing this Machine action is the business-settlement boundary;
+     * do not conflate Mailbox ACCEPTED with completion. */
     if (f->settled >= WARMUP) {
         size_t index = f->settled - WARMUP;
         if (index >= SAMPLES || !f->receive_started) {
@@ -167,11 +152,11 @@ static int actor_init(actor_fixture *f) {
         {10u, &cmeta_type_int, CFLOW_MACHINE_STATE_ACTIVE}
     };
     const cflow_event_type events[] = {
-        {BENCH_EVENT, &cflow_cnet_domain_route_delivery_type}
+        {BENCH_EVENT, &cmeta_type_int}
     };
     const cflow_machine_action actions[] = {{
         BENCH_ACTION, &cmeta_type_int, BENCH_EVENT,
-        &cflow_cnet_domain_route_delivery_type, &cmeta_type_int,
+        &cmeta_type_int, &cmeta_type_int,
         CMETA_EFFECT_MAY_FAIL,
         CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS,
         CFLOW_MACHINE_ACTION_VALUE, &cmeta_type_int, 0u
@@ -184,7 +169,6 @@ static int actor_init(actor_fixture *f) {
         actions, 1u, transitions, 1u
     };
     cflow_actor_config cfg = {0};
-    cflow_cnet_domain_route_config route_cfg = {0};
     f->binding = (cflow_machine_action_binding){BENCH_ACTION, domain_action, f};
     f->failure_stage = "actor_init.machine_or_scheduler";
     if (cflow_machine_build(&f->machine, &def) != CFLOW_MACHINE_OK ||
@@ -202,16 +186,6 @@ static int actor_init(actor_fixture *f) {
         !cflow_actor_ref_acquire(&f->actor, &f->ref) ||
         cflow_actor_start(&f->actor) != CFLOW_ACTOR_OK)
         return SALTS_EPROTO;
-    route_cfg = (cflow_cnet_domain_route_config){
-        .actor = &f->ref, .event_id = BENCH_EVENT,
-        .source_owner = 1u, .connection = f->connection,
-        .slot_capacity = 1u, .max_receive_bytes = 1u
-    };
-    f->failure_stage = "actor_init.route";
-    if (cflow_cnet_domain_route_init(&f->route, &route_cfg) != SALTS_OK ||
-        cflow_cnet_domain_route_bind_source(&f->route) != SALTS_OK)
-        return SALTS_EPROTO;
-    f->failure_stage = "ready";
     f->actor_initialized = true;
     return SALTS_OK;
 }
@@ -227,9 +201,12 @@ static void on_receive(void *user, cnet_connection id,
         f->error = SALTS_EPROTO;
         return;
     }
-    f->error = cflow_cnet_domain_route_receive(&f->route, f->credit, view);
-    if (f->error == SALTS_OK) ++f->received;
-    else f->failure_stage = "on_receive.route_receive";
+    int payload = (int)((const unsigned char *)view->data)[0];
+    const cflow_event_view event = { BENCH_EVENT, &cmeta_type_int, &payload };
+    if (cflow_actor_ref_try_send(&f->ref, &event) != CFLOW_ACTOR_SEND_ACCEPTED) {
+        f->failure_stage = "on_receive.mailbox_send";
+        f->error = SALTS_EPROTO;
+    } else ++f->received;
 }
 static int send_byte(bench_socket peer, unsigned char byte) {
     uint64_t deadline = cmeta_monotonic_ms() + DEADLINE_MS;
@@ -306,15 +283,8 @@ int main(void) {
     for (size_t i = 0; i < WARMUP + SAMPLES; ++i) {
         uint64_t deadline = cmeta_monotonic_ms() + DEADLINE_MS;
         if (i == WARMUP) began = cmeta_hrtime();
-        f->failure_stage = "route.reserve";
-        status = cflow_cnet_domain_route_reserve(&f->route, &f->credit);
-        if (status != SALTS_OK) goto done;
         f->failure_stage = "cnet.receive";
         status = cnet_receive(&f->client, f->connection, 1u);
-        if (status != SALTS_OK) {
-            (void)cflow_cnet_domain_route_cancel_credit(&f->route, f->credit);
-            goto done;
-        }
         if (status != SALTS_OK) goto done;
         f->failure_stage = "tcp.send";
         status = send_byte(peer, (unsigned char)(i % 251u));
@@ -375,11 +345,6 @@ done:
                cmeta_monotonic_ms() < deadline)
             if (!cflow_executor_run_one(&f->executor)) cmeta_thread_yield();
         cflow_actor_destroy(&f->actor);
-        if (f->route.impl) {
-            (void)cflow_cnet_domain_route_seal(&f->route);
-            (void)cflow_cnet_domain_route_abort_after_quiescence(&f->route);
-            (void)cflow_cnet_domain_route_destroy(&f->route);
-        }
         cflow_actor_ref_release(&f->ref);
         cflow_scheduler_destroy(&f->scheduler);
         cflow_executor_destroy(&f->executor);
