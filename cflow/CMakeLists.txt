@@ -87,6 +87,7 @@ add_library(${TARGET_NAME}
   src/relation_exec.c
   src/subscription.c
   src/scheduler.c
+  src/scheduler_owner.c
   src/scheduler_worker.c
   src/publishers.c
   src/statechart.c

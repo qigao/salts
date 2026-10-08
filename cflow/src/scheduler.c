@@ -694,6 +694,9 @@ bool cflow_scheduler_try_post_task_after_internal(
             (cflow_test_loop_state *)scheduler->self, delay_ms, task);
         return true;
     }
+    if (cflow_scheduler_owner_try_post_task_after_internal(
+            scheduler, delay_ms, task, out))
+        return true;
     return cflow_scheduler_worker_try_post_task_after_internal(
         scheduler, delay_ms, task, out);
 }
