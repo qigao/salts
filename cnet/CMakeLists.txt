@@ -64,6 +64,11 @@ function(cnet_configure_target target_name)
 endfunction()
 
 add_library(${TARGET_NAME} SHARED ${CNET_SOURCE_FILES})
+# Manager and inbound admission handoff share CNet's single DSO identity.
+# Do not add them to CNET_SOURCE_FILES: profile archives recompile that list.
+target_sources(${TARGET_NAME} PRIVATE
+  src/cnet_manager.c
+  src/cnet_handoff.c)
 cmake_config_target(${TARGET_NAME}
   VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
   ALIAS Salts::CNet
@@ -93,17 +98,6 @@ if(BUILD_TESTS)
 endif()
 
 install(TARGETS ${TARGET_NAME} EXPORT SaltsTargets)
-add_library(cnet_manager SHARED src/cnet_manager.c src/cnet_handoff.c)
-cmake_config_target(cnet_manager
-  ALIAS Salts::CNetManager FOLDER "cnet" EXPORT_NAME CNetManager
-  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}")
-set_target_properties(cnet_manager PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
-target_include_directories(cnet_manager PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>)
-target_compile_features(cnet_manager PUBLIC c_std_11)
-target_link_libraries(cnet_manager PUBLIC Salts::CNet PRIVATE Salts::Platform)
-install(TARGETS cnet_manager EXPORT SaltsTargets)
 if(WIN32)
   install(FILES "$<TARGET_FILE:c-ares::cares>" TYPE BIN)
 endif()

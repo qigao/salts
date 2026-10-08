@@ -22,10 +22,11 @@ connection placement, bounded handoff, cross-owner commands, and shutdown.
 ## Owner-local connection management
 
 The owner-local slice of [#1001](https://github.com/qigao/salts/issues/1001) is available
-through `<cnet/manager.h>` and the optional `Salts::CNetManager` shared library.
+through `<cnet/manager.h>` in the same `Salts::CNet` shared library.
 The architecture proposal is [PR #1002](https://github.com/qigao/salts/pull/1002).
-CNet does not link back to the helper. The shared library keeps identity epochs
-and owner-thread checks consistent when a manager crosses consumer DSO boundaries.
+The manager is opt-in at runtime, not a separate shared-library target.
+The production CNet DSO keeps incarnation epochs and owner-thread checks
+consistent across consumers loaded from different DSOs.
 
 One manager borrows an initialized client on its progress owner. Initialization
 allocates a fixed record table; admission and management progress never grow it.
@@ -86,8 +87,8 @@ close progress. These integrations retain protocol state in their consumers.
 
 This additive stage changes no wire format or base CNet ABI and adds no external
 dependency. It trades one bounded record per managed context for explicit
-lifetime accounting; no performance gain is claimed. Rollback removes the
-consumer's helper adapter and link dependency while retaining raw CNet calls.
+lifetime accounting; no performance gain is claimed. Rollback disables the
+consumer's explicitly configured manager while retaining raw CNet calls.
 Placement and retention policies remain later stages. The owner-local manager
 creates no worker, timer or cross-thread queue; handoff is a separate opt-in helper.
 
@@ -103,7 +104,7 @@ Downstream suites cover HTTP deferred work and TCP/TLS messaging integration.
 
 ### Optional final-owner handoff
 
-`<cnet/handoff.h>` in the same `Salts::CNetManager` library supplies a bounded
+`<cnet/handoff.h>` in `Salts::CNet` supplies a bounded
 MPSC admission inbox. It extracts CHTTP's detached-stream queue and final-owner
 credits without moving the listener, owner threads, backend, protocol state or
 service stop machinery into CNet. FlowMQ's caller-driven single-owner path does

@@ -1,8 +1,11 @@
 set(CNET_TEST_PRIVATE_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 cmake_add_test(cnet_handoff_test SOURCES cnet_handoff_test.c
-  LIBS Salts::CNetManager Salts::TinyTest FOLDER "cnet/tests")
+  LIBS Salts::CNet Salts::TinyTest FOLDER "cnet/tests")
 cmake_add_test(cnet_manager_test SOURCES cnet_manager_test.c
-  LIBS Salts::CNetManager Salts::TinyTest FOLDER "cnet/tests")
+  LIBS Salts::CNet Salts::TinyTest FOLDER "cnet/tests")
+# Strict target ownership and independent cross-DSO consumers.
+include(cnet_manager_target_contract.cmake)
+add_subdirectory(manager_link)
 set(CNET_WSPARSER_INCLUDE ${CMAKE_SOURCE_DIR}/tools/wsparser)
 
 cmake_add_test(cnet_ipc_test
