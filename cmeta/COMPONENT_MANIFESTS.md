@@ -164,6 +164,30 @@ Rollback replaces the complete SDK, rebuilt host and provider set with the
 previous 2.x deployment and its original contract cache. There is no in-place
 descriptor conversion or mixed-version compatibility path.
 
+## Post-3.0 Component Context initialization contract (development branch only)
+
+The long-term `feature/cmeta-ace-patterns` development branch under #1012/#1014
+requires a **defined first-use state** for a static Component context:
+
+```c
+salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;
+/* ... */
+salts_component_context_init(&context, /* deployment/storage arguments */);
+```
+
+Unlike the released v3.0.0 API that accepted an uninitialized stack context,
+the new development contract reads `context.state` to reject reinitialization
+from READY, RESOLVED or ACTIVE **before** overwriting any live ObjectRef.
+The caller must therefore explicitly initialize storage in C11/C++17. After
+normal stop or fully rolled-back failure, exclusive reuse is allowed; any
+borrowed Interface/service views must have expired. No legacy admission path
+or global registry is introduced.
+
+**Compatibility:** this is a source-contract change relative to published
+Salts 3.0.0. It must not ship as a silent 3.0.x-compatible behavior change;
+#1014 records the downstream migration and next-major release decision before
+merge. The development branch does not change already published v3.0.0.
+
 ## Generation concurrency and resource admission
 
 `Salts::ComponentPlugin` builds a complete candidate before publication. Its

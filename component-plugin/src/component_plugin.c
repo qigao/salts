@@ -300,7 +300,9 @@ salts_component_plugin_status salts_component_plugin_generation_build(
     }
     (void)distinct_modules;
 
-    memset(&generation->components, 0, sizeof(generation->components));
+    /* A candidate owns this context exclusively, never while ACTIVE.
+     * Establish defined typed ZERO state before static Context admission. */
+    generation->components = (salts_component_context)SALTS_COMPONENT_CONTEXT_INIT;
     generation->id = generation_id;
     generation->registry = registry;
     generation->storage = *storage;
