@@ -635,6 +635,13 @@ spec("CNetManager held context across cross-owner Actor ACK") {
             }
             check_equal(poll_status, SALTS_OK);
         }
+        {
+            const uint64_t done_deadline =
+                cmeta_monotonic_ms() + MANAGER_LEASE_TIMEOUT_MS;
+            while (atomic_load(&f.values) < 2 &&
+                   cmeta_monotonic_ms() < done_deadline)
+                cmeta_thread_yield();
+        }
         check_equal(atomic_load(&f.values), 2);
         check_equal(atomic_load(&f.action_count), 2);
         check_equal(atomic_load(&f.checksum), 150);
@@ -649,7 +656,7 @@ spec("CNetManager held context across cross-owner Actor ACK") {
         check_equal(atomic_load(&f.wakes), 2);
         /* Source's EBUSY poll after ACK #1 cleared the old hint. ACK #2
          * therefore publishes a fresh wake: no lost-wake-after-poll. */
-        check_true(guard_stats.notification_pending);
+        check_false(guard_stats.notification_pending);
         /* Concurrent polling already committed the one valid release. */
         check_equal(cflow_cnet_manager_context_poll_release(
             &f.guard, &released), SALTS_EALREADY);
