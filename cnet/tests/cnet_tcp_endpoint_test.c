@@ -449,6 +449,14 @@ static void test_tcp_endpoints(void) {
   check(send_one_byte(&client, connection) == SALTS_OK);
   check(cnet_connection_shutdown(&client, connection, CNET_TCP_SHUTDOWN_SEND) == SALTS_OK);
   check(send_one_byte(&client, connection) == SALTS_ESHUTDOWN);
+  /*
+   * Repeated native half-shutdown is idempotent while this generation is
+   * still live. Do not defer that check past CNet polling: the accepted
+   * peer has closed its receive direction, so the ensuing write can
+   * provoke a platform-specific reset and retire this connection.
+   */
+  check(cnet_connection_shutdown(&client, connection, CNET_TCP_SHUTDOWN_SEND) == SALTS_OK);
+  check(cnet_connection_shutdown(&client, connection, CNET_TCP_SHUTDOWN_BOTH) == SALTS_OK);
 
   deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
   while (atomic_load_explicit(&client_probe.sent, memory_order_acquire) == 0) {
@@ -463,9 +471,6 @@ static void test_tcp_endpoints(void) {
    * platform-specific terminal/reset indication after its final write.
    */
   check(atomic_load_explicit(&accepted_probe.received, memory_order_acquire) == 0);
-
-  check(cnet_connection_shutdown(&client, connection, CNET_TCP_SHUTDOWN_SEND) == SALTS_OK);
-  check(cnet_connection_shutdown(&client, connection, CNET_TCP_SHUTDOWN_BOTH) == SALTS_OK);
 
   check(cnet_close(&client, connection) == SALTS_OK);
   check(cnet_close(&accepted_client, accepted) == SALTS_OK);
