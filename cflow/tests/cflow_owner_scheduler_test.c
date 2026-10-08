@@ -95,6 +95,27 @@ static void owner_sched_cancel_race_foreign(void *user) {
     atomic_store(&r->done, true);
 }
 
+typedef struct owner_queue_order {
+    atomic_int count;
+    int seen[4];
+    const void *owner;
+    atomic_int wrong_owner;
+} owner_queue_order;
+
+typedef struct owner_order_task {
+    owner_queue_order *probe;
+    int value;
+} owner_order_task;
+
+static void owner_sched_record(void *user) {
+    owner_order_task *item = (owner_order_task *)user;
+    owner_queue_order *p = item->probe;
+    if (p->owner != cmeta_thread_current_token())
+        atomic_fetch_add(&p->wrong_owner, 1);
+    const int index = atomic_fetch_add(&p->count, 1);
+    if (index >= 0 && index < 4) p->seen[index] = item->value;
+}
+
 suite("CFlow shared-owner Concurrent Scheduler") {
     it("rejects unsupported bindings and shares the existing Executor queue") {
         cflow_executor executor = {0};
@@ -144,6 +165,46 @@ suite("CFlow shared-owner Concurrent Scheduler") {
         check_equal(atomic_load(&probe.runs), 2);
         cflow_executor_destroy(&executor);
         cflow_executor_destroy(&manual);
+    }
+
+    it("shares one FIFO Executor with Machine work and other owner Schedulers") {
+        cflow_executor executor = {0};
+        cflow_scheduler one = {0};
+        cflow_scheduler two = {0};
+        owner_queue_order probe = {0};
+        owner_order_task first = {&probe, 1};
+        owner_order_task second = {&probe, 2};
+        owner_order_task third = {&probe, 3};
+
+        probe.owner = cmeta_thread_current_token();
+        check_true(cflow_executor_owner_init_with_capacity(
+            &executor, 8u, NULL, NULL));
+        check_true(cflow_scheduler_owner_bind(&one, &executor, 4u));
+        check_true(cflow_scheduler_owner_bind(&two, &executor, 4u));
+
+        check_not_equal(cflow_scheduler_post(
+            &one, owner_sched_record, &first), (cflow_task_id)0u);
+        check_equal(cflow_executor_try_post(
+            &executor, owner_sched_record, &second), CFLOW_ADMISSION_ACCEPTED);
+        check_not_equal(cflow_scheduler_post(
+            &two, owner_sched_record, &third), (cflow_task_id)0u);
+        check_equal(cflow_executor_pending(&executor), (size_t)3u);
+        check_equal(cflow_scheduler_pending(&one), (size_t)1u);
+        check_equal(cflow_scheduler_pending(&two), (size_t)1u);
+
+        /* Draining through either borrowed Scheduler progresses the shared
+         * owner queue; it is not another callback-dispatch or mailbox loop. */
+        check_equal(cflow_scheduler_run_until_idle(&two, 3u), (size_t)3u);
+        check_equal(atomic_load(&probe.count), 3);
+        check_equal(probe.seen[0], 1);
+        check_equal(probe.seen[1], 2);
+        check_equal(probe.seen[2], 3);
+        check_equal(atomic_load(&probe.wrong_owner), 0);
+        check_true(cflow_scheduler_wait_idle(&one));
+        check_true(cflow_scheduler_wait_idle(&two));
+        cflow_scheduler_destroy(&two);
+        cflow_scheduler_destroy(&one);
+        cflow_executor_destroy(&executor);
     }
 
     it("accepts concurrent producers and only the owner dispatches callbacks") {
