@@ -4,7 +4,8 @@ param(
   [AllowEmptyString()][string]$BaseRef,
   [Parameter(Mandatory)][string]$HeadRef,
   [AllowEmptyString()][string]$HeadBranch = "",
-  [bool]$PrepareRelease = $false
+  [bool]$PrepareRelease = $false,
+  [bool]$AceMatrix = $false
 )
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -12,13 +13,19 @@ Set-StrictMode -Version Latest
 # PR coverage follows the whole proposed change; push coverage follows the
 # delivered commit range. Never skip unqualified code using only the last commit.
 $full = $EventName -eq "workflow_dispatch"
-# New long-lived ACE pattern development runs the complete Linux contract suite
-# on PRs; explicit manual release preparation still selects all platforms.
-$acePatternsDevelopment = $HeadBranch -eq 'feature/cmeta-ace-patterns' -and
+# Normal ACE development runs full Linux CTest. An explicit [ACE-MATRIX]
+# marker on the same long-lived Draft PR runs host-complete integration tests
+# and cross-builds; the marker is removable after the qualification checkpoint.
+$aceBranchPr = $HeadBranch -eq 'feature/cmeta-ace-patterns' -and
   $EventName -eq 'pull_request' -and -not $PrepareRelease
+if ($AceMatrix -and -not $aceBranchPr) {
+  throw "ACE-MATRIX qualification is restricted to its long-lived PR"
+}
+$acePatternsDevelopment = $aceBranchPr -and -not $AceMatrix
+$aceFullMatrixQualification = $aceBranchPr -and $AceMatrix
 # Preserve the historical integration branch's complete Linux coverage.
 $componentIntegration = ($HeadBranch -eq 'feature/cmeta-pattern-component-runtime' -and
-  -not $PrepareRelease) -or $acePatternsDevelopment
+  -not $PrepareRelease) -or $aceBranchPr
 $changed = @()
 if (-not $full) {
   if ([string]::IsNullOrWhiteSpace($BaseRef)) { throw "Missing comparison base for $EventName" }
@@ -87,7 +94,7 @@ $compare = $benchmarkCommon -or $cnetRuntime -or $nativeRuntime -or $coroutineRu
 # Manual validation has no change range and does not request benchmark runs.
 # The long-lived ACE pattern PR explicitly qualifies full Linux CTest; defer
 # expensive backend measurement to an explicit later release qualification.
-$benchmarkChanged = (-not $acePatternsDevelopment) -and
+$benchmarkChanged = (-not $aceBranchPr) -and
   (Test-Changed '^(native-io|cnet)/')
 $nativeOwner = $benchmarkChanged -and $nativeOwner
 $nativeStyle = $benchmarkChanged -and $nativeStyle
@@ -101,7 +108,7 @@ $compare = $benchmarkChanged -and $compare
 # Only executable I/O/transport changes (and benchmark inputs) alter this
 # baseline. CNet/NativeIO tests-only edits must not start all four platforms.
 $transportOwner = $PrepareRelease -or
-  ((-not $acePatternsDevelopment) -and
+  ((-not $aceBranchPr) -and
    (Test-Changed '^(cnet|native-io)/(src/|include/|CMakeLists\.txt$|benchmarks/)'))
 $work = $nativeOwner -or $nativeStyle -or $cnetOwner -or $cnetIo -or $cnetSg -or $coroutine -or $nativeUring -or $forensic -or $transportOwner
 
@@ -170,7 +177,12 @@ foreach ($profile in $profiles) {
   $entry.package = $PrepareRelease -and [bool]$entry.sdk
   $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
   $entry.artifact = if ($entry.cross) { $mobile } else { $work -and [bool]$entry.sdk }
-  $entry.full_tests = $componentIntegration -and $entry.id -eq 'linux-release'
+  # Full host CTest for an explicit qualification; Linux arm64 runs the
+  # portable tests, while Android/iOS are compile-only, not device runtime.
+  $entry.full_tests = ($componentIntegration -and $entry.id -eq 'linux-release') -or
+    ($aceFullMatrixQualification -and $entry.id -in @(
+      'linux-release', 'linux-clang-release', 'windows-release',
+      'macos-release', 'macos-clang-release'))
   if ($entry.full_tests) {
     $entry.native = $false
     $entry.execution = $false

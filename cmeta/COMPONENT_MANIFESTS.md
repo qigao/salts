@@ -164,6 +164,20 @@ Rollback replaces the complete SDK, rebuilt host and provider set with the
 previous 2.x deployment and its original contract cache. There is no in-place
 descriptor conversion or mixed-version compatibility path.
 
+## Draft-only full native qualification for #1018
+
+The normal `feature/cmeta-ace-patterns` PR checks only Linux full CTest and
+Lean. During a deliberate branch integration checkpoint, add `[ACE-MATRIX]`
+to the **Draft PR title**, which selects complete host CTest on Linux GCC/Clang,
+Windows MSVC and macOS GCC/Clang, the portable Linux arm64 contract subset,
+and Android/iOS compile profiles. This uses the exact PR HEAD and does not
+publish, package or authorize any new SDK version. CNet/NativeIO transport
+benchmarks remain excluded from this ACE branch mode; they require their own
+performance qualification. Remove the marker to restore Linux-only iteration.
+
+No host test result substitutes for mobile device execution or downstream
+exact-package qualification, both of which remain open in #1018.
+
 ## Post-3.0 Component Context initialization contract (development branch only)
 
 The long-term `feature/cmeta-ace-patterns` development branch under #1012/#1014

@@ -122,11 +122,22 @@ jobs:
           cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
       # A failed suite must not skip other selected suites on a successful build.
-      - name: Run complete Linux integration tests
+      - name: Run complete Unix integration tests
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.full_tests }}
         timeout-minutes: 30
         shell: bash
         run: ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60
+      - name: Run complete Windows ACE integration tests
+        if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.full_tests }}
+        timeout-minutes: 30
+        shell: cmd
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60
+          if errorlevel 1 exit /b 1
       - name: Run Unix native and plugin contracts
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.native }}
         timeout-minutes: 30

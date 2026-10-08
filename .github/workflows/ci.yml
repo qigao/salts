@@ -40,7 +40,10 @@ jobs:
           CI_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
           CI_BRANCH: ${{ github.head_ref || github.ref_name }}
           PREPARE_RELEASE: ${{ inputs.prepare_release || false }}
-        run: ./cmake/ci/select-ci-scope.ps1 -EventName $env:CI_EVENT -BaseRef $env:CI_BASE -HeadRef $env:CI_HEAD -HeadBranch $env:CI_BRANCH -PrepareRelease ($env:PREPARE_RELEASE -eq "true")
+          # Temporary full-host qualification mode for the long-lived ACE PR.
+          # This is not SDK packaging, benchmark work or release publication.
+          ACE_MATRIX: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[ACE-MATRIX]') }}
+        run: ./cmake/ci/select-ci-scope.ps1 -EventName $env:CI_EVENT -BaseRef $env:CI_BASE -HeadRef $env:CI_HEAD -HeadBranch $env:CI_BRANCH -PrepareRelease ($env:PREPARE_RELEASE -eq "true") -AceMatrix ($env:ACE_MATRIX -eq "true")
       - name: Read package version
         shell: pwsh
         id: version
