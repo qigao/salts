@@ -218,6 +218,9 @@ CTest suites. CMake build trees and installed SDKs are not reused across commits
 Linking, code generation, tool installation and tests still run, so speedups
 depend on the changed files and the observed cache hit rate. GitHub branch access
 rules and cache eviction apply; the first run in a new cache namespace is cold.
+The MSVC C11 atomics switch uses its equivalent dash spelling because sccache
+0.18 does not recognize the slash spelling and treats it as an extra input file.
+This retains C11 atomic support and allows C objects to enter the cache.
 
 The supported project compiler profiles are:
 
