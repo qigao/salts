@@ -164,6 +164,24 @@ Rollback replaces the complete SDK, rebuilt host and provider set with the
 previous 2.x deployment and its original contract cache. There is no in-place
 descriptor conversion or mixed-version compatibility path.
 
+## Explicit sanitizer qualification for #1018
+
+The long-lived Draft PR may temporarily use `[ACE-SAN]` in its title to run
+two independent Linux debug host profiles without packaging or benchmarking:
+`linux-dev-ci` enables ASan+UBSan using the canonical `cmake/Sanitizers.cmake`,
+and `linux-tsan-ci` runs TSan separately (never combined with ASan).
+Both build complete targets using CMake presets and execute the focused
+Component, ComponentPlugin DSO/Scope, Actor, Pipes/Filters, CNet TCP and
+Half-Sync/Async CTest contracts. No new test runner, orchestration wrapper,
+global state or automatic retry is introduced. `[ACE-SAN]` and
+`[ACE-MATRIX]` are mutually exclusive.
+
+Sanitizers instrument the branch-built host/runtime, not Android/iOS or
+prebuilt vcpkg dependencies; a sanitizer GREEN is *not* a next-major binary
+compatibility or provider package release. Document any incompatible runner
+or unsupported TSan environment as such rather than declaring unexecuted
+tests passed. Remove the temporary marker to return to Linux-only daily CI.
+
 ## Draft-only full native qualification for #1018
 
 The normal `feature/cmeta-ace-patterns` PR checks only Linux full CTest and

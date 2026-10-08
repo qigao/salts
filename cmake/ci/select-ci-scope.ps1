@@ -5,7 +5,8 @@ param(
   [Parameter(Mandatory)][string]$HeadRef,
   [AllowEmptyString()][string]$HeadBranch = "",
   [bool]$PrepareRelease = $false,
-  [bool]$AceMatrix = $false
+  [bool]$AceMatrix = $false,
+  [bool]$AceSan = $false
 )
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -18,11 +19,13 @@ $full = $EventName -eq "workflow_dispatch"
 # and cross-builds; the marker is removable after the qualification checkpoint.
 $aceBranchPr = $HeadBranch -eq 'feature/cmeta-ace-patterns' -and
   $EventName -eq 'pull_request' -and -not $PrepareRelease
-if ($AceMatrix -and -not $aceBranchPr) {
-  throw "ACE-MATRIX qualification is restricted to its long-lived PR"
+if (($AceMatrix -or $AceSan) -and -not $aceBranchPr) {
+  throw "ACE qualification is restricted to its long-lived PR"
 }
+if ($AceMatrix -and $AceSan) { throw "ACE-MATRIX and ACE-SAN are exclusive" }
 $acePatternsDevelopment = $aceBranchPr -and -not $AceMatrix
 $aceFullMatrixQualification = $aceBranchPr -and $AceMatrix
+$aceSanitizerQualification = $aceBranchPr -and $AceSan
 # Preserve the historical integration branch's complete Linux coverage.
 $componentIntegration = ($HeadBranch -eq 'feature/cmeta-pattern-component-runtime' -and
   -not $PrepareRelease) -or $aceBranchPr
@@ -156,6 +159,15 @@ $profiles = @(
   @{ id = 'android-arm64-v8a-release'; runner = 'ubuntu-24.04'; family = 'android'; preset = 'android-arm64-v8a-release-ci'; build_dir = 'build/android-arm64-v8a-release'; sdk = 'android-arm64-v8a' },
   @{ id = 'ios-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-arm64-release-ci'; build_dir = 'build/ios-arm64'; sdk = 'ios-arm64'; triplet = 'arm64-ios' }
 )
+if ($aceSanitizerQualification) {
+  # Reuse existing Debug ASan and independent TSan CMake presets; the ASan
+  # profile adds UBSan via the canonical Sanitizers.cmake flag. Do not combine
+  # TSan with ASan, or reuse release binaries for sanitizer checks.
+  $profiles += @(
+    @{ id = 'linux-ace-asan-ubsan'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-dev-ci'; build_dir = 'build/linux-gcc-debug'; sdk = ''; sanitizer = 'asan-ubsan' },
+    @{ id = 'linux-ace-tsan'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-tsan-ci'; build_dir = 'build/linux-gcc-tsan'; sdk = ''; sanitizer = 'tsan' }
+  )
+}
 $builds = @()
 foreach ($profile in $profiles) {
   if ($acePatternsDevelopment -and $profile.id -ne 'linux-release') { continue }
@@ -165,6 +177,7 @@ foreach ($profile in $profiles) {
   # The connection-manager integration branch uses GCC for Linux and macOS.
   if ($HeadBranch -eq 'codex/cnet-manager-1001' -and $profile.clang) { continue }
   $entry = $profile.Clone()
+  if (-not $entry.ContainsKey('sanitizer')) { $entry.sanitizer = '' }
   $entry.cross = $entry.family -in @('android', 'ios')
   # Core semantic qualification must also pass without the optional #981 backend.
   # Explicit release packaging still includes the qualified native specialization.
@@ -191,7 +204,17 @@ foreach ($profile in $profiles) {
     $entry.compare = $false
     $entry.artifact = $false
   }
-  if ($entry.full_tests -or $entry.native -or $entry.execution -or $entry.projection -or $entry.armcontracts -or $entry.package -or $entry.artifact) {
+  if ($entry.sanitizer -ne '') {
+    $entry.native = $false
+    $entry.execution = $false
+    $entry.projection = $false
+    $entry.full_tests = $false
+    $entry.benchmarks = 'OFF'
+    $entry.package = $false
+    $entry.compare = $false
+    $entry.artifact = $false
+  }
+  if ($entry.full_tests -or $entry.native -or $entry.execution -or $entry.projection -or $entry.armcontracts -or $entry.package -or $entry.artifact -or $entry.sanitizer -ne '') {
     $builds += $entry
   }
 }
