@@ -15,6 +15,9 @@ cmake_add_test(cflow_cnet_domain_route_test
   SOURCES cflow_cnet_domain_route_test.c
   LIBS Salts::CFlowCNet Salts::Platform Salts::TinyTest
   FOLDER "cflow/cnet-adapter/tests")
+if(WIN32)
+  target_link_libraries(cflow_cnet_domain_route_test PRIVATE ws2_32)
+endif()
 
 cmake_add_test(cflow_cnet_manager_context_test
   SOURCES cflow_cnet_manager_context_test.c
