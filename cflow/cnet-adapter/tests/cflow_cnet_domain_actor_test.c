@@ -8,7 +8,28 @@
 
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+
+#if defined(_WIN32)
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+typedef SOCKET domain_socket;
+typedef int domain_socklen;
+#define DOMAIN_BAD_SOCKET INVALID_SOCKET
+#elif defined(__unix__) || defined(__APPLE__)
+  #include <errno.h>
+  #include <fcntl.h>
+  #include <netinet/in.h>
+  #include <sys/socket.h>
+  #include <unistd.h>
+typedef int domain_socket;
+typedef socklen_t domain_socklen;
+#define DOMAIN_BAD_SOCKET (-1)
+#endif
 
 enum {
     DOMAIN_TEST_EVENT = 150,
@@ -91,8 +112,9 @@ static void domain_on_done(void *user) {
     if (f) atomic_fetch_add(&f->dones, 1);
 }
 
-static bool domain_fixture_init(
-    domain_test_fixture *f, size_t mailbox_capacity, size_t stage_capacity) {
+static bool domain_fixture_init_connection(
+    domain_test_fixture *f, size_t mailbox_capacity, size_t stage_capacity,
+    cnet_connection connection) {
     const cflow_machine_state states[] = {
         {10u, &cmeta_type_int, CFLOW_MACHINE_STATE_ACTIVE}
     };
@@ -141,11 +163,17 @@ static bool domain_fixture_init(
     stage_config = (cflow_cnet_domain_config){
         .actor = &f->ref,
         .event_id = DOMAIN_TEST_EVENT,
-        .connection = (cnet_connection){5u, 13u},
+        .connection = connection,
         .slot_capacity = stage_capacity,
         .max_receive_bytes = 32u
     };
     return cflow_cnet_domain_bridge_init(&f->bridge, &stage_config) == SALTS_OK;
+}
+
+static bool domain_fixture_init(
+    domain_test_fixture *f, size_t mailbox_capacity, size_t stage_capacity) {
+    return domain_fixture_init_connection(
+        f, mailbox_capacity, stage_capacity, (cnet_connection){5u, 13u});
 }
 
 static bool domain_drive_until(domain_test_fixture *f, int expected) {
