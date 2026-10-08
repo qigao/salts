@@ -107,6 +107,21 @@ The test asserts every method's reflection validity in both C11 and C++17.
 These are test-local declarations over Platform's existing mutex/condition;
 there is no new synchronization runtime or global Interface registry.
 
+### Real NativeIO × ACT × Plugin DSO integration (post-freeze)
+
+[Real native terminal conformance](../component-plugin/tests/component_plugin_native_io_act_test.c)
+exercises **Linux epoll** and **Darwin kqueue** over a true nonblocking OS
+pipe with NativeIO request/observed completion. The same fixture loads a
+real Plugin DSO, publishes ComponentPlugin generation N, admits and borrows
+a live Scope, then closes admission before I/O terminal observation.
+It verifies that both successful read and explicit cancellation preserve
+the provider lease through terminal observation and exactly-once ACT
+settlement; final DSO teardown occurs only after the **application** releases
+the Scope. This is not simulated NativeIO progress and not a second
+request/Plugin registry. Windows IOCP owns its separate native regression
+path; do not infer IOCP + DSO end-to-end coverage from these POSIX tests.
+The current HEAD must pass full native CI before this can be claimed qualified.
+
 ## Active pattern-gap tracking
 
 Umbrella: [#1058 — POSA2 17-pattern coverage and conformance](https://github.com/qigao/salts/issues/1058). Missing semantic/composition slices:
