@@ -3,6 +3,7 @@
 
 #include "cmeta_pattern_fixture.h"
 #include <cmeta/object_scope.h>
+#include <cmeta/ace_interceptor.h>
 
 /* The explicit result/cleanup contract is shared by C11 and C++17.
  * This ObjectRef does NOT retain a provider DSO/Plugin lease on its own. */
@@ -14,6 +15,53 @@ static void pattern_destroy_owned_value(void *context, void *object) {
 #endif
     (void)object;
     ++*count;
+}
+
+
+/* Typed ACE Interceptor: deliberately no erased call ABI or hidden retain. */
+CMETA_INTERCEPTOR_TYPE(pattern_interceptor, int, int);
+
+typedef struct pattern_interceptor_probe {
+    int trace[16];
+    int count;
+    int target_calls;
+    bool reject;
+    bool fail_target;
+} pattern_interceptor_probe;
+
+typedef struct pattern_interceptor_stage {
+    pattern_interceptor_probe *probe;
+    int id;
+} pattern_interceptor_stage;
+
+static cmeta_status pattern_intercept_target(
+    void *user, const int *request, int *out) {
+    pattern_interceptor_probe *probe = (pattern_interceptor_probe *)user;
+    probe->trace[probe->count++] = 9;
+    ++probe->target_calls;
+    if (probe->fail_target) return CMETA_CALLBACK_ERROR;
+    *out = *request * 2;
+    return CMETA_OK;
+}
+static cmeta_status pattern_intercept_before(
+    void *user, const int *request, bool *proceed) {
+    pattern_interceptor_stage *stage = (pattern_interceptor_stage *)user;
+    (void)request;
+    stage->probe->trace[stage->probe->count++] = stage->id;
+    *proceed = !stage->probe->reject;
+    return CMETA_OK;
+}
+static void pattern_intercept_after(
+    void *user, const int *request, const int *response) {
+    pattern_interceptor_stage *stage = (pattern_interceptor_stage *)user;
+    (void)request; (void)response;
+    stage->probe->trace[stage->probe->count++] = stage->id + 10;
+}
+static void pattern_intercept_error(
+    void *user, const int *request, cmeta_status status) {
+    pattern_interceptor_stage *stage = (pattern_interceptor_stage *)user;
+    (void)request; (void)status;
+    stage->probe->trace[stage->probe->count++] = stage->id + 20;
 }
 
 suite("CMeta pattern composition") {
@@ -132,6 +180,71 @@ suite("CMeta pattern composition") {
 
         cmeta_object_release(&object);
     }
+
+    it("invokes typed Interceptor hooks forward and after hooks in reverse") {
+        pattern_interceptor_probe probe = {0};
+        pattern_interceptor_stage a = {&probe, 1}, b = {&probe, 2};
+        pattern_interceptor_hook hooks[2] = {
+            {&a, pattern_intercept_before, pattern_intercept_after, pattern_intercept_error},
+            {&b, pattern_intercept_before, pattern_intercept_after, pattern_intercept_error}
+        };
+        pattern_interceptor chain = {&probe, pattern_intercept_target, hooks, 2u};
+        int request = 7, response = 0;
+        check_equal(pattern_interceptor_invoke(&chain, &request, &response), CMETA_OK);
+        check_equal(response, 14);
+        check_equal(probe.target_calls, 1);
+        check_equal(probe.count, 5);
+        check_equal(probe.trace[0], 1);
+        check_equal(probe.trace[1], 2);
+        check_equal(probe.trace[2], 9);
+        check_equal(probe.trace[3], 12);
+        check_equal(probe.trace[4], 11);
+    }
+
+    it("short-circuits Interceptor without invoking target and unwinds errors") {
+        pattern_interceptor_probe probe = {0};
+        pattern_interceptor_stage a = {&probe, 1}, b = {&probe, 2};
+        pattern_interceptor_hook hooks[2] = {
+            {&a, pattern_intercept_before, pattern_intercept_after, pattern_intercept_error},
+            {&b, pattern_intercept_before, pattern_intercept_after, pattern_intercept_error}
+        };
+        pattern_interceptor chain = {&probe, pattern_intercept_target, hooks, 2u};
+        int request = 5, response = 71;
+        probe.reject = true;
+        check_equal(pattern_interceptor_invoke(&chain, &request, &response),
+                    CMETA_CALLBACK_ERROR);
+        check_equal(probe.target_calls, 0);
+        check_equal(response, 71);
+        check_equal(probe.count, 2);
+        check_equal(probe.trace[0], 1);
+        check_equal(probe.trace[1], 21);
+        probe.count = 0;
+        probe.reject = false;
+        probe.fail_target = true;
+        check_equal(pattern_interceptor_invoke(&chain, &request, &response),
+                    CMETA_CALLBACK_ERROR);
+        check_equal(probe.target_calls, 1);
+        check_equal(probe.count, 5);
+        check_equal(probe.trace[0], 1);
+        check_equal(probe.trace[1], 2);
+        check_equal(probe.trace[2], 9);
+        check_equal(probe.trace[3], 22);
+        check_equal(probe.trace[4], 21);
+    }
+
+    it("rejects invalid typed Interceptor construction without callbacks") {
+        pattern_interceptor_probe probe = {0};
+        pattern_interceptor chain = {&probe, pattern_intercept_target, NULL, 1u};
+        int request = 1, response = 2;
+        check_equal(pattern_interceptor_invoke(&chain, &request, &response),
+                    CMETA_INVALID_ARGUMENT);
+        chain.hook_count = 17u;
+        check_equal(pattern_interceptor_invoke(&chain, &request, &response),
+                    CMETA_INVALID_ARGUMENT);
+        chain.hook_count = 0u;
+        check_equal(pattern_interceptor_invoke(&chain, &request, &response), CMETA_OK);
+    }
+
 }
 
 #endif /* CMETA_PATTERN_CASES_H */
