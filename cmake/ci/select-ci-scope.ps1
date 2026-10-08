@@ -3,6 +3,7 @@ param(
   [string]$EventName,
   [AllowEmptyString()][string]$BaseRef,
   [Parameter(Mandatory)][string]$HeadRef,
+  [AllowEmptyString()][string]$HeadBranch = "",
   [bool]$PrepareRelease = $false
 )
 $ErrorActionPreference = "Stop"
@@ -136,6 +137,8 @@ foreach ($profile in $profiles) {
   # Clang profiles qualify the same portable/native contracts in isolated trees;
   # they do not produce additional release packages.
   $profile.clang = $profile.id -in @('linux-clang-release', 'macos-clang-release')
+  # The connection-manager integration branch uses GCC for Linux and macOS.
+  if ($HeadBranch -eq 'codex/cnet-manager-1001' -and $profile.clang) { continue }
   $entry = $profile.Clone()
   $entry.cross = $entry.family -in @('android', 'ios')
   # Core semantic qualification must also pass without the optional #981 backend.

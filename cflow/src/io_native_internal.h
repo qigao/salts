@@ -57,4 +57,10 @@ int cflow_io_native_io_uring_init(
     const cflow_io_native_backend_config *config);
 #endif
 
+#if defined(CFLOW_HAS_NATIVE_DARWIN_AIO)
+int cflow_io_native_darwin_aio_init(
+    cflow_io_native_backend *backend,
+    const cflow_io_native_backend_config *config);
+#endif
+
 #endif /* CFLOW_IO_NATIVE_INTERNAL_H */

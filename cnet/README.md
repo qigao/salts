@@ -8,7 +8,7 @@ to depend on NativeIO directly.
 
 The canonical lower-layer contract is [NativeIO execution and endpoint architecture](../native-io/ARCHITECTURE.md). CNet is an optional network/session semantic consumer: raw TCP/UDP/VSOCK/PIPE data paths do not require CNet, and CNet does not own NativeIO execution-style or terminal-completion truth.
 
-CNet is built unconditionally. Its source-tree target is `cmeta_cnet`; installed
+CNet is built unconditionally. Its source-tree target is `cnet`; installed
 consumers link `Salts::CNet` and include `<cnet/cnet.h>`. The independent
 WebSocket session API is declared by `<cnet/websocket.h>`.
 
@@ -18,6 +18,160 @@ The implemented additive capabilities are listed below; downstream integration
 and release gates in the design remain separate work.
 Its [WS and IPC multicore design](#ws-and-ipc-multicore-design) specifies fixed
 connection placement, bounded handoff, cross-owner commands, and shutdown.
+
+## Owner-local connection management
+
+The owner-local slice of [#1001](https://github.com/qigao/salts/issues/1001) is available
+through `<cnet/manager.h>` and the optional `Salts::CNetManager` shared library.
+The architecture proposal is [PR #1002](https://github.com/qigao/salts/pull/1002).
+CNet does not link back to the helper. The shared library keeps identity epochs
+and owner-thread checks consistent when a manager crosses consumer DSO boundaries.
+
+One manager borrows an initialized client on its progress owner. Initialization
+allocates a fixed record table; admission and management progress never grow it.
+`connection_capacity` bounds RESERVED plus BOUND records; `record_capacity`
+also includes RETIRED contexts. These are helper credits, not reservations of
+the client's transport slots: unmanaged users can still exhaust that client.
+
+The lifecycle is `reserve -> connect/adopt -> real terminal -> recycle`, or
+`reserve -> cancel -> recycle`. Each successful reserve must be consumed or
+canceled. Connect/adopt retire a valid reservation even on immediate rejection;
+they never fabricate state callbacks. A valid adopt attempt consumes the
+detached stream on success or failure. Invalid identities leave it untouched.
+TCP and TLS are supported in this stage; other transport URIs return ENOTSUP.
+
+The attachment copies an observer and optionally a once-only cleanup callback.
+Its user pointer remains borrowed. Transport terminal returns the helper credit
+before forwarding the real state callback. With `hold_context=true`, the host
+aggregates business references and calls `release_context` once when they end.
+That hold consumes record storage without retaining a transport slot. Cleanup
+runs only in a later `advance`, after callbacks and the extra hold end. Retained
+identity values neither retain storage nor authorize raw CNet operations.
+
+For example, after initializing `client` and preparing `observer`:
+
+```c
+cnet_manager manager = {0};
+const cnet_manager_config config = {
+    sizeof(config), CNET_MANAGER_VERSION, &client, 64u, 32u};
+int status = cnet_manager_init(&manager, &config);
+if (status != SALTS_OK) return status;
+const cnet_manager_attachment attachment = {.observer = observer};
+cnet_managed_connection managed = {0};
+cnet_connection connection = {0};
+status = cnet_manager_reserve(&manager, &attachment, &managed);
+if (status == SALTS_OK) {
+  const cnet_connect_options options = {.uri = "tcp://127.0.0.1:8080"};
+  status = cnet_manager_connect(&manager, managed, &options, &connection);
+}
+/* Preserve status. The owner continues its normal CNet poll and bounded
+ * manager advance, including recycling an immediately rejected attempt. */
+```
+
+Send, receive demand, TLS policy and protocol state remain on existing CNet and
+host APIs. Install owned receive handlers through the manager adapter so its
+callback guard also covers transferred slices. `seal` blocks admission without
+closing. `request_close` seals and schedules closes only for this manager's
+subset. `advance(budget)` visits at most that many records round-robin, without
+polling or waiting; rejected closes retain their obligations for retry. The
+snapshot reports runnable work separately from drained obligations. Destroy is
+owner-only and returns EBUSY until drained; it never stops the borrowed client.
+Keep that client initialized through manager destruction.
+
+CHTTP maps one manager and one optional admission inbox to each existing owner
+lane. HTTP/1 deferred responses and HTTP/2 deferred
+streams delay context release. FlowMQ maps one manager to each socket client;
+queued parts delay peer context release, and external owners drive explicit
+close progress. These integrations retain protocol state in their consumers.
+
+This additive stage changes no wire format or base CNet ABI and adds no external
+dependency. It trades one bounded record per managed context for explicit
+lifetime accounting; no performance gain is claimed. Rollback removes the
+consumer's helper adapter and link dependency while retaining raw CNet calls.
+Placement and retention policies remain later stages. The owner-local manager
+creates no worker, timer or cross-thread queue; handoff is a separate opt-in helper.
+
+The formal `cnet_manager_test` covers full capacities, immediate admission
+failure, real TCP terminal/owned receive callbacks, detached ownership, stale
+identities, owner affinity, callback reentrancy, explicit holds and subset close.
+Downstream suites cover HTTP deferred work and TCP/TLS messaging integration.
+
+### Optional final-owner handoff
+
+`<cnet/handoff.h>` in the same `Salts::CNetManager` library supplies a bounded
+MPSC admission inbox. It extracts CHTTP's detached-stream queue and final-owner
+credits without moving the listener, owner threads, backend, protocol state or
+service stop machinery into CNet. FlowMQ's caller-driven single-owner path does
+not need this queue. A host chooses a destination before reserving its credit;
+no established connection moves between owners.
+
+Each inbox preallocates `connection_capacity` generation-checked records and
+`queue_capacity + 1` index entries (the extra ring entry distinguishes full from
+empty). Queue capacity must be positive and no greater than connection capacity;
+all size arithmetic is checked. Credits cover RESERVED + QUEUED + TAKEN, while
+the queue limit covers only QUEUED. They are independent of the manager's
+owner-local record/context budget and the raw client's transport capacity.
+
+The lifecycle is `reserve -> publish -> take -> release`, or `reserve -> release`.
+Publication copies the peer endpoint and moves the descriptor only on success.
+Every rejected publication leaves both descriptor and reservation with the
+producer. Taking an item returns queue space but keeps its credit until the
+owner releases the ticket; in CHTTP that is transport terminal. A taken stream
+must be adopted or closed exactly once. Adoption through `cnet_manager_adopt`
+consumes the detached stream on any valid reserved attempt, including immediate
+TCP/TLS failure. The host then returns handoff credit on failure and continues
+manager context retirement. The final owner retains its immutable TLS policy;
+no borrowed TLS/configuration pointer is stored in an inbox entry.
+
+For example, on a producer with an active `accepted` stream and initialized inbox:
+
+```c
+cnet_handoff_ticket ticket = {0};
+int status = cnet_handoff_reserve(&inbox, &ticket);
+if (status == SALTS_OK) {
+  status = cnet_handoff_publish(&inbox, ticket, &accepted);
+  if (status != SALTS_OK) {
+    int release_status = cnet_handoff_release(&inbox, ticket);
+    if (release_status != SALTS_OK) return release_status;
+  }
+}
+if (status != SALTS_OK) {
+  /* accepted is still owned here: close it or retry per host policy. */
+  return status;
+}
+/* accepted is empty. Wake the final owner using the host's existing mechanism.
+ * Even if that wake fails, do not republish, close or release this ticket.
+ * Arrange bounded owner progress or service shutdown to drain the inbox. */
+```
+
+The owner uses `cnet_handoff_take` to obtain a ticket and detached stream, then
+its existing TCP/TLS adoption and real terminal path. `seal` atomically rejects
+new reserves/publications but permits take/release so all old obligations can
+finish. It neither revokes outstanding producer reservations nor closes sockets.
+The snapshot reports the three credit states coherently in O(1). All operations
+are allocation-free after init, with one mutex protecting the lifecycle table
+and the existing Core byte ring; no ring view escapes that critical section.
+This deliberately favors a small admission-only critical section over an extra
+lock-free publication protocol. No throughput or latency improvement is claimed.
+The helper does not participate in steady send/receive data paths.
+
+**Shutdown requires explicit producer quiescence.** Seal admission, arrange
+completion/join of all producer calls **including their publish-to-wake tails**,
+drain/cancel queued entries, and finish taken connections and credits before
+destroying the inbox or any wake target. `snapshot.drained` proves only that
+credits are returned, not that a producer cannot still issue a wake. Tickets
+are values, not retained references: no ticket/raw pointer may be used after
+inbox destruction. CHTTP enforces this with its existing `listener_done` barrier
+before owner backend teardown, then joins all threads before storage destruction.
+
+The formal `cnet_handoff_test` covers capacity one/full/overflow, foreign and
+stale tickets, FIFO wrapping, rejected publication ownership, each sealed state,
+MPSC publication, seal races, failed wake and delayed wake-tail shutdown.
+`cnet_manager_test` also verifies adoption and invalid TLS adoption after handoff.
+CHTTP's existing topology, stalled-owner, TLS, HTTP/2 and deferred suites exercise
+the real consumer. This additive helper changes no wire format or raw CNet ABI.
+Rollback drains active work, restores the consumer's old admission adapter and
+removes its optional helper use; live inbox/backend replacement is unsupported.
 
 ## Base API
 
@@ -602,6 +756,13 @@ The repository manifest selects the canonical GmSSL overlay. CMake consumes
 exports that target in CNet's public CMake link interface. The overlay packages
 GmSSL statically, so the Windows native SDK ships no private TLS-provider DLL
 beside `cnet.dll`.
+
+The pinned provider includes bounded encrypted TLS 1.3 handshake reassembly and
+variable-width ECDSA DER scalar decoding fixes (GmSSL 3.2.0 port revision 4).
+Rebuild the SDK with matching provider headers and libraries; the connection
+layout changed internally. `cnet_tls_handshake_framing_test` and
+`cnet_tls_signature_test` cover record boundaries, transcript progression,
+malformed records, and valid short-scalar CertificateVerify signatures.
 
 `cnet_connect()` accepts either a one-shot `cnet_tls_client_config` or a reusable
 `cnet_tls_client`; the two fields are mutually exclusive. NULL uses the platform

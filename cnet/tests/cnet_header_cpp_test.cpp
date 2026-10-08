@@ -1,4 +1,7 @@
 #include <cnet/cnet.h>
+#include <cnet/manager.h>
+#include <cnet/handoff.h>
+static_assert(CNET_MANAGER_VERSION == 1u, "manager capability is versioned");
 #include <cnet/ipc.h>
 #include <cnet/websocket.h>
 #include <tinytest.hpp>
@@ -6,6 +9,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
+
+static_assert(std::is_standard_layout<cnet_handoff_ticket>::value,
+              "handoff ticket must remain C ABI data");
+static_assert(CNET_HANDOFF_VERSION == 1u, "handoff capability is versioned");
 
 static_assert(std::is_standard_layout<cnet_ipc_accepted>::value,
               "IPC handoff must remain typed C ABI data");
