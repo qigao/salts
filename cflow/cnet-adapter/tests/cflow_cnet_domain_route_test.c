@@ -847,6 +847,14 @@ static void route_net_multi_source_case(size_t owner_count,
 }
 
 suite("CNet cross-owner domain Actor retained lease routing") {
+    it("moves real TCP receives from two independent CNet owners to one Actor owner") {
+        route_net_multi_source_case(2u, 8u);
+    }
+
+    it("retains real TCP views from four CNet owners during Actor FULL and source close") {
+        route_net_multi_source_case(4u, 1u);
+    }
+
     it("routes four concurrent CNet source owners to one target Actor without a second FIFO") {
         route_test_fixture f;
         route_source_fixture sources[ROUTE_TEST_OWNERS] = {0};
