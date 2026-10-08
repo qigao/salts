@@ -20,8 +20,8 @@
  * Do not treat owner-affinity or FunctionDesc effects as a mutex guarantee.
  */
 #define CMETA_ACE_LOCKABLE_METHODS(X, I) \
-    X(I, V0, void, acquire, _) \
-    X(I, V0, void, release, _)
+    X(I, FV0, void, acquire, stateful, &cmeta_type_void, CMETA_ABI_VOID) \
+    X(I, FV0, void, release, stateful, &cmeta_type_void, CMETA_ABI_VOID)
 
 CMETA_INTERFACE(cmeta_ace_lockable, CMETA_ACE_LOCKABLE_METHODS);
 
