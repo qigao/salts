@@ -118,9 +118,11 @@ int cflow_cnet_domain_cancel_credit(
  * in bounded staging, pauses further receive-credit admission and returns
  * ENOBUFS (retry later through retry_actor). NO dropped/overwritten bytes.
  *
- * Oversized, invalid kind or stale Actor status permanently seal the bridge
- * with an explicit error. The connection remains host-owned; host must close
- * it by its protocol policy, not infer a successful Actor delivery.
+ * An unsolicited callback for the bound connection with no reserved credit,
+ * oversized payload, invalid kind or stale Actor status permanently seals the
+ * bridge with an explicit error. A foreign connection identity returns ENOENT
+ * without consuming the bound connection's credit. The CNet connection remains
+ * host-owned; host must close it by its protocol policy, not infer delivery.
  */
 int cflow_cnet_domain_receive(
     cflow_cnet_domain_bridge *bridge,
