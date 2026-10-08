@@ -54,3 +54,22 @@ install(TARGETS cmeta_cflow_cnet_manager EXPORT SaltsTargets)
 if(BUILD_TESTS)
   add_subdirectory(tests)
 endif()
+
+# Explicitly opt-in diagnostic workload; no release/test gate or perf threshold.
+option(CFLOW_CNET_BUILD_BENCHMARKS "Build CNet/Domain Actor comparison benchmarks" OFF)
+if(CFLOW_CNET_BUILD_BENCHMARKS)
+  if(NOT (WIN32 OR APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+    message(FATAL_ERROR "CFlow CNet TCP benchmark supports Windows, Darwin or Linux hosts")
+  endif()
+  add_executable(cflow_cnet_direct_tcp_benchmark
+    benchmarks/cnet_direct_tcp_benchmark.c
+    benchmarks/cnet_benchmark_stats.c)
+  target_include_directories(cflow_cnet_direct_tcp_benchmark PRIVATE benchmarks)
+  target_link_libraries(cflow_cnet_direct_tcp_benchmark PRIVATE Salts::CNet Salts::Platform)
+  target_compile_features(cflow_cnet_direct_tcp_benchmark PRIVATE c_std_11)
+  set_target_properties(cflow_cnet_direct_tcp_benchmark PROPERTIES
+    C_EXTENSIONS OFF FOLDER "cflow/cnet-adapter/benchmarks")
+  if(WIN32)
+    target_link_libraries(cflow_cnet_direct_tcp_benchmark PRIVATE ws2_32)
+  endif()
+endif()
