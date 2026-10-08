@@ -62,6 +62,11 @@ function(cnet_configure_target target_name)
             "$<$<PLATFORM_ID:Darwin>:-framework Security>"
             "$<$<PLATFORM_ID:iOS>:-framework CoreFoundation>"
             "$<$<PLATFORM_ID:iOS>:-framework Security>")
+  if(APPLE)
+    # vcpkg's ICU archives use Apple's libc++, even when Salts uses GNU C++.
+    # Keep that dependency private to CNet's C ABI and diagnostic archives.
+    target_link_libraries(${target_name} PRIVATE c++)
+  endif()
 endfunction()
 
 add_library(${TARGET_NAME} SHARED ${CNET_SOURCE_FILES})

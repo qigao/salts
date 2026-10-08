@@ -512,6 +512,8 @@ Linux/Android build hosts install ICU's Autoconf prerequisites. The iOS preset
 selects a local triplet which supplies ICU 74's Darwin make fragment for the
 apple-ios host name; SDK/compiler selection still belongs to vcpkg. Darwin UDP
 disconnect uses disconnectx, avoiding connect(AF_UNSPEC)'s failure after mutation.
+Apple CNet targets explicitly link libc++ for vcpkg's ICU archives, including
+GNU builds; that C++ runtime dependency remains behind the C ABI.
 
 Qualification covers IPv4/IPv6, empty/oversized messages, peer replacement,
 terminal pause, numeric/Unicode/invalid names, ordered results, bounded failures
