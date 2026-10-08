@@ -75,6 +75,29 @@ static void owner_sched_cancel_foreign(void *user) {
                  cflow_scheduler_cancel(p->scheduler, p->task_id));
 }
 
+typedef struct owner_blocked_cancel {
+    owner_scheduler_probe probe;
+    atomic_bool cancel_entered;
+    atomic_bool cancel_release;
+} owner_blocked_cancel;
+
+static void owner_blocked_run(void *user) {
+    owner_blocked_cancel *p = (owner_blocked_cancel *)user;
+    owner_sched_run(&p->probe);
+}
+
+static void owner_blocked_cancel_fn(void *user) {
+    owner_blocked_cancel *p = (owner_blocked_cancel *)user;
+    atomic_store(&p->cancel_entered, true);
+    while (!atomic_load(&p->cancel_release)) cmeta_thread_yield();
+    owner_sched_cancel(&p->probe);
+}
+
+static void owner_blocked_finalize(void *user) {
+    owner_blocked_cancel *p = (owner_blocked_cancel *)user;
+    owner_sched_finalize(&p->probe);
+}
+
 enum { OWNER_CANCEL_RACE_TASKS = 32 };
 
 typedef struct owner_cancel_race {
@@ -302,6 +325,64 @@ suite("CFlow shared-owner Concurrent Scheduler") {
         check_true(cflow_scheduler_wait_idle(&scheduler));
         check_equal(atomic_load(&probe.cancels), 1);
         check_equal(atomic_load(&probe.finalizers), 1);
+        cflow_scheduler_destroy(&scheduler);
+        cflow_executor_destroy(&executor);
+    }
+
+    it("keeps a cancellation slot occupied until the external callback completes") {
+        cflow_executor executor = {0};
+        cflow_scheduler scheduler = {0};
+        owner_blocked_cancel probe = {0};
+        owner_cancel_sender cancel = {0};
+        cmeta_thread_t canceller = NULL;
+        cflow_schedule_result first = {0};
+        const cflow_executor_task task = {
+            .run = owner_blocked_run,
+            .cancel = owner_blocked_cancel_fn,
+            .finalize = owner_blocked_finalize,
+            .user = &probe
+        };
+
+        probe.probe.owner = cmeta_thread_current_token();
+        check_true(cflow_executor_owner_init_with_capacity(
+            &executor, 2u, NULL, NULL));
+        check_true(cflow_scheduler_owner_bind(&scheduler, &executor, 1u));
+        check_true(cflow_scheduler_try_post_task_after_internal(
+            &scheduler, 0u, &task, &first));
+        check_equal(first.status, CFLOW_ADMISSION_ACCEPTED);
+
+        cancel.scheduler = &scheduler;
+        cancel.task_id = first.task_id;
+        check_equal(cmeta_thread_create(
+            &canceller, owner_sched_cancel_foreign, &cancel), 0);
+        for (int tries = 0; tries < 5000 &&
+                 !atomic_load(&probe.cancel_entered); ++tries)
+            cmeta_sleep_ms(1u);
+        check_true(atomic_load(&probe.cancel_entered));
+
+        /* The owner consumes the Executor tombstone while cancellation is
+         * still blocked on a foreign thread. The slot must not be recycled. */
+        check_true(cflow_executor_run_one(&executor));
+        check_equal(cflow_scheduler_pending(&scheduler), (size_t)1u);
+        check_false(cflow_scheduler_wait_idle(&scheduler));
+        check_equal(cflow_scheduler_try_post_after(
+            &scheduler, 0u, owner_sched_run, &probe.probe).status,
+            CFLOW_ADMISSION_FULL);
+
+        atomic_store(&probe.cancel_release, true);
+        check_equal(cmeta_thread_join(&canceller), 0);
+        check_true(atomic_load(&cancel.accepted));
+        check_equal(atomic_load(&probe.probe.cancels), 1);
+        check_equal(atomic_load(&probe.probe.finalizers), 1);
+        check_equal(atomic_load(&probe.probe.runs), 0);
+        check_equal(cflow_scheduler_pending(&scheduler), (size_t)0u);
+
+        check_equal(cflow_scheduler_try_post_after(
+            &scheduler, 0u, owner_sched_run, &probe.probe).status,
+            CFLOW_ADMISSION_ACCEPTED);
+        check_true(cflow_executor_run_one(&executor));
+        check_equal(atomic_load(&probe.probe.runs), 1);
+        check_true(cflow_scheduler_wait_idle(&scheduler));
         cflow_scheduler_destroy(&scheduler);
         cflow_executor_destroy(&executor);
     }
