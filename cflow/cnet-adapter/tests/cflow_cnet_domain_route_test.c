@@ -11,7 +11,28 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+
+#if defined(_WIN32)
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+typedef SOCKET route_net_socket;
+typedef int route_net_socklen;
+#define ROUTE_NET_BAD_SOCKET INVALID_SOCKET
+#else
+  #include <errno.h>
+  #include <fcntl.h>
+  #include <netinet/in.h>
+  #include <sys/socket.h>
+  #include <unistd.h>
+typedef int route_net_socket;
+typedef socklen_t route_net_socklen;
+#define ROUTE_NET_BAD_SOCKET (-1)
+#endif
 
 enum {
     ROUTE_TEST_OWNERS = 4,
@@ -142,9 +163,10 @@ static void route_sink_done(void *user) {
     (void)user;
 }
 
-static bool route_test_init(
+static bool route_test_init_mode(
     route_test_fixture *f, size_t route_count,
-    size_t mailbox_capacity, size_t stage_capacity) {
+    size_t mailbox_capacity, size_t stage_capacity,
+    bool defer_route_bindings) {
     const cflow_machine_state states[] = {
         {10u, &cmeta_type_int, CFLOW_MACHINE_STATE_ACTIVE}
     };
@@ -195,6 +217,7 @@ static bool route_test_init(
         cflow_actor_start(&f->actor) != CFLOW_ACTOR_OK)
         return false;
 
+    if (defer_route_bindings) return true;
     for (size_t i = 0u; i < route_count; ++i) {
         const cflow_cnet_domain_route_config config = {
             .actor = &f->actor_ref,
@@ -208,6 +231,13 @@ static bool route_test_init(
             return false;
     }
     return true;
+}
+
+static bool route_test_init(
+    route_test_fixture *f, size_t route_count,
+    size_t mailbox_capacity, size_t stage_capacity) {
+    return route_test_init_mode(
+        f, route_count, mailbox_capacity, stage_capacity, false);
 }
 
 static bool route_drive_until(route_test_fixture *f, int expected) {
