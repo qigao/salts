@@ -16,6 +16,11 @@ cmake_add_test(cflow_cnet_domain_route_test
   LIBS Salts::CFlowCNet Salts::Platform Salts::TinyTest
   FOLDER "cflow/cnet-adapter/tests")
 
+cmake_add_test(cflow_cnet_manager_context_test
+  SOURCES cflow_cnet_manager_context_test.c
+  LIBS Salts::CFlowCNetManager Salts::Platform Salts::TinyTest
+  FOLDER "cflow/cnet-adapter/tests")
+
 cmake_add_test(cflow_cnet_header_cpp_test
   SOURCES cflow_cnet_header_cpp_test.cpp
   LIBS Salts::CFlowCNet Salts::TinyTest
