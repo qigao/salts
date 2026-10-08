@@ -38,6 +38,14 @@ typedef struct exclusive_generation_fixture {
     exclusive_provider provider;
 } exclusive_generation_fixture;
 
+/* One control-plane bind per acquired scope. The typed dispatch is borrowed;
+ * repeated hot calls do not resolve metadata or touch a registry. */
+typedef struct exclusive_bound_service {
+    component_plugin_value value;
+    uint64_t generation_id;
+    bool live;
+} exclusive_bound_service;
+
 cmeta_component(ExclusiveDomainWriter,
     cmeta_provides(component_plugin_value));
 
@@ -139,31 +147,45 @@ static bool domain_close(exclusive_domain_owner *domain) {
     return true;
 }
 
-/* Domain-owned fast-path binding: the scope never grants a listener/writer
- * lease by itself. Fail closed BEFORE a provider callback on epoch mismatch.
- * The scope remains valid for its other borrowed generation-bound services. */
+/* Bind once while the original scope holds the provider generation.
+ * This does not retain the object, vtable, module or exclusive resource. */
+static salts_component_plugin_status domain_bind_service(
+    const salts_component_plugin_scope *scope,
+    exclusive_bound_service *bound) {
+    salts_component_service service;
+    component_plugin_value value = component_plugin_value_bind(NULL, NULL);
+    if (bound == NULL || bound->live ||
+        salts_component_plugin_scope_generation_id(scope) == UINT64_C(0))
+        return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
+    if (salts_component_plugin_scope_find_service_from(
+            scope, "ExclusiveDomainWriter",
+            component_plugin_value_interface(),
+            &service) != SALTS_COMPONENT_PLUGIN_OK)
+        return SALTS_COMPONENT_PLUGIN_COMPONENT_ERROR;
+    if (component_plugin_value_borrow_from_object(
+            service.object, service.interfaces, &value) != CMETA_OK)
+        return SALTS_COMPONENT_PLUGIN_COMPONENT_ERROR;
+    bound->value = value;
+    bound->generation_id = salts_component_plugin_scope_generation_id(scope);
+    bound->live = true;
+    return SALTS_COMPONENT_PLUGIN_OK;
+}
+
+/* Domain-owned fast path: verify the live enclosing scope and epoch BEFORE
+ * calling the once-bound typed Interface. No per-call metadata lookup. */
 static int domain_read(
     exclusive_domain_owner *domain,
-    const salts_component_plugin_scope *scope) {
-    salts_component_service service;
-    component_plugin_value value =
-        component_plugin_value_bind(NULL, NULL);
-
-    if (!domain->resource_open ||
-        salts_component_plugin_scope_generation_id(scope) != domain->epoch) {
+    const salts_component_plugin_scope *scope,
+    const exclusive_bound_service *bound) {
+    if (!domain->resource_open || !bound->live ||
+        domain->epoch != bound->generation_id ||
+        salts_component_plugin_scope_generation_id(scope) !=
+            bound->generation_id) {
         ++domain->rejected_reads;
         return -1;
     }
-    if (salts_component_plugin_scope_find_service(
-            scope, component_plugin_value_interface(),
-            &service) != SALTS_COMPONENT_PLUGIN_OK)
-        return -2;
-    if (component_plugin_value_borrow_from_object(
-            service.object, service.interfaces, &value) != CMETA_OK)
-        return -3;
-
     ++domain->accepted_reads;
-    return component_plugin_value_get(&value);
+    return component_plugin_value_get(&bound->value);
 }
 
 static salts_component_plugin_status build_exclusive_generation(
@@ -208,6 +230,8 @@ suite("ACE exclusive domain resource across Component generations") {
             SALTS_COMPONENT_PLUGIN_SCOPE_INIT;
         salts_component_plugin_scope new_scope =
             SALTS_COMPONENT_PLUGIN_SCOPE_INIT;
+        exclusive_bound_service old_view = {0};
+        exclusive_bound_service new_view = {0};
         salts_component_plugin_generation *previous = NULL;
 
         check_true(domain_bind(&domain));
@@ -234,7 +258,9 @@ suite("ACE exclusive domain resource across Component generations") {
 
         check_equal(salts_component_plugin_scope_acquire(
             &runtime, &old_scope), SALTS_COMPONENT_PLUGIN_OK);
-        check_equal(domain_read(&domain, &old_scope), 17);
+        check_equal(domain_bind_service(&old_scope, &old_view),
+                    SALTS_COMPONENT_PLUGIN_OK);
+        check_equal(domain_read(&domain, &old_scope, &old_view), 17);
 
         check_equal(salts_component_plugin_runtime_publish(
             &runtime, &next.generation, &previous),
@@ -245,19 +271,22 @@ suite("ACE exclusive domain resource across Component generations") {
 
         /* The new generation is published but not yet domain-admitted.
          * Old scope remains usable until the explicit epoch handoff. */
-        check_equal(domain_read(&domain, &new_scope), -1);
-        check_equal(domain_read(&domain, &old_scope), 17);
+        check_equal(domain_bind_service(&new_scope, &new_view),
+                    SALTS_COMPONENT_PLUGIN_OK);
+        check_equal(domain_read(&domain, &new_scope, &new_view), -1);
+        check_equal(domain_read(&domain, &old_scope, &old_view), 17);
 
         check_true(domain_fence(&domain, UINT64_C(8)));
         check_false(domain_fence(&domain, UINT64_C(7)));
-        check_equal(domain_read(&domain, &old_scope), -1);
-        check_equal(domain_read(&domain, &new_scope), 18);
+        check_equal(domain_read(&domain, &old_scope, &old_view), -1);
+        check_equal(domain_read(&domain, &new_scope, &new_view), 18);
         check_equal(salts_component_plugin_generation_drain(
             &runtime, &n.generation), SALTS_COMPONENT_PLUGIN_BUSY);
 
         check_equal(salts_component_plugin_scope_release(
             &old_scope), SALTS_COMPONENT_PLUGIN_OK);
-        check_equal(domain_read(&domain, &old_scope), -1);
+        check_equal(domain_read(&domain, &old_scope, &old_view), -1);
+        old_view.live = false;
         check_equal(salts_component_plugin_generation_drain(
             &runtime, &n.generation), SALTS_COMPONENT_PLUGIN_OK);
         check_equal(n.provider.deactivates, 1u);
@@ -272,6 +301,7 @@ suite("ACE exclusive domain resource across Component generations") {
             &runtime, &next.generation), SALTS_COMPONENT_PLUGIN_BUSY);
         check_equal(salts_component_plugin_scope_release(
             &new_scope), SALTS_COMPONENT_PLUGIN_OK);
+        new_view.live = false;
         check_equal(salts_component_plugin_generation_drain(
             &runtime, &next.generation), SALTS_COMPONENT_PLUGIN_OK);
         check_equal(next.provider.deactivates, 1u);
