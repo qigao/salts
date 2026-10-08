@@ -103,6 +103,15 @@ int cflow_cnet_domain_route_init(
 /** Source Owner: record this exact thread once; cannot rebind or migrate. */
 int cflow_cnet_domain_route_bind_source(cflow_cnet_domain_route *route);
 
+/** Source Owner: retrieve the route's original immutable source-owner and
+ * connection identity. Fails EPERM from target/other threads. Useful for
+ * binding one held CNetManager attachment to several semantic group routes,
+ * without using a connection pointer as a business payload lifetime token. */
+int cflow_cnet_domain_route_get_source_binding(
+    cflow_cnet_domain_route *route,
+    cnet_connection *out_connection,
+    uint32_t *out_source_owner);
+
 /** Source Owner: reserve exactly one credit BEFORE host cnet_receive(1).
  * A second credit or pending Mailbox-FULL staging returns EBUSY; all payload
  * slots leased by Actor yields ENOBUFS. No IO request is made by the route.
