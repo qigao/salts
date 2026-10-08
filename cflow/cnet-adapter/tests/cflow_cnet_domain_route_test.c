@@ -274,6 +274,16 @@ static void route_test_finish(route_test_fixture *f) {
         check_equal(
             cflow_cnet_domain_route_abort_after_quiescence(&f->routes[i]),
             SALTS_OK);
+        /* Mailbox cancellation never calls a domain action/ACK. After
+         * producer and Actor quiescence, the independent lease ledger must
+         * nevertheless settle every retained byte and pending stage. */
+        check_equal(cflow_cnet_domain_route_get_stats(
+            &f->routes[i], &stats), SALTS_OK);
+        check_equal(stats.active_slots, (size_t)0u);
+        check_equal(stats.awaiting_ack, (size_t)0u);
+        check_equal(stats.staged, (size_t)0u);
+        check_equal(stats.retained_bytes, (size_t)0u);
+        check_false(stats.receive_credit_live);
         check_equal(
             cflow_cnet_domain_route_destroy(&f->routes[i]), SALTS_OK);
     }
