@@ -49,3 +49,17 @@ set_target_properties(
     CXX_STANDARD_REQUIRED ON
     CXX_EXTENSIONS OFF)
 
+
+# Phase 3j measurement primitives: functional contract only, no shared-runner
+# performance threshold and no benchmark workload in release CI.
+add_executable(cflow_cnet_benchmark_stats_test
+  ../benchmarks/cnet_benchmark_stats.c
+  ../benchmarks/cnet_benchmark_stats_test.c)
+target_include_directories(cflow_cnet_benchmark_stats_test PRIVATE
+  ../benchmarks)
+target_link_libraries(cflow_cnet_benchmark_stats_test PRIVATE
+  Salts::Platform)
+set_target_properties(cflow_cnet_benchmark_stats_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+add_test(NAME cflow_cnet_benchmark_stats_test
+  COMMAND cflow_cnet_benchmark_stats_test)
