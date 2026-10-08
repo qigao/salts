@@ -99,13 +99,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sanitizer_args=()
+          # Use POSIX-style positional parameters instead of an empty array:
+          # macOS ships Bash 3.2, where ${empty_array[@]} under "set -u"
+          # raises "unbound variable" even with the array declared.
+          set --
           if [ "${{ matrix.sanitizer }}" = 'asan-ubsan' ]; then
-            sanitizer_args+=(-DENABLE_SANITIZER_ADDRESS=ON -DENABLE_SANITIZER_UNDEFINED=ON -DENABLE_SANITIZER_THREAD=OFF)
+            set -- -DENABLE_SANITIZER_ADDRESS=ON -DENABLE_SANITIZER_UNDEFINED=ON -DENABLE_SANITIZER_THREAD=OFF
           elif [ "${{ matrix.sanitizer }}" = 'tsan' ]; then
-            sanitizer_args+=(-DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_UNDEFINED=OFF -DENABLE_SANITIZER_THREAD=ON)
+            set -- -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_UNDEFINED=OFF -DENABLE_SANITIZER_THREAD=ON
           fi
-          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} "${sanitizer_args[@]}"
+          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} "$@"
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
       - name: Configure and build all modules on Windows
         id: build_windows
