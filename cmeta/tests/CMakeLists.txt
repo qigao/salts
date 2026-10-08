@@ -49,18 +49,29 @@ if(NOT CMAKE_CROSSCOMPILING)
   set(CMAKE_REQUIRED_INCLUDES "${PROJECT_SOURCE_DIR}/cmeta/include")
   set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
+  # Native signature admission uses an existing, widely exercised R0
+  # CMeta Interface declaration. Compare its canonical generated vtable member
+  # to the exact declared type; the bad case must reject void return. Reflected
+  # FunctionAbi result-carrier runtime facts are checked by cmeta_pattern_test.
+  # No custom pattern facade or duplicate signature ABI is introduced.
   set(_salts_ace_good_interface_source [=[
 #include <cmeta/interface.h>
 #define ACE_SCORE_METHODS(X,I) \
-  X(I,F0,int,get,value,&cmeta_type_int,CMETA_ABI_SCALAR)
+  X(I,R0,int,get,_)
 CMETA_INTERFACE(ace_freeze_score, ACE_SCORE_METHODS);
+CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(
+    CMETA_IFACE_MEMBER_ADDRESS_(ace_freeze_score,get),
+    int (**)(void *)), "ACE exact CMeta Strategy method");
 int main(void) { return 0; }
 ]=])
   set(_salts_ace_bad_interface_source [=[
 #include <cmeta/interface.h>
 #define ACE_SCORE_METHODS(X,I) \
-  X(I,F0,int,get,value,&cmeta_type_int,CMETA_ABI_VOID)
+  X(I,R0,int,get,_)
 CMETA_INTERFACE(ace_freeze_score, ACE_SCORE_METHODS);
+CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(
+    CMETA_IFACE_MEMBER_ADDRESS_(ace_freeze_score,get),
+    void (**)(void *)), "ACE must reject wrong native return signature");
 int main(void) { return 0; }
 ]=])
 
@@ -91,7 +102,7 @@ int main(void) { return 0; }
   if(NOT SALTS_ACE_GOOD_C11_COMPILES OR SALTS_ACE_BAD_C11_COMPILES OR
      NOT SALTS_ACE_GOOD_CPP17_COMPILES OR SALTS_ACE_BAD_CPP17_COMPILES)
     message(FATAL_ERROR
-      "ACE CMeta Interface/FunctionAbi compile admission failed: "
+      "ACE CMeta Interface native signature compile admission failed: "
       "valid C11=${SALTS_ACE_GOOD_C11_COMPILES}, invalid C11=${SALTS_ACE_BAD_C11_COMPILES}, "
       "valid C++17=${SALTS_ACE_GOOD_CPP17_COMPILES}, invalid C++17=${SALTS_ACE_BAD_CPP17_COMPILES}")
   endif()
