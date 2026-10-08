@@ -170,7 +170,7 @@ global state or automatic retry is introduced. `[ACE-SAN]` and
 `[ACE-MATRIX]` are mutually exclusive.
 
 Sanitizers instrument the branch-built host/runtime, not Android/iOS or
-prebuilt vcpkg dependencies; a sanitizer GREEN is *not* a next-major binary
+prebuilt vcpkg dependencies; a sanitizer GREEN is *not* a 2.3 binary
 compatibility or provider package release. Document any incompatible runner
 or unsupported TSan environment as such rather than declaring unexecuted
 tests passed. Remove the temporary marker to return to Linux-only daily CI.
@@ -189,71 +189,64 @@ performance qualification. Remove the marker to restore Linux-only iteration.
 No host test result substitutes for mobile device execution or downstream
 exact-package qualification, both of which remain open in #1018.
 
-## Unreleased Salts 4.0.0 native SDK candidate migration
+## Unreleased Salts 2.3.0 native SDK candidate migration
 
-**Status: integration branch only, not published.** The coherent SDK major
-is staged as `4.0.0` because the Salts 3.0.0 Component Context *first-use*
-contract and publicly laid-out ComponentPlugin Scope have incompatible changes.
-This does not tag `v4.0.0`, publish `Salts.Native`, merge any branch or
-authorize downstream deployment. The next-major candidate remains subject to
-#1018, all required packaging and sanitizer gates, and exact downstream pins.
+**Status: Draft integration branch only; not published.** The next
+Salts release is 2.3.0, following the published 2.2.0. The withdrawn 3.0.0
+release and interim 4.0.0 proposal are superseded. The new Component,
+Configurator, Context and noncopyable ComponentPlugin Scope contracts will be
+qualified as a coherent 2.3.0 candidate. No 2.3 tag, release or deployment is
+approved by Draft PR #1013.
 
-For native consumers migrating from released 3.0.0:
+For native consumers migrating from 2.2.0:
 
-1. Rebuild every host, provider DSO and dependent library from the same
-   immutable Salts 4 candidate SDK. Use the exact generated CMake package and
-   NuGet SHA/manifest, never old 3.x headers with 4.x libraries.
-2. Initialize every context before its first call:
+1. Rebuild each host, provider DSO and dependent library against the exact
+   immutable 2.3 SDK. Pin generated CMake package identity, NuGet SHA and
+   digest; do not combine 2.2 records or fingerprints with 2.3 binaries.
+2. Initialize contexts before use:
    `salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;`.
-   Reinit in READY/RESOLVED/ACTIVE is invalid and preserves existing owners;
-   only stopped or fully rolled-back FAILED storage may be reinitialized after
-   dependent borrowed service views have expired.
-3. Keep a live `salts_component_plugin_scope` at one stable address. Copies
-   and moves are not independent owners; a copied scope cannot release the
-   original generation or safely borrow its services. Release once after all
-   domain callbacks, tasks and views have expired.
-4. `find_package(Salts 4 CONFIG REQUIRED)` must select this exact major.
-   `find_package(Salts 3 CONFIG REQUIRED)` must reject a 4.x SDK; the existing
-   independent installed-Component consumer tests previous-major rejection.
-   All versioned shared native libraries inherit SOVERSION 4 from
-   `PROJECT_VERSION_MAJOR`, and package metadata comes from the same
-   `vcpkg.json` identity. No 3.x alias/fallback path is provided.
-5. The negotiated `CMETA_REFLECTION_ABI_VERSION=4`, ordinary Plugin ABI 5
-   and ComponentProvider contract v1 remain independent epochs. Do not bump
-   them to 4 because the top-level SDK changed: only a concrete change to
-   those exported descriptors/manifests would justify a separate bump.
-6. Domain owners (CHttp request/deferred mount; TurboFlow ExecutionPlan and
-   durable settlement; TurboSCXML Session/invocation) keep their respective
-   lifetime and domain semantics. Once a SHA-attested 4.x candidate is
-   available, re-pin the three downstream conformance workflows to *that
-   exact candidate*, rerun their focused tests, and record the candidate
-   version/SHA/package digest. Their earlier 3.0.0 prerelease pins do not
-   qualify the new ABI.
+   READY/RESOLVED/ACTIVE reinitialization is rejected without losing object
+   ownership. Exclusive STOPPED or fully rolled-back FAILED reuse is allowed
+   after dependent borrowed views expire.
+3. Keep a live `salts_component_plugin_scope` at its original address.
+   Copies and moves are not independent owners; they cannot release the
+   generation or borrow services. Release the original once all callbacks,
+   tasks and service views have quiesced.
+4. `find_package(Salts 2.3.0 EXACT CONFIG REQUIRED)` must succeed.
+   `find_package(Salts 2.2 CONFIG)` must fail; CMake's
+   `SameMinorVersion` rule rejects older minor versions. SDK-owned native
+   shared libraries use SONAME 2.3 (rather than 2.2), while the independently
+   versioned CFlow ABI remains unchanged. No 2.2 fallback is provided.
+5. Negotiated Reflection ABI 4, ordinary Plugin ABI 5 and
+   ComponentProvider contract v1 remain independent epochs. Do not change
+   them merely because the package is named 2.3.0.
+6. CHttp request/mount/deferred, TurboFlow ExecutionPlan/durable and
+   TurboSCXML Session/invocation lifetimes remain domain-owned. Their
+   workflows must pin the *same* immutable 2.3.0 candidate and record
+   source SHA, version, NuGet hash and executed test results. Previous
+   3.0.0 prerelease candidate results are historical, not 2.3 acceptance.
 
-Rollback restores **the whole** previous Salts 3.x SDK, matching provider
-binaries, CHttp/TurboFlow/TurboSCXML consumers and any persisted contract
-fingerprint cache; never mix major-version assets or perform in-place runtime
-state migration. No raw runtime-state persistence or automatic settlement retry.
+Rollback replaces the entire SDK, provider binaries, host and contract
+cache with the matching previous 2.2.x set. No mixed-epoch binary linking,
+in-place runtime-state conversion or automatic settlement retry.
 
-### Opt-in 4.0.0 ACE candidate (not a release)
+### Opt-in 2.3.0 ACE candidate (not a release)
 
-The long-lived Draft PR #1013 stages
-`.github/workflows/ace-candidate-native-sdk.yml`. Only an in-repository PR
-from `feature/cmeta-ace-patterns` into `master`, still titled
-`DO NOT MERGE ... [ACE-CANDIDATE] ...`, can select its publication job.
-Ordinary PR commits do **not** publish a package. The job checks out the exact
-head SHA, requires matching 4.0.0 CMake/vcpkg versions, executes all Linux
-CTests, and builds/runs an out-of-tree exact installed Component consumer.
-That consumer rejects a 3.x `find_package` request and separately exercises
-the enlarged ComponentPlugin Scope ABI and runtime first-use lifecycle.
+Draft PR #1013 stages `.github/workflows/ace-candidate-native-sdk.yml`.
+Only a same-repository PR from `feature/cmeta-ace-patterns` into master
+that is still Draft and explicitly titled
+`DO NOT MERGE ... [ACE-CANDIDATE] ...` may execute the candidate.
+Ordinary PR commits do not publish. The job validates exact HEAD, matching
+2.3.0 CMake/vcpkg versions, full Linux CTest, and independently
+compiled/linked installed Component and Scope consumers, including rejection
+of a 2.2 package-version request.
 
-An explicitly triggered run may publish only
-`Salts.Native 4.0.0-ace.sha<FULL_COMMIT_SHA>` (Linux x64) with a source
-manifest and SHA256 artifact. It never tags `v4.0.0`, publishes stable 4.0.0,
-updates `master`, or substitutes for Windows/macOS, sanitizer, package
-integrity and CHttp/TurboFlow/TurboSCXML exact-candidate gates. Remove the
-title marker after the intended run. The untriggered workflow is not evidence
-of an accepted or published SDK.
+The only eligible package is immutable Linux-x64
+`Salts.Native 2.3.0-ace.sha<FULL_COMMIT_SHA>` with source manifest
+and SHA256 checksum. It cannot create a stable tag or GitHub Release, merge
+PR #1013, update master, or replace Windows/macOS, sanitizer, mobile device
+runtime or pinned downstream qualification. A skipped workflow is not
+evidence of a released or accepted SDK.
 
 ## Post-3.0 Component Context initialization contract (development branch only)
 
