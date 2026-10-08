@@ -128,16 +128,42 @@ if (!cflow_executor_owner_init_with_capacity(
 
 This is an API illustration, not a standalone compilable example:
 `host_wake` and `host_context` are supplied by the embedding host.
-`cflow_actor_init()` still requires a CONCURRENT Scheduler; using the
-existing worker Scheduler makes **Machine transitions**, not the entire
-Subscription/sink callback path, owner-affine. Generic Manual Executors
-remain invalid for Machine instances. Statechart remains invalid for this
-caller-driven Executor because its synchronous initial stabilization currently
-waits for worker progression; it needs a separate safe contract.
 
-Shutdown stops admission, but accepted tasks must be driven and settled on
-the owner. Producers (including post/wake tails) must quiesce before destroy.
-Do not run Executor callbacks recursively or destroy from one of them.
+#### Shared-owner Concurrent Scheduler (Phase 2b experimental PR #1019)
+
+`cflow_scheduler_owner_bind()` borrows that same Executor and allocates **only
+fixed-capacity task-ID/cancellation records**, not a second queue or worker:
+
+```c
+cflow_scheduler subscription_scheduler = {0};
+if (!cflow_scheduler_owner_bind(
+        &subscription_scheduler, &owner_executor, 32u))
+    return false;
+/* Supply owner_executor to the Machine and subscription_scheduler to
+ * cflow_actor_init(). Host owner drives bounded
+ * cflow_executor_run_one(&owner_executor) work between NativeIO batches. */
+```
+
+The Scheduler truthfully advertises `CONCURRENT|CALLER_DRIVEN_ZERO_DELAY`:
+foreign producer threads can post/cancel, but running callbacks execute only
+on the fixed owner. A successful `cancel(id)` may synchronously invoke
+`cancel/finalize` on the cancelling thread, as allowed by the existing
+Scheduler borrowed-callback contract. Cancelled tasks leave a bounded queue
+tombstone until that owner observes the queued Executor descriptor; a zero
+delay is supported, positive delays fail explicitly. The Scheduler's shutdown
+does not stop its **borrowed** Executor, allowing other Actors to continue.
+
+Machine transitions and Subscription/sink **running** callbacks can therefore
+share the same owner with one Executor Mailbox. The original worker Scheduler
+remains a valid alternative when off-owner business dispatch is intended.
+Generic Manual Executors remain invalid for Machine instances. Statechart
+also remains invalid for owner-driven Executors because its synchronous
+initial stabilization still waits for independent worker progression.
+
+The host must quiesce producers (including the last post/wake tail), stop
+Actors/Subscriptions and settle their work, then destroy the borrowed Scheduler
+**before** destroying its Executor, all on the owner thread. Do not run
+Executor callbacks recursively or destroy from one of those callbacks.
 
 NativeIO execution style is an orthogonal mechanism dimension. Direct/Coroutine and the planned Sharded/SMP style share NativeIO request/completion truth; Reactive and Actor remain CFlow semantic models above thin adapters. See [NativeIO execution and endpoint architecture](../native-io/ARCHITECTURE.md).
 
