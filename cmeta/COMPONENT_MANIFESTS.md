@@ -114,7 +114,7 @@ provider-owned code or metadata.
 
 The static `<cmeta/plugin.h>` declarations were published in Salts 2.x, including
 2.2.0. Replacing them is an intentional source and binary compatibility break
-scheduled for Salts **3.0.0**. The integration branch does not supply legacy
+delivered in released Salts **3.0.0**. That release does not supply legacy
 aliases: keeping two names for one static capability model would preserve the
 ambiguity between declaration metadata and the dynamic Plugin runtime.
 
@@ -242,6 +242,26 @@ binaries, CHttp/TurboFlow/TurboSCXML consumers and any persisted contract
 fingerprint cache; never mix major-version assets or perform in-place runtime
 state migration. No raw runtime-state persistence or automatic settlement retry.
 
+### Opt-in 4.0.0 ACE candidate (not a release)
+
+The long-lived Draft PR #1013 stages
+`.github/workflows/ace-candidate-native-sdk.yml`. Only an in-repository PR
+from `feature/cmeta-ace-patterns` into `master`, still titled
+`DO NOT MERGE ... [ACE-CANDIDATE] ...`, can select its publication job.
+Ordinary PR commits do **not** publish a package. The job checks out the exact
+head SHA, requires matching 4.0.0 CMake/vcpkg versions, executes all Linux
+CTests, and builds/runs an out-of-tree exact installed Component consumer.
+That consumer rejects a 3.x `find_package` request and separately exercises
+the enlarged ComponentPlugin Scope ABI and runtime first-use lifecycle.
+
+An explicitly triggered run may publish only
+`Salts.Native 4.0.0-ace.sha<FULL_COMMIT_SHA>` (Linux x64) with a source
+manifest and SHA256 artifact. It never tags `v4.0.0`, publishes stable 4.0.0,
+updates `master`, or substitutes for Windows/macOS, sanitizer, package
+integrity and CHttp/TurboFlow/TurboSCXML exact-candidate gates. Remove the
+title marker after the intended run. The untriggered workflow is not evidence
+of an accepted or published SDK.
+
 ## Post-3.0 Component Context initialization contract (development branch only)
 
 The long-term `feature/cmeta-ace-patterns` development branch under #1012/#1014
@@ -322,6 +342,7 @@ External YAML/JSON/XML/CLI parsing remains outside CMeta. Factory and lifecycle
 execution authority are deliberately not embedded in the descriptor; they
 belong to the Component runtime binding under #1008.
 
-Development remains on
-`feature/cmeta-pattern-component-runtime`; this contract is not yet a
-released master API.
+The CMeta format-2 Component declaration and first Configurator are already
+shipped in Salts 3.0.0. Post-3.0 ACE lifecycle and breaking Context/Scope
+changes remain on `feature/cmeta-ace-patterns` under Draft PR #1013. They are
+not a released 3.x API or permission to merge the long-lived branch.
