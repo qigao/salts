@@ -19,7 +19,10 @@ extern "C" {
  *
  * No CNet client, observer, connection, poll, worker, event queue, or Actor is
  * created here. The host owns its CNet receive/terminal callbacks and forwards
- * the already borrowed receive view. All operations below are single-owner.
+ * the already borrowed receive view. All receive demand for the bridged
+ * connection must follow reserve_credit -> cnet_receive(1) -> callback (or
+ * rollback on rejection); never issue another raw cnet_receive outside this
+ * single-credit contract. All operations below are single-owner.
  */
 typedef struct cflow_cnet_domain_bridge {
     void *impl;
