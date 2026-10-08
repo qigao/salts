@@ -793,6 +793,17 @@ int cnet_connection_shutdown(cnet_client *client,
                              cnet_tcp_shutdown how);
 
 /**
+ * Opts one connected plaintext TCP owner into directional peer EOF handling.
+ * Install on the owner thread before receive demand, outside callbacks. EOF
+ * emits exactly one empty CNET_MESSAGE_BYTES receive callback, closes receive
+ * admission and keeps send admission open. Normal terminal state is still
+ * delivered only after close/failure. Existing connections retain close-on-EOF
+ * behavior unless explicitly opted in. This does not alter observer/config ABI.
+ * Returns SALTS_EINVAL, SALTS_ENOENT, SALTS_ENOTSUP, SALTS_EBUSY or SALTS_OK.
+ */
+int cnet_connection_preserve_send_on_eof(cnet_client *client, cnet_connection connection);
+
+/**
  * Reads or mutates one live TCP property through the generation-checked CNet
  * owner. These calls obey the same single-owner thread rule as client progress.
  * No native descriptor is exposed. Unsupported host properties return

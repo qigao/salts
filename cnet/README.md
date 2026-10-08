@@ -857,3 +857,16 @@ requires a concrete consumer and paired evidence before it can change this bound
 
 Cross-owner work remains explicit and bounded. CNet never hides live connection migration,
 work-stealing, or an implicit worker-pool hop behind its public send/receive APIs.
+
+Plaintext TCP connections retain the historical close-on-peer-EOF behavior by
+default. A consumer with directional stream semantics can call
+`cnet_connection_preserve_send_on_eof(client, connection)` after the connected
+callback and before submitting receive demand, outside callbacks. The owner
+then emits one empty byte receive (or an empty retained-slice callback), rejects
+further receive demand with `SALTS_ESHUTDOWN`, and preserves send admission.
+The client marks receive closed before invoking the EOF callback, so reentrant
+receive cannot admit work on that direction. Close/failure still produces the
+ordinary terminal callback and settles retained writes. This additive opt-in
+does not resize public configuration or observer structures, does not apply to
+TLS, and is qualified by `cnet_external_progress_test` with a real loopback
+half-close and a send after peer EOF.

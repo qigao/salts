@@ -21,6 +21,7 @@ typedef struct external_probe {
   size_t callbacks;
   size_t sends;
   size_t receives;
+  size_t eofs;
 } external_probe;
 
 static native_io_backend_kind test_backend_kind(void) {
@@ -89,6 +90,7 @@ static void on_receive_slice(
   check_warn(probe != NULL);
   if (probe == NULL) return;
   ++probe->receives;
+  if (slice.buffer == NULL) ++probe->eofs;
   if (slice.buffer != NULL)
     mem_slice_release(&slice);
 }
@@ -129,10 +131,12 @@ static cnet_client client;
 static cnet_listener listener;
 static cnet_listener outbound;
 static cnet_connection connection;
+static cnet_connection peer_connection;
 static external_probe probe;
+static external_probe peer_probe;
 static mem_buffer_t *send_buffer;
 
-static void test_external_native_io_progress(void) {
+static void test_external_native_io_progress(bool preserve_eof) {
   native_io_backend_config backend_config = {
       test_backend_kind(), 8u, 16u, TEST_BATCH};
   native_io_backend_config observed_config = {0};
@@ -232,6 +236,17 @@ static void test_external_native_io_progress(void) {
   check(probe.connected);
   check(!probe.failed);
 
+  if (preserve_eof) {
+    cnet_observer peer_observer = {on_state, NULL, &peer_probe, on_send};
+    check_equal(cnet_connection_preserve_send_on_eof(&client, connection), SALTS_OK);
+    check_equal(cnet_listener_accept(&listener, &client, &peer_observer, &peer_connection), SALTS_OK);
+    deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
+    while (!peer_probe.connected) {
+      check_equal(drive_external_once(&client, &backend, 10), SALTS_OK);
+      check(cmeta_monotonic_ms() < deadline);
+    }
+  }
+
   /*
    * A live connection may own receive and send NativeIO requests
    * concurrently. The typed snapshot must distinguish them without exposing
@@ -329,6 +344,28 @@ static void test_external_native_io_progress(void) {
     check(saw_send);
   }
 
+  if (preserve_eof) {
+    check_equal(cnet_connection_shutdown(&client, peer_connection, CNET_TCP_SHUTDOWN_SEND), SALTS_OK);
+    deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
+    while (!probe.eofs) {
+      check_equal(drive_external_once(&client, &backend, 10), SALTS_OK);
+      check(cmeta_monotonic_ms() < deadline);
+    }
+    check_equal(probe.eofs, (size_t)1); check_false(probe.terminal);
+    check_equal(cnet_receive(&client, connection, 1), SALTS_ESHUTDOWN);
+    send_buffer = mem_get_buffer(mem_global(), 4);
+    check_not_null(send_buffer); memcpy(mem_buffer_data(send_buffer), "pong", 4); mem_set_used(send_buffer, 4);
+    check_equal(cnet_send_buffer(&client, connection, send_buffer), SALTS_OK);
+    mem_buffer_release(send_buffer); send_buffer = NULL;
+    deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
+    while (probe.sends < 2) {
+      check_equal(drive_external_once(&client, &backend, 10), SALTS_OK);
+      check(cmeta_monotonic_ms() < deadline);
+    }
+    check_false(probe.terminal);
+    check_equal(cnet_close(&client, peer_connection), SALTS_OK);
+  }
+
   interest_count = 0u;
   check(cnet_client_external_requests(
              &client, connection, interests, TEST_BATCH,
@@ -347,6 +384,14 @@ static void test_external_native_io_progress(void) {
     check(cmeta_monotonic_ms() < deadline);
   }
   check(!probe.failed);
+
+  if (preserve_eof) {
+    deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
+    while (!peer_probe.terminal) {
+      check_equal(drive_external_once(&client, &backend, 10), SALTS_OK);
+      check(cmeta_monotonic_ms() < deadline);
+    }
+  }
 
   check(cnet_client_stop_external(&client) == SALTS_OK);
   check(cnet_client_destroy(&client) == SALTS_OK);
@@ -381,7 +426,9 @@ suite("CNet external progress") {
     before_each() {
         check_null(backend.impl);
         connection = (cnet_connection){0};
+        peer_connection = (cnet_connection){0};
         probe = (external_probe){0};
+        peer_probe = (external_probe){0};
     }
     after_each() {
         if (send_buffer != NULL) {
@@ -392,12 +439,13 @@ suite("CNet external progress") {
             check_warn(cnet_listener_close(&outbound) == SALTS_OK);
             check_warn(cnet_listener_destroy(&outbound) == SALTS_OK);
         }
-        external_test_cleanup cleanup = {&backend, &listener, {{&client, connection}, {NULL, {0}}}};
+        external_test_cleanup cleanup = {&backend, &listener, {{&client, connection}, {&client, peer_connection}}};
         cleanup_external_test(&cleanup);
     }
 
     group("shared backend contracts") {
-        it("external native io progress") { test_external_native_io_progress(); }
+        it("external native io progress") { test_external_native_io_progress(false); }
+        it("directional EOF preserves send admission and emits one EOF callback") { test_external_native_io_progress(true); }
         it("external backend contract rejects mismatch") { test_external_backend_contract_rejects_mismatch(); }
     }
 }

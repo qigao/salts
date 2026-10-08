@@ -55,6 +55,7 @@ typedef struct cnet_owner_session {
   bool tls_shutdown_after_flush;
   uint8_t tcp_shutdown_mask;
   uint8_t tcp_shutdown_applied_mask;
+  bool preserve_send_on_eof;
   cmeta_deadline_id connect_deadline;
 } cnet_owner_session;
 
@@ -1991,6 +1992,21 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
       return SALTS_OK;
     }
     if (completion->kind == NATIVE_IO_COMPLETION_EOF) {
+      if (session->preserve_send_on_eof && session->peer.scheme == CNET_URI_TCP) {
+        const cnet_event eof = {CNET_EVENT_RECEIVE, session->handle, CNET_EVENT_STATE_NONE,
+                                SALTS_OK, CNET_SESSION_STAGE_NONE, NULL, 0u, 0u};
+        session->receive_demand = 0u;
+        session->tcp_shutdown_mask |= (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE;
+        session->tcp_shutdown_applied_mask |= (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE;
+        if (impl->pending_event_count == 0u) {
+          status = cnet_owner_publish_event(impl, &eof);
+          if (status == SALTS_OK) return SALTS_OK;
+          if (status != SALTS_ENOBUFS) return status;
+        }
+        if (impl->pending_event_count == impl->pending_event_capacity) return SALTS_ENOBUFS;
+        impl->pending_events[impl->pending_event_count++].event = eof;
+        return SALTS_OK;
+      }
       status = cnet_session_table_begin_close(impl->sessions, session->handle);
       if (status != SALTS_OK && status != SALTS_EALREADY) return status;
       session->close_requested = true;
@@ -3173,6 +3189,22 @@ int cnet_owner_tcp_option_set(cnet_owner *owner, cnet_session_handle session_han
   if (session == NULL) return SALTS_ENOENT;
   if (!cnet_owner_tcp_scheme(session->peer.scheme)) return SALTS_ENOTSUP;
   return cnet_transport_tcp_option_set(&session->transport, option, value);
+}
+
+int cnet_owner_preserve_send_on_eof(cnet_owner *owner, cnet_session_handle handle) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  cnet_session_state state;
+  int status;
+  if (impl == NULL) return SALTS_EINVAL;
+  session = cnet_owner_find_session(impl, handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (session->peer.scheme != CNET_URI_TCP) return SALTS_ENOTSUP;
+  status = cnet_session_table_state(impl->sessions, handle, &state);
+  if (status != SALTS_OK) return status;
+  if (state != CNET_SESSION_OPEN || session->receive_demand || session->tcp_shutdown_mask) return SALTS_EBUSY;
+  session->preserve_send_on_eof = true;
+  return SALTS_OK;
 }
 
 int cnet_owner_tcp_shutdown(cnet_owner *owner, cnet_session_handle session_handle,
