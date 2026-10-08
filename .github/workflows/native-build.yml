@@ -157,7 +157,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 30 --repeat until-fail:32 -R '^cflow_cnet_manager_context_test ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.execution }}
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 30 --repeat until-fail:32 -R '^cflow_cnet_manager_context_test$'
+      - name: Run Windows execution and nested CSTL contracts
+        if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.execution }}
         timeout-minutes: 30
         shell: cmd
         run: |
