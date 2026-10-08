@@ -174,12 +174,17 @@ static void native_io_test_pipe_round_trip(native_io_backend_kind kind, bool non
   check_equal(events[0].kind, NATIVE_IO_COMPLETION_OK);
   check_equal(events[1].kind, NATIVE_IO_COMPLETION_OK);
   check_equal(memcmp(received, payload, sizeof(payload)), 0);
-  stale = events[0];
+  /* Completion order is backend-dependent; match the authoritative request. */
+  size_t read_index = 0u;
+  if (events[0].request.slot != requests[0].slot ||
+      events[0].request.generation != requests[0].generation)
+    read_index = 1u;
+  stale = events[read_index];
   ++stale.request.generation;
   check_equal(native_io_test_ace_read_settle(&token, &stale, &settled_context),
               SALTS_ENOENT);
   check_null(settled_context);
-  check_equal(native_io_test_ace_read_settle(&token, &events[0], &settled_context),
+  check_equal(native_io_test_ace_read_settle(&token, &events[read_index], &settled_context),
               SALTS_OK);
   check_true(settled_context == received);
   check_equal(native_io_test_ace_read_settle(&token, &events[0], &settled_context),
