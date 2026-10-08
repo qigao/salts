@@ -92,7 +92,7 @@ typedef struct manager_lease_fixture {
     cnet_managed_connection managed;
     cnet_connection connection;
     cflow_cnet_manager_context guard;
-    cflow_cnet_domain_route *associated[1];
+    cflow_cnet_domain_route *associated[2];
     cmeta_thread_t target_thread;
 
     /* Actor and route belong to a DIFFERENT target OS thread. */
@@ -103,12 +103,14 @@ typedef struct manager_lease_fixture {
     cflow_actor_ref ref;
     cflow_machine_action_binding binding;
     cflow_cnet_domain_route route;
+    cflow_cnet_domain_route route2;
     int initial_state;
 
     atomic_bool connected;
     atomic_bool terminal;
     atomic_bool target_ready;
     atomic_bool target_run;
+    atomic_bool first_ack;
     atomic_bool target_stop;
     atomic_bool target_done;
     atomic_int target_status;
@@ -148,9 +150,12 @@ static void manager_lease_state(
         atomic_store(&f->connected, true);
     if (state == CNET_CONNECTION_CLOSED ||
         state == CNET_CONNECTION_FAILED) {
-        if (f->route.impl)
-            atomic_store(&f->source_terminal_status,
-                cflow_cnet_domain_route_source_terminal(&f->route));
+        if (f->route.impl) {
+            int status = cflow_cnet_domain_route_source_terminal(&f->route);
+            if (status == SALTS_OK && f->route2.impl)
+                status = cflow_cnet_domain_route_source_terminal(&f->route2);
+            atomic_store(&f->source_terminal_status, status);
+        }
         atomic_store(&f->terminal, true);
     }
 }
@@ -164,8 +169,10 @@ static void manager_lease_receive(
         if (f) atomic_store(&f->receive_status, SALTS_EPROTO);
         return;
     }
+    int index = atomic_load(&f->receives);
+    cflow_cnet_domain_route *route = index == 0 ? &f->route : &f->route2;
     atomic_store(&f->receive_status,
-        cflow_cnet_domain_route_receive(&f->route, f->receive_credit, view));
+        cflow_cnet_domain_route_receive(route, f->receive_credit, view));
     atomic_fetch_add(&f->receives, 1);
 }
 
@@ -190,16 +197,22 @@ static bool manager_lease_action(
     bool released = false;
     if (!f || !state || !event || !target || !observation || !error)
         return false;
-    if (cflow_cnet_domain_route_borrow(
-            &f->route, delivery, &retained) != SALTS_OK ||
-        retained.size != 1u || retained.kind != CNET_MESSAGE_BYTES) {
+    cflow_cnet_domain_route *route = &f->route;
+    if (cflow_cnet_domain_route_borrow(route, delivery, &retained) != SALTS_OK) {
+        route = &f->route2;
+        if (cflow_cnet_domain_route_borrow(route, delivery, &retained) != SALTS_OK) {
+            *error = "unknown route delivery";
+            return false;
+        }
+    }
+    if (retained.size != 1u || retained.kind != CNET_MESSAGE_BYTES) {
         *error = "cross-owner business payload missing";
         return false;
     }
     atomic_fetch_add(&f->checksum,
                      ((const unsigned char *)retained.data)[0]);
     if (cflow_cnet_domain_route_acknowledge(
-            &f->route, delivery) != SALTS_OK) {
+            route, delivery) != SALTS_OK) {
         *error = "business ACK rejected";
         return false;
     }
@@ -217,7 +230,11 @@ static bool manager_lease_action(
     }
     *(int *)target = *(const int *)state + 1;
     *(int *)observation = *(int *)target;
-    atomic_fetch_add(&f->action_count, 1);
+    if (atomic_fetch_add(&f->action_count, 1) == 0) {
+        /* First ACK must not implicitly settle another route. */
+        atomic_store(&f->target_run, false);
+        atomic_store(&f->first_ack, true);
+    }
     *error = NULL;
     return true;
 }
@@ -294,7 +311,8 @@ static int manager_lease_target_init(manager_lease_fixture *f) {
         .slot_capacity = 1u,
         .max_receive_bytes = 16u
     };
-    if (cflow_cnet_domain_route_init(&f->route, &route_cfg) != SALTS_OK)
+    if (cflow_cnet_domain_route_init(&f->route, &route_cfg) != SALTS_OK ||
+        cflow_cnet_domain_route_init(&f->route2, &route_cfg) != SALTS_OK)
         return SALTS_EPROTO;
     /* Wrong side cannot read or impersonate the bound CNet source owner. */
     {
@@ -322,10 +340,12 @@ static void manager_lease_target_finish(manager_lease_fixture *f) {
         }
         cflow_actor_destroy(&f->actor);
     }
-    if (f->route.impl) {
-        if (cflow_cnet_domain_route_destroy(&f->route) != SALTS_OK)
-            atomic_store(&f->target_status, SALTS_EBUSY);
-    }
+    if (f->route.impl &&
+        cflow_cnet_domain_route_destroy(&f->route) != SALTS_OK)
+        atomic_store(&f->target_status, SALTS_EBUSY);
+    if (f->route2.impl &&
+        cflow_cnet_domain_route_destroy(&f->route2) != SALTS_OK)
+        atomic_store(&f->target_status, SALTS_EBUSY);
     cflow_actor_ref_release(&f->ref);
     if (cflow_scheduler_valid(&f->scheduler))
         cflow_scheduler_destroy(&f->scheduler);
@@ -362,7 +382,7 @@ static bool manager_lease_wait_bool(atomic_bool *flag) {
 }
 
 spec("CNetManager held context across cross-owner Actor ACK") {
-    it("keeps source context alive through terminal until target business ACK") {
+    it("keeps one managed context until both independent route ACKs") {
         manager_lease_fixture f = {0};
         cnet_client_config config = {
             .backend = manager_lease_backend(),
@@ -451,6 +471,7 @@ spec("CNetManager held context across cross-owner Actor ACK") {
         check_equal(atomic_load(&f.target_status), SALTS_OK);
         check_equal(atomic_load(&f.wrong_route_binding), 1);
         check_equal(cflow_cnet_domain_route_bind_source(&f.route), SALTS_OK);
+        check_equal(cflow_cnet_domain_route_bind_source(&f.route2), SALTS_OK);
         check_equal(cflow_cnet_domain_route_get_source_binding(
             &f.route, &source_connection, &source_id), SALTS_OK);
         check_equal(source_id, (uint32_t)1u);
@@ -458,11 +479,12 @@ spec("CNetManager held context across cross-owner Actor ACK") {
         check_equal(source_connection.generation, f.connection.generation);
 
         f.associated[0] = &f.route;
+        f.associated[1] = &f.route2;
         context_config = (cflow_cnet_manager_context_config){
             .manager = &f.manager,
             .managed = f.managed,
             .routes = f.associated,
-            .route_count = 1u,
+            .route_count = 2u,
             .wake = manager_lease_wake,
             .wake_user = &f
         };
@@ -494,6 +516,23 @@ spec("CNetManager held context across cross-owner Actor ACK") {
         check_equal(atomic_load(&f.receive_status), SALTS_OK);
         check_equal(cflow_cnet_domain_route_get_stats(
             &f.route, &route_stats), SALTS_OK);
+        check_equal(route_stats.awaiting_ack, (size_t)1u);
+        /* The same physical CNet connection carries a second independently
+         * retained semantic route, not another managed connection. */
+        check_equal(cflow_cnet_domain_route_reserve(
+            &f.route2, &credit), SALTS_OK);
+        f.receive_credit = credit;
+        check_equal(cnet_receive(&f.client, f.connection, 1u), SALTS_OK);
+        check_equal(manager_send_byte(peer_fd, 83u), SALTS_OK);
+        while (atomic_load(&f.receives) < 2 &&
+               cmeta_monotonic_ms() < deadline) {
+            size_t events = 0u;
+            check_equal(cnet_client_poll(&f.client, 1u, &events), SALTS_OK);
+        }
+        check_equal(atomic_load(&f.receives), 2);
+        check_equal(atomic_load(&f.receive_status), SALTS_OK);
+        check_equal(cflow_cnet_domain_route_get_stats(
+            &f.route2, &route_stats), SALTS_OK);
         check_equal(route_stats.awaiting_ack, (size_t)1u);
 
         check_equal(cnet_close(&f.client, f.connection), SALTS_OK);
@@ -528,17 +567,37 @@ spec("CNetManager held context across cross-owner Actor ACK") {
                    cmeta_monotonic_ms() < target_deadline)
                 cmeta_sleep_ms(1u);
         }
-        check_equal(atomic_load(&f.values), 1);
+        check_true(manager_lease_wait_bool(&f.first_ack));
         check_equal(atomic_load(&f.action_count), 1);
-        check_equal(atomic_load(&f.checksum), 67);
-        check_equal(atomic_load(&f.wrong_owner_releases), 1);
+        check_equal(atomic_load(&f.sink_errors), 0);
+        released = true;
+        check_equal(cflow_cnet_manager_context_poll_release(
+            &f.guard, &released), SALTS_EBUSY);
+        check_false(released);
+        check_equal(cnet_manager_get_snapshot(
+            &f.manager, &manager_stats), SALTS_OK);
+        check_equal(manager_stats.context_holds, (size_t)1u);
+        check_equal(atomic_load(&f.recycled), 0);
+        atomic_store_explicit(&f.target_run, true, memory_order_release);
+        {
+            const uint64_t ack_deadline =
+                cmeta_monotonic_ms() + MANAGER_LEASE_TIMEOUT_MS;
+            while (atomic_load(&f.values) < 2 &&
+                   cmeta_monotonic_ms() < ack_deadline)
+                cmeta_sleep_ms(1u);
+        }
+        check_equal(atomic_load(&f.values), 2);
+        check_equal(atomic_load(&f.action_count), 2);
+        check_equal(atomic_load(&f.checksum), 150);
+        check_equal(atomic_load(&f.wrong_owner_releases), 2);
         check_equal(atomic_load(&f.sink_errors), 0);
 
         check_equal(cflow_cnet_manager_context_get_stats(
             &f.guard, &guard_stats), SALTS_OK);
-        check_equal(guard_stats.notifications, (uint64_t)2u);
-        check_equal(guard_stats.coalesced_wakes, (uint64_t)1u);
-        check_equal(atomic_load(&f.wakes), 1);
+        check_equal(guard_stats.route_count, (size_t)2u);
+        check_equal(guard_stats.notifications, (uint64_t)4u);
+        check_equal(guard_stats.coalesced_wakes, (uint64_t)2u);
+        check_equal(atomic_load(&f.wakes), 2);
         check_true(guard_stats.notification_pending);
         released = false;
         check_equal(cflow_cnet_manager_context_poll_release(
