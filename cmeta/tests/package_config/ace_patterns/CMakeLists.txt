@@ -6,8 +6,8 @@ endif()
 find_package(Salts ${SALTS_TEST_VERSION} EXACT CONFIG REQUIRED
   PATHS "${SALTS_TEST_PREFIX}" NO_DEFAULT_PATH)
 foreach(target IN ITEMS Salts::CMeta Salts::NativeIO Salts::Platform)
-  if(NOT TARGET "${TARGET}")
-    message(FATAL_ERROR "installed SDK missing ${TARGET}")
+  if(NOT TARGET "${target}")
+    message(FATAL_ERROR "installed SDK missing ${target}")
   endif()
 endforeach()
 
