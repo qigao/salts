@@ -196,6 +196,52 @@ performance qualification. Remove the marker to restore Linux-only iteration.
 No host test result substitutes for mobile device execution or downstream
 exact-package qualification, both of which remain open in #1018.
 
+## Unreleased Salts 4.0.0 native SDK candidate migration
+
+**Status: integration branch only, not published.** The coherent SDK major
+is staged as `4.0.0` because the Salts 3.0.0 Component Context *first-use*
+contract and publicly laid-out ComponentPlugin Scope have incompatible changes.
+This does not tag `v4.0.0`, publish `Salts.Native`, merge any branch or
+authorize downstream deployment. The next-major candidate remains subject to
+#1018, all required packaging and sanitizer gates, and exact downstream pins.
+
+For native consumers migrating from released 3.0.0:
+
+1. Rebuild every host, provider DSO and dependent library from the same
+   immutable Salts 4 candidate SDK. Use the exact generated CMake package and
+   NuGet SHA/manifest, never old 3.x headers with 4.x libraries.
+2. Initialize every context before its first call:
+   `salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;`.
+   Reinit in READY/RESOLVED/ACTIVE is invalid and preserves existing owners;
+   only stopped or fully rolled-back FAILED storage may be reinitialized after
+   dependent borrowed service views have expired.
+3. Keep a live `salts_component_plugin_scope` at one stable address. Copies
+   and moves are not independent owners; a copied scope cannot release the
+   original generation or safely borrow its services. Release once after all
+   domain callbacks, tasks and views have expired.
+4. `find_package(Salts 4 CONFIG REQUIRED)` must select this exact major.
+   `find_package(Salts 3 CONFIG REQUIRED)` must reject a 4.x SDK; the existing
+   independent installed-Component consumer tests previous-major rejection.
+   All versioned shared native libraries inherit SOVERSION 4 from
+   `PROJECT_VERSION_MAJOR`, and package metadata comes from the same
+   `vcpkg.json` identity. No 3.x alias/fallback path is provided.
+5. The negotiated `CMETA_REFLECTION_ABI_VERSION=4`, ordinary Plugin ABI 5
+   and ComponentProvider contract v1 remain independent epochs. Do not bump
+   them to 4 because the top-level SDK changed: only a concrete change to
+   those exported descriptors/manifests would justify a separate bump.
+6. Domain owners (CHttp request/deferred mount; TurboFlow ExecutionPlan and
+   durable settlement; TurboSCXML Session/invocation) keep their respective
+   lifetime and domain semantics. Once a SHA-attested 4.x candidate is
+   available, re-pin the three downstream conformance workflows to *that
+   exact candidate*, rerun their focused tests, and record the candidate
+   version/SHA/package digest. Their earlier 3.0.0 prerelease pins do not
+   qualify the new ABI.
+
+Rollback restores **the whole** previous Salts 3.x SDK, matching provider
+binaries, CHttp/TurboFlow/TurboSCXML consumers and any persisted contract
+fingerprint cache; never mix major-version assets or perform in-place runtime
+state migration. No raw runtime-state persistence or automatic settlement retry.
+
 ## Post-3.0 Component Context initialization contract (development branch only)
 
 The long-term `feature/cmeta-ace-patterns` development branch under #1012/#1014
