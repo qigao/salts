@@ -652,8 +652,12 @@ spec("CNetManager held context across cross-owner Actor ACK") {
             &f.guard, &guard_stats), SALTS_OK);
         check_equal(guard_stats.route_count, (size_t)2u);
         check_equal(guard_stats.notifications, (uint64_t)4u);
-        check_equal(guard_stats.coalesced_wakes, (uint64_t)2u);
-        check_equal(atomic_load(&f.wakes), 2);
+        /* ACK #2 can race a source poll between its two notifications.
+         * That permits an additional rearmed hint, not another release. */
+        check_true(guard_stats.coalesced_wakes >= (uint64_t)2u);
+        check_true(guard_stats.coalesced_wakes <= (uint64_t)3u);
+        check_equal(atomic_load(&f.wakes),
+                    (int)guard_stats.coalesced_wakes);
         /* Source may observe ACK #2 and release before its target Owner
          * publishes notify_settled(). A late wake is only a hint, never a
          * second release request. Either pending state is valid here. */
