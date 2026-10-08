@@ -47,6 +47,7 @@ typedef struct actor_fixture {
     uint64_t receive_started;
     bool actor_initialized;
     int actor_errors;
+    const char *failure_stage;
     cnet_connection connection;
     uint64_t latencies[SAMPLES], scratch[SAMPLES];
     size_t received, settled;
@@ -116,12 +117,14 @@ static bool domain_action(void *user, const void *state, const void *event,
         view.kind != CNET_MESSAGE_BYTES || view.size != 1u ||
         ((const unsigned char *)view.data)[0] !=
            (unsigned char)(f->settled % 251u)) {
+        f->failure_stage = "domain_action.borrow_or_validate";
         *error = "invalid actor delivery";
         f->error = SALTS_EPROTO;
         return false;
     }
     f->checksum += ((const unsigned char *)view.data)[0];
     if (cflow_cnet_domain_route_acknowledge(&f->route, delivery) != SALTS_OK) {
+        f->failure_stage = "domain_action.ack";
         *error = "actor ACK failed";
         f->error = SALTS_EPROTO;
         return false;
@@ -145,6 +148,7 @@ static bool domain_action(void *user, const void *state, const void *event,
 static bool on_value(void *user, const cmeta_type_desc *type, const void *value) {
     actor_fixture *f = (actor_fixture *)user;
     if (!type || !value || !cmeta_type_equal(type, &cmeta_type_int)) {
+        f->failure_stage = "actor.on_value";
         f->actor_errors++;
         return false;
     }
@@ -152,7 +156,10 @@ static bool on_value(void *user, const cmeta_type_desc *type, const void *value)
 }
 static void on_error(void *user, const char *msg) {
     actor_fixture *f = (actor_fixture *)user;
-    if (msg) f->actor_errors++;
+    if (msg) {
+        f->failure_stage = msg;
+        f->actor_errors++;
+    }
 }
 static void on_done(void *user) { (void)user; }
 static int actor_init(actor_fixture *f) {
@@ -179,6 +186,7 @@ static int actor_init(actor_fixture *f) {
     cflow_actor_config cfg = {0};
     cflow_cnet_domain_route_config route_cfg = {0};
     f->binding = (cflow_machine_action_binding){BENCH_ACTION, domain_action, f};
+    f->failure_stage = "actor_init.machine_or_scheduler";
     if (cflow_machine_build(&f->machine, &def) != CFLOW_MACHINE_OK ||
         !cflow_executor_owner_init_with_capacity(&f->executor, 16u, NULL, NULL) ||
         !cflow_scheduler_owner_bind(&f->scheduler, &f->executor, 8u))
@@ -189,6 +197,7 @@ static int actor_init(actor_fixture *f) {
     };
     cfg.scheduler = &f->scheduler;
     cfg.callbacks = (cflow_subscriber_callbacks){on_value, on_error, on_done, f};
+    f->failure_stage = "actor_init.actor";
     if (cflow_actor_init(&f->actor, &cfg).status != CFLOW_ACTOR_OK ||
         !cflow_actor_ref_acquire(&f->actor, &f->ref) ||
         cflow_actor_start(&f->actor) != CFLOW_ACTOR_OK)
@@ -198,9 +207,11 @@ static int actor_init(actor_fixture *f) {
         .source_owner = 1u, .connection = f->connection,
         .slot_capacity = 1u, .max_receive_bytes = 1u
     };
+    f->failure_stage = "actor_init.route";
     if (cflow_cnet_domain_route_init(&f->route, &route_cfg) != SALTS_OK ||
         cflow_cnet_domain_route_bind_source(&f->route) != SALTS_OK)
         return SALTS_EPROTO;
+    f->failure_stage = "ready";
     f->actor_initialized = true;
     return SALTS_OK;
 }
@@ -212,11 +223,13 @@ static void on_receive(void *user, cnet_connection id,
         !view || view->kind != CNET_MESSAGE_BYTES || view->size != 1u ||
         ((const unsigned char *)view->data)[0] !=
             (unsigned char)(f->received % 251u)) {
+        f->failure_stage = "on_receive.validation";
         f->error = SALTS_EPROTO;
         return;
     }
     f->error = cflow_cnet_domain_route_receive(&f->route, f->credit, view);
     if (f->error == SALTS_OK) ++f->received;
+    else f->failure_stage = "on_receive.route_receive";
 }
 static int send_byte(bench_socket peer, unsigned char byte) {
     uint64_t deadline = cmeta_monotonic_ms() + DEADLINE_MS;
@@ -285,6 +298,7 @@ int main(void) {
         }
         if (!f->connected || peer == BENCH_INVALID) { status = SALTS_ETIMEDOUT; goto done; }
     }
+    f->failure_stage = "actor_init";
     status = actor_init(f);
     if (status != SALTS_OK) goto done;
     /* One bounded outstanding receive; never infer one callback per TCP send
@@ -292,22 +306,27 @@ int main(void) {
     for (size_t i = 0; i < WARMUP + SAMPLES; ++i) {
         uint64_t deadline = cmeta_monotonic_ms() + DEADLINE_MS;
         if (i == WARMUP) began = cmeta_hrtime();
+        f->failure_stage = "route.reserve";
         status = cflow_cnet_domain_route_reserve(&f->route, &f->credit);
         if (status != SALTS_OK) goto done;
+        f->failure_stage = "cnet.receive";
         status = cnet_receive(&f->client, f->connection, 1u);
         if (status != SALTS_OK) {
             (void)cflow_cnet_domain_route_cancel_credit(&f->route, f->credit);
             goto done;
         }
         if (status != SALTS_OK) goto done;
+        f->failure_stage = "tcp.send";
         status = send_byte(peer, (unsigned char)(i % 251u));
         if (status != SALTS_OK) goto done;
+        f->failure_stage = "cnet.poll";
         while (f->received == i && cmeta_monotonic_ms() < deadline) {
             size_t events = 0;
             status = cnet_client_poll(&f->client, 1u, &events);
             if (status != SALTS_OK || f->error) goto done;
         }
         if (f->received != i + 1u) { status = SALTS_ETIMEDOUT; goto done; }
+        f->failure_stage = "actor.executor";
         while (f->settled == i && cmeta_monotonic_ms() < deadline) {
             if (!cflow_executor_run_one(&f->executor))
                 cmeta_thread_yield();
@@ -374,7 +393,10 @@ done:
     }
     close_socket(peer);
     close_socket(listener);
+    if (status != SALTS_OK) fprintf(stderr,
+        "Same-owner Actor benchmark failed: status=%d stage=%s received=%zu settled=%zu actor_errors=%d callback_error=%d checksum=%llu\n",
+        status, f->failure_stage ? f->failure_stage : "unknown", f->received,
+        f->settled, f->actor_errors, f->error, (unsigned long long)f->checksum);
     free(f);
-    if (status != SALTS_OK) fprintf(stderr, "Same-owner Actor benchmark failed: %d\n", status);
     return status == SALTS_OK ? 0 : 1;
 }
