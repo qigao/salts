@@ -12,8 +12,13 @@ Set-StrictMode -Version Latest
 # PR coverage follows the whole proposed change; push coverage follows the
 # delivered commit range. Never skip unqualified code using only the last commit.
 $full = $EventName -eq "workflow_dispatch"
-# Keep complete Linux coverage alongside the normal multi-platform matrix.
-$componentIntegration = $HeadBranch -eq 'feature/cmeta-pattern-component-runtime' -and -not $PrepareRelease
+# New long-lived ACE pattern development runs the complete Linux contract suite
+# on PRs; explicit manual release preparation still selects all platforms.
+$acePatternsDevelopment = $HeadBranch -eq 'feature/cmeta-ace-patterns' -and
+  $EventName -eq 'pull_request' -and -not $PrepareRelease
+# Preserve the historical integration branch's complete Linux coverage.
+$componentIntegration = ($HeadBranch -eq 'feature/cmeta-pattern-component-runtime' -and
+  -not $PrepareRelease) -or $acePatternsDevelopment
 $changed = @()
 if (-not $full) {
   if ([string]::IsNullOrWhiteSpace($BaseRef)) { throw "Missing comparison base for $EventName" }
@@ -139,6 +144,7 @@ $profiles = @(
 )
 $builds = @()
 foreach ($profile in $profiles) {
+  if ($acePatternsDevelopment -and $profile.id -ne 'linux-release') { continue }
   # Clang profiles qualify the same portable/native contracts in isolated trees;
   # they do not produce additional release packages.
   $profile.clang = $profile.id -in @('linux-clang-release', 'macos-clang-release')
