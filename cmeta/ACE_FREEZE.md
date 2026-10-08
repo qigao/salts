@@ -1,10 +1,15 @@
 # Salts 2.3 — ACE / CMeta functional freeze contract
 
-**Status:** functionally scoped and under exact-HEAD qualification on the
-long-lived `feature/cmeta-ace-patterns` Draft PR
-[#1013](https://github.com/qigao/salts/pull/1013).
-**DO NOT MERGE. DO NOT PUBLISH.** This is a feature/API freeze contract,
-not a claim that the 2.3.0 SDK release gates have passed.
+**Status:** **ACE FUNCTIONALLY FROZEN** at source HEAD
+[`02b741a7f2ebceaeed68c681898d09072c5323d1`](https://github.com/qigao/salts/commit/02b741a7f2ebceaeed68c681898d09072c5323d1),
+2026-10-08. The exact-source [full CI #37775060929](https://github.com/qigao/salts/actions/runs/37775060929)
+completed **SUCCESS** (Linux GCC/Clang, Windows MSVC, macOS GCC/Clang,
+Linux ARM64, Android/iOS cross-build and Lean). Later documentation-only
+commits do not silently change this frozen code baseline; substantive
+changes must requalify the affected contracts.
+Long-lived `feature/cmeta-ace-patterns` [Draft PR #1013](https://github.com/qigao/salts/pull/1013)
+remains **DO NOT MERGE. DO NOT PUBLISH.** Feature freeze is **not** 2.3.0
+native SDK, downstream or stable release qualification.
 
 ## Frozen ownership graph
 
@@ -142,6 +147,46 @@ scope/deferred mount, TurboFlow durable-plan ownership, TurboSCXML
 session/invocation generations, Android/iOS device runtime if required,
 and the explicit release/merge decision in
 [#1018](https://github.com/qigao/salts/issues/1018).
+
+## Functional qualification evidence (exact source SHA)
+
+[Full matrix #37775060929](https://github.com/qigao/salts/actions/runs/37775060929)
+executed the final ACE regression source `02b741a7f2ebceaeed68c681898d09072c5323d1`.
+
+| Execution profile | Result |
+| --- | --- |
+| Linux GCC | **249/249** full CTest, including the new epoch-fenced exclusive owner, CMeta Pattern C11/C++17 and DSO/Context tests |
+| Linux Clang | **249/249** full CTest |
+| Windows MSVC | **240/240** full CTest |
+| macOS GCC | **242/242** full CTest, including the CNet half-close terminal contract |
+| macOS Clang | **242/242** full CTest |
+| Linux ARM64 | portable native build and targeted contracts passed |
+| Android arm64 / iOS arm64 | cross-compilation passed; **not** device-runtime execution |
+| Lean | build and tests passed |
+
+Every native host's compiler probe admitted the canonical C11/C++17
+Interface method type and rejected the intentionally incorrect return
+signature. The new C11/C++17 owned-result tests, ObjectRef/Plugin lease
+destruction order, and one-bind-per-Scope exclusive-epoch fencing fixture
+ran in the full CTest suites. The unique external writer/listener scenario
+is a **deterministic domain-owner contract fixture**; actual real-world
+socket/writer epoch-switch atomicity remains with CNet/CHttp and must
+be qualified in the relevant downstream execution owner, not introduced
+as a second CMeta runtime.
+
+In-repository `salts_component_context_init` call sites were audited:
+all direct Component C11/C++17 and independently installed consumers use
+`SALTS_COMPONENT_CONTEXT_INIT` before first use; the ComponentPlugin
+generation initializes its embedded context before calling init. Domain
+repositories' final exact-2.3 consumer qualification remains in #1018.
+
+### Remaining work is release and consumer acceptance, **not new ACE APIs**
+
+- SHA-attested exact 2.3.0 installed native SDK and SONAME verification
+- final sanitizer runs, independent package integrity and supported devices
+- CHttp request/deferred, TurboFlow ExecutionPlan/durable, TurboSCXML
+  session/invocation N-to-N+1 consumer qualification
+- explicit release and merge decision, which has **not** been given
 
 ## Freeze change control
 
