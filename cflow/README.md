@@ -100,6 +100,11 @@ watches are drivers. They publish readiness or completion into Reactive, or
 deliver bounded messages to Actor; they do not own Graph state or Actor
 transition state.
 
+For the long-lived CNet connection-strategy / domain-Actor integration, see
+[the CNet Strategy x Actor composition contract](cnet-adapter/ACTOR_STRATEGY_COMPOSITION.md).
+This is an opt-in host composition design, not a new mandatory CNet dependency
+or an assertion that built-in serial-worker Actors are owner-affine.
+
 NativeIO execution style is an orthogonal mechanism dimension. Direct/Coroutine and the planned Sharded/SMP style share NativeIO request/completion truth; Reactive and Actor remain CFlow semantic models above thin adapters. See [NativeIO execution and endpoint architecture](../native-io/ARCHITECTURE.md).
 
 ### I/O portability and execution-policy boundary
