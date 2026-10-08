@@ -563,6 +563,10 @@ suite("CNet to CFlow Domain Actor bounded credit bridge") {
                     SALTS_OK);
         check_equal(domain_loopback_poll_callbacks(&s, 1u), SALTS_OK);
         check_equal(s.on_receive_status, SALTS_OK);
+        /* Keep one CNet receive credit outstanding to observe the peer EOF.
+         * CNet's terminal event must settle THAT credit, not the already
+         * accepted Domain Actor payload lease. */
+        check_equal(domain_loopback_reserve_and_arm(&s), SALTS_OK);
         domain_socket_close(s.peer);
         s.peer = DOMAIN_BAD_SOCKET;
 
