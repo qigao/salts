@@ -51,11 +51,15 @@
             response == NULL || (chain->hook_count != 0u && chain->hooks == NULL)) \
             return CMETA_INVALID_ARGUMENT; \
         if (chain->hook_count > 16u) return CMETA_CAPACITY_EXCEEDED; \
+        /* Prevalidate the entire borrowed chain before any side effect. */ \
+        for (size_t index = 0u; index < chain->hook_count; ++index) { \
+            const name_##_hook *hook = &chain->hooks[index]; \
+            if (hook->before == NULL && hook->after == NULL && \
+                hook->on_error == NULL) return CMETA_INVALID_ARGUMENT; \
+        } \
         while (entered < chain->hook_count) { \
             const name_##_hook *hook = &chain->hooks[entered]; \
             bool proceed = true; \
-            if (hook->before == NULL && hook->after == NULL && \
-                hook->on_error == NULL) return CMETA_INVALID_ARGUMENT; \
             if (hook->before != NULL) \
                 status = hook->before(hook->context, request, &proceed); \
             ++entered; \

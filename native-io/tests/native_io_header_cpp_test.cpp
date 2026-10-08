@@ -85,6 +85,9 @@ suite("NativeIO C++ headers") {
       completion.user_data = 22u;
       check_equal(ace_cpp_request_token_bind(&token, request, endpoint,
                                              22u, &context), SALTS_OK);
+      ace_cpp_request_token copied = token;
+      check_equal(ace_cpp_request_token_settle(&copied, &completion, &settled),
+                  SALTS_EINVAL);
       completion.user_data = 23u;
       check_equal(ace_cpp_request_token_settle(&token, &completion, &settled),
                   SALTS_ENOENT);

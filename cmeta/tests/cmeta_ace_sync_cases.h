@@ -220,6 +220,8 @@ suite("CMeta ACE concurrent pattern composition") {
         check_equal(cmeta_ace_guard_enter(&guard, &missing), CMETA_INVALID_ARGUMENT);
         check_equal(cmeta_ace_guard_enter(&guard, &lock), CMETA_OK);
         check_equal(cmeta_ace_guard_enter(&guard, &lock), CMETA_BUSY);
+        cmeta_ace_guard copied = guard;
+        check_equal(cmeta_ace_guard_leave(&copied), CMETA_INVALID_ARGUMENT);
         check_equal(cmeta_ace_guard_leave(&guard), CMETA_OK);
         check_equal(cmeta_ace_guard_leave(&guard), CMETA_INVALID_ARGUMENT);
         lock = ace_sync_rw_policy_as_cmeta_ace_lockable(&rw);

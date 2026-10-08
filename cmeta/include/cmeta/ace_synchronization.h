@@ -27,6 +27,7 @@ CMETA_INTERFACE(cmeta_ace_lockable, CMETA_ACE_LOCKABLE_METHODS);
 
 typedef struct cmeta_ace_guard {
     cmeta_ace_lockable lock;
+    const struct cmeta_ace_guard *owner_address;
     bool held;
 } cmeta_ace_guard;
 
@@ -34,17 +35,21 @@ CMETA_INLINE cmeta_status cmeta_ace_guard_enter(
     cmeta_ace_guard *guard, const cmeta_ace_lockable *lock) {
     if (guard == NULL || lock == NULL || !cmeta_ace_lockable_valid(lock))
         return CMETA_INVALID_ARGUMENT;
-    if (guard->held) return CMETA_BUSY;
+    if (guard->held)
+        return guard->owner_address == guard ? CMETA_BUSY : CMETA_INVALID_ARGUMENT;
     guard->lock = *lock;
+    guard->owner_address = guard;
     cmeta_ace_lockable_acquire(&guard->lock);
     guard->held = true;
     return CMETA_OK;
 }
 
 CMETA_INLINE cmeta_status cmeta_ace_guard_leave(cmeta_ace_guard *guard) {
-    if (guard == NULL || !guard->held) return CMETA_INVALID_ARGUMENT;
+    if (guard == NULL || !guard->held || guard->owner_address != guard)
+        return CMETA_INVALID_ARGUMENT;
     cmeta_ace_lockable_release(&guard->lock);
     guard->held = false;
+    guard->owner_address = NULL;
     guard->lock = cmeta_ace_lockable_bind(NULL, NULL);
     return CMETA_OK;
 }

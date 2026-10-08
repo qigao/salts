@@ -27,19 +27,21 @@
         native_io_endpoint endpoint; \
         uintptr_t correlation; \
         context_type_ *context; \
+        const struct name_ *owner_address; \
         bool active; \
     } name_; \
     static inline int name_##_bind( \
         name_ *token, native_io_request request, native_io_endpoint endpoint, \
         uintptr_t correlation, context_type_ *context) { \
         if (token == NULL) return SALTS_EINVAL; \
-        if (token->active) return SALTS_EBUSY; \
+        if (token->active) return token->owner_address == token ? SALTS_EBUSY : SALTS_EINVAL; \
         if (!native_io_request_valid(request) || !native_io_endpoint_valid(endpoint) || \
             context == NULL) return SALTS_EINVAL; \
         token->request = request; \
         token->endpoint = endpoint; \
         token->correlation = correlation; \
         token->context = context; \
+        token->owner_address = token; \
         token->active = true; \
         return SALTS_OK; \
     } \
@@ -51,6 +53,7 @@
             return SALTS_EINVAL; \
         *out_context = NULL; \
         if (!token->active) return SALTS_EALREADY; \
+        if (token->owner_address != token) return SALTS_EINVAL; \
         if (completion->request.slot != token->request.slot || \
             completion->request.generation != token->request.generation || \
             completion->endpoint.slot != token->endpoint.slot || \
