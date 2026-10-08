@@ -599,6 +599,19 @@ spec("CNetManager held context across cross-owner Actor ACK") {
             &f.manager, &manager_stats), SALTS_OK);
         check_equal(manager_stats.context_holds, (size_t)1u);
         check_equal(atomic_load(&f.recycled), 0);
+        /* Exercise repeated source-owner scans while the second route is
+         * unacknowledged. No false progress or release is permitted, and
+         * every scan clears only the coalesced hint, not real route state. */
+        for (unsigned attempt = 0u; attempt < 128u; ++attempt) {
+            released = true;
+            check_equal(cflow_cnet_manager_context_poll_release(
+                &f.guard, &released), SALTS_EBUSY);
+            check_false(released);
+        }
+        check_equal(cnet_manager_get_snapshot(
+            &f.manager, &manager_stats), SALTS_OK);
+        check_equal(manager_stats.context_holds, (size_t)1u);
+        check_equal(atomic_load(&f.recycled), 0);
         atomic_store_explicit(&f.target_run, true, memory_order_release);
         {
             const uint64_t ack_deadline =
