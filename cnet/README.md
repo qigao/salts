@@ -1848,3 +1848,45 @@ retention, incorrect logical terminals, or premature destruction; **HIGH** for
 an unbounded KCP receive path under a stalled consumer; **MED** for the additional
 listener progress surface and cross-platform integration burden. The ownership
 and validation gates above are required before FlowMQ can advertise support.
+
+## Portable datagram controls and name lookup
+
+`cnet_datagram_open_external` adds unbound UDP creation on a borrowed NativeIO
+backend. Bind before sending/receiving; endpoint queries preserve IPv6 flow/scope.
+`cnet_datagram_send_endpoint` copies even zero-byte messages, while the existing
+`cnet_datagram_send` admission remains unchanged. Pause cancels demand without
+releasing an active request; route its actual terminal and check quiescence
+before changing peer association. Options support hop limit and receive/send
+buffers before binding. The backend remains owned and observed by the host.
+
+`<cnet/name_lookup.h>` exposes bounded ordered address streams using existing
+c-ares progress and private ICU UTS46 validation. Numeric literals issue no DNS
+request. Every query is scoped to its owner and generation; result overflow is
+an error instead of truncated success. Pending is `SALTS_ETIMEDOUT`, exhaustion
+is `SALTS_EOF`, and a query deadline is `SALTS_EAI_AGAIN`.
+
+```c
+cnet_name_lookup lookup = {0};
+cnet_name_query query = {0};
+cnet_name_lookup_config config;
+cnet_name_lookup_config_init(&config);
+int status = cnet_name_lookup_init(&lookup, &config);
+if (status == SALTS_OK)
+    status = cnet_name_lookup_submit(&lookup, "127.0.0.1", 9, &query);
+if (status == SALTS_OK) {
+    cnet_ip_address address;
+    status = cnet_name_lookup_next(&lookup, query, &address);
+    /* Use address only when status == SALTS_OK. */
+}
+if (query.owner) cnet_name_lookup_query_drop(&lookup, &query);
+if (lookup.impl) {
+    cnet_name_lookup_close(&lookup);
+    cnet_name_lookup_destroy(&lookup);
+}
+```
+
+For DNS names, call nonblocking `advance` on the serialized owner and integrate
+`next_timeout` with the host timer. Close cancels the c-ares channel through its
+real callbacks; destroy succeeds only after every query is dropped. A dropped
+active query continues occupying bounded callback storage until that terminal.
+Optional copied numeric `servers_csv` permits local/private resolver fixtures.

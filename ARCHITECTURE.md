@@ -488,3 +488,27 @@ CSerde 的组合只能位于显式 adapter target；例如 `Salts::JsonCSerdeAda
 - `docs/superpowers/specs/2026-08-23-serialization-data-binding-design.md` — historical CMeta/CSerde/CBind/parser data architecture；
 - `docs/superpowers/specs/2026-08-24-cflow-machine-runtime-design.md` — typed Machine runtime；
 - SaltsUtils `docs/superpowers/specs/2026-09-16-parser-capability-ownership-migration.md` — current parser package cutover.
+
+## WASI datagram controls and address streams
+
+Additive APIs reuse CNet datagram and c-ares owners for unbound/bind/native peer
+association, lossless endpoints, actual options, terminal receive pause and
+ordered bounded address streams. Existing UDP init/config layouts stay stable.
+Empty UDP sends are real messages; only UDP send admits zero NativeIO length.
+
+Queries retain stable callback slots through actual terminals, including logical
+cancellation/drop. Accepted results win cancellation; deadlines latch before
+progress and overflow never produces a truncated success. Numeric IPs bypass DNS.
+
+There is no complete IDNA implementation in the current dependency graph. Manual
+Punycode omits normalization/context checks; platform APIs differ. Private ICU
+UTS46 supplies nontransitional IDNA with STD3, Bidi and ContextJ/O checks. The
+existing vcpkg baseline pins ICU 74.2 revision 6 under the ICU/Unicode license.
+Only uc/data links/ships; data increases SDK size but no ICU types enter the ABI
+and no thread is created. Input is bounded to 4096 UTF-8 bytes, output to 253 DNS
+bytes excluding a root dot. Attribution is in THIRD_PARTY_NOTICES.md.
+
+Qualification covers IPv4/IPv6, empty/oversized messages, peer replacement,
+terminal pause, numeric/Unicode/invalid names, ordered results, bounded failures
+and stale/cross-owner handles. Additive callers relink; old callers retain their
+behavior. Disabling the optional adapter is the rollback boundary.
