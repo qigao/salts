@@ -248,7 +248,7 @@ PR #1013, update master, or replace Windows/macOS, sanitizer, mobile device
 runtime or pinned downstream qualification. A skipped workflow is not
 evidence of a released or accepted SDK.
 
-## Post-3.0 Component Context initialization contract (development branch only)
+## Component Context initialization contract (2.3 development branch only)
 
 The long-term `feature/cmeta-ace-patterns` development branch under #1012/#1014
 requires a **defined first-use state** for a static Component context:
@@ -259,18 +259,19 @@ salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;
 salts_component_context_init(&context, /* deployment/storage arguments */);
 ```
 
-Unlike the released v3.0.0 API that accepted an uninitialized stack context,
-the new development contract reads `context.state` to reject reinitialization
+The earlier unpublished Component prototype accepted uninitialized stack
+storage, but the 2.3 candidate requires a defined first-use state and reads
+`context.state` to reject reinitialization
 from READY, RESOLVED or ACTIVE **before** overwriting any live ObjectRef.
 The caller must therefore explicitly initialize storage in C11/C++17. After
 normal stop or fully rolled-back failure, exclusive reuse is allowed; any
 borrowed Interface/service views must have expired. No legacy admission path
 or global registry is introduced.
 
-**Compatibility:** this is a source-contract change relative to published
-Salts 3.0.0. It must not ship as a silent 3.0.x-compatible behavior change;
-#1014 records the downstream migration and next-major release decision before
-merge. The development branch does not change already published v3.0.0.
+**Compatibility:** this Component model was not part of the published
+2.2.0 SDK. All new 2.3 consumers must honor the explicit first-use rule and
+be rebuilt as one compatible set. #1014 tracks this ownership invariant,
+and #1018 tracks package admission. Draft PR #1013 remains unmerged.
 
 ## Scope ownership and re-publishing after close (development branch only)
 
@@ -286,9 +287,10 @@ pinned to its generation; an explicit, higher-ID `runtime_publish()` may later
 re-open admission within the same two-attached-generation bound. The final
 `runtime_destroy()` requires all attached generations to be fully drained.
 
-The additional owner-address field changes the publicly exposed scope
-structure layout relative to released 3.0.0. It belongs to the **next-major**
-compatibility review rather than a silent 3.0.x ABI update.
+The owner-address field changes Scope layout compared with an unpublished
+interim prototype. The 2.3 candidate layout must be consumed from its exact
+installed SDK; native SONAME 2.3 and SameMinorVersion admission isolate it
+from the published 2.2 binary epoch.
 
 ## Generation concurrency and resource admission
 
@@ -328,7 +330,7 @@ External YAML/JSON/XML/CLI parsing remains outside CMeta. Factory and lifecycle
 execution authority are deliberately not embedded in the descriptor; they
 belong to the Component runtime binding under #1008.
 
-The CMeta format-2 Component declaration and first Configurator are already
-shipped in Salts 3.0.0. Post-3.0 ACE lifecycle and breaking Context/Scope
-changes remain on `feature/cmeta-ace-patterns` under Draft PR #1013. They are
-not a released 3.x API or permission to merge the long-lived branch.
+The Component descriptor and Configurator baseline are integrated into
+master source, but not in the latest published Salts 2.2.0 Release.
+The 2.3.0 ACE lifecycle candidate remains on `feature/cmeta-ace-patterns`
+under Draft PR #1013. Neither stable release nor branch merge is authorized.
