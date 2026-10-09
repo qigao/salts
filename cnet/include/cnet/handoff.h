@@ -9,7 +9,7 @@ extern "C" {
 
 #define CNET_HANDOFF_VERSION 1u
 
-/** Optional bounded MPSC admission inbox; link Salts::CNetManager.
+/** Optional bounded MPSC admission inbox; link Salts::CNet.
  * One inbox belongs to one final owner. Producers reserve and publish; the
  * owner takes streams and adopts them through CNet or cnet_manager_adopt.
  * No transport progress, callbacks, TLS state, threads or wake are created.

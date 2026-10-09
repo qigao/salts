@@ -1,6 +1,8 @@
 #include <cnet/cnet.h>
 #include <cnet/manager.h>
 #include <cnet/handoff.h>
+#include <cnet/owner_placement.h>
+#include <cnet/destination_policy.h>
 static_assert(CNET_MANAGER_VERSION == 1u, "manager capability is versioned");
 #include <cnet/ipc.h>
 #include <cnet/websocket.h>
@@ -10,6 +12,21 @@ static_assert(CNET_MANAGER_VERSION == 1u, "manager capability is versioned");
 #include <cstdint>
 #include <type_traits>
 
+static_assert(std::is_standard_layout<cnet_destination_selection>::value,
+              "client destination selection is C ABI data");
+static_assert(std::is_standard_layout<cnet_destination_result>::value,
+              "selected remote destination has stable copied identity");
+static_assert(CNET_DESTINATION_POLICY_VERSION == 1u, "destination ABI is versioned");
+static_assert(std::is_same<decltype(&cnet_destination_choose),
+                           int (*)(const cnet_destination_selection *,
+                                   cnet_destination_result *)>::value,
+              "client remote policy has C linkage");
+static_assert(std::is_standard_layout<cnet_owner_placement_input>::value,
+              "server placement input is C ABI data");
+static_assert(CNET_OWNER_PLACEMENT_VERSION == 1u, "placement contract is versioned");
+static_assert(std::is_same<decltype(&cnet_owner_placement_choose),
+                           int (*)(const cnet_owner_placement_input *, size_t *)>::value,
+              "server placement decision has C linkage");
 static_assert(std::is_standard_layout<cnet_handoff_ticket>::value,
               "handoff ticket must remain C ABI data");
 static_assert(CNET_HANDOFF_VERSION == 1u, "handoff capability is versioned");
