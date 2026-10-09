@@ -29,6 +29,7 @@ set(CNET_SOURCE_FILES
   src/cnet_destination_policy.c
   src/cnet_client_pool.c
   src/cnet_recovery_policy.c
+  src/cnet_managed_dial.c
   src/cnet_resolver.c
   src/cnet_session.c
   src/cnet_shards.c
