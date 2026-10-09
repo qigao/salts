@@ -32,14 +32,17 @@ target_compile_features(cflow_ace_pipes_installed_consumer PRIVATE c_std_11)
 add_test(NAME cflow_ace_pipes_installed_consumer
   COMMAND cflow_ace_pipes_installed_consumer)
 
-# Existing exact installed SDK fixture also qualifies the CNet/CFlow exported
-# integration target: no separate CMake install orchestration and no fallback.
-if(NOT TARGET Salts::CFlowCNet)
-  message(FATAL_ERROR "installed package is missing Salts::CFlowCNet")
+# The retired CNet x Actor adapter is NOT part of the 2.3 SDK. This
+# executable uses the canonical public CNet and independent CFlow APIs:
+# real TCP receive callback -> bounded Channel -> Subscription. It must not
+# rely on (or resurrect) an obsolete CFlowCNet DSO.
+if(TARGET Salts::CFlowCNet OR NOT TARGET Salts::CNet)
+  message(FATAL_ERROR
+    "installed ACE half-sync requires canonical Salts::CNet, not legacy Salts::CFlowCNet")
 endif()
 add_executable(cflow_ace_half_sync_installed_consumer half_sync.c)
 target_link_libraries(cflow_ace_half_sync_installed_consumer
-  PRIVATE Salts::CFlowCNet)
+  PRIVATE Salts::CNet Salts::CFlow)
 target_compile_features(cflow_ace_half_sync_installed_consumer PRIVATE c_std_11)
 if(WIN32)
   target_link_libraries(cflow_ace_half_sync_installed_consumer PRIVATE ws2_32)
