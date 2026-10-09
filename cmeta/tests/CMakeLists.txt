@@ -37,6 +37,23 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 
+# #1064: CMeta describes actual CPU event callback/borrow/role type contracts;
+# Platform retains all Leader/Followers mutex, condition and thread authority.
+cmake_add_test(cmeta_ace_leader_followers_contract_test
+  SOURCES cmeta_ace_leader_followers_contract_test.c
+  LIBS Salts::CMeta Salts::TinyTest
+  FOLDER "cmeta/tests")
+cmake_add_test(cmeta_ace_leader_followers_contract_cpp_test
+  SOURCES cmeta_ace_leader_followers_contract_cpp_test.cpp
+  LIBS Salts::CMeta Salts::TinyTest
+  FOLDER "cmeta/tests")
+set_target_properties(cmeta_ace_leader_followers_contract_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_target_properties(cmeta_ace_leader_followers_contract_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+set_tests_properties(cmeta_ace_leader_followers_contract_test
+  cmeta_ace_leader_followers_contract_cpp_test PROPERTIES TIMEOUT 60)
+
 # C11/C++17 independent SDK consumption of the five new ACE pattern facades.
 # Use the existing installed-consumer helper, not another workflow.
 if(NOT WIN32)

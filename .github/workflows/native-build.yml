@@ -140,7 +140,7 @@ jobs:
           set -euo pipefail
           ctest --preset "${{ matrix.preset }}" \
             --no-tests=error --output-on-failure --timeout 90 \
-            -R '^(cmeta_native_component_(test|cpp_test|plugin_(abi_test|abi_cpp_test|dso_test|generation_test|scope_cpp_test|publication_test|act_native_io_test|runtime_failure_test|concurrency_test))|cmeta_fastpath_(component|pattern)(_cpp)?_test|cmeta_ace_sync(_cpp)?_test|platform_ace_leader_followers(_cpp)?_test|cflow_actor_test|cflow_ace_pipes_filters_test|cflow_ace_half_sync_async_test|cnet_ace_acceptor_connector_test|cnet_tcp_endpoint_test)$'
+            -R '^(cmeta_native_component_(test|cpp_test|plugin_(abi_test|abi_cpp_test|dso_test|generation_test|scope_cpp_test|publication_test|act_native_io_test|runtime_failure_test|concurrency_test))|cmeta_fastpath_(component|pattern)(_cpp)?_test|cmeta_ace_sync(_cpp)?_test|cmeta_ace_leader_followers_contract(_cpp)?_test|platform_ace_leader_followers(_cpp)?_test|cflow_actor_test|cflow_ace_pipes_filters_test|cflow_ace_half_sync_async_test|cnet_ace_acceptor_connector_test|cnet_tcp_endpoint_test)$'
       - name: Run complete Unix integration tests
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.full_tests }}
         timeout-minutes: 30
