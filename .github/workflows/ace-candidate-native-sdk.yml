@@ -84,13 +84,15 @@ jobs:
         run: |
           set -euo pipefail
           test -f "$QIGAO_VCPKG_TOOLCHAIN_FILE"
-          cmake --preset release-linux-ninja \
+          # Match the canonical Linux release CI dependency graph exactly.
+          # The previous release-linux-ninja + explicit vcpkg override resolved
+          # a different GmSSL source and failed TLS framing (1/253 CTests).
+          cmake --preset linux-release-ci \
+            -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON \
             -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
-            -DCMETA_BUILD_BENCHMARKS=OFF -DNATIVE_IO_BUILD_BENCHMARKS=OFF \
-            -DCOROUTINE_BUILD_BENCHMARKS=OFF -DCNET_BUILD_BENCHMARKS=OFF \
-            -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
-            -DVCPKG_OVERLAY_PORTS="$VCPKG_OVERLAY_PORTS" \
-            -DVCPKG_OVERLAY_TRIPLETS="$VCPKG_OVERLAY_TRIPLETS"
+            -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=OFF \
+            -DNATIVE_IO_BUILD_BENCHMARKS=OFF \
+            -DCOROUTINE_BUILD_BENCHMARKS=OFF -DCNET_BUILD_BENCHMARKS=OFF
           cmake --build build/linux-gcc-release --parallel 2
 
       - name: Execute complete Linux runtime and ACE contracts
