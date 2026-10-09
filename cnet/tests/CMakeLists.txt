@@ -530,6 +530,15 @@ set_target_properties(
   PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 add_dependencies(cnet_api_test cnet_external_gateway_owner_test)
 
+# Native SG registered host lease: real TCP + SG-owned completions, one observe.
+cmake_add_test(cnet_sg_hosted_gateway_test
+  SOURCES cnet_sg_hosted_gateway_test.c
+  LIBS Salts::CNet Salts::NativeIO Salts::Core Salts::TinyTest
+  FOLDER "cnet/tests")
+set_target_properties(cnet_sg_hosted_gateway_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+add_dependencies(cnet_api_test cnet_sg_hosted_gateway_test)
+
 cmake_add_test(
   cnet_external_progress_test
   SOURCES

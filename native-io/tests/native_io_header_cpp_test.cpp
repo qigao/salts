@@ -35,6 +35,12 @@ suite("NativeIO C++ headers") {
       static_assert(std::is_standard_layout_v<native_io_sharded_request>);
       static_assert(std::is_standard_layout_v<native_io_sharded_operation>);
       static_assert(std::is_standard_layout_v<native_io_sharded_ownership>);
+      static_assert(std::is_standard_layout_v<native_io_sharded_host_lease>);
+      static_assert(std::is_standard_layout_v<native_io_sharded_completion>);
+      const auto host_acquire = &native_io_sharded_context_acquire_host;
+      const auto host_release = &native_io_sharded_context_release_host;
+      const auto host_observe = &native_io_sharded_context_observe_host;
+      (void)host_acquire; (void)host_release; (void)host_observe;
       static_assert(sizeof(native_io_endpoint) == sizeof(std::uint32_t) * 2u);
       static_assert(offsetof(native_io_endpoint, slot) == 0u);
       static_assert(offsetof(native_io_endpoint, generation) == sizeof(std::uint32_t));

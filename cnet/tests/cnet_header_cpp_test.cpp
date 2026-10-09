@@ -6,6 +6,7 @@
 #include <cnet/client_pool.h>
 #include <cnet/recovery_policy.h>
 #include <cnet/managed_dial.h>
+#include <cnet/sg_host.h>
 static_assert(CNET_MANAGER_VERSION == 1u, "manager capability is versioned");
 #include <cnet/ipc.h>
 #include <cnet/websocket.h>
@@ -15,6 +16,10 @@ static_assert(CNET_MANAGER_VERSION == 1u, "manager capability is versioned");
 #include <cstdint>
 #include <type_traits>
 
+static_assert(std::is_standard_layout<cnet_sg_host_routes>::value,
+              "SG host route table is a stable C descriptor");
+static_assert(CNET_SG_HOST_ROUTING_VERSION == 1u,
+              "SG host routing is a versioned C ABI");
 static_assert(std::is_standard_layout<cnet_managed_dial_config>::value,
               "Managed dial config is C ABI");
 static_assert(std::is_standard_layout<cnet_managed_dial_snapshot>::value,
