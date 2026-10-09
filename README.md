@@ -26,6 +26,17 @@ identity using a versioned UTS #46 nontransitional profile and caller-owned stor
 
 ## Component migration for Salts 2.3.0
 
+The `2.3.0-rc.2` candidate combines [Unicode 17 NFC and explicit IDNA ToASCII
+conversion (#1094)](https://github.com/qigao/salts/pull/1094) with
+[UDP/WS composition boundaries (#1096)](https://github.com/qigao/salts/pull/1096).
+Unicode hostname conversion remains explicit before the ASCII DNS/TLS boundary.
+The new mixed SG router, dedicated TCP/TLS WS write bridge and admitted Dial
+initialization are opt-in; existing configuration layouts remain unchanged.
+HTTP Upgrade/authentication and H2 stream integration are separately tracked in
+[Chttp #238](https://github.com/qigao/chttp/issues/238) and are not jointly qualified
+by this candidate. Candidate CI and SDK packaging do not themselves publish a
+release; publication requires the exact version tag and its passing release gates.
+
 **Next release: 2.3.0** (last published Release: 2.2.0). The old 3.0.0
 Release was withdrawn; the interim 4.0.0 proposal is superseded.
 The long-lived ACE/CMeta Draft PR remains **DO NOT MERGE**.
