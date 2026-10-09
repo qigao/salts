@@ -11,7 +11,7 @@ runs:
         set -euo pipefail
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
-          ninja-build pkg-config nasm libudev-dev
+          ninja-build pkg-config nasm libudev-dev autoconf-archive
 
     - name: Prepare Windows build dependencies
       if: runner.os == 'Windows'
