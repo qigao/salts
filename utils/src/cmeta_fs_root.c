@@ -122,7 +122,7 @@ static int cmeta_fs_root_validate_open_flags(int flags) {
       flags & (SALTS_FS_O_RDONLY | SALTS_FS_O_WRONLY | SALTS_FS_O_RDWR);
   const int known =
       SALTS_FS_O_RDONLY | SALTS_FS_O_WRONLY | SALTS_FS_O_RDWR |
-      SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC | SALTS_FS_O_APPEND;
+      SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC | SALTS_FS_O_APPEND | SALTS_FS_ROOT_O_EXCL;
   if ((flags & ~known) != 0)
     return -EINVAL;
   if (access != SALTS_FS_O_RDONLY &&
@@ -175,10 +175,15 @@ typedef NTSTATUS (NTAPI *cmeta_nt_create_file_fn)(
     PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK,
     PLARGE_INTEGER, ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
 typedef ULONG (WINAPI *cmeta_rtl_status_to_dos_fn)(NTSTATUS);
+typedef NTSTATUS (NTAPI *cmeta_nt_set_information_file_fn)(
+    HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS);
+/* winternl.h's user-mode enum omits the documented FileRenameInformation. */
+enum { CMETA_FS_FILE_RENAME_INFORMATION = 10 };
 
 static INIT_ONCE cmeta_fs_root_nt_once = INIT_ONCE_STATIC_INIT;
 static cmeta_nt_create_file_fn cmeta_fs_root_nt_create_file = NULL;
 static cmeta_rtl_status_to_dos_fn cmeta_fs_root_status_to_dos = NULL;
+static cmeta_nt_set_information_file_fn cmeta_fs_root_nt_set_information = NULL;
 
 static BOOL CALLBACK cmeta_fs_root_init_nt(
     PINIT_ONCE once, PVOID parameter, PVOID *context) {
@@ -194,8 +199,11 @@ static BOOL CALLBACK cmeta_fs_root_init_nt(
   cmeta_fs_root_status_to_dos =
       (cmeta_rtl_status_to_dos_fn)GetProcAddress(
           module, "RtlNtStatusToDosError");
+  cmeta_fs_root_nt_set_information =
+      (cmeta_nt_set_information_file_fn)GetProcAddress(module, "NtSetInformationFile");
   return cmeta_fs_root_nt_create_file != NULL &&
-         cmeta_fs_root_status_to_dos != NULL;
+         cmeta_fs_root_status_to_dos != NULL &&
+         cmeta_fs_root_nt_set_information != NULL;
 }
 
 static int cmeta_fs_root_win32_error(DWORD error) {
@@ -212,6 +220,8 @@ static int cmeta_fs_root_win32_error(DWORD error) {
   case ERROR_ALREADY_EXISTS:
   case ERROR_FILE_EXISTS:
     return -EEXIST;
+  case ERROR_NOT_SAME_DEVICE:
+    return -EXDEV;
   case ERROR_DIRECTORY:
     return -ENOTDIR;
   case ERROR_DIR_NOT_EMPTY:
@@ -245,6 +255,7 @@ struct cmeta_fs_root_s {
 
 struct cmeta_fs_root_file_s {
   HANDLE handle;
+  bool append;
 };
 
 #define SALTS_FS_ROOT_WIN_DIR_BUFFER 16384u
@@ -435,19 +446,17 @@ static int cmeta_fs_root_stat_handle_win(
 static ACCESS_MASK cmeta_fs_root_access_win(int flags) {
   const int access =
       flags & (SALTS_FS_O_RDONLY | SALTS_FS_O_WRONLY | SALTS_FS_O_RDWR);
-  const bool append = (flags & SALTS_FS_O_APPEND) != 0;
   ACCESS_MASK desired = 0u;
 
   if (access == SALTS_FS_O_RDONLY || access == SALTS_FS_O_RDWR)
     desired |= FILE_READ_DATA | FILE_READ_EA;
   if (access == SALTS_FS_O_WRONLY || access == SALTS_FS_O_RDWR)
-    desired |= append
-        ? (ACCESS_MASK)(FILE_APPEND_DATA | FILE_WRITE_EA)
-        : (ACCESS_MASK)(FILE_WRITE_DATA | FILE_WRITE_EA);
+    desired |= (ACCESS_MASK)(FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA);
   return desired;
 }
 
 static ULONG cmeta_fs_root_disposition_win(int flags) {
+  if (flags & SALTS_FS_ROOT_O_EXCL) return FILE_CREATE;
   if ((flags & SALTS_FS_O_CREAT) != 0) {
     return (flags & SALTS_FS_O_TRUNC) != 0
         ? FILE_OVERWRITE_IF : FILE_OPEN_IF;
@@ -655,6 +664,7 @@ static int cmeta_fs_root_flags_posix(int flags, int *out_flags) {
   if ((flags & SALTS_FS_O_CREAT) != 0) native |= O_CREAT;
   if ((flags & SALTS_FS_O_TRUNC) != 0) native |= O_TRUNC;
   if ((flags & SALTS_FS_O_APPEND) != 0) native |= O_APPEND;
+  if ((flags & SALTS_FS_ROOT_O_EXCL) != 0) native |= O_EXCL;
   native |= O_NOFOLLOW | O_CLOEXEC;
   *out_flags = native;
   return 0;
@@ -879,6 +889,8 @@ int cmeta_fs_root_file_open(
     return -EINVAL;
   *out_file = NULL;
   rc = cmeta_fs_root_validate_open_flags(flags);
+  if ((flags & SALTS_FS_ROOT_O_EXCL) && !(flags & SALTS_FS_O_CREAT))
+    return -EINVAL;
   if (rc != 0)
     return rc;
   if (!root || !relative_path)
@@ -891,6 +903,7 @@ int cmeta_fs_root_file_open(
 #ifdef _WIN32
   (void)mode;
   file->handle = INVALID_HANDLE_VALUE;
+  file->append = (flags & SALTS_FS_O_APPEND) != 0;
   rc = cmeta_fs_root_open_path_win(
       root, relative_path,
       cmeta_fs_root_access_win(flags),
@@ -985,7 +998,11 @@ int cmeta_fs_root_file_write(
 #ifdef _WIN32
   {
     DWORD count = 0u;
-    if (!WriteFile(file->handle, data, (DWORD)length, &count, NULL))
+    OVERLAPPED position = {0};
+    position.Offset = MAXDWORD;
+    position.OffsetHigh = MAXDWORD;
+    if (!WriteFile(file->handle, data, (DWORD)length, &count,
+                   file->append ? &position : NULL))
       return cmeta_fs_root_win32_error(GetLastError());
     return (int)count;
   }
@@ -1030,6 +1047,75 @@ int64_t cmeta_fs_root_file_seek(
 
 int64_t cmeta_fs_root_file_tell(cmeta_fs_root_file_t *file) {
   return cmeta_fs_root_file_seek(file, 0, SEEK_CUR);
+}
+
+int cmeta_fs_root_file_set_append(cmeta_fs_root_file_t *file, bool append) {
+  if (!file) return -EINVAL;
+#ifdef _WIN32
+  file->append = append;
+  return 0;
+#else
+  int flags = fcntl(file->fd, F_GETFL);
+  if (flags < 0) return -errno;
+  int updated = append ? (flags | O_APPEND) : (flags & ~O_APPEND);
+  return fcntl(file->fd, F_SETFL, updated) < 0 ? -errno : 0;
+#endif
+}
+
+int cmeta_fs_root_rename(
+    const cmeta_fs_root_t *source_root, const char *source_path,
+    const cmeta_fs_root_t *target_root, const char *target_path) {
+  char source_name[SALTS_FS_ROOT_COMPONENT_MAX];
+  char target_name[SALTS_FS_ROOT_COMPONENT_MAX];
+#ifdef _WIN32
+  HANDLE source_parent = INVALID_HANDLE_VALUE, target_parent = INVALID_HANDLE_VALUE;
+  HANDLE source = INVALID_HANDLE_VALUE;
+  bool source_owned = false, target_owned = false;
+  int rc = cmeta_fs_root_open_parent_win(source_root, source_path,
+      &source_parent, &source_owned, source_name);
+  if (!rc) rc = cmeta_fs_root_open_parent_win(target_root, target_path,
+      &target_parent, &target_owned, target_name);
+  if (!rc) rc = cmeta_fs_root_open_component_win(source_parent, source_name,
+      DELETE | SYNCHRONIZE, FILE_OPEN, 0, FILE_ATTRIBUTE_NORMAL, true, &source);
+  if (!rc) {
+    WCHAR wide[SALTS_FS_ROOT_COMPONENT_MAX];
+    USHORT length = 0;
+    rc = cmeta_fs_root_utf8_component_to_wide(target_name, wide, &length);
+    if (!rc) {
+      size_t size = offsetof(FILE_RENAME_INFO, FileName) + length + sizeof(WCHAR);
+      FILE_RENAME_INFO *info = (FILE_RENAME_INFO *)calloc(1, size);
+      if (!info) rc = -ENOMEM;
+      else {
+        info->ReplaceIfExists = TRUE;
+        info->RootDirectory = target_parent;
+        info->FileNameLength = length;
+        memcpy(info->FileName, wide, length);
+        /* Preserve the admitted parent HANDLE all the way to the NT operation.
+         * Win32 path normalization is not part of this capability boundary. */
+        IO_STATUS_BLOCK io = {0};
+        NTSTATUS status = cmeta_fs_root_nt_set_information(source, &io, info,
+            (ULONG)size, (FILE_INFORMATION_CLASS)CMETA_FS_FILE_RENAME_INFORMATION);
+        if (status < 0) rc = cmeta_fs_root_nt_error(status);
+        free(info);
+      }
+    }
+  }
+  if (source != INVALID_HANDLE_VALUE) CloseHandle(source);
+  if (source_owned) CloseHandle(source_parent);
+  if (target_owned) CloseHandle(target_parent);
+  return rc;
+#else
+  int source_parent = -1, target_parent = -1;
+  int rc = cmeta_fs_root_open_parent_posix(source_root, source_path,
+      &source_parent, source_name);
+  if (!rc) rc = cmeta_fs_root_open_parent_posix(target_root, target_path,
+      &target_parent, target_name);
+  if (!rc && renameat(source_parent, source_name, target_parent, target_name))
+    rc = -errno;
+  if (source_parent >= 0) close(source_parent);
+  if (target_parent >= 0) close(target_parent);
+  return rc;
+#endif
 }
 
 int cmeta_fs_root_file_stat(

@@ -565,6 +565,19 @@ SALTS_C_API int64_t cmeta_fs_root_file_tell(cmeta_fs_root_file_t *file);
 SALTS_C_API int cmeta_fs_root_file_stat(
     const cmeta_fs_root_file_t *file, cmeta_fs_stat_t *out_stat);
 
+#define SALTS_FS_ROOT_MUTATION_VERSION 1
+/* Root-file-open only: requires O_CREAT, fails with EEXIST without truncation. */
+#define SALTS_FS_ROOT_O_EXCL 0x0800
+/* Toggle append without reopening. Single owner; returns 0 or negative errno,
+ * preserving flags on failure. Each append write targets EOF atomically. */
+SALTS_C_API int cmeta_fs_root_file_set_append(cmeta_fs_root_file_t *file, bool append);
+/* Atomically rename/replace between admitted roots. Parent components never
+ * follow links; a final link is moved as an entry. Returns 0 or negative errno,
+ * including -EXDEV across filesystems. Open handles retain their identities. */
+SALTS_C_API int cmeta_fs_root_rename(
+    const cmeta_fs_root_t *source_root, const char *source_path,
+    const cmeta_fs_root_t *target_root, const char *target_path);
+
 /*
  * stat is secure no-follow in capability v1: a final symlink/reparse point
  * returns -ELOOP. lstat reports the final link itself. Intermediate links are

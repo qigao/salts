@@ -519,3 +519,28 @@ Qualification covers IPv4/IPv6, empty/oversized messages, peer replacement,
 terminal pause, numeric/Unicode/invalid names, ordered results, bounded failures
 and stale/cross-owner handles. Additive callers relink; old callers retain their
 behavior. Disabling the optional adapter is the rollback boundary.
+
+## Root-relative filesystem mutation for C guests
+
+WASI command guests need atomic exclusive creation, rename and append flag
+changes on existing handles. Ambient `cmeta_fs_rename` and reopening a path
+cannot preserve the admitted-root authority or open-file identity. The secure
+root API therefore adds `SALTS_FS_ROOT_MUTATION_VERSION`, the root-only
+`SALTS_FS_ROOT_O_EXCL` flag, `cmeta_fs_root_rename` and
+`cmeta_fs_root_file_set_append`. Existing API layouts remain unchanged; new
+consumers require relinking against a matching SDK.
+
+POSIX rename walks both parents using the existing no-follow descriptor walker,
+then calls renameat. Windows retains both directory HANDLEs and invokes native
+FileRenameInformation, moving the final entry without resolving it as a path.
+There is no path-string or copy/delete fallback. Across filesystems, failure is
+EXDEV. All acquired parent/source handles are released on every exit path.
+
+POSIX append mutation uses F_GETFL/F_SETFL. Windows records append state in the
+private file owner and uses WriteFile's atomic EOF offset for each append write.
+Open access rights are retained when flags change. Calls use the existing
+single-owner file contract; no independent cache of file positions is added.
+Exclusive creation maps to O_EXCL or FILE_CREATE and never truncates an existing
+entry. Errors remain negative errno; successful rename retains existing open
+file identities. Tests cover exclusive collision, append on/off, replacement,
+retained handles and invalid destination paths.
