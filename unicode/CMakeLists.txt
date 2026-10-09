@@ -12,6 +12,33 @@ foreach(_table IN ITEMS "${RE2C_UNICODE_PROPERTIES}" "${RE2C_UNICODE_CATEGORIES}
     message(FATAL_ERROR "Required Unicode 17 re2c table is missing: ${_table}")
   endif()
 endforeach()
+# Generated Unicode 17 semantics cannot silently change when the *latest* re2c
+# tool package upgrades. These content hashes are for the Unicode 17.0.0
+# upstream re2c 4.6 stdlib data, not a pin on the re2c tool package version.
+# Normalize Windows CRLF (Git checkout) to canonical LF before hashing.
+file(READ "${RE2C_UNICODE_PROPERTIES}" _unicode17_properties)
+string(REPLACE "\r\n" "\n" _unicode17_properties "${_unicode17_properties}")
+string(SHA256 _unicode17_properties_sha256 "${_unicode17_properties}")
+if(NOT _unicode17_properties_sha256 STREQUAL
+       "56b5f16e4e516a598125760ee7f4fae60a5db6727b8cf3dfb5f020152ef2aa21")
+  message(FATAL_ERROR
+    "re2c Unicode property database differs from canonical Unicode 17.0.0; "
+    "explicit data/API/conformance upgrade required")
+endif()
+file(READ "${RE2C_UNICODE_CATEGORIES}" _unicode17_categories)
+string(REPLACE "\r\n" "\n" _unicode17_categories "${_unicode17_categories}")
+string(SHA256 _unicode17_categories_sha256 "${_unicode17_categories}")
+if(NOT _unicode17_categories_sha256 STREQUAL
+       "3d0a319806e42a7b476f9d474c104f7e734c42eeab8fb36b2b82591cd55b0689")
+  message(FATAL_ERROR
+    "re2c Unicode category database differs from canonical Unicode 17.0.0; "
+    "explicit data/API/conformance upgrade required")
+endif()
+unset(_unicode17_properties)
+unset(_unicode17_categories)
+unset(_unicode17_properties_sha256)
+unset(_unicode17_categories_sha256)
+
 execute_process(
   COMMAND "${RE2C_EXECUTABLE}" --version
   RESULT_VARIABLE _re2c_exit

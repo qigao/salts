@@ -71,6 +71,14 @@ trim/XID 整体操作按输入 bytes 为 O(n) 时间、O(1) 额外空间。
 
 ## 构建依赖与数据版本
 
+Unicode 17 的 build-time re2c 属性事实源固定为上游 re2c 4.6 的
+`unicode_properties.re` / `unicode_categories.re`。构建配置使用规范化 LF
+后的 SHA-256 验证两个数据文件（分别为 `56b5f16e…2aa21` 和
+`3d0a3198…5b0689`）。re2c 工具继续来自最新版构建工具包，不固定软件包
+版本；如果未来工具携带 Unicode 18 等不同分类表，将 **fail fast**，
+必须显式升级 Unicode 数据、ABI 版本和官方 conformance 测试，绝不静默漂移。
+
+
 构建需要 re2c 4.6 或更新版本，以及它安装的 `unicode_properties.re`。使用 re2c 4.6
 基于 Unicode 17.0.0 生成的数据；不接受随日期变化的 `latest`：
 
