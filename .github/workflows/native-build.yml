@@ -44,6 +44,7 @@ jobs:
       - name: Prepare build host
         uses: ./.github/actions/setup-build-host
       - name: Restore native compiler cache
+        id: compiler_cache
         uses: ./.github/actions/setup-compiler-cache
         with:
           profile: ${{ matrix.id }}
@@ -941,3 +942,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 1
+
+      - name: Report ccache compilation statistics
+        if: ${{ always() && steps.compiler_cache.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          ccache --show-stats
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
