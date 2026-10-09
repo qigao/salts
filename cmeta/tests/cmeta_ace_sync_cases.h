@@ -175,6 +175,22 @@ static void ace_sync_tls_run(void *user) {
     ace_sync_tls_counter = 0;
 }
 
+/* A TLS pointer cannot carry an implicit cross-thread borrow. Model its
+ * lifetime using the existing Platform thread-affine state, not by comparing
+ * cached OS thread tokens after a worker exits. */
+typedef struct ace_sync_tls_borrow_probe {
+    cmeta_thread_affine_state affinity;
+    int value;
+    int foreign_status;
+} ace_sync_tls_borrow_probe;
+static void ace_sync_tls_foreign_borrow(void *user) {
+    ace_sync_tls_borrow_probe *probe =
+        ACE_SYNC_CAST(ace_sync_tls_borrow_probe *, user);
+    int status = cmeta_thread_affine_check(&probe->affinity, probe);
+    probe->foreign_status = status;
+    if (status == SALTS_OK) ++probe->value;
+}
+
 /* POSA2 Wrapper Facade: typed, test-local Platform mutex resource with
  * explicit open/use/close admission and no disguised runtime ownership.
  * Native mutex operations only occur while the facade is live. */
@@ -390,6 +406,21 @@ suite("CMeta ACE concurrent pattern composition") {
         cmeta_once(&ace_sync_once_guard, ace_sync_once_initialize);
         check_equal(ace_sync_once_value, 0x5a17);
         check_equal(ace_sync_once_calls, 1);
+    }
+
+    it("rejects a cross-thread borrowed TLS owner before touching state") {
+        ace_sync_tls_borrow_probe probe = {0};
+        cmeta_thread_t thread = NULL;
+        probe.value = 23;
+        probe.foreign_status = SALTS_OK;
+        check_equal(cmeta_thread_affine_init(&probe.affinity, &probe), SALTS_OK);
+        check_equal(cmeta_thread_create(&thread, ace_sync_tls_foreign_borrow,
+                                        &probe), 0);
+        check_equal(cmeta_thread_join(&thread), 0);
+        check_equal(probe.foreign_status, SALTS_EINVAL);
+        check_equal(probe.value, 23);
+        check_equal(cmeta_thread_affine_check(&probe.affinity, &probe), SALTS_OK);
+        check_equal(cmeta_thread_affine_reset(&probe.affinity, &probe), SALTS_OK);
     }
 
     it("isolates real Thread-Specific Storage across native workers and nested calls") {
