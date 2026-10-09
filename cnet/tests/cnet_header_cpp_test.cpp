@@ -4,6 +4,7 @@
 #include <cnet/owner_placement.h>
 #include <cnet/destination_policy.h>
 #include <cnet/recovery_policy.h>
+#include <cnet/managed_dial.h>
 static_assert(CNET_MANAGER_VERSION == 1u, "manager capability is versioned");
 #include <cnet/ipc.h>
 #include <cnet/websocket.h>
@@ -13,6 +14,11 @@ static_assert(CNET_MANAGER_VERSION == 1u, "manager capability is versioned");
 #include <cstdint>
 #include <type_traits>
 
+static_assert(std::is_standard_layout<cnet_managed_dial_config>::value,
+              "Managed dial config is C ABI");
+static_assert(std::is_standard_layout<cnet_managed_dial_snapshot>::value,
+              "Managed dial observation is C ABI");
+static_assert(CNET_MANAGED_DIAL_VERSION == 1u, "Managed dial has versioned ABI");
 static_assert(std::is_standard_layout<cnet_reconnect_state>::value,
               "Reconnect descriptor remains pure owner-owned C data");
 static_assert(std::is_standard_layout<cnet_retry_input>::value,
