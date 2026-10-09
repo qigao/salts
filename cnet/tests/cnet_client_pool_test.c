@@ -1,5 +1,6 @@
 #include <cnet/client_pool.h>
 #include <salts/thread.h>
+#include <salts/clock.h>
 #include <tinytest.h>
 #include <stdio.h>
 #include <string.h>
@@ -60,6 +61,22 @@ static cnet_managed_connection bind_manager(size_t index) {
   check_equal(cnet_manager_connect(&test_manager, records[index], &options, &connection), SALTS_OK);
   check(connection.slot != 0u);
   return records[index];
+}
+static void finish_managed_connection(cnet_managed_connection managed) {
+  cnet_manager_entry entry = {0};
+  int status = cnet_manager_lookup(&test_manager, managed, &entry);
+  const uint64_t deadline = cmeta_monotonic_ms() + 3000u;
+  check_equal(status, SALTS_OK);
+  if (entry.state == CNET_MANAGER_BOUND) {
+    status = cnet_close(&test_client, entry.connection);
+    check(status == SALTS_OK || status == SALTS_EALREADY || status == SALTS_ENOENT);
+  }
+  while (entry.state != CNET_MANAGER_RETIRED && cmeta_monotonic_ms() < deadline) {
+    size_t events = 0u;
+    check_equal(cnet_client_poll(&test_client, 1u, &events), SALTS_OK);
+    check_equal(cnet_manager_lookup(&test_manager, managed, &entry), SALTS_OK);
+  }
+  check_equal(entry.state, CNET_MANAGER_RETIRED);
 }
 typedef struct protocol_probe { size_t used, released; } protocol_probe;
 static int reserve_protocol(void *arg, cnet_managed_connection managed, uint64_t *token) {
@@ -161,6 +178,8 @@ spec("CNet owner-local client pool") {
     check_equal(cnet_pool_try_acquire(&test_pool, &key, NULL, &reused, &managed), SALTS_ENOBUFS);
     check_equal(cnet_pool_release(&test_pool, lease), SALTS_OK);
     check_equal(cnet_pool_release(&test_pool, lease), SALTS_ENOENT);
+    check_equal(cnet_pool_terminal(&test_pool, physical), SALTS_EBUSY);
+    finish_managed_connection(bound);
     check_equal(cnet_pool_terminal(&test_pool, physical), SALTS_OK);
     check_equal(cnet_pool_get_snapshot(&test_pool, &(cnet_pool_snapshot){0}), SALTS_OK);
   }
@@ -168,19 +187,22 @@ spec("CNet owner-local client pool") {
     cnet_pool_key key = pool_key(7u);
     cnet_pool_connection physical = {0};
     cnet_pool_lease a = {0}, b = {0}, c = {0};
-    cnet_managed_connection managed = {0};
+    cnet_managed_connection managed = {0}, bound = {0};
     protocol_probe probe = {0};
     const cnet_pool_protocol_ops ops = {reserve_protocol, release_protocol, &probe};
     cnet_pool_snapshot snapshot;
     check_equal(cnet_pool_reserve_connecting(&test_pool, &key, &physical), SALTS_OK);
-    managed = bind_manager(0u);
-    check_equal(cnet_pool_bind_ready(&test_pool, physical, managed, 2u), SALTS_OK);
+    bound = bind_manager(0u);
+    check_equal(cnet_pool_bind_ready(&test_pool, physical, bound, 2u), SALTS_OK);
     check_equal(cnet_pool_try_acquire(&test_pool, &key, NULL, &c, &managed), SALTS_ENOTSUP);
     check_equal(cnet_pool_try_acquire(&test_pool, &key, &ops, &a, &managed), SALTS_OK);
     check_equal(cnet_pool_try_acquire(&test_pool, &key, &ops, &b, &managed), SALTS_OK);
     check_equal(cnet_pool_try_acquire(&test_pool, &key, &ops, &c, &managed), SALTS_ENOBUFS);
     check_equal(cnet_pool_begin_drain(&test_pool, physical), SALTS_OK);
     check_equal(cnet_pool_try_acquire(&test_pool, &key, &ops, &c, &managed), SALTS_ENOBUFS);
+    check_equal(cnet_pool_terminal(&test_pool, physical), SALTS_EBUSY);
+    /* Failed acquire clears its out_managed; keep authoritative Manager handle. */
+    finish_managed_connection(bound);
     check_equal(cnet_pool_terminal(&test_pool, physical), SALTS_OK);
     check_equal(cnet_pool_get_snapshot(&test_pool, &snapshot), SALTS_OK);
     check_equal(snapshot.terminal_waiting_for_leases, (size_t)1u);
@@ -190,6 +212,23 @@ spec("CNet owner-local client pool") {
     check_equal(probe.released, (size_t)2u);
     check_equal(cnet_pool_get_snapshot(&test_pool, &snapshot), SALTS_OK);
     check(snapshot.drained);
+  }
+  it("rejects stale READY admission after Manager terminal before pool notification") {
+    cnet_pool_key key = pool_key(32u);
+    cnet_pool_connection physical = {0};
+    cnet_pool_lease lease = {0};
+    cnet_managed_connection bound, managed = {0};
+    cnet_pool_snapshot snapshot;
+    check_equal(cnet_pool_reserve_connecting(&test_pool, &key, &physical), SALTS_OK);
+    bound = bind_manager(0u);
+    check_equal(cnet_pool_bind_ready(&test_pool, physical, bound, 1u), SALTS_OK);
+    finish_managed_connection(bound);
+    check_equal(cnet_pool_try_acquire(&test_pool, &key, NULL, &lease, &managed),
+                SALTS_ENOBUFS);
+    check_equal(lease.slot, (size_t)0u);
+    check_equal(cnet_pool_get_snapshot(&test_pool, &snapshot), SALTS_OK);
+    check_equal(snapshot.draining, (size_t)1u);
+    check_equal(cnet_pool_terminal(&test_pool, physical), SALTS_OK);
   }
   it("seals without destroying a still-owned transport") {
     cnet_pool_key key = pool_key(17u);

@@ -105,7 +105,9 @@ int cnet_pool_bind_ready(cnet_client_pool *pool, cnet_pool_connection connection
 
 /* No queue and no implicit dial. On success reserve a unique generation-safe
  * lease and, when supplied, an authoritative protocol slot. Returns ENOBUFS
- * when no ready compatible slot has both physical and protocol capacity. */
+ * when no ready compatible slot has both physical and protocol capacity.
+ * Manager identity is rechecked at admission: an asynchronously RETIRED or
+ * recycled physical connection is marked draining, never leased again. */
 int cnet_pool_try_acquire(cnet_client_pool *pool, const cnet_pool_key *key,
                           const cnet_pool_protocol_ops *protocol,
                           cnet_pool_lease *out_lease,
@@ -114,7 +116,11 @@ int cnet_pool_release(cnet_client_pool *pool, cnet_pool_lease lease);
 
 /* Disable future acquisition (including when currently leased), but neither
  * close the transport nor free borrowed protocol storage. Caller closes via
- * CNet/Manager and calls terminal on the real terminal callback. */
+ * CNet/Manager and calls terminal on the real terminal callback.
+ * READY entries cannot be declared terminal while Manager is still BOUND:
+ * terminal returns EBUSY and leaves the physical record unchanged. A
+ * CONNECTING entry with no binding can be aborted, but the caller must first
+ * cancel any separately admitted Manager reservation. */
 int cnet_pool_begin_drain(cnet_client_pool *pool, cnet_pool_connection connection);
 int cnet_pool_terminal(cnet_client_pool *pool, cnet_pool_connection connection);
 
