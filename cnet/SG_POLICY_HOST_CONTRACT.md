@@ -104,3 +104,40 @@ multi-RID installed SDK and equivalent workload benchmarks under
 Do not interpret this fixture as shipping a CNet Configurator API or a
 production combined Server/Client manager. Stable 2.3 release and candidate
 publication are **separate review decisions**.
+
+## Cross-Owner handoff (Phase 3, experimental)
+
+[Draft PR #1085](https://github.com/qigao/salts/pull/1085) also adds
+[cnet_sg_handoff_owner_test.c](tests/cnet_sg_handoff_owner_test.c).
+This is a **different topology** from same-shard Server/Client:
+SG Owner 0 owns the listener plus outbound CNet, while Owner 1 owns the
+adopted inbound CNet connection and its CNetManager.
+
+The source Owner's **real externally observed accept completion** is followed
+by a single pure `cnet_owner_placement_choose` selecting Owner 1, then
+`cnet_listener_accept_detached`, the destination's bounded
+`cnet_handoff_reserve` and `cnet_handoff_publish`. A full credit budget
+rejects a second reserve; stale ticket publication fails with the detached
+descriptor still owned by the source. Once published, its socket and credit
+belong to the inbox, and the producer **must never** release or republish
+them, even if the explicit nonblocking SG notification to Owner 1 is full.
+
+Only Owner 1 takes the ticket, makes a real `cnet_manager_reserve`, proves
+the separate manager credit cannot be oversubscribed, and calls
+`cnet_manager_adopt` with the move-only stream. All CNet callbacks run on
+the final Owner. An actual bidirectional 4-byte application exchange is
+verified on both shards before closing either connection. Both terminal
+callbacks then run, the Manager's real on_recycle retires the transport,
+and only **after** that does the target release the TAKEN handoff ticket.
+After owner/backend quiescence the caller seals/destroys the inbox and
+shuts down SG. There is no cross-shard socket migration *after* adoption
+and no per-packet placement, Actor or duplicate NativeIO observe.
+
+Exact-head CI result **pending**. The negative paths exercised in this
+fixture are bounded credit denial and rejected stale publish, plus
+double-release protection after real terminal. Additional rejection
+at actual `manager_adopt` (full transport, TLS init errors), publish-vs-
+seal races, backpressure across multiple accepted connections, competing
+listeners, failed notification during shutdown and fault-isolated
+neighbor consumers remain separate #1052/#1056/#1057 gates. Do not mark
+the remote handoff product interface fully qualified from a single loopback.
