@@ -187,13 +187,13 @@ spec("CNet owner-local client pool") {
     cnet_pool_key key = pool_key(7u);
     cnet_pool_connection physical = {0};
     cnet_pool_lease a = {0}, b = {0}, c = {0};
-    cnet_managed_connection managed = {0};
+    cnet_managed_connection managed = {0}, bound = {0};
     protocol_probe probe = {0};
     const cnet_pool_protocol_ops ops = {reserve_protocol, release_protocol, &probe};
     cnet_pool_snapshot snapshot;
     check_equal(cnet_pool_reserve_connecting(&test_pool, &key, &physical), SALTS_OK);
-    managed = bind_manager(0u);
-    check_equal(cnet_pool_bind_ready(&test_pool, physical, managed, 2u), SALTS_OK);
+    bound = bind_manager(0u);
+    check_equal(cnet_pool_bind_ready(&test_pool, physical, bound, 2u), SALTS_OK);
     check_equal(cnet_pool_try_acquire(&test_pool, &key, NULL, &c, &managed), SALTS_ENOTSUP);
     check_equal(cnet_pool_try_acquire(&test_pool, &key, &ops, &a, &managed), SALTS_OK);
     check_equal(cnet_pool_try_acquire(&test_pool, &key, &ops, &b, &managed), SALTS_OK);
@@ -201,7 +201,8 @@ spec("CNet owner-local client pool") {
     check_equal(cnet_pool_begin_drain(&test_pool, physical), SALTS_OK);
     check_equal(cnet_pool_try_acquire(&test_pool, &key, &ops, &c, &managed), SALTS_ENOBUFS);
     check_equal(cnet_pool_terminal(&test_pool, physical), SALTS_EBUSY);
-    finish_managed_connection(managed);
+    /* Failed acquire clears its out_managed; keep authoritative Manager handle. */
+    finish_managed_connection(bound);
     check_equal(cnet_pool_terminal(&test_pool, physical), SALTS_OK);
     check_equal(cnet_pool_get_snapshot(&test_pool, &snapshot), SALTS_OK);
     check_equal(snapshot.terminal_waiting_for_leases, (size_t)1u);
