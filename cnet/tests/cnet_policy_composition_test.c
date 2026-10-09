@@ -16,7 +16,7 @@ static cnet_client_pool pool;
 static cnet_pool_connection physical;
 static cnet_pool_lease lease;
 static cnet_pool_key key;
-static cnet_websocket_transport link;
+static cnet_websocket_transport ws_transport;
 static cnet_websocket *ws;
 static mem_buffer_t *output;
 static cnet_connection outgoing, accepted[3];
@@ -92,7 +92,7 @@ static int admit(void *u) {
   ++gate_calls;
   check_warn(cnet_managed_dial_advance(&dial, cmeta_monotonic_ms(), &wait) == SALTS_EBUSY);
   check_warn(cnet_managed_dial_seal(&dial) == SALTS_EBUSY);
-  if (link.impl != NULL || lease.slot != 0u) return SALTS_EBUSY;
+  if (ws_transport.impl != NULL || lease.slot != 0u) return SALTS_EBUSY;
   if (physical.slot == 0u) return cnet_pool_reserve_connecting(&pool, &key, &physical);
   return SALTS_OK;
 }
@@ -143,8 +143,8 @@ static int bind_ws(void) {
   cnet_websocket_config c = ws_config();
   const cnet_websocket_tagged_policy p = {sizeof(p), CNET_WEBSOCKET_TAGGED_SEND_VERSION, 3u, tag_cb,
                                           NULL};
-  int rc = cnet_websocket_transport_init(&link, &client, outgoing, &c, &p);
-  if (rc == SALTS_OK) rc = cnet_websocket_transport_session(&link, &ws);
+  int rc = cnet_websocket_transport_init(&ws_transport, &client, outgoing, &c, &p);
+  if (rc == SALTS_OK) rc = cnet_websocket_transport_session(&ws_transport, &ws);
   return rc;
 }
 static mem_buffer_t *bytes(const void *data, size_t n) {
@@ -165,7 +165,7 @@ static void wait_tag(void) {
   size_t events;
   while (tags == 0u && cmeta_monotonic_ms() < until) {
     progress();
-    check_equal(cnet_websocket_transport_advance(&link, 2u, &events), SALTS_OK);
+    check_equal(cnet_websocket_transport_advance(&ws_transport, 2u, &events), SALTS_OK);
   }
   check_equal(tags, 1u);
 }
@@ -265,9 +265,9 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     if (dial.impl != NULL) check_warn(cnet_managed_dial_seal(&dial) == SALTS_OK);
     if (client.impl != NULL) check_warn(cnet_client_stop(&client, WAIT_MS) == SALTS_OK);
     if (peers.impl != NULL) check_warn(cnet_client_stop(&peers, WAIT_MS) == SALTS_OK);
-    if (link.impl != NULL) {
-      (void)cnet_websocket_transport_advance(&link, 8u, &events);
-      check_warn(cnet_websocket_transport_destroy(&link) == SALTS_OK);
+    if (ws_transport.impl != NULL) {
+      (void)cnet_websocket_transport_advance(&ws_transport, 8u, &events);
+      check_warn(cnet_websocket_transport_destroy(&ws_transport) == SALTS_OK);
     }
     if (lease.slot != 0u) {
       check_warn(cnet_pool_release(&pool, lease) == SALTS_OK);
@@ -303,7 +303,7 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     const uint64_t until = cmeta_monotonic_ms() + WAIT_MS;
     send_raw(outgoing, "HTTP!", 5u); /* Equal to one encoded WS frame's size. */
     check_equal(bind_ws(), SALTS_EBUSY);
-    check_null(link.impl);
+    check_null(ws_transport.impl);
     while ((raw_sends != 1u || received != 5u) && cmeta_monotonic_ms() < until)
       progress();
     check_equal(raw_sends, 1u);
@@ -314,7 +314,7 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     mem_buffer_release(b);
     check_equal(cnet_websocket_send_tagged(ws, CNET_WEBSOCKET_MESSAGE_BINARY, "abc", 3u, 7u),
                 SALTS_OK);
-    check_equal(cnet_websocket_transport_advance(&link, 1u, &events), SALTS_OK);
+    check_equal(cnet_websocket_transport_advance(&ws_transport, 1u, &events), SALTS_OK);
     check_equal(tags, 0u);
     wait_tag();
     while (received != 10u && cmeta_monotonic_ms() < until)
@@ -340,7 +340,7 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     send_raw(neighbor, "n", 1u);
     check_equal(cnet_websocket_send_tagged(ws, CNET_WEBSOCKET_MESSAGE_BINARY, "abc", 3u, 8u),
                 SALTS_OK);
-    check_equal(cnet_websocket_transport_advance(&link, 1u, &events), SALTS_OK);
+    check_equal(cnet_websocket_transport_advance(&ws_transport, 1u, &events), SALTS_OK);
     check_equal(events, 0u);
     check_equal(tags, 0u);
     cnet_websocket_state state;
@@ -352,7 +352,7 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     const uint64_t until = cmeta_monotonic_ms() + WAIT_MS;
     while (received < 7u && cmeta_monotonic_ms() < until) {
       progress();
-      check_equal(cnet_websocket_transport_advance(&link, 1u, &events), SALTS_OK);
+      check_equal(cnet_websocket_transport_advance(&ws_transport, 1u, &events), SALTS_OK);
     }
     check_equal(tags, 1u);
     check_equal(raw_sends, 2u);
@@ -372,24 +372,24 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     send_raw(neighbor, "n", 1u);
     check_equal(cnet_websocket_send_tagged(ws, CNET_WEBSOCKET_MESSAGE_BINARY, "abc", 3u, 12u),
                 SALTS_OK);
-    check_equal(cnet_websocket_transport_advance(&link, 1u, &events), SALTS_OK);
+    check_equal(cnet_websocket_transport_advance(&ws_transport, 1u, &events), SALTS_OK);
     check_equal(events, 0u);
     check(cnet_websocket_has_pending_output(ws));
     check_equal(cnet_client_stop(&client, WAIT_MS), SALTS_OK);
     check_equal(tags, 0u);
-    check_equal(cnet_websocket_transport_advance(&link, 1u, &events), SALTS_OK);
+    check_equal(cnet_websocket_transport_advance(&ws_transport, 1u, &events), SALTS_OK);
     check_equal(tags, 1u);
     check_equal(last_tag, UINT64_C(12));
     check_equal(tag_status, SALTS_ECANCELED);
-    check_equal(cnet_websocket_transport_destroy(&link), SALTS_OK);
+    check_equal(cnet_websocket_transport_destroy(&ws_transport), SALTS_OK);
   }
   it("settles cancelled native writes before logical callbacks and prevents early reuse") {
     size_t events;
     check_equal(bind_ws(), SALTS_OK);
     check_equal(cnet_websocket_send_tagged(ws, CNET_WEBSOCKET_MESSAGE_BINARY, "abcdef", 6u, 9u),
                 SALTS_OK);
-    check_equal(cnet_websocket_transport_advance(&link, 1u, &events), SALTS_OK);
-    check_equal(cnet_websocket_transport_destroy(&link), SALTS_EBUSY);
+    check_equal(cnet_websocket_transport_advance(&ws_transport, 1u, &events), SALTS_OK);
+    check_equal(cnet_websocket_transport_destroy(&ws_transport), SALTS_EBUSY);
     check_equal(cnet_close(&client, outgoing), SALTS_OK);
     const uint64_t until = cmeta_monotonic_ms() + WAIT_MS;
     while (terminals == 0u && cmeta_monotonic_ms() < until)
@@ -397,12 +397,12 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     check_equal(terminals, 1u);
     check_equal(tags, 0u);
     check_equal(raw_sends, 0u);
-    check_equal(cnet_websocket_transport_destroy(&link), SALTS_EBUSY);
-    int rc = cnet_websocket_transport_advance(&link, 1u, &events);
+    check_equal(cnet_websocket_transport_destroy(&ws_transport), SALTS_EBUSY);
+    int rc = cnet_websocket_transport_advance(&ws_transport, 1u, &events);
     check(rc == SALTS_OK || rc == SALTS_ECANCELED);
     check_equal(tags, 1u);
     check_equal(tag_status, SALTS_ECANCELED);
-    check_equal(cnet_websocket_transport_destroy(&link), SALTS_OK);
+    check_equal(cnet_websocket_transport_destroy(&ws_transport), SALTS_OK);
   }
   it("blocks replacement dial until old WS and leases settle and real pool capacity is reserved") {
     cnet_managed_dial_snapshot s;
@@ -433,8 +433,8 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     check_equal(wait, UINT64_C(1));
     check_equal(cnet_managed_dial_advance(&dial, eligible, &wait), SALTS_EBUSY);
     check_equal(cnet_pool_terminal(&pool, physical), SALTS_OK);
-    check_equal(cnet_websocket_transport_advance(&link, 1u, &events), SALTS_OK);
-    check_equal(cnet_websocket_transport_destroy(&link), SALTS_OK);
+    check_equal(cnet_websocket_transport_advance(&ws_transport, 1u, &events), SALTS_OK);
+    check_equal(cnet_websocket_transport_destroy(&ws_transport), SALTS_OK);
     check_equal(cnet_managed_dial_advance(&dial, eligible, &wait), SALTS_EBUSY); /* lease remains */
     check_equal(cnet_pool_release(&pool, lease), SALTS_OK);
     lease = (cnet_pool_lease){0};
@@ -463,17 +463,17 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     check_equal(cnet_websocket_send_tagged(ws, CNET_WEBSOCKET_MESSAGE_BINARY,
                                            "abcdefghijklmnopqrstuvwx", 24u, 11u),
                 SALTS_OK);
-    check_equal(cnet_websocket_transport_advance(&link, 1u, &events), SALTS_OK);
+    check_equal(cnet_websocket_transport_advance(&ws_transport, 1u, &events), SALTS_OK);
     while (terminals == 0u && cmeta_monotonic_ms() < until) {
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       check_equal(cnet_manager_advance(&manager, 2u, &work), SALTS_OK);
-      (void)cnet_websocket_transport_advance(&link, 1u, &events);
+      (void)cnet_websocket_transport_advance(&ws_transport, 1u, &events);
     }
     check_equal(terminals, 1u);
     check_equal(tags, 1u);
     check_not_equal(tag_status, SALTS_OK);
     check_equal(raw_sends, 0u);
-    check_equal(cnet_websocket_transport_destroy(&link), SALTS_OK);
+    check_equal(cnet_websocket_transport_destroy(&ws_transport), SALTS_OK);
   }
   it("rejects impossible encoded frame budgets before binding the connection") {
     cnet_websocket_config c = ws_config();
@@ -481,8 +481,8 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     c.max_message_bytes = SEND_BYTES;
     const cnet_websocket_tagged_policy p = {sizeof(p), CNET_WEBSOCKET_TAGGED_SEND_VERSION, 3u,
                                             tag_cb, NULL};
-    check_equal(cnet_websocket_transport_init(&link, &client, outgoing, &c, &p), SALTS_EMSGSIZE);
-    check_null(link.impl);
+    check_equal(cnet_websocket_transport_init(&ws_transport, &client, outgoing, &c, &p), SALTS_EMSGSIZE);
+    check_null(ws_transport.impl);
     check_equal(bind_ws(), SALTS_OK);
   }
 }
