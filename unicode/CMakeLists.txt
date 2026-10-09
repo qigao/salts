@@ -80,7 +80,7 @@ install(
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(FILES include/salts_unicode.h DESTINATION include/unicode)
 install(FILES data/LICENSE.txt
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/salts_unicode)
+        DESTINATION share/licenses/salts_unicode)
 
 if(BUILD_TESTS)
   add_subdirectory(test)
