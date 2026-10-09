@@ -77,7 +77,7 @@ jobs:
             family: mac
             backend: kqueue
             artifact: macos-kqueue
-            build_dir: build/mac-arm64-gcc-release
+            build_dir: build/mac-arm64-appleclang-package-release
             build_artifact: macos-release
     steps:
       - uses: actions/checkout@v6
