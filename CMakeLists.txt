@@ -32,8 +32,8 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if(MSVC)
-  # MSVC accepts either prefix. sccache 0.18 treats an unknown slash switch
-  # as an input filename; the dash spelling preserves the option and caching.
+  # Keep the accepted dash spelling for C11 atomics through the ccache
+  # MSVC compiler launcher; do not rely on slash-option reinterpretation.
   add_compile_options("$<$<COMPILE_LANGUAGE:C>:-experimental:c11atomics>")
 endif()
 # Enable folder organization in IDEs
