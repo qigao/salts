@@ -2337,6 +2337,10 @@ cmeta_status cmeta_data_temp_open(const cmeta_data_desc *desc, size_t max_bytes,
     padded = (extent + alignment - 1u) & ~(alignment - 1u);
 #if defined(_MSC_VER)
     storage = _aligned_malloc(padded, alignment);
+#elif defined(__wasm__)
+    /* A Wasm C11 libc need not expose POSIX. padded is an alignment multiple,
+     * and the result has the ordinary free() lifetime used below. */
+    storage = aligned_alloc(alignment, padded);
 #else
     storage = NULL;
     if (posix_memalign(&storage, alignment, padded) != 0) storage = NULL;
