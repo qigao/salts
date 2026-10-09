@@ -38,6 +38,7 @@ static void observed_state(void *user, cnet_connection connection,
 
 int main(void) {
   cnet_client client = {0};
+  cnet_connection invalid_connection = {0};
   cnet_name_lookup lookup = {0};
   cnet_name_lookup_config lookup_config = {0};
   char ascii_name[256] = {0};
@@ -77,7 +78,7 @@ int main(void) {
   /* These calls use only the installed CNet shared library and SDK headers. */
   CHECK(CNET_NAME_LOOKUP_API_VERSION == 1u);
   CHECK(CNET_DATAGRAM_SOCKET_CONTROL_VERSION == 1u);
-  CHECK(cnet_connection_preserve_send_on_eof(&client, (cnet_connection){0}) == SALTS_ENOENT);
+  CHECK(cnet_connection_preserve_send_on_eof(&client, invalid_connection) == SALTS_ENOENT);
   CHECK(cnet_datagram_open_external(NULL, NULL, NULL, CNET_DATAGRAM_ADDRESS_IPV4) == SALTS_EINVAL);
   cnet_name_lookup_config_init(&lookup_config);
   CHECK(cnet_name_lookup_init(&lookup, &lookup_config) == SALTS_OK);
