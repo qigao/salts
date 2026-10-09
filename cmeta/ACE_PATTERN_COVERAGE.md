@@ -187,3 +187,29 @@ Primitive-only conformance (Wrapper Facade / Scoped Locking / safe Once-DCL / Th
 ## Cross-cutting non-POSA2 patterns
 
 Strategy = canonical Interface; Factory = FunctionDesc/FunctionAbi + ownership; Adapter = exact typed Interface mapping; Observer = callback Interface; Pipes and Filters = CFlow Graph. These remain essential **composition elements**, but do **not** increase the POSA2 17-pattern count.
+
+
+## Phase B exact-source checkpoint — 2026-10-09
+
+Latest completed ordinary [Salts CI #37875659581](https://github.com/qigao/salts/actions/runs/37875659581)
+**SUCCESS** at commit [`0524e216`](https://github.com/qigao/salts/commit/0524e2169c096d18d674278e91f3e29626d4f99c).
+The shared C11/C++17 ACE sync fixture now executes:
+
+- **Thread-Specific Storage:** real `SALTS_THREAD_LOCAL` per-worker isolation, nested access and explicit thread-exit cleanup (initial regression `cdb0a50`).
+- **Safe Once / DCL intent:** four concurrent Platform worker threads observe one safely published value via `cmeta_once`, with no data-racy historical DCL (`568feb3`).
+- **Scoped Locking:** an outer guard and failing inner typed synchronized gate, reverse lifecycle and duplicate-release rejection (`388a19c`).
+- **Wrapper Facade:** typed open/use/close around a real Platform mutex, invalid arguments, unchanged output on closed resource and explicit reopen (`0524e216`).
+
+This is **executable in-tree host conformance**, not proof of full installed-SDK,
+cross-thread borrow prevention, automatic TLS destructors, asynchronous
+use-after-close safety, or sanitizer freedom. The wrapper is deliberately
+quiescent-only, requiring joined users before close. The earlier table is a
+historical inventory; no pattern automatically becomes 17/17 QUALIFIED on
+the strength of this note.
+
+**Next qualification:** the existing opt-in `[ACE-SAN]` selector is used
+to run targeted ASan+UBSan/TSan against the latest branch head. The results
+must be checked against this documentation commit and the selected CTest
+scope; a normal host matrix is not a sanitizer run. Draft PR #1013 stays
+**DO NOT MERGE / DO NOT PUBLISH**, and all immutable SDK/downstream release
+gates remain independent under #1018.
