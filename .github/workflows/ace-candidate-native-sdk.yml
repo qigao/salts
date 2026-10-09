@@ -97,7 +97,7 @@ jobs:
           ctest --test-dir build/linux-gcc-release \
             --no-tests=error --output-on-failure --timeout 90
 
-      - name: Install SDK and verify 3.x rejection with executable 4.x consumer
+      - name: Install SDK and verify 2.2 rejection with executable 2.3 consumer
         shell: bash
         env:
           SDK_VERSION: ${{ steps.identity.outputs.sdk_version }}
@@ -115,7 +115,7 @@ jobs:
           grep -Fq 'set(PACKAGE_VERSION "2.3.0")' "$prefix/lib/cmake/Salts/SaltsConfigVersion.cmake"
           cnet_so="$(find "$prefix" -type f -name 'libcnet.so*' -print -quit)"
           test -n "$cnet_so" || { echo "missing versioned CNet shared library" >&2; exit 1; }
-          readelf -d "$cnet_so" | grep -Eq 'SONAME.*libcnet[.]so[.]4([^0-9]|$)'
+          readelf -d "$cnet_so" | grep -Eq 'SONAME.*libcnet[.]so[.]2[.]3([^0-9]|$)'
           grep -Fq 'SALTS_COMPONENT_CONTEXT_INIT' "$prefix/include/salts/component.h"
           grep -Fq 'owner_address' "$prefix/include/salts/component_plugin.h"
 
