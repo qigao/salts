@@ -2,7 +2,9 @@ name: Salts.Native ACE 2.3 candidate (Linux x64)
 
 # This workflow is isolated to the unmerged ACE integration branch.
 # It can publish only an immutable SHA-qualified prerelease, never a stable tag.
-# Explicit opt-in: put [ACE-CANDIDATE] in Draft PR #1013's title, then remove it.
+# [ACE-VERIFY] validates installed SDK and uploads an artifact without publishing.
+# [ACE-CANDIDATE] additionally requires full host matrix and publishes an immutable prerelease.
+# These markers are exclusive and must be removed after qualification.
 'on':
   pull_request:
     types: [opened, reopened, synchronize, edited]
@@ -26,7 +28,8 @@ jobs:
       github.event.pull_request.base.ref == 'master' &&
       github.event.pull_request.draft &&
       startsWith(github.event.pull_request.title, 'DO NOT MERGE') &&
-      contains(github.event.pull_request.title, '[ACE-CANDIDATE]')
+      (contains(github.event.pull_request.title, '[ACE-CANDIDATE]') || contains(github.event.pull_request.title, '[ACE-VERIFY]')) &&
+      !(contains(github.event.pull_request.title, '[ACE-CANDIDATE]') && contains(github.event.pull_request.title, '[ACE-VERIFY]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     permissions:
@@ -208,6 +211,7 @@ jobs:
           if-no-files-found: error
 
       - name: Verify successful exact-head full host CI before prerelease publication
+        if: contains(github.event.pull_request.title, '[ACE-CANDIDATE]')
         timeout-minutes: 45
         shell: bash
         env:
@@ -237,6 +241,7 @@ jobs:
           echo "Candidate source SHA $SOURCE_SHA qualified by eight-profile CI $full_ci_id"
 
       - name: Publish opt-in immutable prerelease (not a stable release)
+        if: contains(github.event.pull_request.title, '[ACE-CANDIDATE]')
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
