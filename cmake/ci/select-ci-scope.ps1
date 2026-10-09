@@ -17,7 +17,9 @@ Set-StrictMode -Version Latest
 # Qualify this deliberately unmergeable 2.3 review branch by exact push SHA.
 $release23Push = $EventName -eq 'push' -and
   $HeadBranch -eq 'release/salts-2.3-ace-cnet-review' -and -not $PrepareRelease
-$full = ($EventName -eq "workflow_dispatch") -or $release23Push
+$releaseTagPush = $EventName -eq 'push' -and
+  $HeadBranch -match '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$' -and -not $PrepareRelease
+$full = ($EventName -eq "workflow_dispatch") -or $release23Push -or $releaseTagPush
 # Normal ACE development runs full Linux CTest. An explicit [ACE-MATRIX]
 # marker on the same long-lived Draft PR runs host-complete integration tests
 # and cross-builds; the marker is removable after the qualification checkpoint.
@@ -27,8 +29,8 @@ if (($AceMatrix -or $AceSan) -and -not $aceBranchPr) {
   throw "ACE qualification is restricted to its long-lived PR"
 }
 if ($AceMatrix -and $AceSan) { throw "ACE-MATRIX and ACE-SAN are exclusive" }
-$unified23Review = $HeadBranch -eq 'release/salts-2.3-ace-cnet-review' -and
-  ($EventName -eq 'pull_request' -or $release23Push) -and -not $PrepareRelease
+$unified23Review = ($HeadBranch -eq 'release/salts-2.3-ace-cnet-review' -and
+  ($EventName -eq 'pull_request' -or $release23Push) -and -not $PrepareRelease) -or $releaseTagPush
 if ($UnifiedSan -and -not $unified23Review) {
   throw "Unified 2.3 sanitizers are restricted to the release review PR"
 }
@@ -40,7 +42,7 @@ $acePatternsDevelopment = $aceBranchPr -and -not $AceMatrix
 # only native/execution projection subsets that can miss CNet/ACE composition.
 $aceFullMatrixQualification = ($aceBranchPr -and $AceMatrix) -or $unified23Review
 $aceSanitizerQualification = $aceBranchPr -and $AceSan
-$unifiedSanitizerQualification = $unified23Review -and ($UnifiedSan -or $release23Push)
+$unifiedSanitizerQualification = $unified23Review -and ($UnifiedSan -or $release23Push -or $releaseTagPush)
 # Preserve the historical integration branch's complete Linux coverage.
 $componentIntegration = ($HeadBranch -eq 'feature/cmeta-pattern-component-runtime' -and
   -not $PrepareRelease) -or $aceBranchPr -or $unified23Review
@@ -114,7 +116,7 @@ $compare = $benchmarkCommon -or $cnetRuntime -or $nativeRuntime -or $coroutineRu
 # not partial performance input producers. In particular [2.3-SAN] deliberately
 # omits the macOS/Windows Release profiles; never run benchmark consumers in
 # that mode without their exact-SHA native-macos/windows-release archives.
-$benchmarkChanged = $release23Push -or (
+$benchmarkChanged = $release23Push -or $releaseTagPush -or (
   (-not $aceBranchPr) -and
   (-not $unifiedSanitizerQualification) -and
   (Test-Changed '^(native-io|cnet)/'))
@@ -134,7 +136,7 @@ $forensic = $benchmarkChanged -and $forensic
 $compare = $benchmarkChanged -and $compare -and -not $unified23Review
 # Only executable I/O/transport changes (and benchmark inputs) alter this
 # baseline. CNet/NativeIO tests-only edits must not start all four platforms.
-$transportOwner = $PrepareRelease -or $release23Push -or
+$transportOwner = $PrepareRelease -or $release23Push -or $releaseTagPush -or
   ((-not $aceBranchPr) -and (-not $unifiedSanitizerQualification) -and
    (Test-Changed '^(cnet|native-io)/(src/|include/|CMakeLists\.txt$|benchmarks/)'))
 $work = $nativeOwner -or $nativeStyle -or $cnetOwner -or $cnetIo -or $cnetSg -or $coroutine -or $nativeUring -or $forensic -or $transportOwner
@@ -197,7 +199,7 @@ foreach ($profile in $profiles) {
   # [2.3-SAN] is a dedicated source-identical sanitizer gate; a separate
   # [2.3-VERIFY] run must qualify the eight real host/build profiles. Keep
   # the Release Linux smoke in this mode, never package or merge by default.
-  if ($unifiedSanitizerQualification -and -not $release23Push -and
+  if ($unifiedSanitizerQualification -and -not $release23Push -and -not $releaseTagPush -and
       $profile.id -ne 'linux-release' -and
       -not $profile.ContainsKey('sanitizer')) { continue }
   # Keep regular ACE PRs on Linux only, but do not discard the explicit
@@ -214,13 +216,13 @@ foreach ($profile in $profiles) {
   $entry.cross = $entry.family -in @('android', 'ios')
   # Core semantic qualification must also pass without the optional #981 backend.
   # Explicit release packaging still includes the qualified native specialization.
-  $entry.native_thunks = if (($PrepareRelease -or $release23Push) -and $entry.id -in @('linux-release', 'linux-clang-release', 'windows-release')) { 'ON' } else { 'OFF' }
+  $entry.native_thunks = if (($PrepareRelease -or $release23Push -or $releaseTagPush) -and $entry.id -in @('linux-release', 'linux-clang-release', 'windows-release')) { 'ON' } else { 'OFF' }
   $entry.native = $native -and -not $entry.cross -and $entry.id -ne 'linux-arm64-release'
   $entry.execution = $execution -and -not $entry.cross -and $entry.id -ne 'linux-arm64-release'
   $entry.armcontracts = $entry.id -eq 'linux-arm64-release' -and ($native -or $execution)
   $entry.projection = $projection -and $entry.id -in @('linux-release', 'linux-clang-release', 'macos-clang-release')
   $entry.benchmarks = if ($entry.id -in @('linux-release', 'windows-release', 'macos-release')) { 'ON' } else { 'OFF' }
-  $entry.package = ($PrepareRelease -or $release23Push) -and [bool]$entry.sdk
+  $entry.package = ($PrepareRelease -or $release23Push -or $releaseTagPush) -and [bool]$entry.sdk
   $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
   $entry.artifact = if ($entry.cross) { $mobile } else { $work -and [bool]$entry.sdk }
   # Full host CTest for an explicit qualification; Linux arm64 runs the
