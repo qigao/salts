@@ -107,9 +107,12 @@ $compare = $benchmarkCommon -or $cnetRuntime -or $nativeRuntime -or $coroutineRu
   (Test-Changed '^cnet/benchmarks/cnet_owner_lifecycle_compare\.c$')
 # Benchmark execution is limited to changes owned by these two modules.
 # Manual validation has no change range and does not request benchmark runs.
-# The long-lived ACE pattern PR explicitly qualifies full Linux CTest; defer
-# expensive backend measurement to an explicit later release qualification.
+# Both ACE and the unified [2.3-SAN] mode are dedicated conformance runs,
+# not partial performance input producers. In particular [2.3-SAN] deliberately
+# omits the macOS/Windows Release profiles; never run benchmark consumers in
+# that mode without their exact-SHA native-macos/windows-release archives.
 $benchmarkChanged = (-not $aceBranchPr) -and
+  (-not $unifiedSanitizerQualification) -and
   (Test-Changed '^(native-io|cnet)/')
 $nativeOwner = $benchmarkChanged -and $nativeOwner
 $nativeStyle = $benchmarkChanged -and $nativeStyle
@@ -128,7 +131,7 @@ $compare = $benchmarkChanged -and $compare -and -not $unified23Review
 # Only executable I/O/transport changes (and benchmark inputs) alter this
 # baseline. CNet/NativeIO tests-only edits must not start all four platforms.
 $transportOwner = $PrepareRelease -or
-  ((-not $aceBranchPr) -and
+  ((-not $aceBranchPr) -and (-not $unifiedSanitizerQualification) -and
    (Test-Changed '^(cnet|native-io)/(src/|include/|CMakeLists\.txt$|benchmarks/)'))
 $work = $nativeOwner -or $nativeStyle -or $cnetOwner -or $cnetIo -or $cnetSg -or $coroutine -or $nativeUring -or $forensic -or $transportOwner
 
