@@ -1943,6 +1943,14 @@ suite("CFlow Statechart instance initial configuration") {
         check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
                     CFLOW_STATECHART_INSTANCE_INVALID_EXECUTOR);
         check_null(fixture.instance.impl);
+        cflow_executor_destroy(&fixture.executor);
+        check_true(cflow_executor_owner_init_with_capacity(
+            &fixture.executor, 4u, NULL, NULL));
+        /* Initial stabilization synchronously waits for a worker today.
+         * Do not silently accept owner-manual until it can be driven safely. */
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_INSTANCE_INVALID_EXECUTOR);
+        check_null(fixture.instance.impl);
         runtime_fixture_destroy(&fixture);
     }
 

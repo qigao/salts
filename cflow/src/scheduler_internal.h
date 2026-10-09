@@ -9,6 +9,14 @@ bool cflow_scheduler_try_post_task_after_internal(
     cflow_scheduler *scheduler, uint64_t delay_ms,
     const cflow_executor_task *task, cflow_schedule_result *out);
 
+bool cflow_scheduler_owner_try_post_task_after_internal(
+    cflow_scheduler *scheduler, uint64_t delay_ms,
+    const cflow_executor_task *task, cflow_schedule_result *out);
+
+/* Detect captured owner for cooperative Run teardown. */
+bool cflow_scheduler_owner_is_thread_internal(
+    const cflow_scheduler *scheduler);
+
 bool cflow_scheduler_worker_try_post_task_after_internal(
     cflow_scheduler *scheduler, uint64_t delay_ms,
     const cflow_executor_task *task, cflow_schedule_result *out);
