@@ -511,7 +511,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 1
-- name: Report compiler cache statistics after build
+      - name: Report compiler cache statistics after build
         if: always()
         shell: pwsh
         run: |

@@ -168,7 +168,7 @@ jobs:
             echo "- RID: \`linux-x64\`"
             echo "- No stable tag, GitHub Release or master publication"
           } >> "$GITHUB_STEP_SUMMARY"
-- name: Report compiler cache statistics after build
+      - name: Report compiler cache statistics after build
         if: always()
         shell: pwsh
         run: |
