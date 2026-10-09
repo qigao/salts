@@ -93,9 +93,15 @@ spec("CNet client destination selection") {
     check_equal(out.index, 2u);
     s.kind = CNET_DESTINATION_STRICT_KEY;
     s.key_hash = 2u;
-    endpoints[2].eligible = false;
-    check_equal(cnet_destination_choose(&s, &out), SALTS_ENOBUFS);
-    check_equal(out.index, SIZE_MAX);
+    check_equal(cnet_destination_choose(&s, &out), SALTS_OK);
+    {
+      const size_t selected = out.index;
+      check(selected < s.endpoint_count);
+      endpoints[selected].eligible = false;
+      check_equal(cnet_destination_choose(&s, &out), SALTS_ENOBUFS);
+      check_equal(out.index, SIZE_MAX);
+      endpoints[selected].eligible = true;
+    }
     s.key_known = false;
     check_equal(cnet_destination_choose(&s, &out), SALTS_EINVAL);
   }
