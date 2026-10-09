@@ -226,6 +226,10 @@ int cnet_managed_dial_get_snapshot(cnet_managed_dial *dial,
   if (status != SALTS_OK) return status;
   status = cnet_reconnect_get_snapshot(&impl->recovery, &out->recovery);
   if (status != SALTS_OK) return status;
+  /* Previously a client could see a generation but not obtain the state+
+   * incarnation capability required by protocol_ready(). Publish the exact
+   * attempt ticket; it grants no transport ownership or replay authority. */
+  out->recovery_ticket = impl->ticket;
   out->managed = impl->managed;
   out->connection = impl->connection;
   out->stopping = impl->stopping;
