@@ -3,6 +3,7 @@
 #include <cnet/handoff.h>
 #include <cnet/owner_placement.h>
 #include <cnet/destination_policy.h>
+#include <cnet/client_pool.h>
 #include <cnet/recovery_policy.h>
 static_assert(CNET_MANAGER_VERSION == 1u, "manager capability is versioned");
 #include <cnet/ipc.h>
@@ -21,6 +22,18 @@ static_assert(std::is_same<decltype(&cnet_retry_evaluate),
                            int (*)(const cnet_retry_input *, cnet_retry_result *)>::value,
               "Retry gate preserves C ABI/linkage");
 static_assert(CNET_RECOVERY_POLICY_VERSION == 1u, "Recovery contract is versioned");
+static_assert(std::is_standard_layout<cnet_pool_key>::value,
+              "Client pool key must have stable C layout");
+static_assert(std::is_standard_layout<cnet_pool_connection>::value,
+              "Client pool physical identity must be C ABI data");
+static_assert(std::is_standard_layout<cnet_pool_lease>::value,
+              "Protocol lease is a generation-safe C value");
+static_assert(std::is_same<decltype(&cnet_pool_try_acquire),
+                           int (*)(cnet_client_pool *, const cnet_pool_key *,
+                                   const cnet_pool_protocol_ops *, cnet_pool_lease *,
+                                   cnet_managed_connection *)>::value,
+              "Client pool acquire uses C linkage");
+static_assert(CNET_CLIENT_POOL_VERSION == 1u, "Client pool ABI is versioned");
 static_assert(std::is_standard_layout<cnet_destination_selection>::value,
               "client destination selection is C ABI data");
 static_assert(std::is_standard_layout<cnet_destination_result>::value,

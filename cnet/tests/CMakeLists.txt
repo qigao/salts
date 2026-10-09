@@ -10,7 +10,13 @@ cmake_add_test(cnet_destination_policy_test
   LIBS Salts::CNet Salts::TinyTest
   FOLDER "cnet/tests")
 
-# Explicit bounded transport restoration and protocol-authorized request retry.
+# Owner-local physical and protocol-slot capacity with no hidden dial/retry.
+cmake_add_test(cnet_client_pool_test
+  SOURCES cnet_client_pool_test.c
+  LIBS Salts::CNet Salts::TinyTest
+  FOLDER "cnet/tests")
+
+# Explicit bounded transport recovery and protocol-authorized request retry.
 cmake_add_test(cnet_recovery_policy_test
   SOURCES cnet_recovery_policy_test.c
   LIBS Salts::CNet Salts::TinyTest
@@ -449,6 +455,7 @@ add_dependencies(cnet_api_test
   cnet_native_io_sharded_ownership_test
   cnet_owner_placement_test
   cnet_destination_policy_test
+  cnet_client_pool_test
   cnet_recovery_policy_test
   cnet_tcp_endpoint_test
   cnet_external_progress_test
