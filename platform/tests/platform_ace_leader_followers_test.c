@@ -55,12 +55,19 @@ static void lf_elect_locked(lf_pool *p) {
 }
 
 static void lf_verify_locked(lf_pool *p) {
-  int leaders = 0, processing = 0;
+  int leaders = 0, processing = 0, eligible = 0;
   for (int i = 0; i < p->worker_count; ++i) {
     leaders += p->workers[i].role == LF_LEADER;
     processing += p->workers[i].role == LF_PROCESSING;
+    eligible += p->workers[i].role == LF_FOLLOWER &&
+                p->workers[i].stop == LF_RUN;
   }
+  /* An idle pool with runnable followers must not silently lose the baton.
+   * During init, another worker may still be LF_NEW; only enforce after all
+   * workers have reached the election barrier. */
   if (leaders > 1 || leaders != (p->leader >= 0) ||
+      (p->ready == p->worker_count && p->leader < 0 && eligible > 0 &&
+       (!p->closing || p->queued > 0)) ||
       (p->leader >= 0 && p->workers[p->leader].role != LF_LEADER) ||
       processing != p->active ||
       p->queued < 0 || p->queued > LF_CAPACITY ||
@@ -278,6 +285,7 @@ static int lf_request_stop(lf_pool *p, int worker_id, enum lf_stop reason) {
 
 static int lf_close(lf_pool *p) {
   cmeta_mutex_lock(&p->mu);
+  if (p->closing) { cmeta_mutex_unlock(&p->mu); return -1; }
   p->closing = 1;
   p->dispatch_paused = 0; /* A paused test ingress must still drain. */
   cmeta_cond_broadcast(&p->changed);
@@ -291,6 +299,7 @@ static int lf_close(lf_pool *p) {
 static int lf_destroy(lf_pool *p) {
   if (!p->joined || p->queued != 0 || p->active != 0 || p->stopped != p->started)
     return -1;
+  p->joined = 0; /* Reject double destroy before accessing freed primitives. */
   cmeta_cond_destroy(&p->changed);
   cmeta_mutex_destroy(&p->mu);
   return 0;
@@ -336,6 +345,19 @@ spec("ACE genuine optional Leader Followers: bounded CPU source") {
     check_equal(lf_destroy(&p), -1);
     check_equal(lf_request_stop(&p, 0, LF_STOP_CANCEL), 0);
     check_equal(lf_close(&p), 0);
+    check_equal(lf_close(&p), -1); /* Exactly one shutdown/join owner. */
+    check_equal(lf_destroy(&p), 0);
+    check_equal(lf_destroy(&p), -1); /* No duplicate lock release. */
+  }
+  it("wakes all four idle followers on close without inventing work") {
+    lf_pool p;
+    check_equal(lf_init(&p, 4), 0);
+    check_equal(p.ready, 4);
+    check_equal(p.promotions, 1);
+    check_equal(lf_close(&p), 0);
+    check_equal(p.stopped, 4);
+    check_equal(p.settled, 0);
+    check_equal(p.invariant_failures, 0);
     check_equal(lf_destroy(&p), 0);
   }
   it("drains 32 admitted events in FIFO order with 1 2 and 4 workers") {
@@ -362,17 +384,22 @@ spec("ACE genuine optional Leader Followers: bounded CPU source") {
       check_equal(lf_submit(&p, 1, 0), 1);
       check_equal(lf_submit(&p, 2, 0), 0); /* capacity is bounded */
       lf_pause(&p, 0);
-      check_equal(lf_wait_at_least(&p, &p.hold_entered, 1), 1);
-      check_equal(lf_wait_at_least(&p, &p.settled, 1), 1);
+      /* Always unblock and join the fixture even when a deadline fails;
+       * otherwise a failed check can strand a test worker indefinitely. */
+      const int entered = lf_wait_at_least(&p, &p.hold_entered, 1);
+      const int progressed = entered && lf_wait_at_least(&p, &p.settled, 1);
       cmeta_mutex_lock(&p.mu);
-      const int handed_off = p.successor_of[0] >= 0 &&
+      const int handed_off = progressed && p.successor_of[0] >= 0 &&
           p.successor_of[0] != p.worker_of[0] &&
           p.worker_of[0] != p.worker_of[1] &&
           p.handoffs >= 1 && p.observed[0] == 0 && p.observed[1] == 1;
       cmeta_mutex_unlock(&p.mu);
-      check_equal(handed_off, 1);
       lf_release_hold(&p);
-      check_equal(lf_close(&p), 0);
+      const int close_status = lf_close(&p);
+      check_equal(entered, 1);
+      check_equal(progressed, 1);
+      check_equal(handed_off, 1);
+      check_equal(close_status, 0);
       check_equal(lf_assert_settled(&p, 2), 1);
       check_equal(lf_destroy(&p), 0);
     }
@@ -450,15 +477,20 @@ spec("ACE genuine optional Leader Followers: bounded CPU source") {
     check_equal(lf_init(&p, 2), 0);
     p.hold_event = 0;
     check_equal(lf_submit(&p, 0, 0), 1);
-    check_equal(lf_wait_at_least(&p, &p.hold_entered, 1), 1);
+    const int entered = lf_wait_at_least(&p, &p.hold_entered, 1);
     cmeta_mutex_lock(&p.mu);
     const int worker = p.worker_of[0];
     cmeta_mutex_unlock(&p.mu);
-    check_equal(lf_request_stop(&p, worker, LF_STOP_FAILURE), 1);
-    check_equal(lf_submit(&p, 1, 1), 1);
-    check_equal(lf_wait_at_least(&p, &p.settled, 1), 1);
+    const int requested = lf_request_stop(&p, worker, LF_STOP_FAILURE);
+    const int admitted = lf_submit(&p, 1, 1);
+    const int progressed = lf_wait_at_least(&p, &p.settled, 1);
     lf_release_hold(&p);
-    check_equal(lf_close(&p), 0);
+    const int close_status = lf_close(&p);
+    check_equal(entered, 1);
+    check_equal(requested, 1);
+    check_equal(admitted, 1);
+    check_equal(progressed, 1);
+    check_equal(close_status, 0);
     check_equal(p.failed_workers, 1);
     check_equal(p.observed[0], 1);
     check_equal(p.observed[1], 1);
