@@ -59,7 +59,8 @@ static cnet_client_config host_config(void) {
   c.backend = host_kind();
   c.connection_capacity = 1u;
   c.command_capacity = 8u;
-  c.request_capacity = 8u;
+  /* Each client's configured completion batch must fit its request slots. */
+  c.request_capacity = HOST_BATCH;
   c.completion_batch_capacity = HOST_BATCH;
   c.event_capacity = 8u;
   c.max_send_bytes = 1024u;
