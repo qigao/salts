@@ -147,6 +147,34 @@ static void ace_sync_wrong_owner_run(void *user) {
     worker->status = ace_sync_owner_port_increment(&worker->interface, 11);
 }
 
+/* ACE Thread-Specific Storage: this is actual Platform TLS, not a
+ * thread-affine borrowed Local disguised as per-thread allocation.
+ * CMeta's owner token remains a nontransferable lifetime boundary. */
+static SALTS_THREAD_LOCAL int ace_sync_tls_counter;
+
+typedef struct ace_sync_tls_worker {
+    int seed;
+    int initial;
+    int nested;
+    int final;
+    const void *owner;
+} ace_sync_tls_worker;
+
+static int ace_sync_tls_nested_add(int increment) {
+    ace_sync_tls_counter += increment;
+    return ace_sync_tls_counter;
+}
+static void ace_sync_tls_run(void *user) {
+    ace_sync_tls_worker *worker = ACE_SYNC_CAST(ace_sync_tls_worker *, user);
+    worker->initial = ace_sync_tls_counter;
+    worker->owner = cmeta_thread_current_token();
+    ace_sync_tls_counter = worker->seed;
+    worker->nested = ace_sync_tls_nested_add(2);
+    worker->final = ace_sync_tls_counter;
+    /* Explicit cleanup before thread exit; never export an address/borrow. */
+    ace_sync_tls_counter = 0;
+}
+
 /* Monitor Object: predicate, condition and close belong to the same guarded
  * native object. The public CMeta interface supplies exact synchronous ABI. */
 typedef struct ace_sync_monitor {
@@ -271,6 +299,29 @@ static cmeta_status ace_sync_throws(ace_sync_operation *operation) {
 #endif
 
 suite("CMeta ACE concurrent pattern composition") {
+    it("isolates real Thread-Specific Storage across native workers and nested calls") {
+        cmeta_thread_t threads[2] = {0};
+        ace_sync_tls_worker workers[2] = {{11, 0, 0, 0, NULL},
+                                          {29, 0, 0, 0, NULL}};
+        const void *main_owner = cmeta_thread_current_token();
+        ace_sync_tls_counter = 101;
+        check_equal(cmeta_thread_create(&threads[0], ace_sync_tls_run,
+                                        &workers[0]), 0);
+        check_equal(cmeta_thread_create(&threads[1], ace_sync_tls_run,
+                                        &workers[1]), 0);
+        for (size_t i = 0; i < 2u; ++i) {
+            check_equal(cmeta_thread_join(&threads[i]), 0);
+            check_equal(workers[i].initial, 0);
+            check_equal(workers[i].nested, workers[i].seed + 2);
+            check_equal(workers[i].final, workers[i].seed + 2);
+            check_true(workers[i].owner != NULL);
+            check_true(workers[i].owner != main_owner);
+        }
+        check_equal(ace_sync_tls_counter, 101);
+        check_equal(ace_sync_tls_nested_add(3), 104);
+        ace_sync_tls_counter = 0;
+    }
+
     it("selects real typed locking strategies and rejects double release") {
         cmeta_mutex_t mutex = NULL;
         cmeta_rwlock_t rw = NULL;
