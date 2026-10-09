@@ -1,9 +1,10 @@
 # CNet strategies on NativeIO SG Owner lanes
 
 **Scope:** experimental *host-composed* Server + Client policy admission over the
-existing CNet and NativeIO Sharded Graph APIs. This document and the associated
-CTest do **not** introduce a new runtime, scheduler, parser, policy registry,
-public ABI, or permission to modify the Salts 2.3 release candidate.
+existing CNet and NativeIO Sharded Graph APIs. The opt-in composition APIs below
+preserve existing configuration layouts and legacy entry points. They introduce
+no runtime, scheduler, HTTP parser or policy registry. SDK publication remains
+a separate decision.
 
 Tracking: [#1050](https://github.com/qigao/salts/issues/1050),
 [#1051](https://github.com/qigao/salts/issues/1051),
@@ -36,7 +37,8 @@ per-Owner startup configuration is written by the host **before**
 
 1. An SG Owner task acquires a durable `native_io_sharded_host_lease` and
    creates separate inbound/outbound CNet clients borrowing that shard's
-   existing NativeIO backend (also one listener). No second backend is created.
+   existing NativeIO backend (also one listener and two external datagrams).
+   No second backend is created.
 2. On inbound *accepted completion*, the host invokes
    `cnet_owner_placement_choose` **once**. The fixture accepts only a
    successful same-Owner selection, then separately invokes the actual
@@ -53,7 +55,7 @@ per-Owner startup configuration is written by the host **before**
    allocate or connect by itself.
 4. Every short progress turn advances CNet's external client state, calls
    `native_io_sharded_context_observe_host` **once**, demultiplexes the
-   **entire** batch with `cnet_sg_host_route_batch`, then advances the
+   **entire** batch with `cnet_sg_host_route_batch_with_datagrams`, then advances the
    Owner-local CNetManager with a finite record budget. SG-owned completions
    have already been settled by SG; never route them twice.
 5. Borrowed receive callbacks go directly to the application and remain on
@@ -69,7 +71,8 @@ per-Owner startup configuration is written by the host **before**
    inbound connection. Continue short SG turns until real CNet terminal and
    Manager `on_recycle` have completed. Pool terminal does not drop its live
    lease or allow premature destroy; release exactly once before reclaim.
-   Destroy Dial, Pool, Manager and CNet clients, release SG host lease
+   Stop/drain/destroy the datagrams, destroy Dial, Pool, Manager and CNet clients,
+   then release SG host lease
    **after** all borrowed state is quiescent, then shut down the shared SG.
    Timeout never makes a pending terminal safe to free.
 8. This test checks exactly **one Server placement and one Client destination
@@ -154,9 +157,10 @@ The external datagram and tagged WS primitives from
 [#999](https://github.com/qigao/salts/issues/999) and
 [#1000](https://github.com/qigao/salts/issues/1000) are present; their open issue
 status does not mean those primitives are absent or all acceptance gates passed.
-This review changes documentation only. It adds no public API, runtime support,
-release qualification, or new test result. Earlier phase results above remain
-separate evidence.
+This subsection records the original source review, before the opt-in fixes
+described under [implemented composition boundaries](#implemented-composition-boundaries).
+Baseline findings do not describe those new entry points. Earlier phase CI
+results above remain separate evidence; none qualifies these new changes.
 
 The following are **integration risks and acceptance gaps**, not demonstrated
 defects in the existing primitives:
@@ -187,10 +191,10 @@ not a newly executed failure test.
 
 | ID / severity | Trigger and source fact | Impact and minimum resolution | Missing regression |
 | --- | --- | --- | --- |
-| R1 / HIGH | Feed a mixed TCP/UDP SG batch directly to `cnet_sg_host_route_batch`. [Its route configuration](include/cnet/sg_host.h) contains only a listener and clients; [unclaimed records return EPROTO](src/cnet_sg_host.c#L50). It never calls the external datagram router. | UDP terminals remain unrouted, so datagram requests/storage cannot drain. Use a bounded host demultiplexer with the public datagram route API; give the existing helper only records not claimed by datagrams. Do not replay a partly routed batch or add a second observe. An additive public router extension needs separate API review. | One observed batch containing SG-owned, TCP and UDP events; an owned malformed UDP event followed by a valid neighbor terminal; each record settled once and stop reaches quiescence. |
-| R2 / HIGH | Forward every CNet `on_send` into WS `write_complete`, or wait for an error through `on_send`. [The callback](include/cnet/cnet.h#L329) reports successful ordered writes with connection and size only; [dispatch](src/cnet_client.c#L255) reports connection failure separately through `on_state`. | An outstanding HTTP handshake write can be mistaken for a WS frame, and a failed write has no success callback to release the pending frame. H1 needs an explicit handshake-write barrier or bounded ordered write records, qualified by connection generation and write purpose. On real terminal failure, settle the pending frame or notify drained transport closure, then advance WS to dispatch its logical terminal. | Handshake and first WS writes of equal size (size is not identity); a failed retained write with no `on_send`; cancel/late terminal; exactly one result for each admitted WS tag. |
-| R3 / HIGH | After physical recycle, call Dial advance before old WS callbacks/leases settle or without a Pool CONNECTING reservation. [Dial recycle](src/cnet_managed_dial.c#L101) clears only its managed/connection handles; [advance](src/cnet_managed_dial.c#L159) checks Manager credits and recovery, not WS or Pool. [Pool reclaim](src/cnet_client_pool.c#L76) still holds capacity until terminal plus zero leases. | A replacement attempt can bypass the pool budget or reuse adapter state still needed by the old logical terminal. Host gates redial on protocol settlement and actual pool admission; Manager recycle alone is insufficient. Keep each generation's state until all its obligations finish. | Capacity one, physical terminal/recycle before WS `advance`, outstanding lease, and due backoff: no replacement dial until old settlement and a new pool reservation succeed. |
-| R4 / MED | Return a raw retained-send queue-full result from the WS writer. [The CNet queue](src/cnet_write_queue.c#L100) rejects with ENOBUFS; [WS output](src/cnet_websocket.c#L183) treats only EBUSY as retryable non-admission and other errors as terminal. | Ordinary pressure becomes a failed WS session unless that failure is the adapter's deliberate policy. For a backpressure policy, translate a proven transient non-admission to writer EBUSY, retain the existing frame and retry on a bounded Owner turn. Preserve permanent errors and stopping; do not translate every failure into busy. | Real shared CNet queue full, subsequent capacity recovery, no duplicate frame admission; closure while blocked; oversized encoded frame fails configuration/admission rather than retrying forever. |
+| R1 / HIGH | Feed a mixed TCP/UDP SG batch directly to `cnet_sg_host_route_batch`. [Its route configuration](include/cnet/sg_host.h) contains only a listener and clients; [unclaimed records return EPROTO](https://github.com/qigao/salts/blob/10c17c9c2b0d558addf2490c93cc13aa430906b0/cnet/src/cnet_sg_host.c#L50). It never calls the external datagram router. | UDP terminals remain unrouted, so datagram requests/storage cannot drain. Use a bounded host demultiplexer with the public datagram route API; give the existing helper only records not claimed by datagrams. Do not replay a partly routed batch or add a second observe. An additive public router extension needs separate API review. | One observed batch containing SG-owned, TCP and UDP events; an owned malformed UDP event followed by a valid neighbor terminal; each record settled once and stop reaches quiescence. |
+| R2 / HIGH | Forward every CNet `on_send` into WS `write_complete`, or wait for an error through `on_send`. [The callback](https://github.com/qigao/salts/blob/10c17c9c2b0d558addf2490c93cc13aa430906b0/cnet/include/cnet/cnet.h#L329) reports successful ordered writes with connection and size only; [dispatch](https://github.com/qigao/salts/blob/10c17c9c2b0d558addf2490c93cc13aa430906b0/cnet/src/cnet_client.c#L255) reports connection failure separately through `on_state`. | An outstanding HTTP handshake write can be mistaken for a WS frame, and a failed write has no success callback to release the pending frame. H1 needs an explicit handshake-write barrier or bounded ordered write records, qualified by connection generation and write purpose. On real terminal failure, settle the pending frame or notify drained transport closure, then advance WS to dispatch its logical terminal. | Handshake and first WS writes of equal size (size is not identity); a failed retained write with no `on_send`; cancel/late terminal; exactly one result for each admitted WS tag. |
+| R3 / HIGH | After physical recycle, call Dial advance before old WS callbacks/leases settle or without a Pool CONNECTING reservation. [Dial recycle](https://github.com/qigao/salts/blob/10c17c9c2b0d558addf2490c93cc13aa430906b0/cnet/src/cnet_managed_dial.c#L101) clears only its managed/connection handles; [advance](https://github.com/qigao/salts/blob/10c17c9c2b0d558addf2490c93cc13aa430906b0/cnet/src/cnet_managed_dial.c#L159) checks Manager credits and recovery, not WS or Pool. [Pool reclaim](https://github.com/qigao/salts/blob/10c17c9c2b0d558addf2490c93cc13aa430906b0/cnet/src/cnet_client_pool.c#L76) still holds capacity until terminal plus zero leases. | A replacement attempt can bypass the pool budget or reuse adapter state still needed by the old logical terminal. Host gates redial on protocol settlement and actual pool admission; Manager recycle alone is insufficient. Keep each generation's state until all its obligations finish. | Capacity one, physical terminal/recycle before WS `advance`, outstanding lease, and due backoff: no replacement dial until old settlement and a new pool reservation succeed. |
+| R4 / MED | Return a raw retained-send queue-full result from the WS writer. [The CNet queue](https://github.com/qigao/salts/blob/10c17c9c2b0d558addf2490c93cc13aa430906b0/cnet/src/cnet_write_queue.c#L100) rejects with ENOBUFS; [WS output](https://github.com/qigao/salts/blob/10c17c9c2b0d558addf2490c93cc13aa430906b0/cnet/src/cnet_websocket.c#L183) treats only EBUSY as retryable non-admission and other errors as terminal. | Ordinary pressure becomes a failed WS session unless that failure is the adapter's deliberate policy. For a backpressure policy, translate a proven transient non-admission to writer EBUSY, retain the existing frame and retry on a bounded Owner turn. Preserve permanent errors and stopping; do not translate every failure into busy. | Real shared CNet queue full, subsequent capacity recovery, no duplicate frame admission; closure while blocked; oversized encoded frame fails configuration/admission rather than retrying forever. |
 
 For R1, skip SG-owned records already settled by SG. Match native request
 identity/generation before datagram-local metadata; a consumed record belongs
@@ -199,7 +203,7 @@ route later records. This is host composition of existing public APIs, not
 support already supplied by the current `cnet_sg_host_routes` structure.
 
 For R2, the direct CNet CLOSED/FAILED terminal is usable as the drain boundary:
-[owner finalization](src/cnet_owner.c#L647) waits for active native requests and
+[owner finalization](https://github.com/qigao/salts/blob/10c17c9c2b0d558addf2490c93cc13aa430906b0/cnet/src/cnet_owner.c#L647) waits for active native requests and
 discards queued writes before publishing terminal. An earlier socket error,
 close request or HTTP/WS Close event is not that boundary. When the exact write
 failure is known, settle the pending frame with that failure after drain;
@@ -231,6 +235,76 @@ against CNet send limits before enabling the adapter. The writer must return
 `WRITE_PENDING` after successful asynchronous CNet admission. A rejected write
 has no pending native terminal to wait for; host scheduling must retry bounded
 work when capacity changes without spinning or sleeping on the Owner.
+
+### Implemented composition boundaries
+
+The following additive changes address R1-R4. Existing config structures,
+version constants and ungated/raw entry points retain their behavior.
+
+| Risk | Implementation | Formal evidence |
+| --- | --- | --- |
+| R1 | `cnet_sg_host_route_batch_with_datagrams` takes the existing routes plus a borrowed bounded datagram array. It skips SG-owned events, routes by native request identity, stops probing a consumed/failed event and continues the rest of the batch. | `cnet_sg_hosted_gateway_test` now exchanges actual TCP and UDP on each of 1/2/4 SG Owners; `cnet_datagram_external_test` routes a malformed owned terminal followed by valid neighbor work through the new helper. |
+| R2 | [websocket_transport.h](include/cnet/websocket_transport.h) binds a dedicated connected TCP/TLS stream only when real pending writes are zero. Binding reserves writes exclusively and routes CNet success/terminal notifications directly into the owned tagged WS engine. | `cnet_policy_composition_test` and its TLS variant check a same-sized prior handshake write, exclusive write admission, fragmentation, real connection failure/cancel, deferred logical callbacks and early-destroy rejection. |
+| R3 | `cnet_managed_dial_init_admitted` installs a required per-attempt admission hook for that Dial. It runs after physical recycle and eligibility/backoff checks, before attempt/generation consumption. Hook rejection never opens a replacement connection. | Both composition variants use actual WS destruction and Pool reservations/leases: old logical work, an old lease and an independently full Pool each block redial without consuming an attempt. Only real capacity plus settlement admits the replacement; no DATA is replayed. |
+| R4 | The dedicated WS bridge maps proven `cnet_send_buffer` ENOBUFS non-admission to writer EBUSY. It keeps the frame, uses WRITE_PENDING for accepted output, rejects closing streams and validates the encoded frame budget before binding. | Both variants saturate the shared retained-write queue using a real neighboring connection, then verify capacity recovery and one logical send result. Stopping while the frame is queue-blocked cancels its tag once; impossible encoded-frame limits reject before binding. |
+
+The WS bridge is deliberately limited to **dedicated H1 TCP/TLS writes and
+terminal settlement**. The host still validates Upgrade/authentication,
+publishes READY, owns receive demand and feeds bounded input to the borrowed
+engine. The test's prior `HTTP!` bytes check write identity/barrier behavior;
+they are not an HTTP handshake conformance test. H2 streams, full HTTP adapters,
+consumer authentication and protocol-specific UDP transaction routing remain
+separate acceptance gates.
+
+The bridge lives with CNet admission/dispatch because pending-write counts and
+connection terminal are authoritative there. It uses an optional private
+connection binding, rather than a second public observer or a guessed write
+counter. Binding allocates the existing bounded WS engine once, retains its
+output buffer and borrows callback users; subsequent writes allocate no bridge
+queue. Ordinary writes are rejected while bound. Receive and state observers
+remain installed, including Manager/Dial forwarding. Native success consumes
+only the bound frame notification; connection failure first settles the WS
+output, then reaches the original state observer. Destroy requires real native
+terminal plus settled WS callbacks/tags. It never closes the connection or
+assumes that a failed close request released native storage.
+
+Typical host order after validated HTTP/authentication:
+
+1. Set `ws_config.write = NULL` and supply retained encoded-frame storage in
+   `output_buffer`. Call `cnet_websocket_transport_init`; EBUSY requires more
+   transport progress before retrying the bind. Other failures abort binding.
+2. After successful binding, obtain the borrowed engine with
+   `cnet_websocket_transport_session`. Check its result before using the engine;
+   never initialize or destroy that engine separately.
+3. Admit messages with `cnet_websocket_send_tagged`. Only successful admission
+   creates a logical terminal obligation. Alternate existing CNet progress with
+   bounded `cnet_websocket_transport_advance`, including after errors.
+4. Close through CNet and continue progress through real connection terminal
+   and all logical callbacks. Call `cnet_websocket_transport_destroy`; EBUSY
+   means the wrapper and its borrowed state must remain alive for further drain.
+
+The formal composition fixture contains the complete checked setup, progress
+and cleanup sequence for both plain TCP and TLS.
+
+The admission hook is the host's explicit policy boundary, not proof inferred
+from a boolean snapshot. It must inspect actual protocol/lease settlement and
+reserve actual Pool capacity. It must not block, perform I/O progress or mutate
+the Dial recursively. The hook's context and any reservations remain host-owned
+until abandonment or bind/terminal; synchronous connect failure still requires
+that cleanup. The formal fixture's `admit` function provides a complete example
+using existing Pool operations. Unpooled users retain the original init path.
+
+Migration is explicit: select the mixed router, bind the dedicated WS bridge,
+and use admitted Dial initialization at the respective host boundaries. No
+public structure grows, existing code is not silently opted in, and CNet gains
+no dependency on HTTP consumers. Rollback stops admission and drains the bridge,
+Pool and Manager before destroying/reinitializing on the prior explicit path.
+Do not switch a live connection's writer or bypass a failed admission hook.
+
+Local Windows verification uses repository presets and CTest: Release and
+Debug/ASan cover the composition variants and adjacent CNet contracts. Exact
+commit/CI results belong to the implementation PR; local success does not
+complete the platform, H2 or downstream gates below.
 
 ### Strategy applicability matrix
 
@@ -366,7 +440,8 @@ test, not a counter-based multiplexing mock.
 
 ### Acceptance inventory and open gates
 
-This inventory is source inspection, **not a new execution report**. The named
+This inventory records the baseline source inspection. The implemented section
+above supersedes the R1-R4 gaps for the new opt-in APIs only. The named
 formal tests and benchmarks exist at the baseline above; their coverage must
 not be extrapolated to the missing composition.
 
@@ -377,7 +452,7 @@ not be extrapolated to the missing composition.
 | WS send lifecycle | [tagged WS tests](tests/cnet_websocket_tagged_test.c): fragmentation, busy writer, control frames, short completion, close/cancel and frozen output | Real CNet TCP/TLS writer and HTTP adapter; slow peer, fragmented data with control/close, cancellation race and exactly one logical terminal per accepted send. Current fixture copies to local wire storage and explicitly injects `write_complete`. |
 | WS readiness / recovery | [ManagedDial tests](tests/cnet_managed_dial_test.c): actual Manager/transport attempts and READY tickets; [recovery tests](tests/cnet_recovery_policy_test.c): backoff, security, deadlines and stale generations | Real Upgrade/authentication failure and timeout; CONNECTED never admits application DATA; stale auth/deadline after reconnect, normal close, bounded jitter/backoff, old-attempt drain and no implicit replay |
 | Pool compatibility / capacity | [pool tests](tests/cnet_client_pool_test.c): actual Manager binding, authority mismatch, full/stale leases and terminal rules; multiplex callbacks use synthetic tokens | Different TLS trust/SNI/client identities and WS subprotocol/session IDs; closing session never rented; actual H2 stream reservation and window exhaustion; stream release versus physical terminal; leases survive required drain |
-| Combined SG execution | [hosted gateway](tests/cnet_sg_hosted_gateway_test.c): TCP plus policies/Manager/Dial/Pool on 1/2/4 shards; [handoff](tests/cnet_sg_handoff_owner_test.c): two-Owner TCP adoption. The SG route helper currently has no datagram route. | UDP and WS compositions on 1/2/4 actual Owners; R1 mixed routing, R2 write identity/error settlement, R3 redial/pool gates and R4 pressure translation; wrong-owner/reentrant calls, bounded service isolation and shutdown with pending terminals. Existing TCP evidence does not qualify these transports. |
+| Combined SG execution | Baseline [hosted gateway](tests/cnet_sg_hosted_gateway_test.c): TCP plus policies/Manager/Dial/Pool on 1/2/4 shards; [handoff](tests/cnet_sg_handoff_owner_test.c): two-Owner TCP adoption. The new mixed router and R1-R4 fixtures are described above. | Protocol-specific UDP policy and complete HTTP/WS compositions on 1/2/4 actual Owners; wrong-owner/reentrant calls, bounded service isolation and shutdown with pending terminals. Raw TCP/UDP exchange and the dedicated WS write bridge do not qualify full protocol adapters. |
 | Platform / installed SDK | Existing CNet test registration in [tests/CMakeLists.txt](tests/CMakeLists.txt), including the Linux io_uring datagram variant | Local Windows contracts first, then applicable native CI backends and existing installed C11/C++ contract suites. Record exact SDK tag/SHA, topology, test names and unsupported platform cases; cross-compilation alone is not runtime evidence. |
 
 Performance acceptance belongs to #1057: extend the existing opt-in CTest

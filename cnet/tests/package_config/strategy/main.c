@@ -9,6 +9,7 @@
 #include <cnet/recovery_policy.h>
 #include <cnet/managed_dial.h>
 #include <cnet/sg_host.h>
+#include <cnet/websocket_transport.h>
 #include <salts/native_io_sharded.h>
 #include <salts/error_codes.h>
 #include <stdint.h>
@@ -35,6 +36,7 @@ static void observed_state(void *user, cnet_connection connection,
                            cnet_connection_state state, const cnet_error *error) {
   (void)user; (void)connection; (void)state; (void)error;
 }
+static int defer_admission(void *user) { (void)user; return SALTS_EBUSY; }
 
 int main(void) {
   cnet_client client = {0};
@@ -160,12 +162,29 @@ int main(void) {
   CHECK(cnet_managed_dial_init(&managed_dial, &dial_config) == SALTS_OK);
   CHECK(cnet_managed_dial_seal(&managed_dial) == SALTS_OK);
   CHECK(cnet_managed_dial_destroy(&managed_dial) == SALTS_OK);
+  CHECK(cnet_managed_dial_init_admitted(&managed_dial, &dial_config,
+                                       defer_admission, NULL) == SALTS_OK);
+  CHECK(cnet_managed_dial_seal(&managed_dial) == SALTS_OK);
+  CHECK(cnet_managed_dial_destroy(&managed_dial) == SALTS_OK);
+  {
+    cnet_websocket_transport bridge = {0};
+    cnet_websocket *session = NULL;
+    size_t dispatched = 1u;
+    CHECK(cnet_websocket_transport_init(&bridge, &client, invalid_connection,
+                                         NULL, NULL) == SALTS_EINVAL);
+    CHECK(cnet_websocket_transport_session(&bridge, &session) == SALTS_EINVAL);
+    CHECK(cnet_websocket_transport_advance(&bridge, 1u, &dispatched) == SALTS_EINVAL);
+    CHECK(dispatched == 0u && session == NULL);
+    CHECK(cnet_websocket_transport_destroy(&bridge) == SALTS_EINVAL);
+  }
 
   routes.size = sizeof(routes);
   routes.version = CNET_SG_HOST_ROUTING_VERSION;
   CHECK(cnet_sg_host_route_batch(NULL, 0u, &routes,
                                  &accepts, &sg_owned) == SALTS_OK);
   CHECK(accepts == 0u && sg_owned == 0u);
+  CHECK(cnet_sg_host_route_batch_with_datagrams(NULL, 0u, &routes, NULL, 0u,
+                                              &accepts, &sg_owned) == SALTS_OK);
   CHECK(native_io_sharded_context_observe_host(
       NULL, invalid_lease, &ignored_completion, 1u, 0u, &events) == SALTS_EINVAL);
   CHECK(native_io_sharded_context_release_host(

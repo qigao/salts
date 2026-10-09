@@ -1,5 +1,6 @@
 #include "cnet_test_internal.h"
 #include <cnet/cnet.h>
+#include <cnet/sg_host.h>
 #include <salts/clock.h>
 #include <string.h>
 #include <tinytest.h>
@@ -120,6 +121,28 @@ static int observe_more(void) {
       native_io_backend_observe(&backend, held + held_count, TEST_BATCH - held_count, 20u, &count);
   held_count += count;
   return status == SALTS_ETIMEDOUT ? SALTS_OK : status;
+}
+
+static int route_held_sg(void) {
+  native_io_sharded_completion events[TEST_BATCH + 1] = {0};
+  cnet_datagram *udp[2] = {&datagrams[1], &datagrams[0]};
+  const cnet_sg_host_routes routes = {sizeof(routes), CNET_SG_HOST_ROUTING_VERSION, NULL, NULL, 0u};
+  size_t accepts = 0u, sharded = 0u;
+  int status;
+  events[0].sharded_owned = true; /* Already settled by SG; do not route again. */
+  for (size_t i = 0u; i < held_count; ++i) {
+    native_io_sharded_completion *e = &events[i + 1u];
+    e->request.native_request = held[i].request;
+    e->endpoint.native_endpoint = held[i].endpoint;
+    e->kind = held[i].kind; e->bytes = held[i].bytes; e->status = held[i].status;
+    e->native_status = held[i].native_status; e->user_data = held[i].user_data;
+    e->address_length = held[i].address_length;
+  }
+  status = cnet_sg_host_route_batch_with_datagrams(events, held_count + 1u, &routes,
+                                                  udp, 2u, &accepts, &sharded);
+  held_count = 0u;
+  check_warn(accepts == 0u && sharded == 1u);
+  return status;
 }
 
 static void drain_until(size_t sends, size_t receives) {
@@ -355,7 +378,7 @@ spec("CNet external datagram progress") {
       check(cmeta_monotonic_ms() < deadline);
     }
     held[0].user_data = UINTPTR_MAX;
-    check_equal(route_held(), SALTS_EPROTO);
+    check_equal(route_held_sg(), SALTS_EPROTO);
     check_equal(probes[0].sends + probes[1].sends, 2u);
     check((probes[0].status == SALTS_EPROTO && probes[1].status == SALTS_OK) ||
           (probes[1].status == SALTS_EPROTO && probes[0].status == SALTS_OK));

@@ -50,6 +50,21 @@ typedef struct cnet_managed_dial_snapshot {
 int cnet_managed_dial_init(cnet_managed_dial *dial,
                             const cnet_managed_dial_config *config);
 
+/* Optional owner-local admission hook, called before each eligible attempt,
+ * after physical recycle/backoff checks and before consuming an attempt ticket.
+ * It must verify old protocol settlement and reserve real host/pool capacity.
+ * Return OK to admit, EBUSY/ENOBUFS to defer without consuming an attempt, or a
+ * permanent error to the host. No callback is made while waiting for backoff.
+ * No reentrant dial mutation, I/O progress or blocking is permitted. user is
+ * borrowed until dial destroy. Host owns reservations and must release them
+ * on abandoned episodes, including synchronous connect/admission failures.
+ * Example: reject while old WS/leases remain, then pool_reserve_connecting;
+ * retain that reservation across sequential opening retries until bind/abort.
+ * Existing init remains ungated; config layout and its version are unchanged. */
+typedef int (*cnet_dial_admit_fn)(void *user);
+int cnet_managed_dial_init_admitted(cnet_managed_dial *dial,
+    const cnet_managed_dial_config *config, cnet_dial_admit_fn admit, void *user);
+
 /* Owner host calls only from its existing progress loop and **also** advances
  * CNet and cnet_manager_advance independently. An active/retired-but-not-yet
  * recycled Manager record returns EBUSY. The single ready-to-dial transition
