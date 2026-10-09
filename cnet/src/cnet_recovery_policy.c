@@ -143,7 +143,12 @@ int cnet_reconnect_lost(cnet_reconnect_state *s, cnet_reconnect_ticket t,
   if (!s->protocol_ready) return SALTS_EALREADY;
   if (kind != CNET_RECONNECT_TRANSIENT && kind != CNET_RECONNECT_SECURITY &&
       kind != CNET_RECONNECT_PERMANENT) return SALTS_EINVAL;
-  if (next_deadline_ms <= now_ms) return SALTS_ETIMEDOUT;
+  if (next_deadline_ms <= now_ms) {
+    /* The peer is gone regardless of whether the new budget is usable. */
+    s->protocol_ready = false;
+    s->sealed = true;
+    return SALTS_ETIMEDOUT;
+  }
   s->protocol_ready = false;
   s->config.deadline_ms = next_deadline_ms;
   if (kind != CNET_RECONNECT_TRANSIENT) {
@@ -193,6 +198,8 @@ int cnet_retry_evaluate(const cnet_retry_input *in, cnet_retry_result *out) {
   else if (!in->protocol_proves_not_executed &&
            !in->application_declares_idempotent)
     out->reason = CNET_RETRY_UNAUTHORIZED;
+  else if (in->backoff_not_before_ms > in->now_ms)
+    out->reason = CNET_RETRY_WAIT_BACKOFF;
   else {
     out->allowed = true;
     out->reason = CNET_RETRY_ALLOWED;

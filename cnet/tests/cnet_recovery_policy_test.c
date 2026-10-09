@@ -95,6 +95,23 @@ spec("CNet bounded recovery without application replay") {
     check_equal(cnet_reconnect_protocol_ready(&s, t, 1001u), SALTS_EBUSY);
     check_equal(cnet_reconnect_begin(&s, 200u, &t, &wait), SALTS_ESHUTDOWN);
   }
+  it("rejects lost connection when next episode deadline is already expired") {
+    cnet_reconnect_state s = {0};
+    cnet_reconnect_ticket t = {0};
+    cnet_reconnect_snapshot shot;
+    cnet_reconnect_config conf = config();
+    uint64_t wait = 0u;
+    check_equal(cnet_reconnect_init(&s, &conf), SALTS_OK);
+    check_equal(cnet_reconnect_begin(&s, 100u, &t, &wait), SALTS_OK);
+    check_equal(cnet_reconnect_connected(&s, t, 101u), SALTS_OK);
+    check_equal(cnet_reconnect_protocol_ready(&s, t, 102u), SALTS_OK);
+    check_equal(cnet_reconnect_lost(&s, t, CNET_RECONNECT_TRANSIENT,
+                                    200u, 200u), SALTS_ETIMEDOUT);
+    check_equal(cnet_reconnect_get_snapshot(&s, &shot), SALTS_OK);
+    check_false(shot.protocol_ready);
+    check_true(shot.sealed);
+    check_equal(cnet_reconnect_begin(&s, 200u, &t, &wait), SALTS_ESHUTDOWN);
+  }
   it("requires positive replay authorization, owned bytes and budgets") {
     cnet_retry_input input = retry();
     cnet_retry_result out;
@@ -125,5 +142,12 @@ spec("CNet bounded recovery without application replay") {
     input.backoff_not_before_ms = 1000u;
     check_equal(cnet_retry_evaluate(&input, &out), SALTS_OK);
     check_equal(out.reason, CNET_RETRY_DEADLINE);
+    input.backoff_not_before_ms = 250u;
+    check_equal(cnet_retry_evaluate(&input, &out), SALTS_OK);
+    check_equal(out.reason, CNET_RETRY_WAIT_BACKOFF);
+    check_false(out.allowed);
+    input.now_ms = 250u;
+    check_equal(cnet_retry_evaluate(&input, &out), SALTS_OK);
+    check_true(out.allowed);
   }
 }

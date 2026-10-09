@@ -101,7 +101,8 @@ typedef enum cnet_retry_reason {
   CNET_RETRY_DEADLINE,
   CNET_RETRY_BUDGET,
   CNET_RETRY_UNREPLAYABLE,
-  CNET_RETRY_UNAUTHORIZED
+  CNET_RETRY_UNAUTHORIZED,
+  CNET_RETRY_WAIT_BACKOFF
 } cnet_retry_reason;
 
 typedef struct cnet_retry_input {
