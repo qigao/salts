@@ -572,16 +572,3 @@ jobs:
           $ErrorActionPreference = "Stop"
           ccache --show-stats
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Qualify SG Owner policies and cross-Owner handoff (Windows)
-        if: ${{ !cancelled() && github.head_ref == 'feature/cnet-sg-host-policy-composition' && steps.build_windows.outcome == 'success' && matrix.family == 'windows' }}
-        timeout-minutes: 10
-        shell: cmd
-        run: |
-          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
-          call "%VSINSTALL%\\Common7\\Tools\\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 90 -R "^(cnet_sg_hosted_gateway_test|cnet_sg_handoff_owner_test)$"
-          if errorlevel 1 exit /b 1
-      # A failed suite must not skip other selected suites on a successful build.
