@@ -8,7 +8,7 @@ cmake_config_target(
   VERSION
   "${PROJECT_VERSION}"
   SOVERSION
-  "${PROJECT_VERSION_MAJOR}"
+  "${SALTS_NATIVE_SOVERSION}"
   ALIAS
   Salts::Concurrency
   FOLDER

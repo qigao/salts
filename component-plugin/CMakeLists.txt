@@ -22,7 +22,7 @@ add_library(salts_component_plugin STATIC
 
 cmake_config_target(
   salts_component_plugin
-  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
+  VERSION "${PROJECT_VERSION}" SOVERSION "${SALTS_NATIVE_SOVERSION}"
   ALIAS Salts::ComponentPlugin
   FOLDER "component-plugin"
   EXPORT_NAME ComponentPlugin)

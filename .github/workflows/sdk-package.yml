@@ -80,6 +80,17 @@ jobs:
           grep -F "cmeta_interface_desc_equal" "$mac_interface"
           grep -F "cmeta_function_abi_desc" "$mac_header"
           grep -F "cflow_function_typed_filter_projection_admit" "$mac_projection"
+          # CNet's 2.3 additive ABI must be present in each shipped RID.
+          for rid in linux-x64 linux-arm64 windows-x64 macos-arm64 android-arm64-v8a ios-arm64; do
+            header="package/sdk/$rid/include/cnet/cnet.h"
+            name_header="package/sdk/$rid/include/cnet/name_lookup.h"
+            test -f "$header"
+            test -f "$name_header"
+            grep -Fq "cnet_connection_preserve_send_on_eof" "$header"
+            grep -Fq "CNET_DATAGRAM_SOCKET_CONTROL_VERSION" "$header"
+            grep -Fq "cnet_name_lookup_normalize" "$name_header"
+            grep -Fq "CNET_NAME_LOOKUP_API_VERSION" "$name_header"
+          done
           test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 6
 
           mapfile -t cache_contracts < <(

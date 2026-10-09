@@ -100,6 +100,70 @@ watches are drivers. They publish readiness or completion into Reactive, or
 deliver bounded messages to Actor; they do not own Graph state or Actor
 transition state.
 
+CNet network Server/Client strategy composition is tracked independently in
+[Salts #1050](https://github.com/qigao/salts/issues/1050). CNet does not integrate
+with CFlow Actor or the IO Actor adapter; these remain independent CFlow models.
+
+#### Owner-bound SerialExecutor (experimental branch)
+
+[Phase 2a candidate PR #1016](https://github.com/qigao/salts/pull/1016)
+provides an owner-thread-bound, bounded SerialExecutor backed by the existing
+CFlow typed Mailbox. It advertises `SERIAL|MANUAL|OWNER_AFFINE`: the host
+initializes it on the final owner thread, posts may come from other threads,
+and **only that owner** calls `cflow_executor_run_one()` under a finite
+fairness budget. It creates no worker, CNet instance, or backend wait loop.
+
+```c
+cflow_executor owner_executor = {0};
+/* host_wake is optional and must only signal an already initialized owner
+ * wake target. It cannot reenter Executor driving. */
+if (!cflow_executor_owner_init_with_capacity(
+        &owner_executor, 128u, host_wake, host_context))
+    return false;
+/* Supply &owner_executor to a CFlow Machine-backed Actor.
+ * Only the host owner thread calls cflow_executor_run_one().
+ * The host must check pending before sleeping. */
+```
+
+This is an API illustration, not a standalone compilable example:
+`host_wake` and `host_context` are supplied by the embedding host.
+
+#### Shared-owner Concurrent Scheduler (Phase 2b experimental PR #1019)
+
+`cflow_scheduler_owner_bind()` borrows that same Executor and allocates **only
+fixed-capacity task-ID/cancellation records**, not a second queue or worker:
+
+```c
+cflow_scheduler subscription_scheduler = {0};
+if (!cflow_scheduler_owner_bind(
+        &subscription_scheduler, &owner_executor, 32u))
+    return false;
+/* Supply owner_executor to the Machine and subscription_scheduler to
+ * cflow_actor_init(). Host owner drives bounded
+ * cflow_executor_run_one(&owner_executor) work between NativeIO batches. */
+```
+
+The Scheduler truthfully advertises `CONCURRENT|CALLER_DRIVEN_ZERO_DELAY`:
+foreign producer threads can post/cancel, but running callbacks execute only
+on the fixed owner. A successful `cancel(id)` may synchronously invoke
+`cancel/finalize` on the cancelling thread, as allowed by the existing
+Scheduler borrowed-callback contract. Cancelled tasks leave a bounded queue
+tombstone until that owner observes the queued Executor descriptor; a zero
+delay is supported, positive delays fail explicitly. The Scheduler's shutdown
+does not stop its **borrowed** Executor, allowing other Actors to continue.
+
+Machine transitions and Subscription/sink **running** callbacks can therefore
+share the same owner with one Executor Mailbox. The original worker Scheduler
+remains a valid alternative when off-owner business dispatch is intended.
+Generic Manual Executors remain invalid for Machine instances. Statechart
+also remains invalid for owner-driven Executors because its synchronous
+initial stabilization still waits for independent worker progression.
+
+The host must quiesce producers (including the last post/wake tail), stop
+Actors/Subscriptions and settle their work, then destroy the borrowed Scheduler
+**before** destroying its Executor, all on the owner thread. Do not run
+Executor callbacks recursively or destroy from one of those callbacks.
+
 NativeIO execution style is an orthogonal mechanism dimension. Direct/Coroutine and the planned Sharded/SMP style share NativeIO request/completion truth; Reactive and Actor remain CFlow semantic models above thin adapters. See [NativeIO execution and endpoint architecture](../native-io/ARCHITECTURE.md).
 
 ### I/O portability and execution-policy boundary

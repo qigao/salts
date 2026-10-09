@@ -379,6 +379,7 @@ suite("CFlow Machine Resumable runtime") {
         cflow_machine machine = {0};
         cflow_executor serial = {0};
         cflow_executor manual = {0};
+        cflow_executor owner = {0};
         cflow_machine_instance instance = {0};
         cflow_machine_guard_binding guard_bindings[2] = {
             {200u, guard_enabled, NULL},
@@ -397,6 +398,8 @@ suite("CFlow Machine Resumable runtime") {
                     CFLOW_MACHINE_OK);
         check_true(cflow_executor_serial_init(&serial));
         check_true(cflow_executor_manual_init(&manual));
+        check_true(cflow_executor_owner_init_with_capacity(
+            &owner, 4u, NULL, NULL));
 
         config.guard_count = 0u;
         check_equal(cflow_machine_instance_init(&instance, &config),
@@ -421,6 +424,12 @@ suite("CFlow Machine Resumable runtime") {
         check_equal(cflow_machine_instance_init(&instance, &config),
                     CFLOW_MACHINE_INSTANCE_INVALID_EXECUTOR);
         check_null(instance.impl);
+        config.executor = &owner;
+        check_equal(cflow_machine_instance_init(&instance, &config),
+                    CFLOW_MACHINE_INSTANCE_OK);
+        check_not_null(instance.impl);
+        cflow_machine_instance_destroy(&instance);
+        check_null(instance.impl);
         config.executor = &serial;
         config.output_type = &cmeta_type_int;
         check_equal(cflow_machine_instance_init(&instance, &config),
@@ -429,6 +438,7 @@ suite("CFlow Machine Resumable runtime") {
 
         cflow_machine_instance_destroy(&instance);
         cflow_executor_destroy(&manual);
+        cflow_executor_destroy(&owner);
         cflow_executor_destroy(&serial);
         cflow_machine_destroy(&machine);
     }

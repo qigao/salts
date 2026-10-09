@@ -1,21 +1,22 @@
 name: Salts CI
 'on':
-  pull_request: null
+  # The unified 2.3 review needs two independent CI qualifications on the
+  # *same* immutable source commit: full [2.3-VERIFY] and selected [2.3-SAN].
+  # Title edits opt in to the latter without creating a new source SHA; the
+  # release candidate workflow remains a separate publication gate.
+  pull_request:
+    types: [opened, reopened, synchronize, edited]
   push:
     branches:
       - master
+      - release/salts-2.3-ace-cnet-review
+    # A newly created version tag drives qualification AND publication.
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       prepare_release:
-        description: Build all SDK platforms and retain a package for manual publication
-        type: boolean
-        default: false
-      skip_windows:
-        description: Omit Windows qualification from this manual run
-        type: boolean
-        default: false
-      retain_sdk:
-        description: Retain SDK artifacts for downstream qualification without preparing a release
+        description: Build SDKs for qualification only; release publication is tag-driven
         type: boolean
         default: false
 permissions:
@@ -23,7 +24,8 @@ permissions:
   packages: read
 concurrency:
   group: salts-ci-${{ inputs.prepare_release && github.run_id || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ !inputs.prepare_release }}
+  # Never cancel immutable tag release CI when other branches advance.
+  cancel-in-progress: ${{ !inputs.prepare_release && !startsWith(github.ref, 'refs/tags/') }}
 jobs:
   scope:
     name: Select affected checks
@@ -48,15 +50,42 @@ jobs:
           CI_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
           CI_BRANCH: ${{ github.head_ref || github.ref_name }}
           PREPARE_RELEASE: ${{ inputs.prepare_release || false }}
-          SKIP_WINDOWS: ${{ inputs.skip_windows || false }}
-          RETAIN_SDK: ${{ inputs.retain_sdk || false }}
-        run: ./cmake/ci/select-ci-scope.ps1 -EventName $env:CI_EVENT -BaseRef $env:CI_BASE -HeadRef $env:CI_HEAD -HeadBranch $env:CI_BRANCH -PrepareRelease ($env:PREPARE_RELEASE -eq "true")
+          RC_BRANCH_PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/release/salts-2.3-ace-cnet-review' }}
+          # Temporary full-host qualification mode for the long-lived ACE PR.
+          # This is not SDK packaging, benchmark work or release publication.
+          ACE_MATRIX: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[ACE-MATRIX]') }}
+          ACE_SAN: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[ACE-SAN]') }}
+          # #1081: only the unified 2.3 review PR may opt in to exact-head
+          # ASan+UBSan/TSan. This cannot tag/merge or publish a stable SDK.
+          UNIFIED_SAN: ${{ (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[2.3-SAN]')) || (github.event_name == 'push' && (github.ref == 'refs/heads/release/salts-2.3-ace-cnet-review' || startsWith(github.ref, 'refs/tags/v'))) }}
+        run: ./cmake/ci/select-ci-scope.ps1 -EventName $env:CI_EVENT -BaseRef $env:CI_BASE -HeadRef $env:CI_HEAD -HeadBranch $env:CI_BRANCH -PrepareRelease ($env:PREPARE_RELEASE -eq "true") -AceMatrix ($env:ACE_MATRIX -eq "true") -AceSan ($env:ACE_SAN -eq "true") -UnifiedSan ($env:UNIFIED_SAN -eq "true")
       - name: Read package version
         shell: pwsh
         id: version
+        env:
+          RC_BRANCH_PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/release/salts-2.3-ace-cnet-review' }}
+          RELEASE_TAG: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
         run: |
           $manifest = Get-Content vcpkg.json -Raw | ConvertFrom-Json
-          "version=$($manifest.'version-semver')" >> $env:GITHUB_OUTPUT
+          $packageVersion = $manifest.'version-semver'
+          if ($env:RELEASE_TAG -ne '') {
+            if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$') {
+              throw "Unsupported release tag: $env:RELEASE_TAG"
+            }
+            $tagVersion = $env:RELEASE_TAG.Substring(1)
+            if ($tagVersion.Split('-')[0] -ne $packageVersion) {
+              throw "Tag $env:RELEASE_TAG must match vcpkg version $packageVersion"
+            }
+            $cmakeVersion = [regex]::Match((Get-Content CMakeLists.txt -Raw),
+              '(?m)^\s*VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
+            if ($cmakeVersion -ne $packageVersion) { throw "CMake/vcpkg version mismatch" }
+            $packageVersion = $tagVersion
+          } elseif ($env:RC_BRANCH_PUSH -eq 'true') {
+            $channel = (Get-Content cmake/ci/rc-channel.txt -Raw).Trim()
+            if ($channel -notmatch '^rc\.[1-9][0-9]*$') { throw "Invalid release candidate channel: $channel" }
+            $packageVersion = "$packageVersion-$channel"
+          }
+          "version=$packageVersion" >> $env:GITHUB_OUTPUT
   native:
     needs: scope
     if: needs.scope.outputs.has_builds == 'true'
@@ -85,7 +114,7 @@ jobs:
     needs:
       - scope
       - native
-    if: github.event_name == 'workflow_dispatch' && inputs.prepare_release
+    if: (github.event_name == 'workflow_dispatch' && inputs.prepare_release) || (github.event_name == 'push' && (github.ref == 'refs/heads/release/salts-2.3-ace-cnet-review' || startsWith(github.ref, 'refs/tags/v')))
     uses: ./.github/workflows/sdk-package.yml
     with:
       version: ${{ needs.scope.outputs.version }}
@@ -111,3 +140,16 @@ jobs:
           case ",$SELECTED_RESULTS," in
             *,failure,*|*,cancelled,*) exit 1 ;;
           esac
+
+  publish:
+    name: Publish tagged Salts.Native SDK
+    needs: [scope, native, formal, benchmarks, package, result]
+    if: ${{ github.repository == 'qigao/salts' && startsWith(github.ref, 'refs/tags/v') && needs.result.result == 'success' && needs.native.result == 'success' && needs.formal.result == 'success' && needs.benchmarks.result == 'success' && needs.package.result == 'success' }}
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    uses: ./.github/workflows/native-sdk-rc-release.yml
+    with:
+      version: ${{ needs.scope.outputs.version }}
+    secrets: inherit

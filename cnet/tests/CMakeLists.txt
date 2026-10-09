@@ -1,8 +1,57 @@
+# Admission-time pure Owner placement strategy; no Actor/SG backend dependency.
+cmake_add_test(cnet_owner_placement_test
+  SOURCES cnet_owner_placement_test.c
+  LIBS Salts::CNet Salts::TinyTest
+  FOLDER "cnet/tests")
+
+# Client remote endpoint selection, independent of local SG Owner affinity.
+cmake_add_test(cnet_destination_policy_test
+  SOURCES cnet_destination_policy_test.c
+  LIBS Salts::CNet Salts::TinyTest
+  FOLDER "cnet/tests")
+
+# Owner-local physical and protocol-slot capacity with no hidden dial/retry.
+cmake_add_test(cnet_client_pool_test
+  SOURCES cnet_client_pool_test.c
+  LIBS Salts::CNet Salts::TinyTest
+  FOLDER "cnet/tests")
+
+# Explicit bounded transport recovery and protocol-authorized request retry.
+cmake_add_test(cnet_recovery_policy_test
+  SOURCES cnet_recovery_policy_test.c
+  LIBS Salts::CNet Salts::TinyTest
+  FOLDER "cnet/tests")
+
+# Real owner-driven CNetManager TCP reconnect; protocol READY is still explicit.
+cmake_add_test(cnet_managed_dial_test
+  SOURCES cnet_managed_dial_test.c
+  LIBS Salts::CNet Salts::TinyTest
+  FOLDER "cnet/tests")
+
+# Independent installed SDK gate: strict C11/C++17 via exported Salts targets.
+# Native host only; cross-compiled mobile builds remain build-only.
+if(NOT CMAKE_CROSSCOMPILING)
+  add_test(
+    NAME cnet_installed_sdk_test
+    COMMAND "${CMAKE_COMMAND}"
+      "-DSALTS_BINARY_DIR=${CMAKE_BINARY_DIR}"
+      "-DCONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_config/strategy"
+      "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed-strategy"
+      "-DCTEST_COMMAND=${CMAKE_CTEST_COMMAND}"
+      "-DSALTS_GENERATOR=${CMAKE_GENERATOR}"
+      "-DSALTS_TEST_CONFIG=$<CONFIG>"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_installed_cnet.cmake")
+  set_tests_properties(cnet_installed_sdk_test PROPERTIES RUN_SERIAL TRUE TIMEOUT 300)
+endif()
+
 set(CNET_TEST_PRIVATE_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 cmake_add_test(cnet_handoff_test SOURCES cnet_handoff_test.c
-  LIBS Salts::CNetManager Salts::TinyTest FOLDER "cnet/tests")
+  LIBS Salts::CNet Salts::TinyTest FOLDER "cnet/tests")
 cmake_add_test(cnet_manager_test SOURCES cnet_manager_test.c
-  LIBS Salts::CNetManager Salts::TinyTest FOLDER "cnet/tests")
+  LIBS Salts::CNet Salts::TinyTest FOLDER "cnet/tests")
+# Strict target ownership and independent cross-DSO consumers.
+include(cnet_manager_target_contract.cmake)
+add_subdirectory(manager_link)
 set(CNET_WSPARSER_INCLUDE ${CMAKE_SOURCE_DIR}/tools/wsparser)
 
 cmake_add_test(cnet_ipc_test
@@ -372,6 +421,14 @@ set_target_properties(
              C_STANDARD_REQUIRED ON
              C_EXTENSIONS OFF)
 
+# ACE pattern conformance: CNet owns I/O, CMeta supplies borrowed typed handlers.
+cmake_add_test(cnet_ace_acceptor_connector_test
+  SOURCES cnet_ace_acceptor_connector_test.c
+  LIBS cnet Salts::CMeta Salts::Core Salts::TinyTest
+  FOLDER "cnet/tests")
+set_target_properties(cnet_ace_acceptor_connector_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
 cmake_add_test(
   cnet_tcp_endpoint_test
   SOURCES
@@ -426,6 +483,11 @@ set_target_properties(
 # CNet/NativeIO conformance in the same build closure.
 add_dependencies(cnet_api_test
   cnet_native_io_sharded_ownership_test
+  cnet_owner_placement_test
+  cnet_destination_policy_test
+  cnet_client_pool_test
+  cnet_recovery_policy_test
+  cnet_managed_dial_test
   cnet_tcp_endpoint_test
   cnet_external_progress_test
   cnet_external_listener_test
@@ -475,6 +537,42 @@ target_compile_definitions(cnet_external_tls_listener_test PRIVATE
 unset(CNET_EXTERNAL_TLS_CA)
 unset(CNET_EXTERNAL_TLS_CERT)
 unset(CNET_EXTERNAL_TLS_KEY)
+
+cmake_add_test(
+  cnet_external_gateway_owner_test
+  SOURCES
+  cnet_external_gateway_owner_test.c
+  LIBS
+  cnet
+  Salts::Core
+  Salts::NativeIO
+  Salts::TinyTest
+  FOLDER
+  "cnet/tests")
+set_target_properties(
+  cnet_external_gateway_owner_test
+  PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+add_dependencies(cnet_api_test cnet_external_gateway_owner_test)
+
+# Native SG registered host lease: real TCP + SG-owned completions, one observe.
+cmake_add_test(cnet_sg_hosted_gateway_test
+  SOURCES cnet_sg_hosted_gateway_test.c
+  LIBS Salts::CNet Salts::NativeIO Salts::Core Salts::TinyTest
+  FOLDER "cnet/tests")
+set_target_properties(cnet_sg_hosted_gateway_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+add_dependencies(cnet_api_test cnet_sg_hosted_gateway_test)
+
+# Cross-SG-Owner admission: real detached TCP socket from source listener
+# -> bounded handoff credit -> final-Owner CNetManager adopt and terminal.
+# It executes independently from the same-Owner ManagedDial/Pool fixture.
+cmake_add_test(cnet_sg_handoff_owner_test
+  SOURCES cnet_sg_handoff_owner_test.c
+  LIBS Salts::CNet Salts::NativeIO Salts::Core Salts::TinyTest
+  FOLDER "cnet/tests")
+set_target_properties(cnet_sg_handoff_owner_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+add_dependencies(cnet_api_test cnet_sg_handoff_owner_test)
 
 cmake_add_test(
   cnet_external_progress_test

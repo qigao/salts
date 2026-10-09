@@ -2,6 +2,27 @@
 #include "tinytest.h"
 
 #include <salts/component_plugin.h>
+#include <cmeta/object_scope.h>
+
+/* This callback observes the outer Plugin lease during lexical ObjectRef
+ * destruction; cmeta_cleanup itself never acquires or extends that lease. */
+typedef struct test_lease_observer {
+    cmeta_plugin_registry *registry;
+    cmeta_plugin_ref ref;
+    unsigned destroys;
+    size_t active_leases_at_destroy;
+} test_lease_observer;
+
+static void test_observed_object_destroy(void *context, void *object) {
+    test_lease_observer *observer = (test_lease_observer *)context;
+    cmeta_plugin_lifecycle_info info;
+    (void)object;
+    ++observer->destroys;
+    if (cmeta_plugin_registry_get_lifecycle(
+            observer->registry, observer->ref, &info) == CMETA_PLUGIN_OK)
+        observer->active_leases_at_destroy = info.active_leases;
+}
+
 
 static cmeta_plugin_registry registry;
 static cmeta_plugin_ref ref;
@@ -143,6 +164,60 @@ suite("ComponentPlugin candidate generation") {
         check_equal(cmeta_plugin_registry_get_lifecycle(
             &registry, ref, &info), CMETA_PLUGIN_OK);
         check_equal(info.active_leases, (size_t)0u);
+    }
+
+    it("discharges explicit ObjectRef cleanup before releasing its Plugin lease") {
+        const salts_component_plugin_generation_storage storage = {
+            deployments, 1u,
+            instances, 1u,
+            dependencies, 1u,
+            activation_order, 1u,
+            modules, 1u
+        };
+        const salts_component_plugin_source source = {
+            ref, COMPONENT_PROVIDER_EXPORT_ID, NULL, NULL
+        };
+        test_lease_observer observer = {0};
+        cmeta_object_lifecycle lifecycle;
+        cmeta_object_ref temporary = CMETA_OBJECT_REF_INIT;
+        cmeta_cleanup cleanup = CMETA_CLEANUP_INIT;
+        cmeta_plugin_lifecycle_info info;
+        int value = 41;
+
+        observer.registry = &registry;
+        observer.ref = ref;
+        lifecycle = (cmeta_object_lifecycle){
+            sizeof(cmeta_object_lifecycle),
+            &observer, NULL, NULL, test_observed_object_destroy
+        };
+
+        check_equal(salts_component_plugin_generation_build(
+            &generation, UINT64_C(4), &registry, &storage,
+            NULL, 0u, &source, 1u, NULL, 0u),
+            SALTS_COMPONENT_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)1u);
+
+        check_equal(cmeta_object_borrow(
+            &temporary, &value, &cmeta_data_int, NULL), CMETA_OK);
+        check_equal(cmeta_object_take(&temporary, &lifecycle), CMETA_OK);
+        check_equal(cmeta_cleanup_object(&cleanup, &temporary), CMETA_OK);
+
+        /* A lexical cleanup must run while the provider code is still
+         * authorized by the outer lease. It does not unload Plugin itself. */
+        cmeta_cleanup_run(&cleanup);
+        cmeta_cleanup_run(&cleanup);
+        check_equal(observer.destroys, 1u);
+        check_equal(observer.active_leases_at_destroy, (size_t)1u);
+        check_false(cmeta_object_ref_valid(&temporary));
+
+        check_equal(salts_component_plugin_generation_discard(
+            &generation), SALTS_COMPONENT_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)0u);
+        check_equal(observer.destroys, 1u);
     }
 
     it("shares one Plugin lease across two provider exports") {

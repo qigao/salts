@@ -34,6 +34,7 @@ typedef struct ipc_worker {
   cnet_ipc_accepted child;
   cmeta_thread_t thread;
   atomic_bool stop;
+  atomic_bool udp_done;
   ipc_probe probe;
   size_t udp_sends;
   size_t udp_receives;
@@ -145,6 +146,8 @@ static int worker_progress(ipc_worker *worker, native_io_backend *backend, cnet_
     }
     if (!consumed && first == SALTS_OK) first = SALTS_EPROTO;
   }
+  if (worker->udp_sends == 2u && worker->udp_receives == 2u)
+    atomic_store_explicit(&worker->udp_done, true, memory_order_release);
   if (worker->probe.failed && first == SALTS_OK) first = SALTS_EPROTO;
   return first;
 }
@@ -428,6 +431,14 @@ spec("CNet local IPC") {
     while (probes[0].bytes != BYTE_COUNT || probes[1].bytes != BYTE_COUNT) {
       poll_clients();
       check(cmeta_monotonic_ms() < deadline);
+    }
+    /* IPC echo completion does not imply independent UDP completions.
+     * Observe a release/acquire completion flag before requesting stop. */
+    for (size_t i = 0u; i < 2u; ++i) {
+      while (!atomic_load_explicit(&workers[i].udp_done, memory_order_acquire)) {
+        poll_clients();
+        check(cmeta_monotonic_ms() < deadline);
+      }
     }
     for (size_t i = 0u; i < 2u; ++i)
       atomic_store_explicit(&workers[i].stop, true, memory_order_release);

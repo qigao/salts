@@ -4,6 +4,7 @@
 
 #include <salts/error_codes.h>
 #include <salts/native_io.h>
+#include <salts/native_io_ace_token.h>
 #include <salts/thread.h>
 #include <salts/clock.h>
 #include <coro.h>
@@ -37,6 +38,8 @@ typedef int native_io_test_socket;
 typedef socklen_t native_io_test_socklen;
   #define NATIVE_IO_TEST_INVALID_SOCKET (-1)
 #endif
+
+NATIVE_IO_ACE_TOKEN_TYPE(native_io_test_ace_read, unsigned char);
 
 enum {
   NATIVE_IO_TEST_ENDPOINT_CAPACITY = 2,
@@ -131,6 +134,9 @@ static void native_io_test_pipe_round_trip(native_io_backend_kind kind, bool non
   native_io_endpoint duplicate = {1u, 1u};
   native_io_request requests[2] = {0};
   native_io_completion events[2] = {0};
+  native_io_test_ace_read token = {0};
+  native_io_completion stale;
+  unsigned char *settled_context = NULL;
   unsigned char received[sizeof(payload)] = {0};
   const uint32_t flags = NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE;
   native_io_operation operations[2];
@@ -158,12 +164,32 @@ static void native_io_test_pipe_round_trip(native_io_backend_kind kind, bool non
                                        .length = sizeof(payload),
                                        .user_data = 42u};
   check_equal(native_io_backend_submit(&backend, &operations[0], &requests[0]), SALTS_OK);
+  check_equal(native_io_test_ace_read_bind(&token, requests[0], endpoints[0],
+                                          operations[0].user_data, received), SALTS_OK);
+  check_equal(native_io_test_ace_read_bind(&token, requests[0], endpoints[0],
+                                          operations[0].user_data, received), SALTS_EBUSY);
   check_equal(native_io_backend_release_pipe(&backend, endpoints[0]), SALTS_EBUSY);
   check_equal(native_io_backend_submit(&backend, &operations[1], &requests[1]), SALTS_OK);
   check_equal(native_io_test_observe_all(&backend, events, 2u), SALTS_OK);
   check_equal(events[0].kind, NATIVE_IO_COMPLETION_OK);
   check_equal(events[1].kind, NATIVE_IO_COMPLETION_OK);
   check_equal(memcmp(received, payload, sizeof(payload)), 0);
+  /* Completion order is backend-dependent; match the authoritative request. */
+  size_t read_index = 0u;
+  if (events[0].request.slot != requests[0].slot ||
+      events[0].request.generation != requests[0].generation)
+    read_index = 1u;
+  stale = events[read_index];
+  ++stale.request.generation;
+  check_equal(native_io_test_ace_read_settle(&token, &stale, &settled_context),
+              SALTS_ENOENT);
+  check_null(settled_context);
+  check_equal(native_io_test_ace_read_settle(&token, &events[read_index], &settled_context),
+              SALTS_OK);
+  check_true(settled_context == received);
+  check_equal(native_io_test_ace_read_settle(&token, &events[0], &settled_context),
+              SALTS_EALREADY);
+  check_null(settled_context);
 
   (void)close(descriptors[0]);
   (void)close(descriptors[1]);
@@ -310,6 +336,8 @@ static void native_io_test_readiness_vector_cancel(native_io_backend_kind kind) 
   native_io_endpoint endpoint = {0};
   native_io_request request = {0};
   native_io_completion event = {0};
+  native_io_test_ace_read act = {0};
+  unsigned char *context = NULL;
   native_io_vector_operation operation;
   size_t filled = 0u;
   size_t count = 0u;
@@ -324,6 +352,9 @@ static void native_io_test_readiness_vector_cancel(native_io_backend_kind kind) 
   operation = (native_io_vector_operation){
       NATIVE_IO_OPERATION_PIPE_WRITE, endpoint, spans, 2u, 111u};
   check_equal(native_io_backend_submit_vector(&backend, &operation, &request), SALTS_OK);
+  /* ACT binds the already admitted request; cancel does not settle it. */
+  check_equal(native_io_test_ace_read_bind(&act, request, endpoint,
+                                          operation.user_data, &first), SALTS_OK);
   check_equal(native_io_backend_cancel(&backend, request), SALTS_OK);
   check_equal(native_io_backend_release_pipe(&backend, endpoint), SALTS_EBUSY);
   check_equal(native_io_backend_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS, &count),
@@ -332,6 +363,10 @@ static void native_io_test_readiness_vector_cancel(native_io_backend_kind kind) 
   check_equal(event.kind, NATIVE_IO_COMPLETION_CANCELLED);
   check_equal(event.status, SALTS_ECANCELED);
   check_equal(event.user_data, (uintptr_t)111u);
+  check_equal(native_io_test_ace_read_settle(&act, &event, &context), SALTS_OK);
+  check_true(context == &first);
+  check_equal(native_io_test_ace_read_settle(&act, &event, &context), SALTS_EALREADY);
+  check_null(context);
 
   (void)close(descriptors[0]);
   (void)close(descriptors[1]);

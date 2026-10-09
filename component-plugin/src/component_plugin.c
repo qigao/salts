@@ -300,7 +300,9 @@ salts_component_plugin_status salts_component_plugin_generation_build(
     }
     (void)distinct_modules;
 
-    memset(&generation->components, 0, sizeof(generation->components));
+    /* A candidate owns this context exclusively, never while ACTIVE.
+     * Establish defined typed ZERO state before static Context admission. */
+    generation->components = (salts_component_context)SALTS_COMPONENT_CONTEXT_INIT;
     generation->id = generation_id;
     generation->registry = registry;
     generation->storage = *storage;
@@ -483,6 +485,7 @@ salts_component_plugin_status salts_component_plugin_scope_acquire(
     scope->runtime = runtime;
     scope->generation = generation;
     scope->generation_id = generation->id;
+    scope->owner_address = scope;
     scope->live = true;
 
     cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
@@ -494,8 +497,11 @@ salts_component_plugin_status salts_component_plugin_scope_release(
     salts_component_plugin_runtime *runtime;
     salts_component_plugin_generation *generation;
 
-    if (scope == NULL || !scope->live ||
-        scope->runtime == NULL || scope->generation == NULL)
+    if (scope == NULL || !scope->live)
+        return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
+    if (scope->owner_address != scope)
+        return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
+    if (scope->runtime == NULL || scope->generation == NULL)
         return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
 
     runtime = scope->runtime;
@@ -517,13 +523,14 @@ salts_component_plugin_status salts_component_plugin_scope_release(
     --runtime->active_scopes;
     cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
 
-    memset(scope, 0, sizeof(*scope));
+    *scope = (salts_component_plugin_scope)SALTS_COMPONENT_PLUGIN_SCOPE_INIT;
     return SALTS_COMPONENT_PLUGIN_OK;
 }
 
 uint64_t salts_component_plugin_scope_generation_id(
     const salts_component_plugin_scope *scope) {
-    return scope != NULL && scope->live ? scope->generation_id : UINT64_C(0);
+    return scope != NULL && scope->live && scope->owner_address == scope
+        ? scope->generation_id : UINT64_C(0);
 }
 
 salts_component_plugin_status salts_component_plugin_scope_find_service(
@@ -532,7 +539,11 @@ salts_component_plugin_status salts_component_plugin_scope_find_service(
     salts_component_service *out_service) {
     salts_component_status status;
 
-    if (scope == NULL || !scope->live || scope->generation == NULL)
+    if (scope == NULL || !scope->live)
+        return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
+    if (scope->owner_address != scope)
+        return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
+    if (scope->generation == NULL)
         return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
 
     status = salts_component_context_find_service(
@@ -549,7 +560,11 @@ salts_component_plugin_status salts_component_plugin_scope_find_service_from(
     salts_component_service *out_service) {
     salts_component_status status;
 
-    if (scope == NULL || !scope->live || scope->generation == NULL)
+    if (scope == NULL || !scope->live)
+        return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
+    if (scope->owner_address != scope)
+        return SALTS_COMPONENT_PLUGIN_INVALID_STATE;
+    if (scope->generation == NULL)
         return SALTS_COMPONENT_PLUGIN_INVALID_ARGUMENT;
 
     status = salts_component_context_find_service_from(

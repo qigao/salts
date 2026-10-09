@@ -63,6 +63,7 @@ add_library(${TARGET_NAME}
   src/effect.c
   src/event.c
   src/executor.c
+  src/executor_owner.c
   src/function_projection.c
   src/graph.c
   src/interfaces.c
@@ -86,6 +87,7 @@ add_library(${TARGET_NAME}
   src/relation_exec.c
   src/subscription.c
   src/scheduler.c
+  src/scheduler_owner.c
   src/scheduler_worker.c
   src/publishers.c
   src/statechart.c
@@ -153,8 +155,7 @@ target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
-# Keep the core CFlow target independent of CNet. Optional session integration
-# is exported separately as Salts::CFlowCNet after the CNet target exists.
+# CFlow remains independent of CNet; no CNet-to-Actor integration target.
 target_link_libraries(
   ${TARGET_NAME}
   PUBLIC Salts::CMeta Salts::NativeIO Salts::Platform
