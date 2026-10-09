@@ -781,4 +781,4 @@ cmake_add_test(cnet_name_lookup_test SOURCES cnet_name_lookup_test.c
   LIBS cnet Salts::Core Salts::TinyTest FOLDER "cnet/tests")
 
 cmake_add_test(cnet_name_lookup_dns_test SOURCES cnet_name_lookup_dns_test.c
-  LIBS cnet Salts::Core Salts::TinyTest FOLDER "cnet/tests")
+  LIBS cnet Salts::IDNA Salts::Core Salts::TinyTest FOLDER "cnet/tests")

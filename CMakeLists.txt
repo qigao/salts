@@ -89,6 +89,7 @@ add_subdirectory(cserde)
 add_subdirectory(utils)
 # Unicode depends only on Salts::Core; this migration does not change CNet DNS.
 add_subdirectory(unicode)
+add_subdirectory(idna)
 
 if(WIN32)
   enable_language(RC)

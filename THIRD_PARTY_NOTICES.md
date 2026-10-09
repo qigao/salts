@@ -11,7 +11,7 @@ The components below retain their upstream license terms.
 | reed/gf256 | `vendor/reed/` | MIT | See `vendor/reed/LICENSE`. |
 | SDS | `vendor/sds/` | BSD-2-Clause | See `vendor/sds/LICENSE`. |
 | TinyTest | `tinytest/` | MIT | Upstream attribution is retained in the TinyTest sources and README. |
-| Unicode Character Database 17.0.0 | `unicode/data/17.0.0/` and `unicode/src/unicode_*_data.h` | Unicode License v3 | Original data and generated tables are versioned; see `unicode/data/LICENSE.txt` and `unicode/data/README.md`. |
+| Unicode Character Database / IDNA 17.0.0 | `unicode/data/17.0.0/`, `unicode/src/unicode_*_data.h`, `idna/src/idna_data.h` | Unicode License v3 | Original data and generated tables are versioned; see `unicode/data/LICENSE.txt` and `unicode/data/README.md`. |
 | SQLite Lemon parser generator | `tools/lemon/` | Public-domain dedication | The source headers explicitly disclaim copyright. |
 
 Dependencies downloaded by vcpkg or another package manager are not relicensed
