@@ -1204,6 +1204,10 @@ platform, benchmark and SDK release gates below are not declared complete.
 `cnet_connect()` supports `ipc://`, but does not add `ws://` or `kcp://`.
 Current headers and executable tests remain the implementation authority.
 
+For UDP/WS destination, Owner placement, admission, recovery and pool boundaries,
+see the [#1095 strategy applicability review](SG_POLICY_HOST_CONTRACT.md#udp-and-websocket-policy-review-1095),
+including the source-based acceptance inventory and remaining composition gates.
+
 Prerequisite and governing progress contract:
 [Salts #999: UDP multi-owner composition and datagram external progress](https://github.com/qigao/salts/issues/999).
 Its datagram external APIs are present in the current headers and implementation.
