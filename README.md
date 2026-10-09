@@ -20,20 +20,28 @@ These abstractions are designed to compile down to ordinary C data structures an
 并用同一版本重新构建库、宿主和插件。部署时使用完整的新 SDK；不要混用旧头文件、
 旧静态库或旧插件。数据布局与错误码没有因前缀迁移改变。
 
-## Component migration for 3.0.0
+## Component migration for Salts 2.3.0
 
-This integration branch prepares the next major SDK version, 3.0.0. It removes
-the static CMeta Plugin declaration API published in 2.x and replaces it with
-Component metadata and Configurator runtime contracts. This is a source and
-binary compatibility break; CMake and the package manifest use the new major
-version, versioned libraries use SOVERSION 3, and CMake package admission uses
-`SameMajorVersion` to reject 2.x version requests. The branch is not part of the
-published 2.2.0 SDK.
+**Next release: 2.3.0** (last published Release: 2.2.0). The old 3.0.0
+Release was withdrawn; the interim 4.0.0 proposal is superseded.
+The long-lived ACE/CMeta Draft PR remains **DO NOT MERGE**.
+
+The 2.3.0 candidate replaces 2.2.x static CMeta Plugin declarations with
+canonical Component metadata and the bounded Configurator/ComponentPlugin
+runtime. This is a **source and native ABI break within SemVer major 2**.
+There are no compatibility aliases or legacy/fallback execution paths.
+
+To avoid accidentally mixing incompatible 2.2 and 2.3 binaries, SDK-owned
+shared libraries use SONAME epoch `2.3` (independent CFlow ABI unchanged).
+Generated CMake package admission uses `SameMinorVersion`, explicitly
+rejecting 2.2.x requests; consumers should select the exact 2.3.0 SDK.
+Rebuild the host, every provider DSO, dependent libraries and fingerprints
+against one immutable candidate.
 
 See [the Component migration guide](cmeta/COMPONENT_MANIFESTS.md#migration-from-salts-2x)
-for exact symbol changes, descriptor and fingerprint differences, and the
-rebuild/rollback procedure. Dynamic loading and module leases remain owned by
-`Salts::Plugin`.
+for symbols, typed configuration, Scope ownership, and migration/rollback.
+Module loading and leases remain the responsibility of `Salts::Plugin`.
+No 2.3.0 stable release, tag or merge is authorized here.
 
 ## Why Salts?
 
@@ -218,9 +226,8 @@ CTest suites. CMake build trees and installed SDKs are not reused across commits
 Linking, code generation, tool installation and tests still run, so speedups
 depend on the changed files and the observed cache hit rate. GitHub branch access
 rules and cache eviction apply; the first run in a new cache namespace is cold.
-The MSVC C11 atomics switch keeps its equivalent dash spelling for consistent
-Windows compiler flags. This retains C11 atomic support and allows eligible
-C objects to enter the ccache cache.
+The MSVC C11 atomics switch uses its equivalent dash spelling for consistent compiler flags across Windows builds. This retains C11
+atomic support and allows eligible C objects to enter the ccache cache.
 
 The supported project compiler profiles are:
 
@@ -454,8 +461,3 @@ Higher-level parsers, QueryVM, crypto, filesystem/process adapters, and related 
 Salts first-party code is licensed under the Apache License 2.0. See
 [LICENSE](LICENSE). Bundled third-party components retain their upstream
 licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-ICU source builds on Linux require `autoconf`, `automake`, `autoconf-archive`
-and `libtool`, in addition to the existing Ninja/pkg-config tools. CI installs
-these through the shared build-host action; macOS already installs the same
-autotools prerequisites through Homebrew.

@@ -8,8 +8,13 @@ endif()
 
 project(
   Salts
-  VERSION 3.0.0
+  VERSION 2.3.0
   LANGUAGES C CXX)
+
+# The 2.3 SDK includes an explicit native ABI transition from released 2.2.
+# Distinct SONAME (2.3) prevents old 2.2 binaries loading incompatible 2.3
+# Component/Plugin records merely because the SemVer major remains 2.
+set(SALTS_NATIVE_SOVERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}")
 
 # Project configuration - output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -32,8 +37,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if(MSVC)
-  # MSVC accepts either prefix. sccache 0.18 treats an unknown slash switch
-  # as an input filename; the dash spelling preserves the option and caching.
+  # Preserve the supported C11 atomics flag for MSVC builds.
   add_compile_options("$<$<COMPILE_LANGUAGE:C>:-experimental:c11atomics>")
 endif()
 # Enable folder organization in IDEs
@@ -81,7 +85,6 @@ add_subdirectory(tinymock)
 add_subdirectory(cflow)
 add_subdirectory(cstl)
 add_subdirectory(cnet)
-add_subdirectory(cflow/cnet-adapter)
 add_subdirectory(cserde)
 add_subdirectory(utils)
 # Unicode depends only on Salts::Core; this migration does not change CNet DNS.
@@ -104,7 +107,7 @@ configure_package_config_file(
 write_basic_package_version_file(
   "${CMAKE_BINARY_DIR}/SaltsConfigVersion.cmake"
   VERSION ${PROJECT_VERSION}
-  COMPATIBILITY SameMajorVersion)
+  COMPATIBILITY SameMinorVersion)
 
 # Install the config files
 install(FILES "${CMAKE_BINARY_DIR}/SaltsConfig.cmake"

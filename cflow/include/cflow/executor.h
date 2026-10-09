@@ -96,7 +96,11 @@ extern const cmeta_type_desc cflow_type_executor_protocol_stats_ptr;
 enum {
     CMETA_EXEC_CAP_MANUAL     = 1u << 0,
     CMETA_EXEC_CAP_SERIAL     = 1u << 1,
-    CMETA_EXEC_CAP_CONCURRENT = 1u << 2
+    CMETA_EXEC_CAP_CONCURRENT = 1u << 2,
+    /** Caller-driven on a fixed owner thread, with concurrent bounded posting.
+     * OWNER_AFFINE must also advertise MANUAL and SERIAL. Unlike the ordinary
+     * Manual Executor, only the captured owner thread may drive callbacks. */
+    CMETA_EXEC_CAP_OWNER_AFFINE = 1u << 3
 };
 
 #define CMETA_EXECUTOR_METHODS(X,I) \
@@ -234,6 +238,37 @@ bool cflow_executor_worker_init(cflow_executor *executor, size_t workers);
 bool cflow_executor_worker_init_with_capacity(cflow_executor *executor,
                                               size_t workers,
                                               size_t capacity);
+
+/**
+ * Initialize a fixed-capacity, owner-driven SerialExecutor.
+ *
+ * The calling thread becomes the only task execution/driver thread. Other
+ * threads may post concurrently and receive exact FULL/CLOSED admission.
+ * The existing bounded typed CFlow Mailbox stores task descriptors; no worker
+ * thread is created. Caller-provided wake, when non-NULL, is invoked only as
+ * an advisory signal *after* a successful queue publication (and on shutdown
+ * when needed), outside the Executor mutex. It may run on any producer thread,
+ * must not call run_one/run_ready or destroy the Executor, and must not block.
+ * The host must arm its NativeIO wake before using this hook, drive bounded
+ * run_one() quanta, and check pending work before sleeping. A wake failure does
+ * NOT change an accepted admission into a rejection.
+ *
+ * This Executor advertises SERIAL|MANUAL|OWNER_AFFINE. The explicit owner
+ * capability permits Machine execution without misrepresenting
+ * a generic caller-driven Manual Executor as a worker Executor.
+ * Statechart initialization is still synchronous and rejects caller-driven
+ * Executors until an owner-safe initial stabilization contract is available. No live task
+ * can migrate to another owner. It owns no CNet backend, connection, or loop.
+ *
+ * Successful descriptor admission copies the descriptor. Accepted callbacks
+ * run (or cancel on CANCEL_PENDING shutdown) and finalize once on the owner.
+ * Other threads must stop posting, including any post->wake tail, before
+ * owner-side destruction. Do not destroy from an Executor callback. Shutdown
+ * closes admission; the host must continue owner-driven progress to settle it.
+ */
+bool cflow_executor_owner_init_with_capacity(
+    cflow_executor *executor, size_t capacity,
+    cflow_task_fn wake, void *wake_user);
 
 #ifdef __cplusplus
 }

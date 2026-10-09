@@ -1,0 +1,125 @@
+name: Publish Salts.Native tagged SDK
+
+# Reusable final stage: only Salts CI calls this after tag-scoped full
+# build, sanitizers, host CTests, six installed RIDs, and package succeeded.
+# It has no independent push/dispatch trigger and cannot bypass the CI gate.
+'on':
+  workflow_call:
+    inputs:
+      version:
+        description: Validated NuGet version derived from the immutable Git tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish NuGet and GitHub Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    env:
+      TAG: ${{ github.ref_name }}
+      SOURCE_SHA: ${{ github.sha }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate immutable tag, version and source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = push
+          [[ "$GITHUB_REF" == refs/tags/v* ]]
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git rev-list -n 1 "$TAG")" = "$SOURCE_SHA"
+          test "$TAG" = "v$RELEASE_VERSION"
+          cmake_version="$(awk '/^[[:space:]]*VERSION[[:space:]]+[0-9]/{print $2; exit}' CMakeLists.txt)"
+          manifest_version="$(python3 -c 'import json; print(json.load(open("vcpkg.json"))["version-semver"])')"
+          test "$cmake_version" = "$manifest_version"
+          base_version="$(printf '%s' "$RELEASE_VERSION" | cut -d- -f1)"
+          test "$base_version" = "$manifest_version"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing immutable GitHub Release $TAG" >&2
+            exit 1
+          fi
+
+      - name: Restore exact-tag six-platform SDK package
+        uses: actions/download-artifact@v4
+        with:
+          name: salts-native-nuget
+          path: dist
+
+      - name: Verify NuGet contents, version and source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="dist/Salts.Native.$RELEASE_VERSION.nupkg"
+          test -f "$package"
+          python3 - "$package" "$RELEASE_VERSION" "$SOURCE_SHA" <<'PY'
+          import sys,zipfile
+          path,version,sha=sys.argv[1:]
+          rids={'linux-x64','linux-arm64','windows-x64','macos-arm64',
+                'android-arm64-v8a','ios-arm64'}
+          with zipfile.ZipFile(path) as pkg:
+              names=set(pkg.namelist())
+              manifests={n for n in names if n.endswith('/salts-sdk-manifest.txt')}
+              expected={f'sdk/{rid}/salts-sdk-manifest.txt' for rid in rids}
+              if manifests!=expected:
+                  raise SystemExit(f'Incorrect SDK RID set: {manifests ^ expected}')
+              for entry in expected:
+                  fields=dict(line.split('=',1) for line in
+                      pkg.read(entry).decode('utf-8-sig').splitlines() if '=' in line)
+                  for key,want in [('version',version),('commit',sha),('profile','release')]:
+                      if fields.get(key)!=want:
+                          raise SystemExit(f'{entry}: {key} mismatch {fields.get(key)!r}')
+                  rid=entry.split('/')[1]
+                  for header in ('cmeta/function.h','cnet/cnet.h','cnet/name_lookup.h'):
+                      if f'sdk/{rid}/include/{header}' not in names:
+                          raise SystemExit(f'{rid}: missing {header}')
+          PY
+          sha256sum "$package" | tee dist/SHA256SUMS
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish immutable NuGet package
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          config="$RUNNER_TEMP/salts-tag-nuget.config"
+          printf '<configuration><packageSources><clear /></packageSources></configuration>\n' > "$config"
+          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
+            --name github --username qigao --password "$GITHUB_TOKEN" \
+            --store-password-in-clear-text --configfile "$config"
+          dotnet nuget push "dist/Salts.Native.$RELEASE_VERSION.nupkg" \
+            --api-key "$GITHUB_TOKEN" --source github --skip-duplicate --configfile "$config"
+
+      - name: Publish GitHub prerelease or stable release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_VERSION" == *-rc.* ]]; then
+            gh release create "$TAG" \
+              "dist/Salts.Native.$RELEASE_VERSION.nupkg" dist/SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" --verify-tag --target "$SOURCE_SHA" \
+              --title "Salts $RELEASE_VERSION" --generate-notes --prerelease
+          else
+            gh release create "$TAG" \
+              "dist/Salts.Native.$RELEASE_VERSION.nupkg" dist/SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" --verify-tag --target "$SOURCE_SHA" \
+              --title "Salts $RELEASE_VERSION" --generate-notes --latest
+          fi

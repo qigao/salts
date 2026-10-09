@@ -136,6 +136,69 @@ suite("CMeta component declarations") {
         check_not_equal(plain, configured);
     }
 
+
+    it("rejects kind-only container config through descriptor, manifest and fingerprint") {
+        const cmeta_manifest_limits manifest_limits = {
+            CMETA_MANIFEST_DEFAULT_ITEMS,
+            CMETA_MANIFEST_DEFAULT_DEPTH,
+            CMETA_MANIFEST_DEFAULT_NODES
+        };
+        const cmeta_fingerprint_limits fingerprint_limits = {
+            CMETA_FINGERPRINT_DEFAULT_DEPTH,
+            CMETA_FINGERPRINT_DEFAULT_NODES,
+            CMETA_FINGERPRINT_DEFAULT_ROWS,
+            CMETA_FINGERPRINT_DEFAULT_STRING_BYTES
+        };
+        const cmeta_data_kind kind_only_cases[] = {
+            CMETA_DATA_SEQUENCE, CMETA_DATA_SET, CMETA_DATA_MAP
+        };
+        size_t i;
+
+        for (i = 0u; i < sizeof(kind_only_cases) / sizeof(kind_only_cases[0]); ++i) {
+            cmeta_data_desc config = cmeta_data_int;
+            cmeta_component_desc component =
+                *cmeta_component_meta(PatternConfiguredStorage);
+            const cmeta_manifest_entry entries[] = {
+                { "kind-only-config", CMETA_MANIFEST_COMPONENT, &component,
+                  UINT64_C(0), UINT32_C(0) }
+            };
+            const cmeta_manifest manifest = {
+                "kind-only-config", entries, COMPONENT_SIZE(1u),
+                CMETA_MANIFEST_FORMAT_VERSION
+            };
+            const cmeta_component_desc *found =
+                cmeta_component_meta(PatternConfiguredStorage);
+            const cmeta_interface_desc *capability = component_logger_interface();
+            uint64_t fingerprint = UINT64_C(0x1234);
+
+            config.stable_id = "test.kind_only_config";
+            config.display_name = "kind-only config";
+            config.kind = kind_only_cases[i];
+            config.storage_type = NULL;
+            config.shape = NULL;
+            config.collection_ops = NULL;
+            config.map_ops = NULL;
+            component.config = &config;
+
+            /* This is a valid DataDesc for schema-only consumers, but not
+             * for the exact native configuration consumed by Component. */
+            check_true(cmeta_data_desc_valid(&config));
+            check_false(cmeta_component_desc_valid(&component));
+            check_equal(cmeta_manifest_get_component(
+                &manifest, 0u, &manifest_limits, &found),
+                CMETA_INVALID_ARGUMENT);
+            check_true(found == cmeta_component_meta(PatternConfiguredStorage));
+            check_equal(cmeta_component_get_capability(
+                &component, 0u, CMETA_COMPONENT_PROVIDES,
+                &manifest_limits, &capability), CMETA_INVALID_ARGUMENT);
+            check_true(capability == component_logger_interface());
+            check_equal(cmeta_contract_fingerprint_component(
+                &component, &fingerprint_limits, &fingerprint),
+                CMETA_INVALID_ARGUMENT);
+            check_equal(fingerprint, UINT64_C(0x1234));
+        }
+    }
+
     it("rejects duplicate capability rows in validation and fingerprint") {
         const cmeta_fingerprint_limits limits = {
             CMETA_FINGERPRINT_DEFAULT_DEPTH,

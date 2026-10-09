@@ -1,7 +1,6 @@
 set(TARGET_NAME cnet)
 
 find_package(c-ares CONFIG REQUIRED)
-find_package(ICU REQUIRED COMPONENTS uc data)
 find_package(kcp CONFIG REQUIRED)
 find_package(GmSSL CONFIG REQUIRED)
 if(APPLE)
@@ -26,6 +25,12 @@ set(CNET_SOURCE_FILES
   src/cnet_listener.c
   src/cnet_module.c
   src/cnet_owner.c
+  src/cnet_owner_strategy.c
+  src/cnet_destination_policy.c
+  src/cnet_client_pool.c
+  src/cnet_recovery_policy.c
+  src/cnet_managed_dial.c
+  src/cnet_sg_host.c
   src/cnet_resolver.c
   src/cnet_session.c
   src/cnet_shards.c
@@ -55,23 +60,23 @@ function(cnet_configure_target target_name)
     ${target_name}
     PUBLIC Salts::NativeIO Salts::Concurrency Salts::Core
     PRIVATE Salts::UriParser Salts::Platform Salts::CSTL monocypher cmeta_reed
-            ${cnet_cares_link_items} kcp::kcp c-ares::cares ICU::uc ICU::data
+            ${cnet_cares_link_items} kcp::kcp c-ares::cares
             GmSSL::GmSSL
             $<$<PLATFORM_ID:Windows>:crypt32>
             "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
             "$<$<PLATFORM_ID:Darwin>:-framework Security>"
             "$<$<PLATFORM_ID:iOS>:-framework CoreFoundation>"
             "$<$<PLATFORM_ID:iOS>:-framework Security>")
-  if(APPLE)
-    # vcpkg's ICU archives use Apple's libc++, even when Salts uses GNU C++.
-    # Keep that dependency private to CNet's C ABI and diagnostic archives.
-    target_link_libraries(${target_name} PRIVATE c++)
-  endif()
 endfunction()
 
 add_library(${TARGET_NAME} SHARED ${CNET_SOURCE_FILES})
+# Manager and inbound admission handoff share CNet's single DSO identity.
+# Do not add them to CNET_SOURCE_FILES: profile archives recompile that list.
+target_sources(${TARGET_NAME} PRIVATE
+  src/cnet_manager.c
+  src/cnet_handoff.c)
 cmake_config_target(${TARGET_NAME}
-  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
+  VERSION "${PROJECT_VERSION}" SOVERSION "${SALTS_NATIVE_SOVERSION}"
   ALIAS Salts::CNet
   FOLDER "cnet"
   EXPORT_NAME CNet)
@@ -99,17 +104,6 @@ if(BUILD_TESTS)
 endif()
 
 install(TARGETS ${TARGET_NAME} EXPORT SaltsTargets)
-add_library(cnet_manager SHARED src/cnet_manager.c src/cnet_handoff.c)
-cmake_config_target(cnet_manager
-  ALIAS Salts::CNetManager FOLDER "cnet" EXPORT_NAME CNetManager
-  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}")
-set_target_properties(cnet_manager PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
-target_include_directories(cnet_manager PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>)
-target_compile_features(cnet_manager PUBLIC c_std_11)
-target_link_libraries(cnet_manager PUBLIC Salts::CNet PRIVATE Salts::Platform)
-install(TARGETS cnet_manager EXPORT SaltsTargets)
 if(WIN32)
   install(FILES "$<TARGET_FILE:c-ares::cares>" TYPE BIN)
 endif()
@@ -131,16 +125,3 @@ endif()
 if(BUILD_BENCHMARKS OR CNET_BUILD_BENCHMARKS)
   add_subdirectory(benchmarks)
 endif()
-
-if(WIN32)
-  get_filename_component(_cnet_icu_libdir "${ICU_UC_LIBRARY_RELEASE}" DIRECTORY)
-  string(REGEX REPLACE "^([0-9]+).*" "\\1" _cnet_icu_major "${ICU_VERSION}")
-  foreach(component uc dt)
-    find_file(CNET_ICU_${component}_DLL NAMES icu${component}${_cnet_icu_major}.dll icu${component}.dll
-      PATHS "${_cnet_icu_libdir}/../bin" NO_DEFAULT_PATH REQUIRED)
-    install(FILES "${CNET_ICU_${component}_DLL}" TYPE BIN)
-  endforeach()
-endif()
-
-install(FILES "${ICU_INCLUDE_DIR}/../share/icu/copyright"
-  DESTINATION share/licenses/Salts/icu)

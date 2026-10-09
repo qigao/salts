@@ -128,6 +128,34 @@ bool cflow_scheduler_inline_init(cflow_scheduler *scheduler);
 bool cflow_scheduler_manual_init(cflow_scheduler *scheduler);
 bool cflow_scheduler_manual_init_with_capacity(cflow_scheduler *scheduler,
                                                size_t ready_capacity);
+/** Bind a concurrent-admission, zero-delay Scheduler to an existing
+ * owner-affine SerialExecutor. Machine and Subscription work share the SAME
+ * underlying bounded Executor queue; no new queue, worker or timer is created.
+ *
+ * Binding must run on the Executor owner before dispatch starts. The Scheduler
+ * borrows the Executor, so destroy Scheduler after closing all Subscriptions
+ * and before destroying Executor. ready_capacity bounds the preallocated
+ * Scheduler task-ID/cancellation slots and must not exceed the Executor
+ * queue capacity.
+ *
+ * Concurrent callers may post/cancel tasks. Only the captured owner may
+ * run_one/run_ready/run_until_idle. Accepted fn callbacks are dispatched
+ * on that owner, never inline from admission. cancel(id) may synchronously
+ * invoke cancel/finalize on its CALLER's thread, matching Scheduler cancel's
+ * borrowed-user lifetime contract; only running callbacks are owner-affine.
+ * A successful cancel leaves a bounded tombstone until the owner consumes
+ * the corresponding Executor task. Shutdown seals only Scheduler admission,
+ * and never shuts down the borrowed Executor (which other Actors may use).
+ * Delayed tasks are explicitly unsupported.
+ *
+ * The host owns progress/wake, must periodically drive a finite quantum of
+ * the shared Executor and must quiesce all external post/cancel/wake tails
+ * before Scheduler destruction. Destroy must not execute from a callback.
+ */
+bool cflow_scheduler_owner_bind(cflow_scheduler *scheduler,
+                                cflow_executor *owner_executor,
+                                size_t ready_capacity);
+
 bool cflow_scheduler_worker_init(cflow_scheduler *scheduler, size_t workers);
 bool cflow_scheduler_worker_init_with_capacity(cflow_scheduler *scheduler,
                                                size_t workers,

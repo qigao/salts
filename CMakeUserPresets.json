@@ -438,9 +438,11 @@
         {
             "name": "mac-arm64-release-ci",
             "inherits": [
+                "AppleClang",
                 "vcpkg-cache-ci",
                 "mac-arm64-release-user"
             ],
+            "binaryDir": "${sourceDir}/build/mac-arm64-appleclang-package-release",
             "environment": {
                 "SALTS_ROOT": "${sourceDir}/stage/sdk/macos-arm64"
             }
@@ -490,7 +492,6 @@
                 "CMAKE_OSX_SYSROOT": "iphoneos",
                 "CMAKE_OSX_ARCHITECTURES": "arm64",
                 "VCPKG_TARGET_TRIPLET": "arm64-ios",
-                "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/vcpkg-triplets",
                 "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/arm64-ios",
                 "VCPKG_INSTALL_OPTIONS": "",
                 "ENABLE_TESTS": "OFF",
