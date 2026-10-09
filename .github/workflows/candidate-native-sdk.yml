@@ -73,6 +73,13 @@ jobs:
             -DVCPKG_OVERLAY_TRIPLETS="$VCPKG_OVERLAY_TRIPLETS"
           cmake --build build/linux-gcc-release --parallel 2
 
+      - name: Report compiler cache after build
+        if: always()
+        shell: pwsh
+        run: |
+          $ccache = Get-Command ccache -ErrorAction SilentlyContinue
+          if ($ccache) { & $ccache.Source --show-stats }
+
       - name: Qualify CMeta Component and generation contracts
         shell: bash
         run: |

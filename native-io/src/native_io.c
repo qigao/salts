@@ -233,7 +233,7 @@ bool native_io_operation_valid(const native_io_operation *operation) {
            operation->address_length != 0u &&
            operation->address_length <= operation->address_capacity &&
            operation->address_length <= (size_t)INT_MAX;
-  if (operation->buffer == NULL || operation->length == 0u ||
+  if (operation->buffer == NULL || (operation->length == 0u && operation->kind != NATIVE_IO_OPERATION_UDP_SEND_TO) ||
       operation->length > (size_t)UINT32_MAX)
     return false;
   if (operation->kind == NATIVE_IO_OPERATION_STREAM_RECV ||

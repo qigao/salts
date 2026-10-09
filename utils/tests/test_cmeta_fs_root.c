@@ -391,4 +391,70 @@ spec("Salts secure root-relative FS") {
     check_equal(cmeta_fs_unlink(original_file), 0);
     check_equal(cmeta_fs_rmdir(moved_path), 0);
   }
+
+  group("exclusive creation, rename and append mutation") {
+    static cmeta_fs_root_t *root;
+    static cmeta_fs_root_file_t *file;
+    before_each() {
+      root = NULL; file = NULL;
+      reset_fixture();
+      check_equal(cmeta_fs_mkdir(root_path, 0700), 0);
+      check_equal(cmeta_fs_root_open(root_path, &root), 0);
+    }
+    after_each() {
+      if (file) { cmeta_fs_root_file_close(file); file = NULL; }
+      if (root) { cmeta_fs_root_close(root); root = NULL; }
+      reset_fixture();
+    }
+    it("exclusive creation never truncates an existing file") {
+      check_equal(cmeta_fs_root_file_open(root, "data.txt",
+          SALTS_FS_O_RDWR | SALTS_FS_O_CREAT | SALTS_FS_ROOT_O_EXCL, 0600, &file), 0);
+      check_equal(cmeta_fs_root_file_write(file, "abc", 3), 3);
+      cmeta_fs_root_file_t *other = NULL;
+      check_equal(cmeta_fs_root_file_open(root, "data.txt",
+          SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC | SALTS_FS_ROOT_O_EXCL,
+          0600, &other), -EEXIST);
+      check_null(other);
+      check_equal(cmeta_fs_root_file_seek(file, 0, SEEK_SET), 0);
+      char text[4] = {0};
+      check_equal(cmeta_fs_root_file_read(file, text, 3), 3);
+      check_equal(text, "abc");
+    }
+    it("toggles atomic append without reopening or losing file identity") {
+      check_equal(cmeta_fs_root_file_open(root, "append.txt",
+          SALTS_FS_O_RDWR | SALTS_FS_O_CREAT, 0600, &file), 0);
+      check_equal(cmeta_fs_root_file_write(file, "abc", 3), 3);
+      check_equal(cmeta_fs_root_file_set_append(file, true), 0);
+      check_equal(cmeta_fs_root_file_seek(file, 0, SEEK_SET), 0);
+      check_equal(cmeta_fs_root_file_write(file, "d", 1), 1);
+      check_equal(cmeta_fs_root_file_set_append(file, false), 0);
+      check_equal(cmeta_fs_root_file_seek(file, 0, SEEK_SET), 0);
+      check_equal(cmeta_fs_root_file_write(file, "A", 1), 1);
+      check_equal(cmeta_fs_root_file_seek(file, 0, SEEK_SET), 0);
+      char text[5] = {0};
+      check_equal(cmeta_fs_root_file_read(file, text, 4), 4);
+      check_equal(text, "Abcd");
+    }
+    it("renames and replaces entries while preserving open source handles") {
+      check_equal(cmeta_fs_root_file_open(root, "data.txt",
+          SALTS_FS_O_RDWR | SALTS_FS_O_CREAT, 0600, &file), 0);
+      check_equal(cmeta_fs_root_file_write(file, "abc", 3), 3);
+      check_equal(cmeta_fs_root_rename(root, "data.txt", root, "inside.txt"), 0);
+      cmeta_fs_stat_t stat = {0};
+      check_equal(cmeta_fs_root_stat(root, "data.txt", &stat), -ENOENT);
+      check_equal(cmeta_fs_root_stat(root, "inside.txt", &stat), 0);
+      check_equal(stat.size, 3u);
+      check_equal(cmeta_fs_root_file_seek(file, 0, SEEK_SET), 0);
+      char text[4] = {0};
+      check_equal(cmeta_fs_root_file_read(file, text, 3), 3);
+      check_equal(text, "abc");
+      check_equal(cmeta_fs_root_file_close(file), 0); file = NULL;
+      check_equal(cmeta_fs_root_file_open(root, "data.txt",
+          SALTS_FS_O_RDWR | SALTS_FS_O_CREAT, 0600, &file), 0);
+      check_equal(cmeta_fs_root_file_write(file, "new", 3), 3);
+      check_equal(cmeta_fs_root_rename(root, "data.txt", root, "inside.txt"), 0);
+      check_less(cmeta_fs_root_rename(root, "inside.txt", root, "../outside.txt"), 0);
+      check_equal(cmeta_fs_root_stat(root, "inside.txt", &stat), 0);
+    }
+  }
 }

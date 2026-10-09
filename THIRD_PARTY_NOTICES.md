@@ -22,3 +22,9 @@ This allows compiler-generated pointer authentication when a completed coroutine
 switches back to its caller, including an optimized tail call. PAC/BTI compiler
 settings remain enabled. The public coroutine completion, reset and nested-return
 contracts are covered by `cmeta_coroutine_completion_test`.
+
+CNet name normalization uses [ICU](https://icu.unicode.org/) at the pinned
+vcpkg baseline's ICU 74.2 revision 6, under its
+[ICU/Unicode license](https://github.com/unicode-org/icu/blob/release-74-2/LICENSE).
+No upstream source is copied or modified. The SDK includes its package-manager
+copyright file.

@@ -1,4 +1,5 @@
 #include <cnet/cnet.h>
+#include <cnet/name_lookup.h>
 #include <cnet/manager.h>
 #include <cnet/handoff.h>
 static_assert(CNET_MANAGER_VERSION == 1u, "manager capability is versioned");

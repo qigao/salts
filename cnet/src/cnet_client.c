@@ -38,6 +38,7 @@ typedef struct cnet_client_record {
   /* Same-owner command reservations only; canonical lifecycle lives in cnet_session_table. */
   bool close_command_pending;
   bool tls_command_pending;
+  bool preserve_send_on_eof;
 } cnet_client_record;
 
 struct cnet_client_impl {
@@ -209,6 +210,7 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
 
   cnet_active_callback_client = impl;
   if (view->kind == CNET_EVENT_RECEIVE) {
+    const bool peer_eof = record->preserve_send_on_eof && record->scheme == CNET_URI_TCP && view->size == 0u;
     const cnet_message_kind kind =
         record->scheme == CNET_URI_UDP ? CNET_MESSAGE_DATAGRAM : CNET_MESSAGE_BYTES;
     const bool receive_shutdown =
@@ -221,6 +223,10 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
         if (record->receive_pending == 0u) cnet_client_record_error(impl, SALTS_EPROTO);
         else --record->receive_pending;
       }
+    }
+    if (peer_eof) {
+      record->tcp_shutdown_mask |= (uint8_t)CNET_TCP_SHUTDOWN_RECEIVE;
+      record->receive_pending = 0u;
     }
     if (receive_shutdown) {
       /*
@@ -509,6 +515,7 @@ static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_pa
   record->pending_writes = 0u;
   record->receive_pending = 0u;
   record->tcp_shutdown_mask = 0u;
+  record->preserve_send_on_eof = false;
   record->close_command_pending = false;
   record->tls_command_pending = false;
   ++impl->active_count;
@@ -789,6 +796,22 @@ int cnet_connection_shutdown(cnet_client *client,
   if ((how & CNET_TCP_SHUTDOWN_RECEIVE) != 0)
     record->receive_pending = 0u;
   return SALTS_OK;
+}
+
+int cnet_connection_preserve_send_on_eof(cnet_client *client, cnet_connection connection) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_shard_connection internal = {0};
+  cnet_client_record *record;
+  int status;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (cnet_active_callback_client == impl) return SALTS_EBUSY;
+  record = cnet_client_find_record(impl, connection, &internal);
+  if (record == NULL) return SALTS_ENOENT;
+  if (record->scheme != CNET_URI_TCP) return SALTS_ENOTSUP;
+  if (record->receive_pending || record->close_command_pending || record->tcp_shutdown_mask) return SALTS_EBUSY;
+  status = cnet_shards_preserve_send_on_eof(&impl->shards, internal);
+  if (status == SALTS_OK) record->preserve_send_on_eof = true;
+  return status;
 }
 
 int cnet_connection_tcp_option_get(cnet_client *client, cnet_connection connection,

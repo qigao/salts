@@ -10,6 +10,14 @@ name: Salts CI
         description: Build all SDK platforms and retain a package for manual publication
         type: boolean
         default: false
+      skip_windows:
+        description: Omit Windows qualification from this manual run
+        type: boolean
+        default: false
+      retain_sdk:
+        description: Retain SDK artifacts for downstream qualification without preparing a release
+        type: boolean
+        default: false
 permissions:
   contents: read
   packages: read
@@ -40,6 +48,8 @@ jobs:
           CI_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
           CI_BRANCH: ${{ github.head_ref || github.ref_name }}
           PREPARE_RELEASE: ${{ inputs.prepare_release || false }}
+          SKIP_WINDOWS: ${{ inputs.skip_windows || false }}
+          RETAIN_SDK: ${{ inputs.retain_sdk || false }}
         run: ./cmake/ci/select-ci-scope.ps1 -EventName $env:CI_EVENT -BaseRef $env:CI_BASE -HeadRef $env:CI_HEAD -HeadBranch $env:CI_BRANCH -PrepareRelease ($env:PREPARE_RELEASE -eq "true")
       - name: Read package version
         shell: pwsh
