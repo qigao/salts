@@ -163,6 +163,19 @@ cmake_add_test(cflow_actor_test
   LIBS Salts::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
+# ACE #1025 real TCP -> bounded CFlow Channel -> Subscription -> Actor.
+# Keep its full production API conformance independently from the retired
+# CFlowCNet adapter target. Both libraries have separate authoritative owners.
+cmake_add_test(cflow_ace_half_sync_async_test
+  SOURCES cflow_ace_half_sync_async_test.c
+  LIBS Salts::CNet Salts::CFlow Salts::Platform Salts::TinyTest
+  FOLDER "cflow/tests")
+set_target_properties(cflow_ace_half_sync_async_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+if(WIN32)
+  target_link_libraries(cflow_ace_half_sync_async_test PRIVATE ws2_32)
+endif()
+
 # Real installed-SDK test; use the shared CMake consumer harness without
 # linking against in-tree CMeta/CFlow targets or a duplicate test wrapper.
 if(NOT WIN32)
