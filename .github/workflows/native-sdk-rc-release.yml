@@ -1,0 +1,175 @@
+name: Publish immutable Salts.Native RC
+
+# Tag only after successful exact-SHA review-branch CI including six installed
+# SDK RIDs, five complete native host suites, ASan/UBSan + TSan and benchmarks.
+# Never creates a stable release or merges master.
+'on':
+  push:
+    tags:
+      - 'v*-rc.*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: salts-native-rc-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Verify exact RC tag and publish prerelease
+    if: github.repository == 'qigao/salts'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    env:
+      TAG: ${{ github.ref_name }}
+      SOURCE_SHA: ${{ github.sha }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate prerelease tag, version and branch provenance
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[1-9][0-9]*$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git rev-list -n 1 "$TAG")" = "$SOURCE_SHA"
+          cmake_version="$(awk '/^[[:space:]]*VERSION[[:space:]]+[0-9]/{print $2; exit}' CMakeLists.txt)"
+          manifest_version="$(python3 -c 'import json; print(json.load(open("vcpkg.json"))["version-semver"])')"
+          channel="$(tr -d '\r\n' < cmake/ci/rc-channel.txt)"
+          test "$cmake_version" = "$manifest_version"
+          test "$TAG" = "v$manifest_version-$channel"
+          echo "version=$manifest_version-$channel" >> "$GITHUB_OUTPUT"
+          # A tag must refer to reviewed 2.3 source, not unrelated master code.
+          git fetch origin refs/heads/release/salts-2.3-ace-cnet-review
+          git merge-base --is-ancestor "$SOURCE_SHA" FETCH_HEAD
+
+      - name: Require successful same-SHA RC qualification and packaged SDK
+        id: ci
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SOURCE_SHA&per_page=100" \
+            --jq '.workflow_runs | map(select(
+              .event == "push" and
+              .head_branch == "release/salts-2.3-ace-cnet-review" and
+              .status == "completed" and
+              .conclusion == "success")) | .[0].id // empty')"
+          test -n "$run_id" || { echo "No successful exact-SHA review-branch CI" >&2; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$RUNNER_TEMP/rc-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?per_page=100" > "$RUNNER_TEMP/rc-jobs.json"
+          python3 - "$RUNNER_TEMP/rc-run.json" "$RUNNER_TEMP/rc-jobs.json" "$SOURCE_SHA" <<'PY'
+          import json,sys
+          run=json.load(open(sys.argv[1]))
+          jobs=json.load(open(sys.argv[2]))['jobs']
+          sha=sys.argv[3]
+          expected={'head_sha':sha,'event':'push','head_branch':'release/salts-2.3-ace-cnet-review',
+                    'conclusion':'success','status':'completed'}
+          for key,value in expected.items():
+              if run.get(key)!=value:
+                  raise SystemExit(f'RC CI {key}: {run.get(key)!r} != {value!r}')
+          names={job['name']:job for job in jobs}
+          hosts={'linux-release','linux-clang-release','windows-release',
+                 'macos-release','macos-clang-release','linux-arm64-release',
+                 'android-arm64-v8a-release','ios-arm64-release'}
+          sanitizers={'linux-ace-asan-ubsan','linux-ace-tsan'}
+          required={'native / '+item for item in hosts | sanitizers}
+          required |= {'Pack Salts.Native','CI result'}
+          for name in sorted(required):
+              if name not in names or names[name]['conclusion']!='success':
+                  raise SystemExit(f'Missing successful exact-SHA RC job: {name}')
+          for host in sorted({'linux-release','linux-clang-release','windows-release',
+                              'macos-release','macos-clang-release'}):
+              steps=names['native / '+host].get('steps',[])
+              if not any(step['name'] in ('Run complete Unix integration tests',
+                                         'Run complete Windows ACE integration tests')
+                         and step.get('conclusion')=='success' for step in steps):
+                  raise SystemExit(f'Host full CTest not qualified: {host}')
+          if not any(job['name'].startswith('benchmarks / ') and
+                     job['conclusion']=='success' for job in jobs):
+              raise SystemExit('RC benchmark qualification missing')
+          print('8 platforms, 2 sanitizers, 5 full hosts, benchmarks, six-RID package: PASS')
+          PY
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download exact-SHA six-RID NuGet artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: salts-native-nuget
+          run-id: ${{ steps.ci.outputs.run_id }}
+          path: dist
+          github-token: ${{ github.token }}
+
+      - name: Verify package name, manifests and installed CNet headers
+        env:
+          PACKAGE_VERSION: ${{ steps.identity.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          nupkg="dist/Salts.Native.$PACKAGE_VERSION.nupkg"
+          test -f "$nupkg"
+          python3 - "$nupkg" "$PACKAGE_VERSION" "$SOURCE_SHA" <<'PY'
+          import sys,zipfile
+          package,version,sha=sys.argv[1:]
+          rids={'linux-x64','linux-arm64','windows-x64','macos-arm64','android-arm64-v8a','ios-arm64'}
+          with zipfile.ZipFile(package) as archive:
+              names=set(archive.namelist())
+              manifests={name for name in names if name.endswith('/salts-sdk-manifest.txt')}
+              expected={f'sdk/{rid}/salts-sdk-manifest.txt' for rid in rids}
+              if manifests!=expected:
+                  raise SystemExit(f'Invalid RC RID payload: {manifests ^ expected}')
+              for name in expected:
+                  values=dict(line.split('=',1) for line in
+                      archive.read(name).decode('utf-8-sig').splitlines() if '=' in line)
+                  for key,required in [('version',version),('commit',sha),('profile','release')]:
+                      if values.get(key)!=required:
+                          raise SystemExit(f'{name}: {key} mismatch')
+                  rid=name.split('/')[1]
+                  for header in ('cnet/cnet.h','cnet/name_lookup.h','cmeta/function.h'):
+                      if f'sdk/{rid}/include/{header}' not in names:
+                          raise SystemExit(f'{rid}: missing {header}')
+          PY
+          sha256sum "$nupkg" | tee dist/SHA256SUMS
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish immutable GitHub Packages prerelease
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE_VERSION: ${{ steps.identity.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          config="$RUNNER_TEMP/salts-rc-nuget.config"
+          printf '<configuration><packageSources><clear /></packageSources></configuration>\n' > "$config"
+          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
+            --name github --username qigao --password "$GITHUB_TOKEN" \
+            --store-password-in-clear-text --configfile "$config"
+          dotnet nuget push "dist/Salts.Native.$PACKAGE_VERSION.nupkg" \
+            --api-key "$GITHUB_TOKEN" --source github --skip-duplicate --configfile "$config"
+
+      - name: Create GitHub prerelease, never stable
+        env:
+          PACKAGE_VERSION: ${{ steps.identity.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Immutable prerelease $TAG already exists; refusing to mutate" >&2
+            exit 1
+          fi
+          gh release create "$TAG" dist/*.nupkg dist/SHA256SUMS \
+            --verify-tag --prerelease --repo "$GITHUB_REPOSITORY" \
+            --title "Salts $PACKAGE_VERSION" \
+            --notes "Salts 2.3 RC from immutable source SHA $SOURCE_SHA; six platform SDKs qualified by CI ${{ steps.ci.outputs.run_id }}. Downstream integrations may use NuGet 2.3.0-*. Stable 2.3.0 is gated separately."
