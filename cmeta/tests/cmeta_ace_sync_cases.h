@@ -383,6 +383,34 @@ suite("CMeta ACE concurrent pattern composition") {
         cmeta_mutex_destroy(&mutex);
     }
 
+    it("releases nested Scoped Locking guards in reverse order on failure") {
+        cmeta_mutex_t outer_mutex = NULL, inner_mutex = NULL;
+        cmeta_mutex_init(&outer_mutex);
+        cmeta_mutex_init(&inner_mutex);
+        cmeta_ace_lockable outer =
+            ace_sync_mutex_policy_as_cmeta_ace_lockable(&outer_mutex);
+        cmeta_ace_lockable inner =
+            ace_sync_mutex_policy_as_cmeta_ace_lockable(&inner_mutex);
+        cmeta_ace_guard outer_guard = {0}, inner_guard = {0};
+        check_equal(cmeta_ace_guard_enter(&outer_guard, &outer), CMETA_OK);
+        check_equal(cmeta_ace_guard_enter(&inner_guard, &inner), CMETA_OK);
+        /* Error is reported by the guarded work, not by the lock. */
+        ace_sync_counter counter = {inner, 0, 0u};
+        ace_sync_operation operation = {&counter, 7, 55};
+        check_equal(ace_sync_fail_body(&operation), CMETA_CALLBACK_ERROR);
+        check_equal(operation.result, 55);
+        check_equal(cmeta_ace_guard_leave(&inner_guard), CMETA_OK);
+        check_equal(cmeta_ace_guard_leave(&outer_guard), CMETA_OK);
+        check_equal(cmeta_ace_guard_leave(&inner_guard), CMETA_INVALID_ARGUMENT);
+        /* A later operation must be able to reacquire both native locks. */
+        check_equal(cmeta_ace_guard_enter(&outer_guard, &outer), CMETA_OK);
+        check_equal(cmeta_ace_guard_enter(&inner_guard, &inner), CMETA_OK);
+        check_equal(cmeta_ace_guard_leave(&inner_guard), CMETA_OK);
+        check_equal(cmeta_ace_guard_leave(&outer_guard), CMETA_OK);
+        cmeta_mutex_destroy(&inner_mutex);
+        cmeta_mutex_destroy(&outer_mutex);
+    }
+
     it("serializes concurrent public Interface calls with a single private gate") {
         cmeta_mutex_t mutex = NULL;
         cmeta_rwlock_t rw = NULL;
