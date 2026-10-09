@@ -8,8 +8,12 @@ endif()
 
 project(
   Salts
-  VERSION 3.0.0
+  VERSION 2.3.0
   LANGUAGES C CXX)
+
+# 2.3 is a new native Component ABI epoch relative to the published 2.2.
+# Keep old 2.2 SONAMEs and headers from silently resolving into 2.3 DSOs.
+set(SALTS_NATIVE_SOVERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}")
 
 # Project configuration - output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -102,7 +106,7 @@ configure_package_config_file(
 write_basic_package_version_file(
   "${CMAKE_BINARY_DIR}/SaltsConfigVersion.cmake"
   VERSION ${PROJECT_VERSION}
-  COMPATIBILITY SameMajorVersion)
+  COMPATIBILITY SameMinorVersion)
 
 # Install the config files
 install(FILES "${CMAKE_BINARY_DIR}/SaltsConfig.cmake"
