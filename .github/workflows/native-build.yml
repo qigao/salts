@@ -404,9 +404,12 @@ jobs:
           test -f "$prefix/include/tinymock_return.h"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          # Pull-request builds check out the exact PR HEAD, not github.sha's
+          # synthetic merge commit. Record the actual binary source identity.
+          source_sha="$(git rev-parse HEAD)"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ inputs.version }}
-          commit=${{ github.sha }}
+          commit=$source_sha
           os=macos
           arch=$RUNNER_ARCH
           profile=release
@@ -422,6 +425,10 @@ jobs:
           prefix="$GITHUB_WORKSPACE/stage/sdk/macos-arm64"
           archive="$prefix/lib/libtinytest.a"
           test -f "$archive"
+          manifest="$prefix/salts-sdk-manifest.txt"
+          test -f "$manifest"
+          source_sha="$(git rev-parse HEAD)"
+          grep -Fx "commit=$source_sha" "$manifest"
           # The SDK may not expose GNU GCC's emulated TLS wrapper when
           # AppleClang C11 consumers expect one native Mach-O TLS variable.
           if nm -gU "$archive" | grep -F '___emutls_v.ttest_active_config__'; then
