@@ -119,7 +119,12 @@ $cnetSg = $benchmarkChanged -and $cnetSg
 $coroutine = $benchmarkChanged -and $coroutine
 $nativeUring = $benchmarkChanged -and $nativeUring
 $forensic = $benchmarkChanged -and $forensic
-$compare = $benchmarkChanged -and $compare
+# The unified 2.3 review starts from a master tree that advertises the
+# withdrawn 3.0 ABI. Comparing its Windows CNet DSO against the new 2.3 SDK
+# would conflate incompatible ABI epochs with scheduling performance. Run
+# performance backends normally, but require a separately qualified, matching
+# 2.3 source baseline before enabling the Windows old/new DSO A/B.
+$compare = $benchmarkChanged -and $compare -and -not $unified23Review
 # Only executable I/O/transport changes (and benchmark inputs) alter this
 # baseline. CNet/NativeIO tests-only edits must not start all four platforms.
 $transportOwner = $PrepareRelease -or
@@ -221,9 +226,24 @@ foreach ($profile in $profiles) {
     $entry.native = $false
     $entry.execution = $false
     $entry.projection = $false
-    $entry.benchmarks = 'OFF'
+    # The benchmark workflow is a separate consumer of the three native
+    # Release build artifacts. If its work gate is selected, do not suppress
+    # the binaries or their archives simply because the host also runs full
+    # CTest. That left all four benchmark backends unable to restore
+    # native-{linux,macos,windows}-release (PR #1083 CI 37889496280).
+    $benchmarkProducer = $work -and $entry.id -in @(
+      'linux-release', 'windows-release', 'macos-release')
+    $entry.benchmarks = if ($benchmarkProducer) { 'ON' } else { 'OFF' }
     $entry.compare = $false
-    $entry.artifact = $false
+    $entry.artifact = $benchmarkProducer
+  }
+  # Prevent a later qualification refactor from enabling benchmark consumers
+  # while silently withholding their exact-SHA compiled producer artifacts.
+  if ($unified23Review -and $work -and $entry.id -in @(
+        'linux-release', 'windows-release', 'macos-release')) {
+    if (-not $entry.artifact -or $entry.benchmarks -ne 'ON') {
+      throw "Unified 2.3 benchmark producer must build/upload native-$($entry.id)"
+    }
   }
   if ($entry.sanitizer -ne '') {
     $entry.native = $false
