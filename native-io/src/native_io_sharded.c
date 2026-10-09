@@ -1323,6 +1323,7 @@ static int native_io_sharded_context_observe_impl(native_io_sharded_context *con
       if (record->active && record->generation == native_event->request.generation) {
         settlement->ownership = record->ownership;
         settlement->active = 1;
+        event->sharded_owned = true;
         memset(record, 0, sizeof(*record));
       }
     }

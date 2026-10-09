@@ -27,6 +27,7 @@ set(CNET_SOURCE_FILES
   src/cnet_owner.c
   src/cnet_owner_strategy.c
   src/cnet_destination_policy.c
+  src/cnet_sg_host.c
   src/cnet_resolver.c
   src/cnet_session.c
   src/cnet_shards.c

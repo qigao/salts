@@ -1,4 +1,5 @@
 #include <cnet/cnet.h>
+#include <cnet/sg_host.h>
 #include <salts/native_io_sharded.h>
 #include <salts/clock.h>
 #include <salts/thread.h>
@@ -217,42 +218,20 @@ static void host_progress(native_io_sharded_context *context, void *arg) {
   if (status != SALTS_OK && status != SALTS_ETIMEDOUT) {
     host_record_error(f, status); return;
   }
-  for (size_t i = 0u; i < count; ++i) {
-    const native_io_sharded_completion *event = &observed[i];
-    native_io_completion raw = {0};
-    bool claimed = false;
-    size_t routed = 0u;
-#if defined(__linux__)
-    if (event->request.owner_identity == f->pipe_request.owner_identity &&
-        event->request.owner_shard == f->pipe_request.owner_shard &&
-        event->request.native_request.slot == f->pipe_request.native_request.slot &&
-        event->request.native_request.generation == f->pipe_request.native_request.generation)
-      continue; /* SG ownership terminal/finalizer already settled in observe. */
-#endif
-    raw.request = event->request.native_request;
-    raw.endpoint = event->endpoint.native_endpoint;
-    raw.kind = event->kind; raw.bytes = event->bytes;
-    raw.status = event->status; raw.native_status = event->native_status;
-    raw.user_data = event->user_data; raw.address_length = event->address_length;
-    if (f->listener.impl) {
-      HOST_TASK_OK(f, cnet_listener_route_external_completion(
-          &f->listener, &raw, &claimed));
-      if (claimed && f->accepting) {
-        cnet_observer in = host_observer(&f->in_probe);
-        HOST_TASK_OK(f, cnet_listener_accept(
-            &f->listener, &f->inbound, &in, &f->accepted));
-        f->accepting = false;
-      }
+  {
+    cnet_client *clients[2] = {&f->inbound, &f->outbound};
+    cnet_sg_host_routes routes = {
+        sizeof(routes), CNET_SG_HOST_ROUTING_VERSION, &f->listener, clients, 2u};
+    size_t accepts = 0u, sg_completed = 0u;
+    status = cnet_sg_host_route_batch(
+        observed, count, &routes, &accepts, &sg_completed);
+    if (status != SALTS_OK) { host_record_error(f, status); return; }
+    if (accepts != 0u && f->accepting) {
+      cnet_observer in = host_observer(&f->in_probe);
+      HOST_TASK_OK(f, cnet_listener_accept(
+          &f->listener, &f->inbound, &in, &f->accepted));
+      f->accepting = false;
     }
-    if (!claimed) {
-      HOST_TASK_OK(f, cnet_client_route_external_completion(
-          &f->inbound, &raw, &claimed, &routed));
-    }
-    if (!claimed) {
-      HOST_TASK_OK(f, cnet_client_route_external_completion(
-          &f->outbound, &raw, &claimed, &routed));
-    }
-    if (!claimed) { host_record_error(f, SALTS_EPROTO); return; }
   }
   HOST_TASK_OK(f, cnet_client_advance_external(&f->inbound, &events));
   HOST_TASK_OK(f, cnet_client_advance_external(&f->outbound, &events));

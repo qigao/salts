@@ -112,6 +112,10 @@ typedef struct native_io_sharded_completion {
   uint32_t native_status;
   uintptr_t user_data;
   size_t address_length;
+  /* True only when SG already detached/settled a registered owned-request
+   * token during this observe batch. Host must not route this completion to
+   * external CNet or treat it as an unknown foreign raw request. */
+  bool sharded_owned;
 } native_io_sharded_completion;
 
 /**
