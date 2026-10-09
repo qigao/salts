@@ -211,6 +211,22 @@ int cnet_pool_try_acquire(cnet_client_pool *pool, const cnet_pool_key *key,
     if (entry->state != POOL_READY || entry->draining ||
         !key_equal(&entry->key, key) || entry->leases >= entry->protocol_capacity)
       continue;
+    /* A once-READY protocol pipe may have reached Manager terminal before
+     * its upper-layer observer has marked this pool entry draining. Never
+     * grant another lease from that stale eligibility snapshot. */
+    {
+      cnet_manager_entry managed_entry = {0};
+      status = cnet_manager_lookup(impl->manager, entry->managed, &managed_entry);
+      if (status == SALTS_ENOENT) {
+        entry->draining = true;
+        continue;
+      }
+      if (status != SALTS_OK) return status;
+      if (managed_entry.state != CNET_MANAGER_BOUND) {
+        entry->draining = true;
+        continue;
+      }
+    }
     if (entry->protocol_capacity != 1u && protocol == NULL) return SALTS_ENOTSUP;
     if (protocol != NULL) {
       impl->in_callback = true;
@@ -277,6 +293,16 @@ int cnet_pool_terminal(cnet_client_pool *pool, cnet_pool_connection identity) {
   int status = get_physical(pool, identity, &impl, &entry);
   if (status != SALTS_OK) return status;
   if (entry->state == POOL_TERMINAL) return SALTS_EALREADY;
+  if (entry->state == POOL_READY) {
+    cnet_manager_entry managed_entry = {0};
+    status = cnet_manager_lookup(impl->manager, entry->managed, &managed_entry);
+    if (status != SALTS_OK && status != SALTS_ENOENT) return status;
+    /* The Manager is the authoritative physical transport owner. A pool
+     * caller cannot free its capacity merely by declaring a live connection
+     * terminal; only Manager RETIRED (or recycled generation) is accepted. */
+    if (status == SALTS_OK && managed_entry.state != CNET_MANAGER_RETIRED)
+      return SALTS_EBUSY;
+  }
   if (entry->state == POOL_CONNECTING) --impl->connecting;
   entry->state = POOL_TERMINAL;
   entry->draining = true;
