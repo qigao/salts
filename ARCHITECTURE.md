@@ -488,3 +488,55 @@ CSerde 的组合只能位于显式 adapter target；例如 `Salts::JsonCSerdeAda
 - `docs/superpowers/specs/2026-08-23-serialization-data-binding-design.md` — historical CMeta/CSerde/CBind/parser data architecture；
 - `docs/superpowers/specs/2026-08-24-cflow-machine-runtime-design.md` — typed Machine runtime；
 - SaltsUtils `docs/superpowers/specs/2026-09-16-parser-capability-ownership-migration.md` — current parser package cutover.
+
+## WASI datagram controls and address streams
+
+Additive APIs reuse CNet datagram and c-ares owners for unbound/bind/native peer
+association, lossless endpoints, actual options, terminal receive pause and
+ordered bounded address streams. Existing UDP init/config layouts stay stable.
+Empty UDP sends are real messages; only UDP send admits zero NativeIO length.
+
+Queries retain stable callback slots through actual terminals, including logical
+cancellation/drop. Accepted results win cancellation; deadlines latch before
+progress and overflow never produces a truncated success. Numeric IPs bypass DNS.
+
+CNet DNS deliberately accepts only ASCII LDH hostnames, pre-encoded A-labels,
+and numeric IPv4/IPv6 input; non-ASCII input fails closed. The full Unicode
+17.0.0 module migration plus UTS #46 IDNA support are future Salts work in
+[#1088](https://github.com/qigao/salts/issues/1088). There is no ICU link,
+IDNA library fallback, or Salts -> SaltsUtils dependency in the 2.3 SDK.
+
+Canonical cross-platform vcpkg triplets remain in `qigao/vcpkg-cache`.
+Darwin UDP disconnect uses `disconnectx` rather than `connect(AF_UNSPEC)`
+when the latter mutates socket state before failing.
+
+Qualification covers IPv4/IPv6, empty/oversized messages, peer replacement,
+terminal pause, numeric/ASCII/A-label acceptance, Unicode/invalid-name rejection,
+ordered results, bounded failures
+and stale/cross-owner handles. Additive callers relink; old callers retain their
+behavior. Disabling the optional adapter is the rollback boundary.
+
+## Root-relative filesystem mutation for C guests
+
+WASI command guests need atomic exclusive creation, rename and append flag
+changes on existing handles. Ambient `cmeta_fs_rename` and reopening a path
+cannot preserve the admitted-root authority or open-file identity. The secure
+root API therefore adds `SALTS_FS_ROOT_MUTATION_VERSION`, the root-only
+`SALTS_FS_ROOT_O_EXCL` flag, `cmeta_fs_root_rename` and
+`cmeta_fs_root_file_set_append`. Existing API layouts remain unchanged; new
+consumers require relinking against a matching SDK.
+
+POSIX rename walks both parents using the existing no-follow descriptor walker,
+then calls renameat. Windows retains both directory HANDLEs and invokes native
+FileRenameInformation, moving the final entry without resolving it as a path.
+There is no path-string or copy/delete fallback. Across filesystems, failure is
+EXDEV. All acquired parent/source handles are released on every exit path.
+
+POSIX append mutation uses F_GETFL/F_SETFL. Windows records append state in the
+private file owner and uses WriteFile's atomic EOF offset for each append write.
+Open access rights are retained when flags change. Calls use the existing
+single-owner file contract; no independent cache of file positions is added.
+Exclusive creation maps to O_EXCL or FILE_CREATE and never truncates an existing
+entry. Errors remain negative errno; successful rename retains existing open
+file identities. Tests cover exclusive collision, append on/off, replacement,
+retained handles and invalid destination paths.

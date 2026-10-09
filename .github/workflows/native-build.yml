@@ -38,7 +38,7 @@ jobs:
       - name: Configure shared vcpkg cache
         id: shared_deps
         # Bootstrap the pinned tool independently of hosted runner image updates (vcpkg-cache#186).
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@fafb1efe5ac2440bfd7a08e493988d0459d89e51
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
         with:
           mode: read
       - name: Prepare build host
@@ -131,7 +131,25 @@ jobs:
           set -euo pipefail
           cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
-      # A failed suite must not skip other selected suites on a successful build.
+      # PR 1085 isolated SG runtime gate.
+      - name: Qualify SG Owner tests (Unix)
+        if: ${{ !cancelled() && github.head_ref == 'feature/cnet-sg-host-policy-composition' && steps.build_unix.outcome == 'success' && matrix.execution && (matrix.family == 'linux' || matrix.family == 'mac') }}
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 90 -R 'cnet_sg_(hosted_gateway|handoff_owner)_test'
+      - name: Qualify SG Owner tests (Windows)
+        if: ${{ !cancelled() && github.head_ref == 'feature/cnet-sg-host-policy-composition' && steps.build_windows.outcome == 'success' && matrix.execution && matrix.family == 'windows' }}
+        timeout-minutes: 10
+        shell: cmd
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 90 -R "cnet_sg_(hosted_gateway|handoff_owner)_test"
+          if errorlevel 1 exit /b 1
       - name: Run ACE sanitizer ownership contracts
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.sanitizer != '' }}
         timeout-minutes: 30

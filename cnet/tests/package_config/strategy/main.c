@@ -1,6 +1,7 @@
 /* Standalone installed SDK consumer, built as both strict C11 and C++17.
  * No source-tree private header, build-tree link or protocol DATA replay. */
 #include <cnet/cnet.h>
+#include <cnet/name_lookup.h>
 #include <cnet/manager.h>
 #include <cnet/owner_placement.h>
 #include <cnet/destination_policy.h>
@@ -11,6 +12,7 @@
 #include <salts/native_io_sharded.h>
 #include <salts/error_codes.h>
 #include <stdint.h>
+#include <string.h>
 #include <stdio.h>
 
 #define CHECK(x) do { \
@@ -36,6 +38,11 @@ static void observed_state(void *user, cnet_connection connection,
 
 int main(void) {
   cnet_client client = {0};
+  cnet_connection invalid_connection = {0};
+  cnet_name_lookup lookup = {0};
+  cnet_name_lookup_config lookup_config = {0};
+  char ascii_name[256] = {0};
+  size_t ascii_name_length = 0u;
   /* C11 and C++17 require the first (enum) member to be typed, not {0}. */
   cnet_client_config client_config = {backend_kind()};
   cnet_manager manager = {0};
@@ -68,6 +75,23 @@ int main(void) {
   client_config.max_send_bytes = 1024u;
   client_config.receive_buffer_bytes = 1024u;
   CHECK(cnet_client_init(&client, &client_config) == SALTS_OK);
+  /* These calls use only the installed CNet shared library and SDK headers. */
+  CHECK(CNET_NAME_LOOKUP_API_VERSION == 1u);
+  CHECK(CNET_DATAGRAM_SOCKET_CONTROL_VERSION == 1u);
+  CHECK(cnet_connection_preserve_send_on_eof(&client, invalid_connection) == SALTS_ENOENT);
+  CHECK(cnet_datagram_open_external(NULL, NULL, NULL, CNET_DATAGRAM_ADDRESS_IPV4) == SALTS_EINVAL);
+  cnet_name_lookup_config_init(&lookup_config);
+  CHECK(cnet_name_lookup_init(&lookup, &lookup_config) == SALTS_OK);
+  CHECK(cnet_name_lookup_normalize(&lookup, "Example.COM", 11,
+                                   ascii_name, sizeof(ascii_name), &ascii_name_length,
+                                   NULL, NULL) == SALTS_OK);
+  CHECK(ascii_name_length == 11u && strcmp(ascii_name, "example.com") == 0);
+  CHECK(cnet_name_lookup_normalize(&lookup, "\xc3\xbc", 2,
+                                   ascii_name, sizeof(ascii_name), &ascii_name_length,
+                                   NULL, NULL) == SALTS_EINVAL);
+  CHECK(cnet_name_lookup_close(&lookup) == SALTS_OK);
+  CHECK(cnet_name_lookup_destroy(&lookup) == SALTS_OK);
+
 
   manager_config.size = sizeof(manager_config);
   manager_config.version = CNET_MANAGER_VERSION;

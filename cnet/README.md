@@ -1183,6 +1183,19 @@ requires a concrete consumer and paired evidence before it can change this bound
 Cross-owner work remains explicit and bounded. CNet never hides live connection migration,
 work-stealing, or an implicit worker-pool hop behind its public send/receive APIs.
 
+Plaintext TCP connections retain the historical close-on-peer-EOF behavior by
+default. A consumer with directional stream semantics can call
+`cnet_connection_preserve_send_on_eof(client, connection)` after the connected
+callback and before submitting receive demand, outside callbacks. The owner
+then emits one empty byte receive (or an empty retained-slice callback), rejects
+further receive demand with `SALTS_ESHUTDOWN`, and preserves send admission.
+The client marks receive closed before invoking the EOF callback, so reentrant
+receive cannot admit work on that direction. Close/failure still produces the
+ordinary terminal callback and settles retained writes. This additive opt-in
+does not resize public configuration or observer structures, does not apply to
+TLS, and is qualified by `cnet_external_progress_test` with a real loopback
+half-close and a send after peer EOF.
+
 ## IPC, WebSocket, and KCP evolution design
 
 Status: joint design, recorded 2026-10-07. The additive UDP, IPC and tagged WS
@@ -1841,3 +1854,47 @@ retention, incorrect logical terminals, or premature destruction; **HIGH** for
 an unbounded KCP receive path under a stalled consumer; **MED** for the additional
 listener progress surface and cross-platform integration burden. The ownership
 and validation gates above are required before FlowMQ can advertise support.
+
+## Portable datagram controls and name lookup
+
+`cnet_datagram_open_external` adds unbound UDP creation on a borrowed NativeIO
+backend. Bind before sending/receiving; endpoint queries preserve IPv6 flow/scope.
+`cnet_datagram_send_endpoint` copies even zero-byte messages, while the existing
+`cnet_datagram_send` admission remains unchanged. Pause cancels demand without
+releasing an active request; route its actual terminal and check quiescence
+before changing peer association. Options support hop limit and receive/send
+buffers before binding. The backend remains owned and observed by the host.
+
+`<cnet/name_lookup.h>` exposes bounded ordered address streams using existing
+c-ares progress and strict ASCII LDH hostname validation. Already-encoded
+Punycode A-labels pass through unchanged; raw non-ASCII names fail closed
+until the future Unicode/IDNA implementation in #1088. Numeric literals issue no DNS
+request. Every query is scoped to its owner and generation; result overflow is
+an error instead of truncated success. Pending is `SALTS_ETIMEDOUT`, exhaustion
+is `SALTS_EOF`, and a query deadline is `SALTS_EAI_AGAIN`.
+
+```c
+cnet_name_lookup lookup = {0};
+cnet_name_query query = {0};
+cnet_name_lookup_config config;
+cnet_name_lookup_config_init(&config);
+int status = cnet_name_lookup_init(&lookup, &config);
+if (status == SALTS_OK)
+    status = cnet_name_lookup_submit(&lookup, "127.0.0.1", 9, &query);
+if (status == SALTS_OK) {
+    cnet_ip_address address;
+    status = cnet_name_lookup_next(&lookup, query, &address);
+    /* Use address only when status == SALTS_OK. */
+}
+if (query.owner) cnet_name_lookup_query_drop(&lookup, &query);
+if (lookup.impl) {
+    cnet_name_lookup_close(&lookup);
+    cnet_name_lookup_destroy(&lookup);
+}
+```
+
+For DNS names, call nonblocking `advance` on the serialized owner and integrate
+`next_timeout` with the host timer. Close cancels the c-ares channel through its
+real callbacks; destroy succeeds only after every query is dropped. A dropped
+active query continues occupying bounded callback storage until that terminal.
+Optional copied numeric `servers_csv` permits local/private resolver fixtures.

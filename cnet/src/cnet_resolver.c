@@ -3,6 +3,9 @@
 #include "cnet_module.h"
 
 #include <ares.h>
+#include <cnet/name_lookup.h>
+#include <salts/clock.h>
+#include <stdatomic.h>
 #include <salts/thread.h>
 
 #include <limits.h>
@@ -14,6 +17,8 @@
   #include <winsock2.h>
 typedef WSAPOLLFD cnet_resolver_pollfd;
 #else
+  #include <arpa/inet.h>
+  #include <netinet/in.h>
   #include <poll.h>
   #include <sys/socket.h>
 typedef struct pollfd cnet_resolver_pollfd;
@@ -35,6 +40,11 @@ typedef struct cnet_resolver_slot {
   uintptr_t user_data;
   int socket_type;
   bool cancelled;
+  bool dropped;
+  bool expired;
+  uint64_t deadline;
+  size_t address_count, address_index;
+  cnet_ip_address *addresses;
   char host[CNET_RESOLVER_HOST_CAPACITY];
   char service[6];
   cnet_resolver_result result;
@@ -64,6 +74,10 @@ typedef struct cnet_resolver_impl {
   cmeta_mutex_t control_lock;
   cmeta_mutex_t state_lock;
   bool socket_overflow;
+  uint64_t lookup_identity;
+  size_t result_capacity, name_capacity;
+  uint32_t lookup_timeout;
+  cnet_ip_address *lookup_storage;
 } cnet_resolver_impl;
 
 static cnet_resolver_impl *cnet_resolver_get_impl(cnet_resolver *resolver) {
@@ -158,10 +172,30 @@ static void cnet_resolver_callback(void *argument, int status, int timeouts,
     slot->result.user_data = slot->user_data;
     slot->result.native_status = status;
     slot->result.timeouts = timeouts;
-    slot->result.status = slot->cancelled ? SALTS_EAI_CANCELED : cnet_resolver_map_status(status);
+    slot->result.status = slot->expired ? SALTS_EAI_AGAIN : slot->cancelled ? SALTS_EAI_CANCELED : cnet_resolver_map_status(status);
     if (slot->result.status == SALTS_OK && node != NULL) {
       slot->result.address_length = (size_t)node->ai_addrlen;
       memcpy(slot->result.address, node->ai_addr, slot->result.address_length);
+    }
+    if (impl->lookup_identity && slot->result.status == SALTS_OK) {
+      for (node = addresses ? addresses->nodes : NULL; node; node = node->ai_next) {
+        cnet_ip_address a = {0}; bool duplicate = false;
+        if (!node->ai_addr) continue;
+        if (node->ai_family == AF_INET && node->ai_addrlen >= sizeof(struct sockaddr_in)) {
+          a.family = CNET_DATAGRAM_ADDRESS_IPV4;
+          memcpy(a.address, &((const struct sockaddr_in *)node->ai_addr)->sin_addr, 4);
+        } else if (node->ai_family == AF_INET6 && node->ai_addrlen >= sizeof(struct sockaddr_in6)) {
+          const struct sockaddr_in6 *ip = (const struct sockaddr_in6 *)node->ai_addr;
+          if (IN6_IS_ADDR_V4MAPPED(&ip->sin6_addr)) continue;
+          a.family = CNET_DATAGRAM_ADDRESS_IPV6; memcpy(a.address, &ip->sin6_addr, 16);
+        } else continue;
+        for (size_t i = 0; i < slot->address_count; ++i)
+          if (slot->addresses[i].family == a.family && !memcmp(slot->addresses[i].address, a.address, 16)) duplicate = true;
+        if (duplicate) continue;
+        if (slot->address_count == impl->result_capacity) { slot->result.status = SALTS_ENOBUFS; slot->address_count = 0; break; }
+        slot->addresses[slot->address_count++] = a;
+      }
+      if (!slot->address_count && slot->result.status == SALTS_OK) slot->result.status = SALTS_EAI_NODATA;
     }
     slot->state = CNET_RESOLVER_SLOT_READY;
     impl->ready_slots[(impl->ready_head + impl->ready_count) % impl->capacity] =
@@ -358,6 +392,8 @@ int cnet_resolver_submit(cnet_resolver *resolver, const char *host, uint16_t por
   slot->user_data = user_data;
   slot->socket_type = socket_type;
   slot->cancelled = false;
+  slot->dropped = slot->expired = false; slot->address_count = slot->address_index = 0;
+  slot->deadline = cmeta_monotonic_ms() + impl->lookup_timeout;
   memcpy(slot->host, host, host_length + 1u);
   (void)snprintf(slot->service, sizeof(slot->service), "%u", (unsigned int)port);
   ++impl->active_count;
@@ -465,6 +501,7 @@ int cnet_resolver_destroy(cnet_resolver *resolver) {
 
   cmeta_mutex_destroy(&impl->state_lock);
   cmeta_mutex_destroy(&impl->control_lock);
+  free(impl->lookup_storage);
   free(impl->ready_events);
   free(impl->poll_fds);
   free(impl->sockets);
@@ -475,4 +512,225 @@ int cnet_resolver_destroy(cnet_resolver *resolver) {
   resolver->impl = NULL;
   cnet_module_release_resolver();
   return SALTS_OK;
+}
+
+/* The public address-stream owner reuses this resolver's c-ares channel,
+ * readiness arrays and stable callback slots. The legacy connection resolver
+ * continues to take one native address; only address-stream mode keeps a
+ * bounded ordered array until its explicit query drop. */
+static atomic_uint_fast64_t lookup_identity;
+static uint64_t lookup_new_identity(void) {
+  uint_fast64_t n = atomic_load(&lookup_identity);
+  while (n != UINT64_MAX) if (atomic_compare_exchange_weak(&lookup_identity, &n, n + 1u)) return n + 1u;
+  return 0;
+}
+static cnet_resolver_impl *lookup_impl(cnet_name_lookup *lookup) {
+  cnet_resolver_impl *p = lookup ? lookup->impl : NULL;
+  return p && p->lookup_identity ? p : NULL;
+}
+static cnet_resolver_slot *lookup_slot(cnet_resolver_impl *p, cnet_name_query q) {
+  cnet_resolver_slot *s;
+  if (!p || q.owner != p->lookup_identity) return NULL;
+  s = cnet_resolver_find_slot(p, (cnet_resolver_query){q.slot, q.generation});
+  return s && !s->dropped ? s : NULL;
+}
+void cnet_name_lookup_config_init(cnet_name_lookup_config *c) {
+  if (c) *c = (cnet_name_lookup_config){sizeof(*c), 1, 16, 64, 4096, 30000, NULL};
+}
+int cnet_name_lookup_init(cnet_name_lookup *lookup, const cnet_name_lookup_config *config) {
+  cnet_name_lookup_config defaults; cnet_resolver resolver = {0}; cnet_resolver_impl *p;
+  int rc;
+  if (!config) { cnet_name_lookup_config_init(&defaults); config = &defaults; }
+  if (!lookup || lookup->impl || config->size != sizeof(*config) || config->version != 1 ||
+      !config->query_capacity || !config->results_per_query || !config->max_name_bytes ||
+      config->max_name_bytes > 4096 || !config->timeout_ms ||
+      config->query_capacity > SIZE_MAX / config->results_per_query ||
+      config->query_capacity * config->results_per_query > SIZE_MAX / sizeof(cnet_ip_address)) return SALTS_EINVAL;
+  rc = cnet_module_init(); if (rc != SALTS_OK) return rc;
+  rc = cnet_resolver_init(&resolver, &(cnet_resolver_config){config->query_capacity});
+  if (rc != SALTS_OK) { (void)cnet_module_shutdown(); return rc; }
+  p = resolver.impl;
+  p->lookup_storage = calloc(config->query_capacity * config->results_per_query, sizeof(cnet_ip_address));
+  p->lookup_identity = lookup_new_identity();
+  p->result_capacity = config->results_per_query; p->name_capacity = config->max_name_bytes;
+  p->lookup_timeout = config->timeout_ms;
+  rc = !p->lookup_storage || !p->lookup_identity ? SALTS_ENOMEM : SALTS_OK;
+  if (rc == SALTS_OK && config->servers_csv) {
+    ares_status_t status = ares_set_servers_ports_csv(p->channel, config->servers_csv);
+    if (status != ARES_SUCCESS) rc = status == ARES_ENOMEM ? SALTS_ENOMEM : SALTS_EINVAL;
+  }
+  if (rc != SALTS_OK) {
+    (void)cnet_resolver_close(&resolver, 0); (void)cnet_resolver_destroy(&resolver); (void)cnet_module_shutdown(); return rc;
+  }
+  for (size_t i = 0; i < p->capacity; ++i) p->slots[i].addresses = p->lookup_storage + i * p->result_capacity;
+  lookup->impl = p; return SALTS_OK;
+}
+/* CNet DNS accepts ASCII LDH hostnames and already-encoded A-labels only.
+ * Unicode/UTS #46 and Punycode validation belong to future #1088. */
+static int cnet_name_lookup_ascii_hostname(const char *name, size_t size,
+                                           char result[256]) {
+  size_t label_size = 0u;
+  if (size == 0u || size > 254u ||
+      (size == 254u && name[size - 1u] != '.')) return SALTS_EINVAL;
+  for (size_t i = 0u; i < size; ++i) {
+    unsigned char c = (unsigned char)name[i];
+    if (c == '.') {
+      if (label_size == 0u || result[i - 1u] == '-') return SALTS_EINVAL;
+      label_size = 0u;
+      result[i] = '.';
+      continue;
+    }
+    if (c >= 'A' && c <= 'Z') c = (unsigned char)(c + ('a' - 'A'));
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+          (c == '-' && label_size != 0u))) return SALTS_EINVAL;
+    if (++label_size > 63u) return SALTS_EINVAL;
+    result[i] = (char)c;
+  }
+  if (label_size != 0u && result[size - 1u] == '-') return SALTS_EINVAL;
+  if (size - (name[size - 1u] == '.' ? 1u : 0u) > 253u) return SALTS_EINVAL;
+  result[size] = '\0';
+  return SALTS_OK;
+}
+
+int cnet_name_lookup_normalize(cnet_name_lookup *lookup, const char *name, size_t size,
+                              char *ascii, size_t capacity, size_t *out_size,
+                              bool *out_numeric, cnet_ip_address *out_address) {
+  cnet_resolver_impl *p = lookup_impl(lookup);
+  char result[256], numeric[4097];
+  cnet_ip_address address = {0};
+  bool is_numeric = false;
+  if (!p || !name || !ascii || !out_size || !size ||
+      size > p->name_capacity || capacity < sizeof(result) ||
+      memchr(name, 0, size)) return SALTS_EINVAL;
+  memcpy(numeric, name, size);
+  numeric[size] = '\0';
+  if (inet_pton(AF_INET, numeric, address.address) == 1) {
+    address.family = CNET_DATAGRAM_ADDRESS_IPV4;
+    is_numeric = true;
+  } else if (inet_pton(AF_INET6, numeric, address.address) == 1) {
+    address.family = CNET_DATAGRAM_ADDRESS_IPV6;
+    is_numeric = true;
+    struct in6_addr ip;
+    memcpy(&ip, address.address, 16);
+    if (IN6_IS_ADDR_V4MAPPED(&ip)) {
+      memmove(address.address, address.address + 12, 4);
+      memset(address.address + 4, 0, 12);
+      address.family = CNET_DATAGRAM_ADDRESS_IPV4;
+    }
+  }
+  if (is_numeric) {
+    if (size >= sizeof(result)) return SALTS_EINVAL;
+    memcpy(result, name, size);
+    result[size] = '\0';
+  } else if (cnet_name_lookup_ascii_hostname(name, size, result) != SALTS_OK) {
+    return SALTS_EINVAL;
+  }
+  memcpy(ascii, result, size + 1u);
+  *out_size = size;
+  if (out_numeric) *out_numeric = is_numeric;
+  if (out_address) *out_address = address;
+  return SALTS_OK;
+}
+int cnet_name_lookup_submit(cnet_name_lookup *lookup, const char *name, size_t size, cnet_name_query *out) {
+  cnet_resolver_impl *p = lookup_impl(lookup); cnet_resolver carrier = {p}; cnet_resolver_query query = {0};
+  char ascii[256]; size_t count; bool numeric; cnet_ip_address address; int rc;
+  if (!p || !out || out->owner || out->slot || out->generation) return SALTS_EINVAL;
+  if (!p->admission_open) return SALTS_ESHUTDOWN;
+  rc = cnet_name_lookup_normalize(lookup, name, size, ascii, sizeof(ascii), &count, &numeric, &address);
+  if (rc != SALTS_OK) return rc;
+  if (!numeric) {
+    rc = cnet_resolver_submit(&carrier, ascii, 1, SOCK_STREAM, 0, &query);
+    if (rc != SALTS_OK) return rc;
+  } else {
+    if (!p->free_count) return SALTS_ENOBUFS;
+    uint32_t index = p->free_slots[--p->free_count]; cnet_resolver_slot *s = &p->slots[index];
+    ++s->generation; s->state = CNET_RESOLVER_SLOT_READY; s->cancelled = s->dropped = s->expired = false;
+    s->address_count = 1; s->address_index = 0; s->addresses[0] = address;
+    memset(&s->result, 0, sizeof(s->result));
+    s->result.query = (cnet_resolver_query){index + 1u, s->generation};
+    p->ready_slots[(p->ready_head + p->ready_count++) % p->capacity] = index; ++p->active_count;
+    query = s->result.query;
+  }
+  *out = (cnet_name_query){p->lookup_identity, query.slot, query.generation}; return SALTS_OK;
+}
+static void lookup_retire(cnet_resolver_impl *p, cnet_resolver_slot *s) {
+  size_t found = 0, index = (size_t)(s - p->slots);
+  while (found < p->ready_count && p->ready_slots[(p->ready_head + found) % p->capacity] != index) ++found;
+  if (found == p->ready_count) return;
+  for (size_t i = found; i + 1 < p->ready_count; ++i)
+    p->ready_slots[(p->ready_head + i) % p->capacity] = p->ready_slots[(p->ready_head + i + 1) % p->capacity];
+  --p->ready_count; --p->active_count;
+  s->state = s->generation == UINT32_MAX ? CNET_RESOLVER_SLOT_RETIRED : CNET_RESOLVER_SLOT_FREE;
+  if (s->state == CNET_RESOLVER_SLOT_FREE) p->free_slots[p->free_count++] = (uint32_t)index;
+}
+int cnet_name_lookup_advance(cnet_name_lookup *lookup) {
+  cnet_resolver_impl *p = lookup_impl(lookup); cnet_resolver carrier = {p}; int rc;
+  if (!p) return SALTS_EINVAL;
+  for (size_t i = 0; i < p->capacity; ++i)
+    if (p->slots[i].state == CNET_RESOLVER_SLOT_ACTIVE && !p->slots[i].cancelled && cmeta_monotonic_ms() >= p->slots[i].deadline) p->slots[i].expired = true;
+  rc = cnet_resolver_poll(&carrier);
+  for (size_t i = 0; i < p->capacity; ++i)
+    if (p->slots[i].state == CNET_RESOLVER_SLOT_READY && p->slots[i].dropped) lookup_retire(p, &p->slots[i]);
+  return rc;
+}
+int cnet_name_lookup_next_timeout(cnet_name_lookup *lookup, uint32_t max_wait, uint32_t *out) {
+  cnet_resolver_impl *p = lookup_impl(lookup); uint64_t now = cmeta_monotonic_ms(); struct timeval maximum, timeout;
+  if (!p || !out) return SALTS_EINVAL;
+  *out = max_wait;
+  for (size_t i = 0; i < p->capacity; ++i) if (p->slots[i].state == CNET_RESOLVER_SLOT_ACTIVE && !p->slots[i].cancelled && !p->slots[i].expired) {
+    uint64_t remaining = p->slots[i].deadline > now ? p->slots[i].deadline - now : 0;
+    if (remaining < *out) *out = (uint32_t)remaining;
+  }
+  maximum.tv_sec = *out / 1000; maximum.tv_usec = (*out % 1000) * 1000;
+  struct timeval *wait = ares_timeout(p->channel, &maximum, &timeout);
+  if (wait) { uint64_t ms = (uint64_t)wait->tv_sec * 1000 + ((uint64_t)wait->tv_usec + 999) / 1000;
+    if (ms < *out) *out = (uint32_t)ms; }
+  return SALTS_OK;
+}
+int cnet_name_lookup_ready(cnet_name_lookup *lookup, cnet_name_query query, bool *out) {
+  cnet_resolver_slot *s = lookup_slot(lookup_impl(lookup), query);
+  if (!s || !out) return SALTS_EINVAL;
+  *out = s->state == CNET_RESOLVER_SLOT_READY || s->cancelled || cmeta_monotonic_ms() >= s->deadline; return SALTS_OK;
+}
+int cnet_name_lookup_next(cnet_name_lookup *lookup, cnet_name_query query, cnet_ip_address *out) {
+  cnet_resolver_slot *s = lookup_slot(lookup_impl(lookup), query);
+  if (!s || !out) return SALTS_EINVAL;
+  if (s->state != CNET_RESOLVER_SLOT_READY) {
+    if (s->cancelled) return SALTS_EAI_CANCELED;
+    if (cmeta_monotonic_ms() >= s->deadline) s->expired = true;
+    return s->expired ? SALTS_EAI_AGAIN : SALTS_ETIMEDOUT;
+  }
+  if (s->result.status != SALTS_OK) return s->result.status;
+  if (s->address_index == s->address_count) return SALTS_EOF;
+  *out = s->addresses[s->address_index++]; return SALTS_OK;
+}
+int cnet_name_lookup_cancel(cnet_name_lookup *lookup, cnet_name_query query) {
+  cnet_resolver_slot *s = lookup_slot(lookup_impl(lookup), query);
+  if (!s) return SALTS_EINVAL;
+  if (s->state == CNET_RESOLVER_SLOT_READY) return SALTS_EALREADY;
+  s->cancelled = true; return SALTS_OK;
+}
+int cnet_name_lookup_query_drop(cnet_name_lookup *lookup, cnet_name_query *query) {
+  cnet_resolver_impl *p = lookup_impl(lookup); cnet_resolver_slot *s;
+  if (!query || !(s = lookup_slot(p, *query))) return SALTS_EINVAL;
+  s->dropped = true;
+  if (s->state == CNET_RESOLVER_SLOT_READY) lookup_retire(p, s); else s->cancelled = true;
+  memset(query, 0, sizeof(*query)); return SALTS_OK;
+}
+int cnet_name_lookup_close(cnet_name_lookup *lookup) {
+  cnet_resolver_impl *p = lookup_impl(lookup); cnet_resolver carrier = {p}; int rc;
+  if (!p) return SALTS_EINVAL;
+  rc = cnet_resolver_close(&carrier, 0);
+  if (rc == SALTS_EALREADY) rc = SALTS_OK;
+  if (rc == SALTS_OK) rc = cnet_name_lookup_advance(lookup);
+  return rc;
+}
+int cnet_name_lookup_destroy(cnet_name_lookup *lookup) {
+  cnet_resolver_impl *p = lookup_impl(lookup); cnet_resolver carrier = {p}; int rc;
+  if (!lookup) return SALTS_EINVAL;
+  if (!lookup->impl) return SALTS_OK;
+  if (!p) return SALTS_EINVAL;
+  rc = cnet_resolver_destroy(&carrier);
+  if (rc == SALTS_OK) { lookup->impl = NULL; rc = cnet_module_shutdown(); }
+  return rc;
 }

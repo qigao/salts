@@ -17,6 +17,7 @@ if(NOT installed EQUAL 0)
 endif()
 foreach(header IN ITEMS
     "cnet/manager.h" "cnet/client_pool.h" "cnet/recovery_policy.h"
+    "cnet/name_lookup.h"
     "cnet/managed_dial.h" "cnet/sg_host.h" "salts/native_io_sharded.h")
   if(NOT EXISTS "${prefix}/include/${header}")
     message(FATAL_ERROR "installed CNet SDK missing header: ${header}")

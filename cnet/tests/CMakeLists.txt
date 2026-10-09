@@ -563,6 +563,17 @@ set_target_properties(cnet_sg_hosted_gateway_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 add_dependencies(cnet_api_test cnet_sg_hosted_gateway_test)
 
+# Cross-SG-Owner admission: real detached TCP socket from source listener
+# -> bounded handoff credit -> final-Owner CNetManager adopt and terminal.
+# It executes independently from the same-Owner ManagedDial/Pool fixture.
+cmake_add_test(cnet_sg_handoff_owner_test
+  SOURCES cnet_sg_handoff_owner_test.c
+  LIBS Salts::CNet Salts::NativeIO Salts::Core Salts::TinyTest
+  FOLDER "cnet/tests")
+set_target_properties(cnet_sg_handoff_owner_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+add_dependencies(cnet_api_test cnet_sg_handoff_owner_test)
+
 cmake_add_test(
   cnet_external_progress_test
   SOURCES
@@ -765,3 +776,9 @@ set_target_properties(
   PROPERTIES CXX_STANDARD 17
              CXX_STANDARD_REQUIRED ON
              CXX_EXTENSIONS OFF)
+
+cmake_add_test(cnet_name_lookup_test SOURCES cnet_name_lookup_test.c
+  LIBS cnet Salts::Core Salts::TinyTest FOLDER "cnet/tests")
+
+cmake_add_test(cnet_name_lookup_dns_test SOURCES cnet_name_lookup_dns_test.c
+  LIBS cnet Salts::Core Salts::TinyTest FOLDER "cnet/tests")

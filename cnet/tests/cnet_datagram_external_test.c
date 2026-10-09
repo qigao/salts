@@ -175,6 +175,42 @@ spec("CNet external datagram progress") {
     }
   }
 
+  it("opens unbound sockets, preserves options and sends a real empty message") {
+    bool stopped = false; uint64_t hop = 0;
+    check_equal(cnet_datagram_stop_external(&datagrams[0],&stopped), SALTS_OK); check_true(stopped);
+    check_equal(cnet_datagram_destroy(&datagrams[0]), SALTS_OK);
+    cnet_datagram_config config = config_for(0); config.host = NULL;
+    check_equal(cnet_datagram_open_external(&datagrams[0],&config,&backend,CNET_DATAGRAM_ADDRESS_IPV4), SALTS_OK);
+    check_equal(cnet_datagram_option_set(&datagrams[0],CNET_TCP_SOCKET_HOP_LIMIT,42), SALTS_OK);
+    check_equal(cnet_datagram_option_get(&datagrams[0],CNET_TCP_SOCKET_HOP_LIMIT,&hop), SALTS_OK); check_equal(hop,42u);
+    cnet_stream_endpoint local = CNET_STREAM_ENDPOINT_INIT, remote = CNET_STREAM_ENDPOINT_INIT;
+    local.family = CNET_DATAGRAM_ADDRESS_IPV4;
+    check_equal(cnet_datagram_bind_endpoint(&datagrams[0],&local), SALTS_OK);
+    check_equal(cnet_datagram_local_endpoint(&datagrams[0],&local), SALTS_OK); check_not_equal(local.port,0u);
+    cnet_datagram_peer peer = peer_for(1); remote.family = peer.family; remote.port = peer.port; memcpy(remote.address,peer.address,4);
+    check_equal(cnet_datagram_associate_endpoint(&datagrams[0],&remote), SALTS_OK);
+    check_equal(cnet_datagram_receive(&datagrams[1],1), SALTS_OK);
+    check_equal(cnet_datagram_send_endpoint(&datagrams[0],NULL,NULL,0,123), SALTS_OK);
+    drain_until(1,1); check_equal(probes[0].status, SALTS_OK); check_equal(probes[0].tag,123u);
+    check_equal(cnet_datagram_send(&datagrams[0],&peer,NULL,0,124), SALTS_EINVAL);
+    check_equal(cnet_datagram_associate_endpoint(&datagrams[0],NULL), SALTS_OK);
+    cnet_stream_endpoint after = CNET_STREAM_ENDPOINT_INIT;
+    check_equal(cnet_datagram_local_endpoint(&datagrams[0],&after), SALTS_OK); check_equal(after.port,local.port);
+  }
+  it("retains paused receive storage until its actual terminal is routed") {
+    bool quiet = true;
+    check_equal(cnet_datagram_receive(&datagrams[0],1), SALTS_OK);
+    check_equal(cnet_datagram_pause_receive(&datagrams[0]), SALTS_OK);
+    check_equal(cnet_datagram_quiescent(&datagrams[0],&quiet), SALTS_OK); check_false(quiet);
+    check_equal(cnet_datagram_associate_endpoint(&datagrams[0],NULL), SALTS_EBUSY);
+    uint64_t deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
+    while (!quiet && cmeta_monotonic_ms() < deadline) {
+      check_equal(observe_more(), SALTS_OK); check_equal(route_held(), SALTS_OK);
+      check_equal(cnet_datagram_quiescent(&datagrams[0],&quiet), SALTS_OK);
+    }
+    check_true(quiet); check_equal(probes[0].receives,0u);
+  }
+
 #if defined(__linux__)
   it("distributes distinct source flows across a shared concrete reuseport bind") {
     enum { FLOWS = 64 };
