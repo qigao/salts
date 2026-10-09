@@ -1,6 +1,7 @@
 #include "component_plugin_publication_fixture.h"
 #include "tinytest.h"
 #include <salts/native_io_ace_token.h>
+#include <cmeta/ace_interceptor.h>
 
 /* The ACT has NO authority to own/release this borrowed Plugin Scope.
  * The component runtime's lease stays authoritative until observed terminal
@@ -8,7 +9,208 @@
 NATIVE_IO_ACE_TOKEN_TYPE(ace_plugin_scope_act, salts_component_plugin_scope);
 
 
+
+/* POSA2 Interceptor under an actual ComponentPlugin generation Scope.
+ * CMeta describes the exact FunctionAbi and borrows the native function.
+ * ComponentPlugin alone admits/drains the Scope and retains the DSO lease. */
+CMETA_INTERCEPTOR_TYPE(ace_plugin_interceptor, int, int);
+
+typedef struct ace_plugin_interceptor_call {
+    salts_component_plugin_scope *scope;
+    unsigned targets;
+} ace_plugin_interceptor_call;
+
+typedef struct ace_plugin_interceptor_probe {
+    unsigned events[12];
+    size_t count;
+    bool reject;
+    bool fail_before;
+    cmeta_status error;
+} ace_plugin_interceptor_probe;
+
+static cmeta_status ace_plugin_interceptor_target(
+    void *user, const int *request, int *result) {
+    ace_plugin_interceptor_call *call = (ace_plugin_interceptor_call *)user;
+    const int current = scope_value(call->scope);
+    ++call->targets;
+    if (current < 0 || *request < 0) return CMETA_CALLBACK_ERROR;
+    *result = current + *request;
+    return CMETA_OK;
+}
+
+static cmeta_status ace_plugin_interceptor_before(
+    void *user, const int *request, bool *proceed) {
+    ace_plugin_interceptor_probe *probe = (ace_plugin_interceptor_probe *)user;
+    (void)request;
+    probe->events[probe->count++] = 1u;
+    *proceed = !probe->reject;
+    return probe->fail_before ? CMETA_CALLBACK_ERROR : CMETA_OK;
+}
+
+static void ace_plugin_interceptor_after(
+    void *user, const int *request, const int *result) {
+    ace_plugin_interceptor_probe *probe = (ace_plugin_interceptor_probe *)user;
+    (void)request; (void)result;
+    probe->events[probe->count++] = 3u;
+}
+
+static void ace_plugin_interceptor_error(
+    void *user, const int *request, cmeta_status status) {
+    ace_plugin_interceptor_probe *probe = (ace_plugin_interceptor_probe *)user;
+    (void)request;
+    probe->error = status;
+    probe->events[probe->count++] = 4u;
+}
+
+/* Native function pointer and borrowed descriptor are independently checked.
+ * This test-local metadata does not create a second dynamic invocation ABI. */
+static const cmeta_type_desc ace_plugin_interceptor_status_desc = {
+    "cmeta_status", sizeof(cmeta_status), CMETA_ALIGNOF(cmeta_status),
+    CMETA_T_INTEGER, NULL, NULL, NULL
+};
+CMETA_FUNCTION_METADATA_AS_ABI_RESULT(
+    ace_plugin_interceptor_contract, "component.plugin.interceptor.target",
+    io, &ace_plugin_interceptor_status_desc, CMETA_ABI_ENUM, CMETA_RESULT_VALUE,
+    (void *, context, CMETA_PARAM_IN | CMETA_PARAM_BORROWED,
+     &cmeta_type_void_ptr, CMETA_ABI_OBJECT_POINTER),
+    (const int *, request, CMETA_PARAM_IN | CMETA_PARAM_BORROWED,
+     &cmeta_type_int_ptr, CMETA_ABI_OBJECT_POINTER),
+    (int *, result, CMETA_PARAM_OUT | CMETA_PARAM_BORROWED,
+     &cmeta_type_int_ptr, CMETA_ABI_OBJECT_POINTER));
+CMETA_STATIC_ASSERT(
+    CMETA_TYPE_MATCHES(&ace_plugin_interceptor_target, ace_plugin_interceptor_target_fn),
+    "Interceptor provider must match its canonical native callable");
+
 suite("ComponentPlugin generation publication") {
+
+    it("borrows a real Plugin DSO through typed Interceptor success/short-circuit/error") {
+        const cmeta_plugin_registry_config registry_config = {1};
+        cmeta_plugin_registry registry = {0};
+        cmeta_plugin_ref ref;
+        cmeta_plugin_lifecycle_info info;
+        publication_generation_fixture generation = {0};
+        salts_component_plugin_runtime runtime = {0};
+        salts_component_plugin_generation *retired = NULL;
+        salts_component_plugin_scope scope = {0};
+        ace_plugin_interceptor_call call = {&scope, 0u};
+        ace_plugin_interceptor_probe probe = {0};
+        const ace_plugin_interceptor_hook hook = {
+            &probe, ace_plugin_interceptor_before,
+            ace_plugin_interceptor_after, ace_plugin_interceptor_error
+        };
+        const cmeta_function_abi_desc *abi =
+            &ace_plugin_interceptor_contract__function_abi_meta;
+        ace_plugin_interceptor chain = {0};
+        bool quiet = false;
+        int request = 3;
+        int response = -1;
+
+        check_true(cmeta_function_abi_desc_valid(abi));
+        check_equal(cmeta_plugin_registry_init(
+            &registry, &registry_config), CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_load(
+            &registry, COMPONENT_PROVIDER_PLUGIN_PATH, &ref), CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_start(
+            &registry, ref), CMETA_PLUGIN_OK);
+        check_equal(build_generation(
+            &generation, UINT64_C(21), &registry, ref), SALTS_COMPONENT_PLUGIN_OK);
+        check_equal(salts_component_plugin_runtime_init(
+            &runtime), SALTS_COMPONENT_PLUGIN_OK);
+        check_equal(salts_component_plugin_runtime_publish(
+            &runtime, &generation.generation, &retired), SALTS_COMPONENT_PLUGIN_OK);
+        check_null(retired);
+        check_equal(salts_component_plugin_scope_acquire(
+            &runtime, &scope), SALTS_COMPONENT_PLUGIN_OK);
+        check_equal(ace_plugin_interceptor_admit(
+            &chain, &call, ace_plugin_interceptor_target, &hook, 1u,
+            abi, abi), CMETA_OK);
+
+        /* The generation is no longer public, but already admitted work can
+         * call the real provider through its still-live borrowing Scope. */
+        check_equal(salts_component_plugin_runtime_close(
+            &runtime, &retired), SALTS_COMPONENT_PLUGIN_OK);
+        check_true(retired == &generation.generation);
+        check_equal(salts_component_plugin_generation_drain(
+            &runtime, retired), SALTS_COMPONENT_PLUGIN_BUSY);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)1u);
+
+        check_equal(ace_plugin_interceptor_invoke(
+            &chain, &request, &response), CMETA_OK);
+        check_equal(response, COMPONENT_PROVIDER_VALUE + request);
+        check_equal(call.targets, 1u);
+        check_equal(probe.count, 2u);
+        check_equal(probe.events[0], 1u);
+        check_equal(probe.events[1], 3u);
+
+        /* Before rejects: no DSO invocation, no result transfer, one error. */
+        probe.count = 0u;
+        probe.reject = true;
+        response = 97;
+        check_equal(ace_plugin_interceptor_invoke(
+            &chain, &request, &response), CMETA_CALLBACK_ERROR);
+        check_equal(call.targets, 1u);
+        check_equal(response, 97);
+        check_equal(probe.count, 2u);
+        check_equal(probe.events[0], 1u);
+        check_equal(probe.events[1], 4u);
+        check_equal(probe.error, CMETA_CALLBACK_ERROR);
+
+        /* A target failure uses the same borrowed Scope and unwinds on_error,
+         * never calling after or fabricating an owned response. */
+        probe.count = 0u;
+        probe.reject = false;
+        request = -1;
+        response = 71;
+        check_equal(ace_plugin_interceptor_invoke(
+            &chain, &request, &response), CMETA_CALLBACK_ERROR);
+        check_equal(call.targets, 2u);
+        check_equal(response, 71);
+        check_equal(probe.count, 2u);
+        check_equal(probe.events[0], 1u);
+        check_equal(probe.events[1], 4u);
+
+        /* Even a rejected BEFORE callback itself has exactly one error hook. */
+        probe.count = 0u;
+        probe.fail_before = true;
+        request = 7;
+        check_equal(ace_plugin_interceptor_invoke(
+            &chain, &request, &response), CMETA_CALLBACK_ERROR);
+        check_equal(call.targets, 2u);
+        check_equal(response, 71);
+        check_equal(probe.count, 2u);
+        check_equal(probe.events[0], 1u);
+        check_equal(probe.events[1], 4u);
+
+        check_equal(scope_value(&scope), COMPONENT_PROVIDER_VALUE);
+        check_equal(salts_component_plugin_generation_drain(
+            &runtime, retired), SALTS_COMPONENT_PLUGIN_BUSY);
+        check_equal(cmeta_plugin_registry_request_stop(
+            &registry, ref), CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_unload(
+            &registry, ref), CMETA_PLUGIN_BUSY);
+        /* Interceptor callbacks do not release a Plugin lease: the calling
+         * application explicitly releases Scope before the generation drain. */
+        check_equal(salts_component_plugin_scope_release(
+            &scope), SALTS_COMPONENT_PLUGIN_OK);
+        check_equal(salts_component_plugin_generation_drain(
+            &runtime, retired), SALTS_COMPONENT_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)0u);
+        check_equal(salts_component_plugin_runtime_destroy(
+            &runtime), SALTS_COMPONENT_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_poll_quiescent(
+            &registry, ref, &quiet), CMETA_PLUGIN_OK);
+        check_true(quiet);
+        check_equal(cmeta_plugin_registry_unload(
+            &registry, ref), CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_destroy(
+            &registry), CMETA_PLUGIN_OK);
+    }
+
+
 
     it("pins a real provider generation across typed ACT terminal settlement") {
         const cmeta_plugin_registry_config registry_config = {1};

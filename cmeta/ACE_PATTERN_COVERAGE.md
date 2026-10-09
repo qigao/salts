@@ -135,6 +135,20 @@ the existing Linux epoll / macOS kqueue nonblocking-pipe fixture; it does
 not add a Reactor/Proactor, hidden queue, or duplicate Plugin lease.
 Status: newly submitted, **requires native Windows CI evidence**.
 
+### Real Plugin Scope × typed Interceptor integration (post-freeze)
+
+[ComponentPlugin publication conformance](../component-plugin/tests/component_plugin_publication_test.c)
+also runs a **native-typed CMeta Interceptor** whose target calls a real
+ComponentPlugin DSO provider via an explicitly acquired Scope. The generation
+has stopped new admission, yet in-flight intercepted work remains authorized
+until the Scope is released. CMeta's existing FunctionAbi admission checks
+the native signature; before/after/error and short-circuit paths verify
+exact callback ordering, unchanged rejected results and no double invoke.
+The real provider module cannot unload while the borrowed Scope remains
+live, and CMeta does not create or silently release a Plugin lease.
+This uses the existing CTest case, already selected by the ACE sanitizer
+regression matrix; the current commit requires exact-head CI acceptance.
+
 ## Active pattern-gap tracking
 
 Umbrella: [#1058 — POSA2 17-pattern coverage and conformance](https://github.com/qigao/salts/issues/1058). Missing semantic/composition slices:
