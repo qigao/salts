@@ -408,6 +408,26 @@ suite("CMeta ACE concurrent pattern composition") {
         check_equal(ace_sync_once_calls, 1);
     }
 
+    it("starts a fresh TLS instance after each completed worker lifetime") {
+        /* Workers are joined before another starts; never compare tokens
+         * across terminated OS threads, since identities may be recycled. */
+        ace_sync_tls_worker first = {17, -1, 0, 0, NULL};
+        ace_sync_tls_worker second = {31, -1, 0, 0, NULL};
+        cmeta_thread_t thread = NULL;
+        ace_sync_tls_counter = 77;
+        check_equal(cmeta_thread_create(&thread, ace_sync_tls_run, &first), 0);
+        check_equal(cmeta_thread_join(&thread), 0);
+        check_equal(first.initial, 0);
+        check_equal(first.final, 19);
+        thread = NULL;
+        check_equal(cmeta_thread_create(&thread, ace_sync_tls_run, &second), 0);
+        check_equal(cmeta_thread_join(&thread), 0);
+        check_equal(second.initial, 0);
+        check_equal(second.final, 33);
+        check_equal(ace_sync_tls_counter, 77);
+        ace_sync_tls_counter = 0;
+    }
+
     it("rejects a cross-thread borrowed TLS owner before touching state") {
         ace_sync_tls_borrow_probe probe = {0};
         cmeta_thread_t thread = NULL;
