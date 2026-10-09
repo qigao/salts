@@ -13,6 +13,25 @@ extern "C" {
 typedef struct native_io_sharded native_io_sharded;
 typedef struct native_io_sharded_context native_io_sharded_context;
 
+/* One registered, Owner-local long-lived host consumer of an SG backend.
+ * Explicit lease prevents SG shutdown while external CNet/FlowMQ connections
+ * still borrow the backend. This is not a raw backend pointer without a
+ * lifetime; the owner must destroy all borrowed clients before releasing.
+ * No second observe owner, hidden poll task or cross-shard backend access. */
+#define NATIVE_IO_SHARDED_HOST_VERSION 1u
+typedef struct native_io_sharded_host_lease {
+  uint64_t owner_identity;
+  uint32_t owner_shard;
+  uint32_t version;
+  uint64_t generation;
+} native_io_sharded_host_lease;
+
+/* Called on the selected shard during release to prove host-owned clients
+ * have stopped and destroyed their NativeIO endpoints. The callback is
+ * borrowed through successful release; it must not recurse into SG. */
+typedef bool (*native_io_sharded_host_quiescent_fn)(void *user);
+
+
 /**
  * Runs one routed task on its selected NativeIO owner shard.
  *
@@ -379,6 +398,32 @@ int native_io_sharded_context_cancel(native_io_sharded_context *context,
  * on each returned endpoint/request wrapper. Uses runtime-preallocated scratch
  * storage; no steady-state allocation is introduced.
  */
+/*
+ * Called only from a routed callback on its exact SG Owner shard.
+ * At most one host-observe authority is registered per shard. The supplied
+ * backend pointer is valid through release and only on the fixed Owner. The
+ * host controls when to run bounded progress tasks: registration itself does
+ * not start an endless executor task, poll loop, thread or timer.
+ *
+ * The host must use native_io_sharded_context_observe_host(), which observes
+ * once, first settles SG-owned terminal callbacks and returns the complete
+ * bounded batch for demultiplexing to attached CNet clients. Unleased observe
+ * is refused while the host is registered, to prevent completion stealing.
+ */
+int native_io_sharded_context_acquire_host(
+    native_io_sharded_context *context,
+    native_io_sharded_host_quiescent_fn quiescent, void *user,
+    native_io_sharded_host_lease *out_lease, native_io_backend **out_backend);
+/* EBUSY until callback confirms consumer quiescence and backend has no
+ * untracked active requests; no native endpoint/connection is forcibly closed. */
+int native_io_sharded_context_release_host(
+    native_io_sharded_context *context, native_io_sharded_host_lease lease);
+
+int native_io_sharded_context_observe_host(
+    native_io_sharded_context *context, native_io_sharded_host_lease lease,
+    native_io_sharded_completion *events, size_t event_capacity,
+    uint32_t timeout_ms, size_t *out_count);
+
 int native_io_sharded_context_observe(native_io_sharded_context *context,
                                       native_io_sharded_completion *events, size_t event_capacity,
                                       uint32_t timeout_ms, size_t *out_count);

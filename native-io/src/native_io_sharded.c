@@ -64,6 +64,10 @@ struct native_io_sharded_shard {
   native_io_sharded_request_ownership *request_ownerships;
   size_t request_ownership_capacity;
   int observe_active;
+  int host_active;
+  uint64_t host_generation;
+  native_io_sharded_host_quiescent_fn host_quiescent;
+  void *host_user;
 
   native_io_sharded_slot *slots;
   size_t *free_slots;
@@ -449,7 +453,9 @@ static void native_io_sharded_shutdown_probe(coro_t *coroutine, void *arg) {
   int status = SALTS_OK;
   (void)coroutine;
 
-  if (!native_io_backend_get_stats(&shard->backend, &stats)) {
+  if (shard->host_active) {
+    status = SALTS_EBUSY; /* A borrowed backend cannot be destroyed. */
+  } else if (!native_io_backend_get_stats(&shard->backend, &stats)) {
     status = SALTS_EIO;
   } else if (stats.active_requests < owned) {
     status = SALTS_EPROTO;
@@ -1198,7 +1204,65 @@ int native_io_sharded_context_cancel(native_io_sharded_context *context,
   return native_io_backend_cancel(&shard->backend, request.native_request);
 }
 
-int native_io_sharded_context_observe(native_io_sharded_context *context,
+
+static int native_io_sharded_host_validate(
+    const native_io_sharded_shard *shard, native_io_sharded_host_lease lease) {
+  if (shard == NULL || lease.version != NATIVE_IO_SHARDED_HOST_VERSION ||
+      lease.owner_identity != shard->runtime->identity ||
+      (size_t)lease.owner_shard != shard->index ||
+      !shard->host_active || lease.generation != shard->host_generation)
+    return SALTS_ENOENT;
+  return SALTS_OK;
+}
+
+int native_io_sharded_context_acquire_host(
+    native_io_sharded_context *context,
+    native_io_sharded_host_quiescent_fn quiescent, void *user,
+    native_io_sharded_host_lease *out_lease, native_io_backend **out_backend) {
+  native_io_sharded_shard *shard = native_io_sharded_context_owner(context);
+  if (out_lease != NULL) *out_lease = (native_io_sharded_host_lease){0};
+  if (out_backend != NULL) *out_backend = NULL;
+  if (shard == NULL || out_lease == NULL || out_backend == NULL ||
+      quiescent == NULL) return SALTS_EINVAL;
+  if (atomic_load(&shard->draining) || !atomic_load(&shard->runtime->accepting))
+    return SALTS_ESHUTDOWN;
+  if (shard->host_active || shard->observe_active) return SALTS_EBUSY;
+  if (shard->host_generation == UINT64_MAX) return SALTS_ERANGE;
+  if (!atomic_load(&shard->backend_initialized)) return SALTS_ESHUTDOWN;
+  ++shard->host_generation;
+  shard->host_quiescent = quiescent;
+  shard->host_user = user;
+  shard->host_active = 1;
+  *out_lease = (native_io_sharded_host_lease){
+      shard->runtime->identity, (uint32_t)shard->index,
+      NATIVE_IO_SHARDED_HOST_VERSION, shard->host_generation};
+  *out_backend = &shard->backend;
+  return SALTS_OK;
+}
+
+int native_io_sharded_context_release_host(
+    native_io_sharded_context *context, native_io_sharded_host_lease lease) {
+  native_io_sharded_shard *shard = native_io_sharded_context_owner(context);
+  native_io_backend_stats stats = {0};
+  size_t sg_owned;
+  int status = native_io_sharded_host_validate(shard, lease);
+  if (status != SALTS_OK) return status;
+  if (shard->observe_active) return SALTS_EBUSY;
+  /* The callback must only inspect its consumers; SG callbacks and recursive
+   * polling from inside the check are outside this contract. */
+  if (!shard->host_quiescent(shard->host_user)) return SALTS_EBUSY;
+  if (!native_io_backend_get_stats(&shard->backend, &stats)) return SALTS_EIO;
+  sg_owned = native_io_sharded_owned_request_count(shard);
+  if (stats.active_requests < sg_owned) return SALTS_EPROTO;
+  if (stats.active_requests > sg_owned) return SALTS_EBUSY;
+  shard->host_active = 0;
+  shard->host_quiescent = NULL;
+  shard->host_user = NULL;
+  return SALTS_OK;
+}
+
+static int native_io_sharded_context_observe_impl(native_io_sharded_context *context,
+                                      const native_io_sharded_host_lease *lease,
                                       native_io_sharded_completion *events,
                                       size_t event_capacity, uint32_t timeout_ms,
                                       size_t *out_count) {
@@ -1211,6 +1275,12 @@ int native_io_sharded_context_observe(native_io_sharded_context *context,
       shard->completion_scratch == NULL || shard->completion_capacity == 0u)
     return SALTS_EINVAL;
   if (shard->observe_active) return SALTS_EBUSY;
+  if (shard->host_active) {
+    if (lease == NULL || native_io_sharded_host_validate(shard, *lease) != SALTS_OK)
+      return SALTS_EPERM;
+  } else if (lease != NULL) {
+    return SALTS_ENOENT;
+  }
   shard->observe_active = 1;
   limit = event_capacity < shard->completion_capacity ? event_capacity : shard->completion_capacity;
   status = native_io_backend_observe(&shard->backend, shard->completion_scratch, limit,
@@ -1271,6 +1341,22 @@ int native_io_sharded_context_observe(native_io_sharded_context *context,
   shard->observe_active = 0;
   *out_count = count;
   return SALTS_OK;
+}
+
+int native_io_sharded_context_observe(native_io_sharded_context *context,
+                                      native_io_sharded_completion *events,
+                                      size_t event_capacity, uint32_t timeout_ms,
+                                      size_t *out_count) {
+  return native_io_sharded_context_observe_impl(
+      context, NULL, events, event_capacity, timeout_ms, out_count);
+}
+
+int native_io_sharded_context_observe_host(
+    native_io_sharded_context *context, native_io_sharded_host_lease lease,
+    native_io_sharded_completion *events, size_t event_capacity,
+    uint32_t timeout_ms, size_t *out_count) {
+  return native_io_sharded_context_observe_impl(
+      context, &lease, events, event_capacity, timeout_ms, out_count);
 }
 
 bool native_io_sharded_get_stats(const native_io_sharded *runtime,
