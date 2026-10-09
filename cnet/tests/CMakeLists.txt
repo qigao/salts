@@ -28,6 +28,22 @@ cmake_add_test(cnet_managed_dial_test
   LIBS Salts::CNet Salts::TinyTest
   FOLDER "cnet/tests")
 
+# Independent installed SDK gate: strict C11/C++17 via exported Salts targets.
+# Native host only; cross-compiled mobile builds remain build-only.
+if(NOT CMAKE_CROSSCOMPILING)
+  add_test(
+    NAME cnet_installed_sdk_test
+    COMMAND "${CMAKE_COMMAND}"
+      "-DSALTS_BINARY_DIR=${CMAKE_BINARY_DIR}"
+      "-DCONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_config/strategy"
+      "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed-strategy"
+      "-DCTEST_COMMAND=${CMAKE_CTEST_COMMAND}"
+      "-DSALTS_GENERATOR=${CMAKE_GENERATOR}"
+      "-DSALTS_TEST_CONFIG=$<CONFIG>"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_installed_cnet.cmake")
+  set_tests_properties(cnet_installed_sdk_test PROPERTIES RUN_SERIAL TRUE TIMEOUT 300)
+endif()
+
 set(CNET_TEST_PRIVATE_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 cmake_add_test(cnet_handoff_test SOURCES cnet_handoff_test.c
   LIBS Salts::CNet Salts::TinyTest FOLDER "cnet/tests")
