@@ -10,6 +10,10 @@ These abstractions are designed to compile down to ordinary C data structures an
 
 **Tags:** C11 · generic-programming · systems-programming · typed-metadata · dataflow · reactive-streams · actor-model · state-machine · async-io · containers
 
+[Unicode](unicode/README.md) provides explicit Unicode 17 NFC normalization.
+[IDNA](idna/README.md) converts Unicode hostnames to a validated ASCII DNS/TLS
+identity using a versioned UTS #46 nontransitional profile and caller-owned storage.
+
 ## API namespace migration
 
 一方 API 的小写前缀统一为 `cmeta_`，包括平台、并发、Core 工具和 Plugin；对应文件名、
@@ -92,7 +96,7 @@ The canonical module boundaries and dependency direction are documented in [ARCH
 
 ### Extension layer
 
-- [salts-utils](https://github.com/qigao/salts-utils) — DataBind schema/compiler/native-dynamic binding, parsers, QueryVM, crypto, filesystem/process adapters, templates, Unicode, media helpers, and other higher-level utilities.
+- [salts-utils](https://github.com/qigao/salts-utils) — DataBind schema/compiler/native-dynamic binding, parsers, QueryVM, crypto, filesystem/process adapters, templates, media helpers, and other higher-level utilities.
 - [salts-net](https://github.com/qigao/salts-net) — protocol and network tooling built on CNet/CMeta, including ICE/STUN/TURN, SNMP, LDAP, email, proxying, and related adapters.
 
 ### Domain infrastructure

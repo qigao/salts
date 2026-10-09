@@ -66,7 +66,7 @@ function Test-Changed([string]$Pattern) {
 # Shared build inputs invalidate all native suites. Formal checks only depend
 # on the Lean package, checked-in generated outputs, and their workflow.
 $shared = $full -or (Test-Changed '^(CMakeLists\.txt|CMakeOptions\.cmake|CMake(User)?Presets\.json|vcpkg(-configuration)?\.json|presets/|vendor/|\.github/actions/|\.github/workflows/(ci|native-build|sdk-package|sdk-tests)\.yml|cmake/(?!ci/)|cmake/ci/select-ci-scope\.ps1)')
-$mobile = $shared -or (Test-Changed '^(tools|tinytest|platform|concurrency|coroutine|native-io|uri|cmeta|component|component-plugin|plugin|simd|tinymock|cflow|cstl|cnet|cserde|utils)/')
+$mobile = $shared -or (Test-Changed '^(tools|tinytest|platform|concurrency|coroutine|native-io|uri|cmeta|component|component-plugin|plugin|simd|tinymock|cflow|cstl|cnet|cserde|utils|unicode|idna)/')
 $contractsChanged = Test-Changed '^\.github/workflows/cmeta-cflow-calculus\.yml$'
 $cmetaRuntime = Test-Changed '^cmeta/(include/|src/|native/|CMakeLists\.txt$|tests/CMakeLists\.txt$)'
 $componentRuntime = Test-Changed '^component/(include/|src/|CMakeLists\.txt$|tests/)'
@@ -77,8 +77,9 @@ $coroutineRuntime = Test-Changed '^coroutine/(include/|src/|arch/|CMakeLists\.tx
 $cflowRuntime = Test-Changed '^cflow/(include/|src/|CMakeLists\.txt$|tests/CMakeLists\.txt$|cnet-adapter/)'
 $pluginRuntime = Test-Changed '^plugin/(include/|src/|CMakeLists\.txt$)'
 $utilsRuntime = Test-Changed '^utils/(include/|src/|CMakeLists\.txt$)'
+$unicodeRuntime = Test-Changed '^(unicode|idna)/'
 $harness = Test-Changed '^(tinytest|tinymock)/'
-$nativeCommon = $shared -or $contractsChanged -or $cmetaRuntime -or $componentRuntime -or $componentPluginRuntime -or $platformRuntime -or $harness
+$nativeCommon = $shared -or $contractsChanged -or $cmetaRuntime -or $componentRuntime -or $componentPluginRuntime -or $platformRuntime -or $harness -or $unicodeRuntime
 $native = $nativeCommon -or $concurrencyRuntime -or $pluginRuntime -or $utilsRuntime -or
   (Test-Changed '^(coroutine/|platform/tests/|plugin/|cmeta/(tests/|benchmarks/))')
 $execution = $nativeCommon -or $utilsRuntime -or $cflowRuntime -or $coroutineRuntime -or

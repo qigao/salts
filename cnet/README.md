@@ -1867,8 +1867,13 @@ buffers before binding. The backend remains owned and observed by the host.
 
 `<cnet/name_lookup.h>` exposes bounded ordered address streams using existing
 c-ares progress and strict ASCII LDH hostname validation. Already-encoded
-Punycode A-labels pass through unchanged; raw non-ASCII names fail closed
-until the future Unicode/IDNA implementation in #1088. Numeric literals issue no DNS
+Punycode A-labels pass through unchanged without IDNA validation; raw non-ASCII
+names fail closed. Applications accepting Unicode domains explicitly call
+[`Salts::IDNA`](../idna/README.md) before submission, then use the same validated
+ASCII identity for DNS, TLS hostname verification and SNI. CNet itself has no
+IDNA dependency or implicit conversion. Its existing trailing-dot and numeric
+address behavior is unchanged; the IDNA strict profile rejects trailing dots.
+Numeric literals issue no DNS
 request. Every query is scoped to its owner and generation; result overflow is
 an error instead of truncated success. Pending is `SALTS_ETIMEDOUT`, exhaustion
 is `SALTS_EOF`, and a query deadline is `SALTS_EAI_AGAIN`.
