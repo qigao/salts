@@ -131,15 +131,26 @@ jobs:
           set -euo pipefail
           cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
-      # PR #1085 release gate: execute real SG transport tests, not build-only.
-      # Keep this isolated from full_tests and from SDK cross-compilation.
-      - name: Qualify SG Owner policies and cross-Owner handoff (Unix)
-        if: ${{ !cancelled() && github.head_ref == 'feature/cnet-sg-host-policy-composition' && steps.build_unix.outcome == 'success' && !matrix.cross && (matrix.family == 'linux' || matrix.family == 'mac') }}
+      # PR 1085 isolated SG runtime gate.
+      - name: Qualify SG Owner tests (Unix)
+        if: ${{ !cancelled() && github.head_ref == 'feature/cnet-sg-host-policy-composition' && steps.build_unix.outcome == 'success' && matrix.execution && (matrix.family == 'linux' || matrix.family == 'mac') }}
         timeout-minutes: 10
         shell: bash
         run: |
           set -euo pipefail
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 90 -R '^cnet_sg_(hosted_gateway|handoff_owner)_test      - name: Run ACE sanitizer ownership contracts
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 90 -R 'cnet_sg_(hosted_gateway|handoff_owner)_test'
+      - name: Qualify SG Owner tests (Windows)
+        if: ${{ !cancelled() && github.head_ref == 'feature/cnet-sg-host-policy-composition' && steps.build_windows.outcome == 'success' && matrix.execution && matrix.family == 'windows' }}
+        timeout-minutes: 10
+        shell: cmd
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 90 -R "cnet_sg_(hosted_gateway|handoff_owner)_test"
+          if errorlevel 1 exit /b 1
+      - name: Run ACE sanitizer ownership contracts
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.sanitizer != '' }}
         timeout-minutes: 30
         shell: bash
