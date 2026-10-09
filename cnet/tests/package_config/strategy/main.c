@@ -36,7 +36,8 @@ static void observed_state(void *user, cnet_connection connection,
 
 int main(void) {
   cnet_client client = {0};
-  cnet_client_config client_config = {0};
+  /* C11 and C++17 require the first (enum) member to be typed, not {0}. */
+  cnet_client_config client_config = {backend_kind()};
   cnet_manager manager = {0};
   cnet_manager_config manager_config = {0};
   cnet_client_pool pool = {0};
