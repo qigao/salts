@@ -1,4 +1,5 @@
 #include <cnet/cnet.h>
+#include <cnet/name_lookup.h>
 #include <cnet/manager.h>
 #include <cnet/handoff.h>
 #include <cnet/owner_placement.h>

@@ -63,6 +63,8 @@ typedef struct cnet_datagram_impl {
   size_t receive_demand;
   uint16_t port;
   int stop_status;
+  int native_family;
+  bool receive_callback_active;
   bool receive_active;
   bool polling;
   bool callback_active;
@@ -70,6 +72,8 @@ typedef struct cnet_datagram_impl {
   bool stopped;
   bool backend_borrowed;
   bool receive_rearm;
+  bool bound;
+  bool receive_paused;
 #if defined(CNET_INTERNAL_TESTING)
   int test_drive_status;
   int test_persistent_drive_status;
@@ -207,7 +211,7 @@ static int cnet_datagram_arm_receive(cnet_datagram_impl *impl) {
   native_io_operation operation;
   int status;
   /* A callback still borrows receive_buffer; reentrant demand must wait for its return. */
-  if (impl->receive_active || impl->receive_demand == 0u || impl->stopping)
+  if (impl->receive_active || impl->receive_demand == 0u || impl->stopping || impl->receive_paused)
     return SALTS_OK;
   if (impl->callback_active) {
     impl->receive_rearm = true;
@@ -287,6 +291,7 @@ static int cnet_datagram_complete(cnet_datagram_impl *impl,
     impl->receive_rearm = false;
     memset(&impl->receive_request, 0, sizeof(impl->receive_request));
     if (malformed) return SALTS_EPROTO;
+    if (impl->receive_paused) return SALTS_OK;
     if (completion->kind == NATIVE_IO_COMPLETION_CANCELLED && impl->stopping) return SALTS_OK;
     status = cnet_datagram_completion_status(completion);
     if (status != SALTS_OK) return status;
@@ -298,7 +303,9 @@ static int cnet_datagram_complete(cnet_datagram_impl *impl,
     --impl->receive_demand;
     view = (cnet_receive_view){impl->receive_buffer, completion->bytes, CNET_MESSAGE_DATAGRAM};
     impl->callback_active = true;
+    impl->receive_callback_active = true;
     impl->observer.on_receive(impl->observer.user, impl->public_datagram, &peer, &view);
+    impl->receive_callback_active = false;
     impl->callback_active = false;
     ++*callback_count;
     return cnet_datagram_arm_receive(impl);
@@ -412,7 +419,7 @@ static int cnet_datagram_drive(cnet_datagram_impl *impl, uint32_t timeout_ms,
 }
 
 static int cnet_datagram_init_impl(cnet_datagram *datagram, const cnet_datagram_config *config,
-                                    native_io_backend *borrowed_backend) {
+                                    native_io_backend *borrowed_backend, cnet_datagram_address_family unbound_family) {
   cnet_datagram_impl *impl = NULL;
   native_io_backend_config borrowed_config = {0};
   native_io_backend_stats borrowed_stats = {0};
@@ -428,7 +435,9 @@ static int cnet_datagram_init_impl(cnet_datagram *datagram, const cnet_datagram_
        borrowed_config.kind != config->backend))
     return SALTS_EINVAL;
   if (borrowed_backend != NULL && !borrowed_stats.admission_open) return SALTS_ESHUTDOWN;
-  if (config->host == NULL || config->host[0] == '\0' || config->send_capacity == 0u ||
+  if ((unbound_family == 0 ? config->host == NULL || config->host[0] == '\0' :
+       config->host != NULL || config->port != 0 ||
+       (unbound_family != CNET_DATAGRAM_ADDRESS_IPV4 && unbound_family != CNET_DATAGRAM_ADDRESS_IPV6)) || config->send_capacity == 0u ||
       config->request_capacity <= config->send_capacity ||
       config->completion_batch_capacity == 0u ||
       config->completion_batch_capacity > config->request_capacity ||
@@ -451,7 +460,8 @@ static int cnet_datagram_init_impl(cnet_datagram *datagram, const cnet_datagram_
 #if !defined(SO_REUSEPORT)
   if (config->reuse_port) return SALTS_ENOTSUP;
 #endif
-  status = cnet_transport_parse_bind_address(config->host, config->port, native_address,
+  status = cnet_transport_parse_bind_address(unbound_family == CNET_DATAGRAM_ADDRESS_IPV4 ? "0.0.0.0" :
+                                             unbound_family == CNET_DATAGRAM_ADDRESS_IPV6 ? "::" : config->host, config->port, native_address,
                                              sizeof(native_address), &native_address_size);
   if (status != SALTS_OK) return status;
   family = ((const struct sockaddr *)native_address)->sa_family;
@@ -463,6 +473,7 @@ static int cnet_datagram_init_impl(cnet_datagram *datagram, const cnet_datagram_
     return SALTS_ENOMEM;
   }
   impl->socket_value = CNET_DATAGRAM_INVALID_SOCKET;
+  impl->native_family = family;
   impl->public_datagram = datagram;
   impl->observer = config->observer;
   impl->backend_borrowed = borrowed_backend != NULL;
@@ -527,12 +538,13 @@ static int cnet_datagram_init_impl(cnet_datagram *datagram, const cnet_datagram_
     }
   }
 #endif
-  if (bind(impl->socket_value, (const struct sockaddr *)native_address,
+  if (!unbound_family && bind(impl->socket_value, (const struct sockaddr *)native_address,
            (int)native_address_size) != 0) {
     status = cnet_datagram_native_error();
     goto fail;
   }
-  status = cnet_datagram_bound_port(impl->socket_value, &impl->port);
+  status = unbound_family ? SALTS_OK : cnet_datagram_bound_port(impl->socket_value, &impl->port);
+  impl->bound = unbound_family == 0;
   if (status != SALTS_OK) goto fail;
   status = native_io_backend_attach_socket(&impl->backend, (uintptr_t)impl->socket_value,
                                            &impl->endpoint);
@@ -559,13 +571,159 @@ fail:
 }
 
 int cnet_datagram_init(cnet_datagram *datagram, const cnet_datagram_config *config) {
-  return cnet_datagram_init_impl(datagram, config, NULL);
+  return cnet_datagram_init_impl(datagram, config, NULL, 0);
 }
 
 int cnet_datagram_init_external(cnet_datagram *datagram, const cnet_datagram_config *config,
                                  native_io_backend *backend) {
   if (backend == NULL) return SALTS_EINVAL;
-  return cnet_datagram_init_impl(datagram, config, backend);
+  return cnet_datagram_init_impl(datagram, config, backend, 0);
+}
+
+int cnet_datagram_open_external(cnet_datagram *datagram, const cnet_datagram_config *config,
+                               native_io_backend *backend, cnet_datagram_address_family family) {
+  if (!backend || !family) return SALTS_EINVAL;
+  return cnet_datagram_init_impl(datagram, config, backend, family);
+}
+
+static int endpoint_to_native(const cnet_stream_endpoint *endpoint, struct sockaddr_storage *address,
+                              size_t *size) {
+  if (!endpoint || endpoint->size != sizeof(*endpoint) || endpoint->version != CNET_STREAM_ENDPOINT_API_VERSION)
+    return SALTS_EINVAL;
+  memset(address, 0, sizeof(*address));
+  if (endpoint->family == CNET_DATAGRAM_ADDRESS_IPV4) {
+    struct sockaddr_in *a = (struct sockaddr_in *)address;
+    a->sin_family = AF_INET; a->sin_port = htons(endpoint->port);
+    memcpy(&a->sin_addr, endpoint->address, 4); *size = sizeof(*a); return SALTS_OK;
+  }
+  if (endpoint->family == CNET_DATAGRAM_ADDRESS_IPV6) {
+    struct sockaddr_in6 *a = (struct sockaddr_in6 *)address;
+    a->sin6_family = AF_INET6; a->sin6_port = htons(endpoint->port);
+    a->sin6_flowinfo = htonl(endpoint->flow_info); a->sin6_scope_id = endpoint->scope_id;
+    memcpy(&a->sin6_addr, endpoint->address, 16); *size = sizeof(*a); return SALTS_OK;
+  }
+  return SALTS_EAFNOSUPPORT;
+}
+static int endpoint_from_native(const struct sockaddr_storage *address, cnet_stream_endpoint *out) {
+  cnet_stream_endpoint result = CNET_STREAM_ENDPOINT_INIT;
+  if (address->ss_family == AF_INET) {
+    const struct sockaddr_in *a = (const struct sockaddr_in *)address;
+    result.family = CNET_DATAGRAM_ADDRESS_IPV4; result.port = ntohs(a->sin_port);
+    memcpy(result.address, &a->sin_addr, 4);
+  } else if (address->ss_family == AF_INET6) {
+    const struct sockaddr_in6 *a = (const struct sockaddr_in6 *)address;
+    result.family = CNET_DATAGRAM_ADDRESS_IPV6; result.port = ntohs(a->sin6_port);
+    result.flow_info = ntohl(a->sin6_flowinfo); result.scope_id = a->sin6_scope_id;
+    memcpy(result.address, &a->sin6_addr, 16);
+  } else return SALTS_EAFNOSUPPORT;
+  *out = result; return SALTS_OK;
+}
+int cnet_datagram_bind_endpoint(cnet_datagram *datagram, const cnet_stream_endpoint *endpoint) {
+  cnet_datagram_impl *p = cnet_datagram_get(datagram); struct sockaddr_storage address; size_t size; int rc;
+  if (!p) return SALTS_EINVAL;
+  if (p->stopping) return SALTS_ESHUTDOWN;
+  if (p->polling || p->callback_active) return SALTS_EBUSY;
+  if (p->bound) return SALTS_EALREADY;
+  rc = endpoint_to_native(endpoint, &address, &size); if (rc != SALTS_OK) return rc;
+  if (bind(p->socket_value, (struct sockaddr *)&address, (int)size) != 0) return cnet_datagram_native_error();
+  p->bound = true;
+  return cnet_datagram_bound_port(p->socket_value, &p->port);
+}
+static int endpoint_query(const cnet_datagram *datagram, cnet_stream_endpoint *out, bool remote) {
+  const cnet_datagram_impl *p = cnet_datagram_const_get(datagram); struct sockaddr_storage address;
+#if defined(_WIN32)
+  int size = sizeof(address);
+#else
+  socklen_t size = sizeof(address);
+#endif
+  if (!p || !out) return SALTS_EINVAL;
+  if (p->stopping) return SALTS_ESHUTDOWN;
+  if (!p->bound) return SALTS_ENOTCONN;
+  memset(&address, 0, sizeof(address));
+  if ((remote ? getpeername(p->socket_value, (struct sockaddr *)&address, &size) :
+                getsockname(p->socket_value, (struct sockaddr *)&address, &size)) != 0) return cnet_datagram_native_error();
+  return endpoint_from_native(&address, out);
+}
+int cnet_datagram_local_endpoint(const cnet_datagram *d, cnet_stream_endpoint *out) { return endpoint_query(d, out, false); }
+int cnet_datagram_remote_endpoint(const cnet_datagram *d, cnet_stream_endpoint *out) { return endpoint_query(d, out, true); }
+int cnet_datagram_received_endpoint(const cnet_datagram *d, cnet_stream_endpoint *out) {
+  const cnet_datagram_impl *p = cnet_datagram_const_get(d);
+  if (!p || !out || !p->receive_callback_active) return SALTS_EINVAL;
+  return endpoint_from_native(&p->receive_peer, out);
+}
+int cnet_datagram_associate_endpoint(cnet_datagram *d, const cnet_stream_endpoint *endpoint) {
+  cnet_datagram_impl *p = cnet_datagram_get(d); struct sockaddr_storage address; size_t size; int rc;
+  if (!p) return SALTS_EINVAL;
+  if (p->stopping) return SALTS_ESHUTDOWN;
+  if (!p->bound) return SALTS_ENOTCONN;
+  if (p->polling || p->callback_active || p->receive_active || p->active_send_count) return SALTS_EBUSY;
+  if (endpoint) {
+    if (!endpoint->port) return SALTS_EINVAL;
+    rc = endpoint_to_native(endpoint, &address, &size); if (rc != SALTS_OK) return rc;
+  } else {
+    memset(&address, 0, sizeof(address)); address.ss_family = AF_UNSPEC; size = sizeof(struct sockaddr);
+  }
+  struct sockaddr_storage local;
+#if defined(_WIN32)
+  int local_size = sizeof(local);
+#else
+  socklen_t local_size = sizeof(local);
+#endif
+  if (!endpoint && getsockname(p->socket_value, (struct sockaddr *)&local, &local_size) != 0)
+    return cnet_datagram_native_error();
+#if defined(__APPLE__)
+  /* Darwin connect(AF_UNSPEC) disconnects then reports EAFNOSUPPORT. Use its
+   * explicit disconnect API so the native result matches the state change. */
+  if (!endpoint) {
+    if (disconnectx(p->socket_value, SAE_ASSOCID_ANY, SAE_CONNID_ANY) != 0 && errno != ENOTCONN)
+      return cnet_datagram_native_error();
+  } else
+#endif
+  if (connect(p->socket_value, (struct sockaddr *)&address, (int)size) != 0) return cnet_datagram_native_error();
+  /* Linux disconnect can clear the port. Restore the explicit binding before
+   * reporting success; the owner remains bound throughout association changes. */
+  if (!endpoint) {
+    cnet_stream_endpoint current = CNET_STREAM_ENDPOINT_INIT;
+    rc = cnet_datagram_local_endpoint(d, &current);
+    if (rc != SALTS_OK) return rc;
+    if (!current.port && bind(p->socket_value, (struct sockaddr *)&local, local_size) != 0)
+      return cnet_datagram_native_error();
+  }
+  return SALTS_OK;
+}
+int cnet_datagram_pause_receive(cnet_datagram *d) {
+  cnet_datagram_impl *p = cnet_datagram_get(d); int rc;
+  if (!p) return SALTS_EINVAL;
+  if (p->polling || p->callback_active) return SALTS_EBUSY;
+  p->receive_paused = true; p->receive_demand = 0; p->receive_rearm = false;
+  if (!p->receive_active) return SALTS_OK;
+  rc = native_io_backend_cancel(&p->backend, p->receive_request);
+  return rc == SALTS_ENOENT || rc == SALTS_EALREADY ? SALTS_OK : rc;
+}
+int cnet_datagram_quiescent(const cnet_datagram *d, bool *out) {
+  const cnet_datagram_impl *p = cnet_datagram_const_get(d);
+  if (!p || !out) return SALTS_EINVAL;
+  *out = !p->receive_active && !p->active_send_count && !p->polling && !p->callback_active; return SALTS_OK;
+}
+static bool datagram_option(cnet_tcp_socket_option option) {
+  return option == CNET_TCP_SOCKET_HOP_LIMIT || option == CNET_TCP_SOCKET_RECEIVE_BUFFER_BYTES ||
+         option == CNET_TCP_SOCKET_SEND_BUFFER_BYTES;
+}
+int cnet_datagram_option_get(const cnet_datagram *d, cnet_tcp_socket_option option, uint64_t *out) {
+  const cnet_datagram_impl *p = cnet_datagram_const_get(d);
+  if (!p || !out) return SALTS_EINVAL;
+  if (p->stopping) return SALTS_ESHUTDOWN;
+  if (!datagram_option(option)) return SALTS_ENOTSUP;
+  return cnet_transport_tcp_native_option_get_family((uintptr_t)p->socket_value, p->native_family, option, out);
+}
+int cnet_datagram_option_set(cnet_datagram *d, cnet_tcp_socket_option option, uint64_t value) {
+  cnet_datagram_impl *p = cnet_datagram_get(d);
+  if (!p || !value) return SALTS_EINVAL;
+  if (p->stopping) return SALTS_ESHUTDOWN;
+  if (p->polling || p->callback_active) return SALTS_EBUSY;
+  if (!datagram_option(option)) return SALTS_ENOTSUP;
+  if (option != CNET_TCP_SOCKET_HOP_LIMIT && value > INT_MAX) value = INT_MAX;
+  return cnet_transport_tcp_native_option_set_family((uintptr_t)p->socket_value, p->native_family, option, value);
 }
 
 int cnet_datagram_port(const cnet_datagram *datagram, uint16_t *out_port) {
@@ -580,7 +738,9 @@ int cnet_datagram_port(const cnet_datagram *datagram, uint16_t *out_port) {
 
 int cnet_datagram_receive(cnet_datagram *datagram, size_t demand) {
   cnet_datagram_impl *impl = cnet_datagram_get(datagram);
-  if (impl == NULL || demand == 0u) return SALTS_EINVAL;
+  if (impl == NULL || demand == 0u || !impl->bound) return SALTS_EINVAL;
+  if (impl->receive_paused && impl->receive_active) return SALTS_EBUSY;
+  impl->receive_paused = false;
   if (impl->stopping) return SALTS_ESHUTDOWN;
   if (demand > SIZE_MAX - impl->receive_demand) return SALTS_ERANGE;
   {
@@ -595,15 +755,15 @@ int cnet_datagram_receive(cnet_datagram *datagram, size_t demand) {
   }
 }
 
-int cnet_datagram_send(cnet_datagram *datagram, const cnet_datagram_peer *peer,
-                       const void *data, size_t size, uint64_t tag) {
+static int cnet_datagram_send_impl(cnet_datagram *datagram, const cnet_datagram_peer *peer,
+                       const void *data, size_t size, uint64_t tag, uint32_t flow_info, bool connected) {
   cnet_datagram_impl *impl = cnet_datagram_get(datagram);
   cnet_datagram_send_slot *slot;
   native_io_operation operation;
   size_t native_peer_size = 0u;
   size_t index;
   int status;
-  if (impl == NULL || peer == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
+  if (impl == NULL || peer == NULL || (data == NULL && size != 0u) || !impl->bound) return SALTS_EINVAL;
   if (impl->stopping) return SALTS_ESHUTDOWN;
   if (size > impl->max_datagram_bytes) return SALTS_EMSGSIZE;
   if (impl->free_send_count == 0u) return SALTS_ENOBUFS;
@@ -614,7 +774,9 @@ int cnet_datagram_send(cnet_datagram *datagram, const cnet_datagram_peer *peer,
     impl->free_sends[impl->free_send_count++] = (uint32_t)index;
     return status;
   }
-  memcpy(slot->data, data, size);
+  if (peer->family == CNET_DATAGRAM_ADDRESS_IPV6)
+    ((struct sockaddr_in6 *)&slot->native_peer)->sin6_flowinfo = htonl(flow_info);
+  if (size) memcpy(slot->data, data, size);
   slot->peer = *peer;
   slot->size = size;
   slot->tag = tag;
@@ -624,9 +786,9 @@ int cnet_datagram_send(cnet_datagram *datagram, const cnet_datagram_peer *peer,
                                     .buffer = slot->data,
                                     .length = size,
                                     .user_data = (uintptr_t)(index + 1u),
-                                    .address = &slot->native_peer,
-                                    .address_capacity = sizeof(slot->native_peer),
-                                    .address_length = native_peer_size};
+                                    .address = connected ? NULL : &slot->native_peer,
+                                    .address_capacity = connected ? 0 : sizeof(slot->native_peer),
+                                    .address_length = connected ? 0 : native_peer_size};
   status = native_io_backend_submit(&impl->backend, &operation, &slot->request);
   if (status != SALTS_OK) {
     slot->active = false;
@@ -637,6 +799,22 @@ int cnet_datagram_send(cnet_datagram *datagram, const cnet_datagram_peer *peer,
   }
   ++impl->active_send_count;
   return SALTS_OK;
+}
+
+int cnet_datagram_send(cnet_datagram *datagram, const cnet_datagram_peer *peer,
+                       const void *data, size_t size, uint64_t tag) {
+  if (!data || !size) return SALTS_EINVAL;
+  return cnet_datagram_send_impl(datagram, peer, data, size, tag, 0, false);
+}
+int cnet_datagram_send_endpoint(cnet_datagram *d, const cnet_stream_endpoint *endpoint,
+                                const void *data, size_t size, uint64_t tag) {
+  cnet_stream_endpoint remote = CNET_STREAM_ENDPOINT_INIT; cnet_datagram_peer peer = {0};
+  bool connected = endpoint == NULL; int rc;
+  if (!endpoint) { rc = cnet_datagram_remote_endpoint(d, &remote); if (rc != SALTS_OK) return rc; endpoint = &remote; }
+  if (endpoint->size != sizeof(*endpoint) || endpoint->version != CNET_STREAM_ENDPOINT_API_VERSION) return SALTS_EINVAL;
+  peer.family = endpoint->family; peer.port = endpoint->port; peer.scope_id = endpoint->scope_id;
+  memcpy(peer.address, endpoint->address, 16);
+  return cnet_datagram_send_impl(d, &peer, data, size, tag, endpoint->flow_info, connected);
 }
 
 int cnet_datagram_poll(cnet_datagram *datagram, uint32_t timeout_ms, size_t *out_events) {
