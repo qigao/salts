@@ -48,6 +48,10 @@ static void lf_ace_check_callable_metadata(void) {
     const cmeta_param_desc *context_param = cmeta_function_param(fn, 0u);
     const cmeta_param_desc *event_param = cmeta_function_param(fn, 1u);
     cmeta_function_abi_desc bad = *abi;
+    const size_t expected_param_count = 2u;
+    const cmeta_result_flags expected_result_flags = CMETA_RESULT_VALUE;
+    const cmeta_param_flags expected_borrowed = CMETA_PARAM_IN | CMETA_PARAM_BORROWED;
+    const cmeta_param_flags expected_input = CMETA_PARAM_IN;
     int sum = 0;
     lf_handler_fn callback = lf_ace_cpu_handler;
 
@@ -59,13 +63,13 @@ static void lf_ace_check_callable_metadata(void) {
     check_true(context_param != NULL);
     check_true(event_param != NULL);
     check_equal(abi->return_carrier, CMETA_ABI_ENUM);
-    check_equal(abi->param_count, (size_t)2u);
+    check_equal(abi->param_count, expected_param_count);
     check_equal(abi->param_carriers[0], CMETA_ABI_OBJECT_POINTER);
     check_equal(abi->param_carriers[1], CMETA_ABI_SCALAR);
-    check_equal(fn->result_flags, CMETA_RESULT_VALUE);
+    check_equal(fn->result_flags, expected_result_flags);
     if (context_param != NULL && event_param != NULL) {
-        check_equal(context_param->flags, CMETA_PARAM_IN | CMETA_PARAM_BORROWED);
-        check_equal(event_param->flags, CMETA_PARAM_IN);
+        check_equal(context_param->flags, expected_borrowed);
+        check_equal(event_param->flags, expected_input);
     }
     bad.param_count = 1u;
     check_false(cmeta_function_abi_desc_valid(&bad));

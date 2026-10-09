@@ -53,6 +53,10 @@ set_target_properties(cmeta_ace_leader_followers_contract_cpp_test PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 set_tests_properties(cmeta_ace_leader_followers_contract_test
   cmeta_ace_leader_followers_contract_cpp_test PROPERTIES TIMEOUT 60)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_ace_leader_followers_contract_cpp_test PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:-Werror=old-style-cast>")
+endif()
 
 # C11/C++17 independent SDK consumption of the five new ACE pattern facades.
 # Use the existing installed-consumer helper, not another workflow.

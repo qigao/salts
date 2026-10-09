@@ -99,3 +99,10 @@ thread-local addresses across owner migration or after exit.
 selection on the latest test source, then restore the Draft PR title. This
 qualification does not include packaging, immutable 2.3 SDK acceptance or
 production non-SG Leader/Followers execution.
+
+## #1064 Leader/Followers exact CMeta ABI checkpoint — 2026-10-09
+
+- [`b7c72ca3`](https://github.com/qigao/salts/commit/b7c72ca36574554470f8759aec8cb3dfe4b0f4f4) adds C11/C++17 **canonical CMeta FunctionDesc/FunctionAbi** tests for the actual test-local `enum lf_result (*)(void *, int)` CPU callback, borrowed context, enum terminal, and typed role/stop metadata. This does not create a scheduling or Plugin-lease runtime.
+- [Exact-source ACE-MATRIX #37886770939](https://github.com/qigao/salts/actions/runs/37886770939) passed **257/257 Linux GCC/Clang**, **247/247 Windows MSVC**, **250/250 macOS GCC/Clang**, plus Linux ARM64, Android and iOS cross-build and Lean. All four LF C11/C++17 test targets executed on native hosts.
+- [`0c2551a5`](https://github.com/qigao/salts/commit/0c2551a5ffac45e7f408a541d77ad199cacb85fc) passed [ACE-SAN #37886359217](https://github.com/qigao/salts/actions/runs/37886359217), **24/24 ASan+UBSan and 24/24 TSan**, for the earlier Platform LF executor pair only. The newly introduced CMeta ABI tests require a separate latest-source ACE-SAN qualification.
+- **Disposition:** test-local **PROTOTYPE**, still **NOT QUALIFIED** as a consumer feature. Non-SG CPU-only workload must be explicitly selected and shown useful; do not relabel CNet SG, add default worker pools, publish an SDK or merge draft #1013.
