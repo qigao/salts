@@ -144,7 +144,7 @@ jobs:
   publish:
     name: Publish tagged Salts.Native SDK
     needs: [scope, native, formal, benchmarks, package, result]
-    if: ${{ startsWith(github.ref, 'refs/tags/v') && needs.result.result == 'success' && needs.native.result == 'success' && needs.formal.result == 'success' && needs.benchmarks.result == 'success' && needs.package.result == 'success' }}
+    if: ${{ github.repository == 'qigao/salts' && startsWith(github.ref, 'refs/tags/v') && needs.result.result == 'success' && needs.native.result == 'success' && needs.formal.result == 'success' && needs.benchmarks.result == 'success' && needs.package.result == 'success' }}
     permissions:
       contents: write
       packages: write
