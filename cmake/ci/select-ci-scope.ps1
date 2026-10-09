@@ -139,6 +139,7 @@ $profiles = @(
 )
 $builds = @()
 foreach ($profile in $profiles) {
+  if ($env:SKIP_WINDOWS -eq 'true' -and $profile.family -eq 'windows') { continue }
   # Clang profiles qualify the same portable/native contracts in isolated trees;
   # they do not produce additional release packages.
   $profile.clang = $profile.id -in @('linux-clang-release', 'macos-clang-release')
