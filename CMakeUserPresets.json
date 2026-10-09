@@ -438,9 +438,11 @@
         {
             "name": "mac-arm64-release-ci",
             "inherits": [
+                "AppleClang",
                 "vcpkg-cache-ci",
                 "mac-arm64-release-user"
             ],
+            "binaryDir": "${sourceDir}/build/mac-arm64-appleclang-package-release",
             "environment": {
                 "SALTS_ROOT": "${sourceDir}/stage/sdk/macos-arm64"
             }
