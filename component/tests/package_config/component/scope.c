@@ -3,8 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* A separately installed next-major SDK must expose the non-copyable scope
- * address sentinel, not accidentally pick up the released 3.x scope layout. */
+/* The installed 2.3 SDK must expose the non-copyable Scope sentinel from
+ * the breaking 2.2 -> 2.3 native ABI transition; reject older layouts. */
 _Static_assert(
     offsetof(salts_component_plugin_scope, owner_address) >
         offsetof(salts_component_plugin_scope, generation_id),
