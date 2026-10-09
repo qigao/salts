@@ -41,6 +41,9 @@ typedef struct actor_fixture {
 
 typedef struct actor_edge_probe {
     cflow_actor *actor;
+    const void *expected_owner_thread;
+    atomic_bool wrong_owner_thread;
+    atomic_bool wrong_sink_owner_thread;
     cflow_actor_ref *self_ref;
     actor_blocker *blocker;
     atomic_bool block_action;
@@ -199,6 +202,9 @@ static bool actor_edge_action(void *user,
         out_target_state == NULL || out_observation == NULL ||
         out_error == NULL)
         return false;
+    if (probe->expected_owner_thread != NULL &&
+        probe->expected_owner_thread != cmeta_thread_current_token())
+        atomic_store(&probe->wrong_owner_thread, true);
     atomic_fetch_add(&probe->action_calls, 1);
     if (atomic_load(&probe->block_action) && probe->blocker != NULL) {
         const uint64_t started = cmeta_monotonic_ms();
@@ -247,6 +253,9 @@ static bool actor_edge_on_value(void *user,
         value == NULL)
         return false;
     payload = *(const int *)value;
+    if (probe->expected_owner_thread != NULL &&
+        probe->expected_owner_thread != cmeta_thread_current_token())
+        atomic_store(&probe->wrong_sink_owner_thread, true);
     index = atomic_load(&probe->values);
     if (index >= 0 && index < ACTOR_EDGE_OBSERVATIONS)
         probe->observations[index] = payload;
@@ -272,11 +281,12 @@ static void actor_edge_on_done(void *user) {
     if (probe != NULL) atomic_fetch_add(&probe->dones, 1);
 }
 
-static bool actor_edge_fixture_init_with_scheduler_capacity(
+static bool actor_edge_fixture_init_with_mode(
     actor_edge_fixture *fixture,
     size_t mailbox_capacity,
     size_t scheduler_ready_capacity,
-    size_t scheduler_timer_capacity) {
+    size_t scheduler_timer_capacity,
+    bool owner_executor, bool owner_scheduler) {
     cflow_machine_state states[1];
     cflow_event_type events[ACTOR_EDGE_EVENT_TYPES];
     cflow_machine_guard guards[ACTOR_EDGE_EVENT_TYPES];
@@ -324,11 +334,22 @@ static bool actor_edge_fixture_init_with_scheduler_capacity(
     if (cflow_machine_build(&fixture->machine, &definition) !=
         CFLOW_MACHINE_OK)
         return false;
-    if (!cflow_executor_serial_init(&fixture->executor)) return false;
-    if (!cflow_scheduler_worker_init_with_capacity(
-            &fixture->scheduler, 1u, scheduler_ready_capacity,
-            scheduler_timer_capacity))
-        return false;
+    if (owner_executor) {
+        if (!cflow_executor_owner_init_with_capacity(
+                &fixture->executor, 64u, NULL, NULL)) return false;
+    } else {
+        if (!cflow_executor_serial_init(&fixture->executor)) return false;
+    }
+    if (owner_scheduler) {
+        if (!cflow_scheduler_owner_bind(&fixture->scheduler,
+                                         &fixture->executor, 32u))
+            return false;
+    } else {
+        if (!cflow_scheduler_worker_init_with_capacity(
+                &fixture->scheduler, 1u, scheduler_ready_capacity,
+                scheduler_timer_capacity))
+            return false;
+    }
     fixture->probe.actor = &fixture->actor;
     atomic_init(&fixture->probe.self_send_status,
                 (int)CFLOW_ACTOR_SEND_INVALID_ARGUMENT);
@@ -350,6 +371,27 @@ static bool actor_edge_fixture_init_with_scheduler_capacity(
         actor_edge_on_done,
         &fixture->probe};
     return cflow_actor_init(&fixture->actor, &config).status == CFLOW_ACTOR_OK;
+}
+
+static bool actor_edge_fixture_init_with_scheduler_capacity(
+    actor_edge_fixture *fixture, size_t mailbox_capacity,
+    size_t ready_capacity, size_t timer_capacity) {
+    return actor_edge_fixture_init_with_mode(
+        fixture, mailbox_capacity, ready_capacity, timer_capacity, false, false);
+}
+
+static bool actor_edge_fixture_init_owner(
+    actor_edge_fixture *fixture, size_t mailbox_capacity) {
+    return actor_edge_fixture_init_with_mode(
+        fixture, mailbox_capacity, CFLOW_EXECUTOR_DEFAULT_CAPACITY,
+        CFLOW_TIMER_DEFAULT_CAPACITY, true, false);
+}
+
+static bool actor_edge_fixture_init_full_owner(
+    actor_edge_fixture *fixture, size_t mailbox_capacity) {
+    return actor_edge_fixture_init_with_mode(
+        fixture, mailbox_capacity, 32u, CFLOW_TIMER_DEFAULT_CAPACITY,
+        true, true);
 }
 
 static bool actor_edge_fixture_init(actor_edge_fixture *fixture,
@@ -557,6 +599,94 @@ static void actor_fixture_destroy(actor_fixture *fixture) {
 }
 
 suite("CFlow Actor lifecycle") {
+    it("runs Machine transitions on the CNet-compatible host owner without a new worker") {
+        actor_edge_fixture fixture;
+        cflow_actor_ref ref = {0};
+        const int first = 13;
+        const int second = 14;
+        const cflow_event_view ev1 = {100u, &cmeta_type_int, &first};
+        const cflow_event_view ev2 = {101u, &cmeta_type_int, &second};
+        const uint64_t deadline = cmeta_monotonic_ms() + ACTOR_TEST_TIMEOUT_MS;
+
+        check_true(actor_edge_fixture_init_owner(&fixture, 4u));
+        fixture.probe.expected_owner_thread = cmeta_thread_current_token();
+        check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
+        check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
+        check_equal(cflow_actor_ref_try_send(&ref, &ev1),
+                    CFLOW_ACTOR_SEND_ACCEPTED);
+        check_equal(cflow_actor_ref_try_send(&ref, &ev2),
+                    CFLOW_ACTOR_SEND_ACCEPTED);
+
+        while (atomic_load(&fixture.probe.values) < 2 &&
+               cmeta_monotonic_ms() < deadline) {
+            /* Host drives only a bounded quantum, then returns to I/O. */
+            if (!cflow_executor_run_one(&fixture.executor))
+                cmeta_sleep_ms(1u);
+        }
+        check_equal(atomic_load(&fixture.probe.values), 2);
+        check_equal(atomic_load(&fixture.probe.action_calls), 2);
+        check_false(atomic_load(&fixture.probe.wrong_owner_thread));
+        check_equal(fixture.probe.observations[0], first);
+        check_equal(fixture.probe.observations[1], second);
+
+        check_equal(cflow_actor_request_stop(&fixture.actor), CFLOW_ACTOR_OK);
+        while ((cflow_actor_current_state(&fixture.actor) !=
+                    CFLOW_ACTOR_STATE_STOPPED ||
+                cflow_executor_pending(&fixture.executor) != 0u) &&
+               cmeta_monotonic_ms() < deadline) {
+            if (!cflow_executor_run_one(&fixture.executor))
+                cmeta_sleep_ms(1u);
+        }
+        check_equal(cflow_actor_current_state(&fixture.actor),
+                    CFLOW_ACTOR_STATE_STOPPED);
+        check_equal(cflow_executor_pending(&fixture.executor), (size_t)0u);
+        cflow_actor_ref_release(&ref);
+        actor_edge_fixture_destroy(&fixture);
+    }
+
+    it("uses one owner lane for Machine transitions and Subscription callbacks") {
+        actor_edge_fixture fixture;
+        cflow_actor_ref ref = {0};
+        const int first = 31;
+        const int second = 32;
+        const cflow_event_view ev1 = {100u, &cmeta_type_int, &first};
+        const cflow_event_view ev2 = {101u, &cmeta_type_int, &second};
+        const uint64_t deadline = cmeta_monotonic_ms() + ACTOR_TEST_TIMEOUT_MS;
+
+        check_true(actor_edge_fixture_init_full_owner(&fixture, 4u));
+        fixture.probe.expected_owner_thread = cmeta_thread_current_token();
+        check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
+        check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
+        check_equal(cflow_actor_ref_try_send(&ref, &ev1),
+                    CFLOW_ACTOR_SEND_ACCEPTED);
+        check_equal(cflow_actor_ref_try_send(&ref, &ev2),
+                    CFLOW_ACTOR_SEND_ACCEPTED);
+
+        while (atomic_load(&fixture.probe.values) < 2 &&
+               cmeta_monotonic_ms() < deadline) {
+            if (!cflow_executor_run_one(&fixture.executor))
+                cmeta_sleep_ms(1u);
+        }
+        check_equal(atomic_load(&fixture.probe.values), 2);
+        check_equal(atomic_load(&fixture.probe.action_calls), 2);
+        check_false(atomic_load(&fixture.probe.wrong_owner_thread));
+        check_false(atomic_load(&fixture.probe.wrong_sink_owner_thread));
+        check_equal(fixture.probe.observations[0], first);
+        check_equal(fixture.probe.observations[1], second);
+
+        check_equal(cflow_actor_request_stop(&fixture.actor), CFLOW_ACTOR_OK);
+        while (cflow_actor_current_state(&fixture.actor) !=
+                    CFLOW_ACTOR_STATE_STOPPED &&
+               cmeta_monotonic_ms() < deadline) {
+            if (!cflow_executor_run_one(&fixture.executor))
+                cmeta_sleep_ms(1u);
+        }
+        check_equal(cflow_actor_current_state(&fixture.actor),
+                    CFLOW_ACTOR_STATE_STOPPED);
+        cflow_actor_ref_release(&ref);
+        actor_edge_fixture_destroy(&fixture);
+    }
+
     it("rejects invalid owners and preserves Machine initialization status") {
         cflow_actor actor = {0};
         cflow_actor_config config = {0};
