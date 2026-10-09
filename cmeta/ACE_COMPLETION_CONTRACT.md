@@ -75,3 +75,27 @@ For all four: type exactness, owned/borrowed lifetimes, C11/C++17 conformance an
 2. Implement Phase B *only* as thin CMeta composition over existing Platform primitives and concrete resource operations. Avoid pattern-named API aliases.
 3. Decide #1064 via a named non-SG consumer before implementing any workers or queue.
 4. Update `ACE_PATTERN_COVERAGE.md` only when the corresponding executable evidence exists; keep #1013 Draft and #1018 release admission independent.
+
+
+## TLS worker-lifetime qualification checkpoint (2026-10-09)
+
+The shared C11/C++17 regression now tests sequential native worker lifetimes
+and strict owner-affinity rejection: [`37fd7e3`](https://github.com/qigao/salts/commit/37fd7e3ca222b108563b64488940f10196c854dd)
+checks a foreign worker fails admission before mutating borrowed state; 
+[`cd46728`](https://github.com/qigao/salts/commit/cd467281e0378f61c6cf511c6c68eb6bf105631e)
+checks that a new worker begins with independently zero-initialized TLS after
+a previous worker has exited. The latter passed exact-head ordinary Linux
+[CI #37877642307](https://github.com/qigao/salts/actions/runs/37877642307).
+
+**Destructor decision:** `SALTS_THREAD_LOCAL` for scalar test state does not
+imply a general-purpose native TLS destructor callback contract. We will not
+introduce a second TLS runtime or claim automatic destruction for arbitrary
+CMeta borrowed values. Resource-owning thread-specific values must have an
+explicit owner-managed stop/join/destroy path, or use an independently
+specified Platform lifecycle API in a future dedicated issue. Never borrow
+thread-local addresses across owner migration or after exit.
+
+**Next evidence gate:** rerun the existing opt-in `[ACE-SAN]` ASan+UBSan/TSan
+selection on the latest test source, then restore the Draft PR title. This
+qualification does not include packaging, immutable 2.3 SDK acceptance or
+non-SG Leader/Followers execution.
