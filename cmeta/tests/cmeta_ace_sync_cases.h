@@ -175,6 +175,43 @@ static void ace_sync_tls_run(void *user) {
     ace_sync_tls_counter = 0;
 }
 
+/* POSA2 Wrapper Facade: typed, test-local Platform mutex resource with
+ * explicit open/use/close admission and no disguised runtime ownership.
+ * Native mutex operations only occur while the facade is live. */
+typedef struct ace_sync_mutex_facade {
+    cmeta_mutex_t native;
+    bool live;
+    int value;
+} ace_sync_mutex_facade;
+
+static cmeta_status ace_sync_facade_open(ace_sync_mutex_facade *facade) {
+    if (facade == NULL) return CMETA_INVALID_ARGUMENT;
+    if (facade->live) return CMETA_BUSY;
+    cmeta_mutex_init(&facade->native);
+    facade->value = 0;
+    facade->live = true;
+    return CMETA_OK;
+}
+static cmeta_status ace_sync_facade_add(ace_sync_mutex_facade *facade,
+                                         int delta, int *out) {
+    if (facade == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
+    if (!facade->live) return CMETA_BUSY;
+    cmeta_mutex_lock(&facade->native);
+    facade->value += delta;
+    *out = facade->value;
+    cmeta_mutex_unlock(&facade->native);
+    return CMETA_OK;
+}
+static cmeta_status ace_sync_facade_close(ace_sync_mutex_facade *facade) {
+    if (facade == NULL) return CMETA_INVALID_ARGUMENT;
+    if (!facade->live) return CMETA_BUSY;
+    /* Caller must have joined all borrowers before closing. */
+    facade->live = false;
+    cmeta_mutex_destroy(&facade->native);
+    facade->native = NULL;
+    return CMETA_OK;
+}
+
 /* POSA2 safe Once/DCL intent: use the canonical Platform once primitive,
  * never the historical unchecked read/unsynchronized double-check idiom.
  * The published value is immutable after the one-time callback returns. */
@@ -318,6 +355,28 @@ static cmeta_status ace_sync_throws(ace_sync_operation *operation) {
 #endif
 
 suite("CMeta ACE concurrent pattern composition") {
+    it("wraps a native mutex resource with explicit open use and close admission") {
+        ace_sync_mutex_facade facade = {0};
+        int result = 91;
+        check_equal(ace_sync_facade_add(&facade, 1, &result), CMETA_BUSY);
+        check_equal(result, 91);
+        check_equal(ace_sync_facade_open(NULL), CMETA_INVALID_ARGUMENT);
+        check_equal(ace_sync_facade_open(&facade), CMETA_OK);
+        check_equal(ace_sync_facade_open(&facade), CMETA_BUSY);
+        check_equal(ace_sync_facade_add(&facade, 5, NULL),
+                    CMETA_INVALID_ARGUMENT);
+        check_equal(ace_sync_facade_add(&facade, 5, &result), CMETA_OK);
+        check_equal(result, 5);
+        check_equal(ace_sync_facade_close(&facade), CMETA_OK);
+        check_equal(ace_sync_facade_close(&facade), CMETA_BUSY);
+        check_equal(ace_sync_facade_add(&facade, 1, &result), CMETA_BUSY);
+        check_equal(result, 5);
+        check_equal(ace_sync_facade_open(&facade), CMETA_OK);
+        check_equal(ace_sync_facade_add(&facade, 2, &result), CMETA_OK);
+        check_equal(result, 2);
+        check_equal(ace_sync_facade_close(&facade), CMETA_OK);
+    }
+
     it("publishes initialized state exactly once across native concurrent callers") {
         cmeta_thread_t threads[4] = {0};
         ace_sync_once_worker workers[4] = {{0}, {0}, {0}, {0}};
