@@ -1,0 +1,266 @@
+name: Release Salts SDK (Actions UI)
+
+# Default-branch entrypoint. GITHUB_TOKEN-created tags do not retrigger push
+# workflows, so this same run verifies source CI, creates the tag and publishes.
+'on':
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'New tag: v2.3.0-rc.1 or v2.3.0'
+        required: true
+        type: string
+      source_branch:
+        description: 'Qualified source branch (RC: release/*; stable: master)'
+        required: true
+        type: string
+        default: release/salts-2.3-ace-cnet-review
+      stable_qualified:
+        description: 'For stable only: downstream integration gates are signed off'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: salts-actions-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Qualify, create immutable tag and publish
+    if: github.repository == 'qigao/salts'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      SOURCE_BRANCH: ${{ inputs.source_branch }}
+      STABLE_QUALIFIED: ${{ inputs.stable_qualified }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate requested tag and resolve reviewed source
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]] ||
+            { echo "Tag must be vX.Y.Z-rc.N or vX.Y.Z" >&2; exit 1; }
+          [[ "$SOURCE_BRANCH" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]
+          [[ "$SOURCE_BRANCH" != *..* ]]
+          if [[ "$RELEASE_TAG" == *-rc.* ]]; then
+            [[ "$SOURCE_BRANCH" == release/* ]] ||
+              { echo "RC source must be a release/* branch" >&2; exit 1; }
+          else
+            test "$SOURCE_BRANCH" = master ||
+              { echo "Stable source must be master" >&2; exit 1; }
+            test "$STABLE_QUALIFIED" = true ||
+              { echo "Confirm downstream stable-release qualification" >&2; exit 1; }
+          fi
+
+          git fetch --no-tags origin "refs/heads/$SOURCE_BRANCH:refs/remotes/origin/$SOURCE_BRANCH"
+          sha="$(git rev-parse "refs/remotes/origin/$SOURCE_BRANCH^{commit}")"
+          cmake_version="$(git show "$sha:CMakeLists.txt" |
+            awk '/^[[:space:]]*VERSION[[:space:]]+[0-9]/{print $2; exit}')"
+          vcpkg_version="$(git show "$sha:vcpkg.json" |
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["version-semver"])')"
+          test -n "$cmake_version"
+          test "$cmake_version" = "$vcpkg_version"
+          version="$(printf '%s' "$RELEASE_TAG" | cut -c2-)"
+          base_version="$(printf '%s' "$version" | cut -d- -f1)"
+          test "$base_version" = "$cmake_version" ||
+            { echo "Tag/source version mismatch" >&2; exit 1; }
+          if [[ "$RELEASE_TAG" == *-rc.* ]]; then
+            channel="$(git show "$sha:cmake/ci/rc-channel.txt" | tr -d '\r\n')"
+            test "$version" = "$cmake_version-$channel" ||
+              { echo "RC tag disagrees with source RC channel" >&2; exit 1; }
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Immutable tag already exists: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub Release already exists: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "source=$SOURCE_BRANCH @ $sha" >> "$GITHUB_STEP_SUMMARY"
+          echo "nuget=Salts.Native $version" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Require exact-source successful CI, complete hosts and six-RID package
+        id: qualified
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SOURCE_SHA&per_page=100" \
+            > "$RUNNER_TEMP/candidate-runs.json"
+          run_id="$(python3 - "$RUNNER_TEMP/candidate-runs.json" "$SOURCE_BRANCH" "$SOURCE_SHA" <<'PY'
+          import json,sys
+          source=json.load(open(sys.argv[1]))['workflow_runs']
+          branch,sha=sys.argv[2:]
+          matching=[r for r in source if r.get('head_sha')==sha and
+                    r.get('head_branch')==branch and r.get('event')=='push' and
+                    r.get('path')=='.github/workflows/ci.yml']
+          if not matching: raise SystemExit('No exact-SHA source CI: push and qualify the branch first')
+          print(matching[0]['id'])
+          PY
+          )"
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --interval 20 --exit-status
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$RUNNER_TEMP/ci-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?per_page=100" > "$RUNNER_TEMP/ci-jobs.json"
+          python3 - "$RUNNER_TEMP/ci-run.json" "$RUNNER_TEMP/ci-jobs.json" "$SOURCE_SHA" "$SOURCE_BRANCH" <<'PY'
+          import json,sys
+          run=json.load(open(sys.argv[1]))
+          jobs=json.load(open(sys.argv[2]))['jobs']
+          sha,branch=sys.argv[3:]
+          identity={'head_sha':sha,'head_branch':branch,'event':'push',
+                    'path':'.github/workflows/ci.yml','conclusion':'success',
+                    'status':'completed'}
+          for key,want in identity.items():
+              if run.get(key)!=want:
+                  raise SystemExit(f'Unqualified CI {key}: {run.get(key)!r} != {want!r}')
+          names={job['name']:job for job in jobs}
+          hosts={'linux-release','linux-clang-release','windows-release',
+                 'macos-release','macos-clang-release','linux-arm64-release',
+                 'android-arm64-v8a-release','ios-arm64-release'}
+          sanitizers={'linux-ace-asan-ubsan','linux-ace-tsan'}
+          required={'native / '+name for name in hosts|sanitizers}
+          required.update({'formal / Lean build and test','package / Pack Salts.Native',
+              'CI result','benchmarks / Benchmark policy',
+              'benchmarks / epoll / Ubuntu 24.04 GCC',
+              'benchmarks / io_uring / Ubuntu 24.04 GCC',
+              'benchmarks / IOCP / Windows 2025 MSVC v145',
+              'benchmarks / kqueue / macOS 15 GCC'})
+          for name in sorted(required):
+              job=names.get(name)
+              if not job or job.get('conclusion')!='success':
+                  raise SystemExit(f'Missing successful release gate: {name}')
+          full_hosts={'linux-release','linux-clang-release','windows-release',
+                      'macos-release','macos-clang-release'}
+          for name in full_hosts:
+              steps=names['native / '+name].get('steps',[])
+              if not any(step.get('name') in (
+                  'Run complete Unix integration tests',
+                  'Run complete Windows ACE integration tests') and
+                  step.get('conclusion')=='success' for step in steps):
+                  raise SystemExit(f'Missing full CTests: {name}')
+          print('PASS: 8 native, 2 sanitizers, 5 host full CTests, formal, 4 benches, SDK package')
+          PY
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download exactly the qualified six-platform NuGet artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: salts-native-nuget
+          run-id: ${{ steps.qualified.outputs.run_id }}
+          path: dist
+          github-token: ${{ github.token }}
+
+      - name: Verify NuGet identity, source SHA and six installed SDKs
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          set -euo pipefail
+          package="dist/Salts.Native.$RELEASE_VERSION.nupkg"
+          test -f "$package"
+          python3 - "$package" "$RELEASE_VERSION" "$SOURCE_SHA" <<'PY'
+          import sys,zipfile,xml.etree.ElementTree as ET
+          path,version,sha=sys.argv[1:]
+          rids={'linux-x64','linux-arm64','windows-x64','macos-arm64',
+                'android-arm64-v8a','ios-arm64'}
+          with zipfile.ZipFile(path) as z:
+              names=set(z.namelist())
+              expected={f'sdk/{rid}/salts-sdk-manifest.txt' for rid in rids}
+              found={p for p in names if p.endswith('/salts-sdk-manifest.txt')}
+              if found!=expected:
+                  raise SystemExit(f'Six-RID SDK set mismatch: {found ^ expected}')
+              for manifest in expected:
+                  props=dict(line.split('=',1) for line in
+                      z.read(manifest).decode('utf-8-sig').splitlines() if '=' in line)
+                  for key,want in [('version',version),('commit',sha),('profile','release')]:
+                      if props.get(key)!=want: raise SystemExit(f'{manifest}: {key} mismatch')
+                  rid=manifest.split('/')[1]
+                  for header in ('cmeta/function.h','cnet/cnet.h','cnet/name_lookup.h'):
+                      if f'sdk/{rid}/include/{header}' not in names:
+                          raise SystemExit(f'Missing {header} in {rid}')
+              nuspecs=[n for n in names if n.endswith('.nuspec')]
+              if len(nuspecs)!=1: raise SystemExit('Expected one nuspec')
+              root=ET.fromstring(z.read(nuspecs[0]))
+              identity={elem.tag.split('}')[-1]:elem.text for elem in root.iter()
+                        if elem.tag.split('}')[-1] in ('id','version')}
+              if identity.get('id')!='Salts.Native' or identity.get('version')!=version:
+                  raise SystemExit(f'NuGet ID/version mismatch: {identity}')
+          PY
+          sha256sum "$package" | tee dist/SHA256SUMS
+
+      - name: Create exactly one immutable tag after successful qualification
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          latest="$(git ls-remote origin "refs/heads/$SOURCE_BRANCH" | awk '{print $1}')"
+          test "$latest" = "$SOURCE_SHA" ||
+            { echo "Source branch moved since CI qualification" >&2; exit 1; }
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Refusing to replace an existing tag" >&2
+            exit 1
+          fi
+          # GITHUB_TOKEN tag creation will NOT trigger another push workflow.
+          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$RELEASE_TAG" -f sha="$SOURCE_SHA" \
+            --jq '.ref' | grep -Fx "refs/tags/$RELEASE_TAG"
+          tagged="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')"
+          test "$tagged" = "$SOURCE_SHA"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish immutable NuGet package to GitHub Packages
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          set -euo pipefail
+          config="$RUNNER_TEMP/salts-actions-nuget.config"
+          printf '<configuration><packageSources><clear /></packageSources></configuration>\n' > "$config"
+          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
+            --name github --username qigao --password "$GITHUB_TOKEN" \
+            --store-password-in-clear-text --configfile "$config"
+          dotnet nuget push "dist/Salts.Native.$RELEASE_VERSION.nupkg" \
+            --api-key "$GITHUB_TOKEN" --source github --configfile "$config"
+
+      - name: Create prerelease or stable GitHub Release
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_VERSION" == *-rc.* ]]; then
+            gh release create "$RELEASE_TAG" \
+              "dist/Salts.Native.$RELEASE_VERSION.nupkg" dist/SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" --verify-tag --target "$SOURCE_SHA" \
+              --title "Salts $RELEASE_VERSION" --generate-notes --prerelease
+          else
+            gh release create "$RELEASE_TAG" \
+              "dist/Salts.Native.$RELEASE_VERSION.nupkg" dist/SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" --verify-tag --target "$SOURCE_SHA" \
+              --title "Salts $RELEASE_VERSION" --generate-notes --latest
+          fi
