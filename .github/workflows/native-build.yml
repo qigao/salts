@@ -234,6 +234,11 @@ jobs:
           test -f "$prefix/include/tinymock_return.h"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/unicode/salts_unicode.h"
+          grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          cmake -S unicode/test/install_consumer -B build/unicode-installed-sdk-linux -DCMAKE_PREFIX_PATH="$prefix"
+          cmake --build build/unicode-installed-sdk-linux --parallel 2
+          LD_LIBRARY_PATH="$prefix/lib:${LD_LIBRARY_PATH:-}" ctest --test-dir build/unicode-installed-sdk-linux --output-on-failure
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ inputs.version }}
           commit=${{ github.sha }}
@@ -298,6 +303,15 @@ jobs:
           if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::CFlow" -Quiet)) {
             throw "missing Salts::CFlow export in $targets"
           }
+          $unicodeHeader = Join-Path $prefix "include\unicode\salts_unicode.h"
+          if (-not (Test-Path -LiteralPath $unicodeHeader -PathType Leaf)) { throw "missing $unicodeHeader" }
+          if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::Unicode" -Quiet)) {
+            throw "missing Salts::Unicode export in $targets"
+          }
+          $env:CMAKE_PREFIX_PATH = $prefix
+          $env:PATH = "$(Join-Path $prefix 'bin');$env:PATH"
+          cmd /d /c "call `"$env:VSINSTALL\Common7\Tools\VsDevCmd.bat`" -arch=x64 -host_arch=x64 >nul && cmake -S unicode/test/install_consumer -B build/unicode-installed-sdk-win -G Ninja && cmake --build build/unicode-installed-sdk-win --parallel 2 && ctest --test-dir build/unicode-installed-sdk-win --output-on-failure"
+          if ($LASTEXITCODE -ne 0) { throw "Windows installed Unicode C/C++ consumers failed" }
           $manifest = @(
             "version=${{ inputs.version }}"
             "commit=${{ github.sha }}"
@@ -351,6 +365,11 @@ jobs:
           test -f "$prefix/include/tinymock_return.h"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/unicode/salts_unicode.h"
+          grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          cmake -S unicode/test/install_consumer -B build/unicode-installed-sdk-mac -DCMAKE_PREFIX_PATH="$prefix"
+          cmake --build build/unicode-installed-sdk-mac --parallel 2
+          DYLD_LIBRARY_PATH="$prefix/lib:${DYLD_LIBRARY_PATH:-}" ctest --test-dir build/unicode-installed-sdk-mac --output-on-failure
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ inputs.version }}
           commit=${{ github.sha }}
@@ -382,6 +401,8 @@ jobs:
           test -f "$prefix/include/tinytest/detail/equality.h"
           grep -F "Salts::CMeta" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/unicode/salts_unicode.h"
+          grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ inputs.version }}
@@ -429,6 +450,8 @@ jobs:
           test -f "$prefix/include/tinymock_return.h"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/unicode/salts_unicode.h"
+          grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ inputs.version }}
           commit=$(git rev-parse HEAD)
@@ -462,6 +485,8 @@ jobs:
           test -f "$prefix/include/tinymock.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/unicode/salts_unicode.h"
+          grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
           grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
