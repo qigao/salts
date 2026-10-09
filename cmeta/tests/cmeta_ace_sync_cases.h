@@ -112,6 +112,41 @@ static void ace_sync_counter_worker(void *user) {
             ++worker->failures;
 }
 
+/* Owner-affine is NOT synonymous with thread-safe. The canonical Platform
+ * thread token gates an exact reflected CMeta Interface on its owner lane.
+ * Foreign threads fail before touching unprotected state; synchronous public
+ * method serialization is independently proven by ace_sync_counter_port. */
+typedef struct ace_sync_owner_resource {
+    const void *owner_token;
+    int value;
+} ace_sync_owner_resource;
+
+#define ACE_SYNC_OWNER_METHODS(X,I) \
+    X(I,FR1,cmeta_status,increment,stateful, \
+      &ace_sync_status_type,CMETA_ABI_ENUM,CMETA_RESULT_VALUE, \
+      (int,delta,CMETA_PARAM_IN,&cmeta_type_int,CMETA_ABI_SCALAR))
+CMETA_INTERFACE(ace_sync_owner_port, ACE_SYNC_OWNER_METHODS);
+
+static cmeta_status ace_sync_owner_increment(void *self, int delta) {
+    ace_sync_owner_resource *resource = ACE_SYNC_CAST(ace_sync_owner_resource *, self);
+    if (resource->owner_token == NULL) return CMETA_INVALID_ARGUMENT;
+    if (resource->owner_token != cmeta_thread_current_token()) return CMETA_BUSY;
+    resource->value += delta;
+    return CMETA_OK;
+}
+CMETA_IMPLEMENTS(ace_sync_owner_port, ace_sync_owner_impl, 0u,
+    .increment = ace_sync_owner_increment);
+
+typedef struct ace_sync_wrong_owner_worker {
+    ace_sync_owner_port interface;
+    cmeta_status status;
+} ace_sync_wrong_owner_worker;
+static void ace_sync_wrong_owner_run(void *user) {
+    ace_sync_wrong_owner_worker *worker =
+        ACE_SYNC_CAST(ace_sync_wrong_owner_worker *, user);
+    worker->status = ace_sync_owner_port_increment(&worker->interface, 11);
+}
+
 /* Monitor Object: predicate, condition and close belong to the same guarded
  * native object. The public CMeta interface supplies exact synchronous ABI. */
 typedef struct ace_sync_monitor {
@@ -296,6 +331,38 @@ suite("CMeta ACE concurrent pattern composition") {
         check_equal(ace_sync_counter_port_get(&port), 1004);
         cmeta_rwlock_destroy(&rw);
         cmeta_mutex_destroy(&mutex);
+    }
+
+    it("distinguishes owner-affine Interface from synchronized Thread-Safe Interface") {
+        ace_sync_owner_resource resource = {cmeta_thread_current_token(), 0};
+        ace_sync_owner_port port =
+            ace_sync_owner_impl_as_ace_sync_owner_port(&resource);
+        ace_sync_wrong_owner_worker foreign = {port, CMETA_OK};
+        cmeta_thread_t thread = NULL;
+        const cmeta_interface_desc *contract = ace_sync_owner_port_interface();
+        check_true(cmeta_interface_desc_valid(contract));
+        check_equal(contract->method_count, 1u);
+        check_true(cmeta_interface_method_reflection_valid(
+            &contract->methods[0]));
+        check_true(resource.owner_token != NULL);
+        check_equal(ace_sync_owner_port_increment(&port, 3), CMETA_OK);
+        check_equal(resource.value, 3);
+
+        /* Non-owner admission fails without acquiring a lock, changing
+         * the value, or silently redirecting the owner-affine operation. */
+        check_equal(cmeta_thread_create(&thread, ace_sync_wrong_owner_run, &foreign), 0);
+        check_equal(cmeta_thread_join(&thread), 0);
+        check_equal(foreign.status, CMETA_BUSY);
+        check_equal(resource.value, 3);
+        check_equal(ace_sync_owner_port_increment(&port, 2), CMETA_OK);
+        check_equal(resource.value, 5);
+
+        ace_sync_owner_resource unowned = {0};
+        ace_sync_owner_port invalid =
+            ace_sync_owner_impl_as_ace_sync_owner_port(&unowned);
+        check_equal(ace_sync_owner_port_increment(&invalid, 1),
+                    CMETA_INVALID_ARGUMENT);
+        check_equal(unowned.value, 0);
     }
 
     it("runs a real Monitor Object with bounded predicate and terminal close") {

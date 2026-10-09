@@ -149,6 +149,18 @@ live, and CMeta does not create or silently release a Plugin lease.
 This uses the existing CTest case, already selected by the ACE sanitizer
 regression matrix; the current commit requires exact-head CI acceptance.
 
+### Thread-Safe Interface vs owner-affine Interface negative contract (post-freeze)
+
+The same [C11/C++17 concurrent-pattern fixture](tests/cmeta_ace_sync_cases.h)
+now contrasts two **different** contracts: a public Thread-Safe Interface
+serialized through the selected real Lockable Strategy, and an independently
+reflected owner-affine Interface that checks the canonical Platform thread
+token. The foreign-thread attempt must be rejected **without mutating
+unprotected state**, while the original owner can still call afterwards.
+Thread ownership is a runtime admission invariant, **not** evidence that an
+owner-affine receiver is thread-safe. No new scheduler, global thread registry
+or implicit cross-owner dispatch is introduced. Requires latest-head CI.
+
 ## Active pattern-gap tracking
 
 Umbrella: [#1058 — POSA2 17-pattern coverage and conformance](https://github.com/qigao/salts/issues/1058). Missing semantic/composition slices:
