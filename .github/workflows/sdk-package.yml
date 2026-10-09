@@ -80,6 +80,11 @@ jobs:
           grep -F "cmeta_interface_desc_equal" "$mac_interface"
           grep -F "cmeta_function_abi_desc" "$mac_header"
           grep -F "cflow_function_typed_filter_projection_admit" "$mac_projection"
+          # All shipped RID SDKs must provide exactly the Salts-owned Unicode ABI.
+          for rid in linux-x64 linux-arm64 windows-x64 macos-arm64 android-arm64-v8a ios-arm64; do
+            test -f "package/sdk/$rid/include/unicode/salts_unicode.h"
+            grep -Fq "Salts::Unicode" "package/sdk/$rid/lib/cmake/Salts/SaltsTargets.cmake"
+          done
           # CNet's 2.3 additive ABI must be present in each shipped RID.
           for rid in linux-x64 linux-arm64 windows-x64 macos-arm64 android-arm64-v8a ios-arm64; do
             header="package/sdk/$rid/include/cnet/cnet.h"
