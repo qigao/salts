@@ -84,6 +84,8 @@ add_subdirectory(cnet)
 add_subdirectory(cflow/cnet-adapter)
 add_subdirectory(cserde)
 add_subdirectory(utils)
+# Unicode depends only on Salts::Core; CNet DNS remains ASCII-only.
+add_subdirectory(unicode)
 
 if(WIN32)
   enable_language(RC)
