@@ -256,9 +256,7 @@ jobs:
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           test -f "$prefix/include/unicode/salts_unicode.h"
           grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          cmake -S unicode/test/install_consumer -B build/unicode-installed-sdk-linux -DCMAKE_PREFIX_PATH="$prefix"
-          cmake --build build/unicode-installed-sdk-linux --parallel 2
-          LD_LIBRARY_PATH="$prefix/lib:${LD_LIBRARY_PATH:-}" ctest --test-dir build/unicode-installed-sdk-linux --output-on-failure
+          # Installed C11/C++ tests already ran through the parent CTest preset.
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ inputs.version }}
           commit=${{ github.sha }}
@@ -328,10 +326,7 @@ jobs:
           if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::Unicode" -Quiet)) {
             throw "missing Salts::Unicode export in $targets"
           }
-          $env:CMAKE_PREFIX_PATH = $prefix
-          $env:PATH = "$(Join-Path $prefix 'bin');$env:PATH"
-          cmd /d /c "call `"$env:VSINSTALL\Common7\Tools\VsDevCmd.bat`" -arch=x64 -host_arch=x64 >nul && cmake -S unicode/test/install_consumer -B build/unicode-installed-sdk-win -G Ninja && cmake --build build/unicode-installed-sdk-win --parallel 2 && ctest --test-dir build/unicode-installed-sdk-win --output-on-failure"
-          if ($LASTEXITCODE -ne 0) { throw "Windows installed Unicode C/C++ consumers failed" }
+          # Installed C11/C++ tests already ran through the parent CTest preset.
           $manifest = @(
             "version=${{ inputs.version }}"
             "commit=${{ github.sha }}"
@@ -387,9 +382,7 @@ jobs:
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           test -f "$prefix/include/unicode/salts_unicode.h"
           grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          cmake -S unicode/test/install_consumer -B build/unicode-installed-sdk-mac -DCMAKE_PREFIX_PATH="$prefix"
-          cmake --build build/unicode-installed-sdk-mac --parallel 2
-          DYLD_LIBRARY_PATH="$prefix/lib:${DYLD_LIBRARY_PATH:-}" ctest --test-dir build/unicode-installed-sdk-mac --output-on-failure
+          # Installed C11/C++ tests already ran through the parent CTest preset.
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ inputs.version }}
           commit=${{ github.sha }}
