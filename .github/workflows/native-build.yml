@@ -511,3 +511,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 1
+- name: Report compiler cache statistics after build
+        if: always()
+        shell: pwsh
+        run: |
+          $ccache = Get-Command ccache -ErrorAction SilentlyContinue
+          if ($ccache) { & $ccache.Source --show-stats }
+
