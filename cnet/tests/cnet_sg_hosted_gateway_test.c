@@ -310,6 +310,11 @@ static int host_start_managed_client(hosted_state *f,
   if (rc != SALTS_OK) return rc;
   if (snap.connection.slot == 0u || snap.managed.slot == 0u ||
       snap.recovery_ticket.generation == 0u) return SALTS_EPROTO;
+  /* A valid attempt ticket exists while CONNECTING, but may not yet assert
+   * protocol READY: the actual transport callback + peer exchange are pending. */
+  if (cnet_managed_dial_protocol_ready(
+        &f->dial, snap.recovery_ticket, cmeta_monotonic_ms()) != SALTS_EBUSY)
+    return SALTS_EPROTO;
   f->outgoing = snap.connection;
   return SALTS_OK;
 }

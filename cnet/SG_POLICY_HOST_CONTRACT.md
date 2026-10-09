@@ -47,21 +47,34 @@ per-Owner startup configuration is written by the host **before**
    `cnet_destination_choose` **once** using an immutable, already-authorized
    endpoint snapshot and proves the selected stable identity matches the
    configured loopback endpoint. The physical connection is subsequently
-   committed by `cnet_connect_endpoint` on this same SG Owner. The policy
-   does not allocate or connect by itself.
+   committed by `cnet_managed_dial_advance` through a real Owner-local
+   `CNetManager` reservation/connect, after a separate bounded
+   `cnet_pool_reserve_connecting` budget is reserved. The policy does not
+   allocate or connect by itself.
 4. Every short progress turn advances CNet's external client state, calls
    `native_io_sharded_context_observe_host` **once**, demultiplexes the
-   **entire** batch with `cnet_sg_host_route_batch`, then allows owner-local
-   accept/adopt and CNet advancement. SG-owned completions have already been
-   settled by SG; never route them twice.
-5. Borrowed receive callbacks go directly to the application and remain
-   on their fixed Owner. There is **zero further strategy evaluation**
-   during send/receive/close; the test checks exactly one placement and one
-   destination decision per actual established connection for **1/2/4** shards.
-6. Seal admission/acquire/dial first; continue necessary completion routing
-   and real CNet/manager/pool retirement; stop and destroy borrowed clients;
-   release host lease **after** quiescence; only then shut down shared SG.
+   **entire** batch with `cnet_sg_host_route_batch`, then advances the
+   Owner-local CNetManager with a finite record budget. SG-owned completions
+   have already been settled by SG; never route them twice.
+5. Borrowed receive callbacks go directly to the application and remain on
+   their fixed Owner. The test verifies the **actual bidirectional peer
+   payload exchange** before the application explicitly publishes ManagedDial
+   `protocol_ready` using its generation-safe ticket. Stale/double READY
+   fails; TCP CONNECTED alone is not protocol READY or permission to replay.
+6. The actual Manager BOUND identity becomes Pool READY, then one real
+   owner-local nonmultiplexed lease can be acquired. A different authority
+   cannot borrow that connection; full/duplicate leases are rejected.
+   Calling Pool terminal while Manager still reports BOUND fails.
+7. Seal Pool acquisition, retain the live lease, seal Dial and close the
+   inbound connection. Continue short SG turns until real CNet terminal and
+   Manager `on_recycle` have completed. Pool terminal does not drop its live
+   lease or allow premature destroy; release exactly once before reclaim.
+   Destroy Dial, Pool, Manager and CNet clients, release SG host lease
+   **after** all borrowed state is quiescent, then shut down the shared SG.
    Timeout never makes a pending terminal safe to free.
+8. This test checks exactly **one Server placement and one Client destination
+   selection** per actual established connection across **1/2/4 shards**, with
+   zero further strategy evaluation during send/receive/close.
 
 No additional runtime, permanent poll task, hidden retry, CFlow Actor, or
 connection-owner migration is introduced. The existing raw, non-SG CNet API
@@ -69,18 +82,25 @@ remains an **explicit** supported entry path, not an automatic fallback.
 
 ## Qualification boundaries still open
 
-This test proves the decision **placement** relative to real SG callback and
-transport progression; it does **not** yet exercise cross-Owner handoff,
-CNetManager, ClientPool, or ManagedDial in the very same multi-shard fixture.
-Those APIs have independent tests, but their combined control plane requires
-separate real consumer acceptance and lifecycle fault injection under
+Phase 1 established pure decision-time Server/Client selection on real SG
+Owners ([CI #37898635381](https://github.com/qigao/salts/actions/runs/37898635381)
+PASS). Phase 2 adds the **same-Owner** CNetManager + ManagedDial + ClientPool
+physical binding, explicit post-payload READY ticket and terminal/lease
+settlement; its exact-source [CI #37901777035](https://github.com/qigao/salts/actions/runs/37901777035)
+is a separate qualification gate. Until CI passes this test must not be
+reported as fully accepted.
+
+These synthetic payloads constitute only the fixture's checked application
+exchange, **not** real HTTP/FlowMQ authentication or a general protocol-ready
+classifier. This phase does not create a default client pool or retry service.
+
+Follow-up gates: remote handoff credit/rollback, wrong-owner/reentrant
+progress, full/unrouted completion batch, multiple real authorities and TLS
+profiles, multiplexed per-protocol capacity, subsequent connection reuse,
+failure/stop of one service sharing an SG backend, actual HTTP/MQ consumers,
+multi-RID installed SDK and equivalent workload benchmarks under
 [#1051](https://github.com/qigao/salts/issues/1051) through
 [#1057](https://github.com/qigao/salts/issues/1057).
-
-Follow-up gates: wrong-owner/reentrant progress, full/unrouted completion
-batch, remote handoff credit fail/rollback, protocol-restricted Pool leases,
-explicit reconnect ticket/READY, failure/stop of one service sharing an SG
-backend, multi-RID installed SDK consumer, and equivalent workload benchmarks.
 Do not interpret this fixture as shipping a CNet Configurator API or a
 production combined Server/Client manager. Stable 2.3 release and candidate
 publication are **separate review decisions**.
