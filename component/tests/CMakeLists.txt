@@ -21,7 +21,7 @@ if(NOT WIN32)
       "-DCONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_config/component"
       "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed-component"
       "-DCTEST_COMMAND=${CMAKE_CTEST_COMMAND}"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_installed_component.cmake")
+      -P "${PROJECT_SOURCE_DIR}/cmake/ci/verify-installed-consumer.cmake")
   set_tests_properties(cmeta_native_component_installed_test PROPERTIES
     TIMEOUT 180
     RUN_SERIAL TRUE)

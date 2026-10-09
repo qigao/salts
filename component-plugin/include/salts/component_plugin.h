@@ -98,13 +98,20 @@ typedef struct salts_component_plugin_scope {
     salts_component_plugin_runtime *runtime;
     salts_component_plugin_generation *generation;
     uint64_t generation_id;
+    /* Diagnostic owner-address sentinel. A live scope is not copyable/movable.
+     * The original object address alone authorizes use/release of its count.
+     * This is not a security boundary against arbitrary caller corruption. */
+    const struct salts_component_plugin_scope *owner_address;
     bool live;
 } salts_component_plugin_scope;
 
 /* The runtime, registry, generation bundles and their borrowed storage must
  * remain alive and address-stable until all scopes are released and attached
- * generations are drained. Do not copy a live scope; one owner releases it
- * exactly once. Services borrowed from it expire at that release.
+ * generations are drained. Do not copy/move a live scope; a copied scope is
+ * rejected without changing its generation's admission count. One original
+ * owner releases it exactly once. Services borrowed from it expire at release.
+ * The additional owner-address field is a post-3.0 ABI change and must not
+ * ship as a silent 3.0.x-compatible update.
  *
  * After init, publish/close/acquire/release/drain synchronize runtime admission
  * and generation counts. Each scope is used by one thread at a time; provider
@@ -156,6 +163,11 @@ salts_component_plugin_status salts_component_plugin_runtime_publish(
     salts_component_plugin_generation *generation,
     salts_component_plugin_generation **out_previous);
 
+/* Withdraws the currently published generation from admission and returns
+ * it to the caller for draining; existing scope holders remain valid. A later
+ * explicit publish() may re-open admission if generation IDs remain strictly
+ * increasing and the two-attached-generation bound is satisfied. This is
+ * distinct from final runtime_destroy(). */
 salts_component_plugin_status salts_component_plugin_runtime_close(
     salts_component_plugin_runtime *runtime,
     salts_component_plugin_generation **out_previous);

@@ -3,7 +3,7 @@ if(NOT DEFINED SALTS_BINARY_DIR OR
    NOT DEFINED CONSUMER_SOURCE_DIR OR
    NOT DEFINED WORK_DIR OR
    NOT DEFINED CTEST_COMMAND)
-  message(FATAL_ERROR "installed component test arguments are required")
+  message(FATAL_ERROR "installed consumer test arguments are required")
 endif()
 
 set(prefix "${WORK_DIR}/prefix")
@@ -30,19 +30,19 @@ execute_process(
     -DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=FALSE
   RESULT_VARIABLE configure_result)
 if(NOT configure_result EQUAL 0)
-  message(FATAL_ERROR "installed Component consumer configure failed: ${configure_result}")
+  message(FATAL_ERROR "installed Salts SDK consumer configure failed: ${configure_result}")
 endif()
 
 execute_process(
   COMMAND "${CMAKE_COMMAND}" --build "${build}"
   RESULT_VARIABLE build_result)
 if(NOT build_result EQUAL 0)
-  message(FATAL_ERROR "installed Component consumer build failed: ${build_result}")
+  message(FATAL_ERROR "installed Salts SDK consumer build failed: ${build_result}")
 endif()
 
 execute_process(
   COMMAND "${CTEST_COMMAND}" --test-dir "${build}" --output-on-failure
   RESULT_VARIABLE test_result)
 if(NOT test_result EQUAL 0)
-  message(FATAL_ERROR "installed Component consumer test failed: ${test_result}")
+  message(FATAL_ERROR "installed Salts SDK consumer test failed: ${test_result}")
 endif()

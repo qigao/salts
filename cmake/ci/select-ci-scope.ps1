@@ -4,7 +4,9 @@ param(
   [AllowEmptyString()][string]$BaseRef,
   [Parameter(Mandatory)][string]$HeadRef,
   [AllowEmptyString()][string]$HeadBranch = "",
-  [bool]$PrepareRelease = $false
+  [bool]$PrepareRelease = $false,
+  [bool]$AceMatrix = $false,
+  [bool]$AceSan = $false
 )
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -12,8 +14,21 @@ Set-StrictMode -Version Latest
 # PR coverage follows the whole proposed change; push coverage follows the
 # delivered commit range. Never skip unqualified code using only the last commit.
 $full = $EventName -eq "workflow_dispatch"
-# Keep complete Linux coverage alongside the normal multi-platform matrix.
-$componentIntegration = $HeadBranch -eq 'feature/cmeta-pattern-component-runtime' -and -not $PrepareRelease
+# Normal ACE development runs full Linux CTest. An explicit [ACE-MATRIX]
+# marker on the same long-lived Draft PR runs host-complete integration tests
+# and cross-builds; the marker is removable after the qualification checkpoint.
+$aceBranchPr = $HeadBranch -eq 'feature/cmeta-ace-patterns' -and
+  $EventName -eq 'pull_request' -and -not $PrepareRelease
+if (($AceMatrix -or $AceSan) -and -not $aceBranchPr) {
+  throw "ACE qualification is restricted to its long-lived PR"
+}
+if ($AceMatrix -and $AceSan) { throw "ACE-MATRIX and ACE-SAN are exclusive" }
+$acePatternsDevelopment = $aceBranchPr -and -not $AceMatrix
+$aceFullMatrixQualification = $aceBranchPr -and $AceMatrix
+$aceSanitizerQualification = $aceBranchPr -and $AceSan
+# Preserve the historical integration branch's complete Linux coverage.
+$componentIntegration = ($HeadBranch -eq 'feature/cmeta-pattern-component-runtime' -and
+  -not $PrepareRelease) -or $aceBranchPr
 $changed = @()
 if (-not $full) {
   if ([string]::IsNullOrWhiteSpace($BaseRef)) { throw "Missing comparison base for $EventName" }
@@ -80,7 +95,10 @@ $compare = $benchmarkCommon -or $cnetRuntime -or $nativeRuntime -or $coroutineRu
   (Test-Changed '^cnet/benchmarks/cnet_owner_lifecycle_compare\.c$')
 # Benchmark execution is limited to changes owned by these two modules.
 # Manual validation has no change range and does not request benchmark runs.
-$benchmarkChanged = Test-Changed '^(native-io|cnet)/'
+# The long-lived ACE pattern PR explicitly qualifies full Linux CTest; defer
+# expensive backend measurement to an explicit later release qualification.
+$benchmarkChanged = (-not $aceBranchPr) -and
+  (Test-Changed '^(native-io|cnet)/')
 $nativeOwner = $benchmarkChanged -and $nativeOwner
 $nativeStyle = $benchmarkChanged -and $nativeStyle
 $cnetOwner = $benchmarkChanged -and $cnetOwner
@@ -90,7 +108,11 @@ $coroutine = $benchmarkChanged -and $coroutine
 $nativeUring = $benchmarkChanged -and $nativeUring
 $forensic = $benchmarkChanged -and $forensic
 $compare = $benchmarkChanged -and $compare
-$transportOwner = $PrepareRelease -or (Test-Changed '^(cnet|native-io)/')
+# Only executable I/O/transport changes (and benchmark inputs) alter this
+# baseline. CNet/NativeIO tests-only edits must not start all four platforms.
+$transportOwner = $PrepareRelease -or
+  ((-not $aceBranchPr) -and
+   (Test-Changed '^(cnet|native-io)/(src/|include/|CMakeLists\.txt$|benchmarks/)'))
 $work = $nativeOwner -or $nativeStyle -or $cnetOwner -or $cnetIo -or $cnetSg -or $coroutine -or $nativeUring -or $forensic -or $transportOwner
 
 $checks = [ordered]@{
@@ -137,14 +159,28 @@ $profiles = @(
   @{ id = 'android-arm64-v8a-release'; runner = 'ubuntu-24.04'; family = 'android'; preset = 'android-arm64-v8a-release-ci'; build_dir = 'build/android-arm64-v8a-release'; sdk = 'android-arm64-v8a' },
   @{ id = 'ios-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-arm64-release-ci'; build_dir = 'build/ios-arm64'; sdk = 'ios-arm64'; triplet = 'arm64-ios' }
 )
+if ($aceSanitizerQualification) {
+  # Reuse existing Debug ASan and independent TSan CMake presets; the ASan
+  # profile adds UBSan via the canonical Sanitizers.cmake flag. Do not combine
+  # TSan with ASan, or reuse release binaries for sanitizer checks.
+  $profiles += @(
+    @{ id = 'linux-ace-asan-ubsan'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-dev-ci'; build_dir = 'build/linux-gcc-debug'; sdk = ''; sanitizer = 'asan-ubsan' },
+    @{ id = 'linux-ace-tsan'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-tsan-ci'; build_dir = 'build/linux-gcc-tsan'; sdk = ''; sanitizer = 'tsan' }
+  )
+}
 $builds = @()
 foreach ($profile in $profiles) {
+  # Keep regular ACE PRs on Linux only, but do not discard the explicit
+  # ASan+UBSan/TSan Debug profiles supplied for an [ACE-SAN] qualification.
+  if ($acePatternsDevelopment -and $profile.id -ne 'linux-release' -and
+      -not $profile.ContainsKey('sanitizer')) { continue }
   # Clang profiles qualify the same portable/native contracts in isolated trees;
   # they do not produce additional release packages.
   $profile.clang = $profile.id -in @('linux-clang-release', 'macos-clang-release')
   # The connection-manager integration branch uses GCC for Linux and macOS.
   if ($HeadBranch -eq 'codex/cnet-manager-1001' -and $profile.clang) { continue }
   $entry = $profile.Clone()
+  if (-not $entry.ContainsKey('sanitizer')) { $entry.sanitizer = '' }
   $entry.cross = $entry.family -in @('android', 'ios')
   # Core semantic qualification must also pass without the optional #981 backend.
   # Explicit release packaging still includes the qualified native specialization.
@@ -157,7 +193,12 @@ foreach ($profile in $profiles) {
   $entry.package = $PrepareRelease -and [bool]$entry.sdk
   $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
   $entry.artifact = if ($entry.cross) { $mobile } else { $work -and [bool]$entry.sdk }
-  $entry.full_tests = $componentIntegration -and $entry.id -eq 'linux-release'
+  # Full host CTest for an explicit qualification; Linux arm64 runs the
+  # portable tests, while Android/iOS are compile-only, not device runtime.
+  $entry.full_tests = ($componentIntegration -and $entry.id -eq 'linux-release') -or
+    ($aceFullMatrixQualification -and $entry.id -in @(
+      'linux-release', 'linux-clang-release', 'windows-release',
+      'macos-release', 'macos-clang-release'))
   if ($entry.full_tests) {
     $entry.native = $false
     $entry.execution = $false
@@ -166,7 +207,17 @@ foreach ($profile in $profiles) {
     $entry.compare = $false
     $entry.artifact = $false
   }
-  if ($entry.full_tests -or $entry.native -or $entry.execution -or $entry.projection -or $entry.armcontracts -or $entry.package -or $entry.artifact) {
+  if ($entry.sanitizer -ne '') {
+    $entry.native = $false
+    $entry.execution = $false
+    $entry.projection = $false
+    $entry.full_tests = $false
+    $entry.benchmarks = 'OFF'
+    $entry.package = $false
+    $entry.compare = $false
+    $entry.artifact = $false
+  }
+  if ($entry.full_tests -or $entry.native -or $entry.execution -or $entry.projection -or $entry.armcontracts -or $entry.package -or $entry.artifact -or $entry.sanitizer -ne '') {
     $builds += $entry
   }
 }

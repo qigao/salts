@@ -76,7 +76,12 @@ CMETA_INLINE cmeta_status cmeta_with_cleanups(cmeta_cleanup *obligations,
     return status;
 }
 CMETA_INLINE void cmeta_cleanup_data_release_(void *authority, void *resource) {
+#ifdef __cplusplus
+    const cmeta_lifecycle_binding *binding =
+        static_cast<const cmeta_lifecycle_binding *>(authority);
+#else
     const cmeta_lifecycle_binding *binding = (const cmeta_lifecycle_binding *)authority;
+#endif
     binding->ops->restore_zero(resource);
 }
 /** The binding and successfully initialized storage must outlive obligation. */

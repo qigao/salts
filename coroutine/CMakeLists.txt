@@ -8,7 +8,7 @@ add_library(
 
 cmake_config_target(
   ${TARGET_NAME}
-  VERSION "${PROJECT_VERSION}" SOVERSION "${PROJECT_VERSION_MAJOR}"
+  VERSION "${PROJECT_VERSION}" SOVERSION "${SALTS_NATIVE_SOVERSION}"
   ALIAS Salts::Coroutine
   FOLDER "coroutine"
   EXPORT_NAME Coroutine)

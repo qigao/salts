@@ -6,7 +6,11 @@
 
 CMETA_INLINE void cmeta_cleanup_object_release_(void *authority, void *resource) {
     (void)authority;
+#ifdef __cplusplus
+    cmeta_object_release(static_cast<cmeta_object_ref *>(resource));
+#else
     cmeta_object_release((cmeta_object_ref *)resource);
+#endif
 }
 /** BORROWED only clears its view; SHARED releases; OWNED destroys. The original
  * handle remains the sole owner and must not be copied or externally replaced

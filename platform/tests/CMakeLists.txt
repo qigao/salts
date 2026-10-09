@@ -114,3 +114,20 @@ set_target_properties(platform_fastpath_test platform_fastpath_cpp_test PROPERTI
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 set_target_properties(platform_fastpath_cpp_test PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
+# #1064: optional non-SG Leader/Followers executable prototype, no public ABI.
+cmake_add_test(platform_ace_leader_followers_test
+  SOURCES platform_ace_leader_followers_test.c
+  LIBS Salts::Platform Salts::TinyTest
+  FOLDER "platform/tests")
+set_target_properties(platform_ace_leader_followers_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_tests_properties(platform_ace_leader_followers_test PROPERTIES TIMEOUT 60)
+
+# #1064: C++17 compile-time strict roles and incompatible callback signatures.
+cmake_add_test(platform_ace_leader_followers_cpp_test
+  SOURCES platform_ace_leader_followers_cpp_test.cpp
+  LIBS Salts::Platform Salts::TinyTest
+  FOLDER "platform/tests")
+set_target_properties(platform_ace_leader_followers_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)

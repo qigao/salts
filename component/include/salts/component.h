@@ -85,8 +85,22 @@ typedef struct salts_component_context {
     salts_component_failure failure;
 } salts_component_context;
 
+/* Required on first use, in both C11 and C++17:
+ * salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;
+ * Do not copy a context with live instances, or initialize it concurrently. */
+#define SALTS_COMPONENT_CONTEXT_INIT {0}
+
 const char *salts_component_status_string(salts_component_status status);
 
+/* First admission requires an explicitly zero-initialized context.
+ * Reinitialization from READY, RESOLVED or ACTIVE is rejected without
+ * modifying the original context or any owned ObjectRef. A STOPPED context
+ * (after successful stop) or FAILED context (after rollback) may be reused
+ * exclusively once all borrowed service views have expired.
+ *
+ * Caller-owned provider/storage arrays must remain alive through stop.
+ * This post-3.0 stricter contract changes source requirements for callers
+ * that previously passed uninitialized automatic storage. */
 salts_component_status salts_component_context_init(
     salts_component_context *context,
     const salts_component_deployment *deployments,

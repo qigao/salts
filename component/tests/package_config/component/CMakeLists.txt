@@ -5,14 +5,25 @@ if(NOT DEFINED SALTS_TEST_PREFIX OR NOT DEFINED SALTS_TEST_VERSION)
   message(FATAL_ERROR "the SDK prefix and expected version are required")
 endif()
 
-# Exercise find_package admission against the installed SDK itself. A request
-# for a previous major must not silently load incompatible descriptors/symbols.
-string(REGEX MATCH "^[0-9]+" sdk_major "${SALTS_TEST_VERSION}")
-math(EXPR previous_major "${sdk_major} - 1")
-find_package(Salts ${previous_major} CONFIG QUIET
+# Salts 2.3 intentionally introduces an incompatible native Component ABI.
+# SameMinorVersion admission must reject a non-EXACT request for 2.2;
+# checking only an older major would fail to catch accidental 2.2 admission.
+string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.[0-9]+$" sdk_semver "${SALTS_TEST_VERSION}")
+if(NOT sdk_semver)
+  message(FATAL_ERROR "expected an exact numeric Salts SDK version")
+endif()
+set(sdk_major "${CMAKE_MATCH_1}")
+set(sdk_minor "${CMAKE_MATCH_2}")
+if(sdk_minor LESS 1)
+  message(FATAL_ERROR "this next-minor ABI admission fixture requires minor >= 1")
+endif()
+math(EXPR previous_minor "${sdk_minor} - 1")
+set(previous_minor_version "${sdk_major}.${previous_minor}")
+find_package(Salts ${previous_minor_version} CONFIG QUIET
   PATHS "${SALTS_TEST_PREFIX}" NO_DEFAULT_PATH)
 if(Salts_FOUND)
-  message(FATAL_ERROR "SDK ${SALTS_TEST_VERSION} accepted a ${previous_major}.x request")
+  message(FATAL_ERROR
+    "SDK ${SALTS_TEST_VERSION} accepted older ${previous_minor_version}.x request")
 endif()
 find_package(Salts ${SALTS_TEST_VERSION} EXACT CONFIG REQUIRED
   PATHS "${SALTS_TEST_PREFIX}" NO_DEFAULT_PATH)
@@ -22,6 +33,9 @@ if(NOT TARGET Salts::ComponentABI)
 endif()
 if(NOT TARGET Salts::Component)
   message(FATAL_ERROR "installed package is missing Salts::Component")
+endif()
+if(NOT TARGET Salts::ComponentPlugin)
+  message(FATAL_ERROR "installed package is missing Salts::ComponentPlugin")
 endif()
 
 get_target_property(component_abi_type Salts::ComponentABI TYPE)
@@ -45,6 +59,16 @@ add_executable(component_installed_consumer main.c)
 target_link_libraries(component_installed_consumer PRIVATE Salts::Component)
 target_compile_features(component_installed_consumer PRIVATE c_std_11)
 
+# Rebuild and execute against the installed headers/libraries, not the
+# in-tree source targets: catch layout/version skew in ComponentPlugin scopes.
+add_executable(component_plugin_scope_installed_consumer scope.c)
+target_link_libraries(component_plugin_scope_installed_consumer PRIVATE Salts::ComponentPlugin)
+target_compile_features(component_plugin_scope_installed_consumer PRIVATE c_std_11)
+set_target_properties(component_plugin_scope_installed_consumer PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
 enable_testing()
 add_test(NAME component_installed_consumer
   COMMAND component_installed_consumer)
+add_test(NAME component_plugin_scope_installed_consumer
+  COMMAND component_plugin_scope_installed_consumer)

@@ -55,6 +55,7 @@ jobs:
         uses: ./.github/actions/setup-build-host
 
       - name: Restore candidate compiler cache
+        id: compiler_cache
         uses: ./.github/actions/setup-compiler-cache
         with:
           profile: linux-component-candidate
@@ -168,3 +169,11 @@ jobs:
             echo "- RID: \`linux-x64\`"
             echo "- No stable tag, GitHub Release or master publication"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report ccache compilation statistics
+        if: ${{ always() && steps.compiler_cache.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          ccache --show-stats
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
