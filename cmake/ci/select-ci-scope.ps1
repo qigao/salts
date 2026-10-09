@@ -180,7 +180,7 @@ $profiles = @(
   @{ id = 'linux-arm64-release'; runner = 'ubuntu-24.04-arm'; family = 'linux'; preset = 'linux-arm64-release-ci'; build_dir = 'build/linux-arm64-release'; sdk = 'linux-arm64' },
   @{ id = 'linux-clang-release'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-clang-release-ci'; build_dir = 'build/linux-clang-release'; sdk = '' },
   @{ id = 'windows-release'; runner = 'windows-2025'; family = 'windows'; preset = 'win-release-ci'; build_dir = 'build/Msvc-Release'; sdk = 'windows-x64' },
-  @{ id = 'macos-release'; runner = 'macos-15'; family = 'mac'; preset = 'mac-arm64-release-ci'; build_dir = 'build/mac-arm64-gcc-release'; sdk = 'macos-arm64' },
+  @{ id = 'macos-release'; runner = 'macos-15'; family = 'mac'; preset = 'mac-arm64-release-ci'; build_dir = 'build/mac-arm64-appleclang-package-release'; sdk = 'macos-arm64' },
   @{ id = 'macos-clang-release'; runner = 'macos-15'; family = 'mac'; preset = 'mac-arm64-clang-release-ci'; build_dir = 'build/mac-arm64-clang-release'; sdk = '' },
   @{ id = 'android-arm64-v8a-release'; runner = 'ubuntu-24.04'; family = 'android'; preset = 'android-arm64-v8a-release-ci'; build_dir = 'build/android-arm64-v8a-release'; sdk = 'android-arm64-v8a' },
   @{ id = 'ios-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-arm64-release-ci'; build_dir = 'build/ios-arm64'; sdk = 'ios-arm64'; triplet = 'arm64-ios' }
