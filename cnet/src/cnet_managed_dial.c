@@ -17,6 +17,8 @@ typedef struct dial_impl {
   cnet_observer user_observer;
   cnet_dial_failure_classify_fn classifier;
   void *classify_user;
+  cnet_dial_admit_fn admit;
+  void *admit_user;
   cnet_reconnect_state recovery;
   cnet_reconnect_ticket ticket;
   cnet_managed_connection managed;
@@ -175,6 +177,25 @@ int cnet_managed_dial_advance(cnet_managed_dial *dial, uint64_t now_ms,
   if (manager_snapshot.sealed) return SALTS_ESHUTDOWN;
   if (manager_snapshot.reserved + manager_snapshot.bound >=
       manager_snapshot.connection_capacity) return SALTS_ENOBUFS;
+  if (impl->admit != NULL) {
+    /* Preflight without changing generation/attempt accounting. The final
+     * begin below remains authoritative; the callback cannot mutate this dial. */
+    const cnet_reconnect_state *r = &impl->recovery;
+    if (r->sealed) return SALTS_ESHUTDOWN;
+    if (r->in_flight || r->awaiting_protocol || r->protocol_ready) return SALTS_EBUSY;
+    if (now_ms >= r->config.deadline_ms || r->next_attempt_ms == UINT64_MAX)
+      return SALTS_ETIMEDOUT;
+    if (r->attempts >= r->config.max_attempts) return SALTS_ENOBUFS;
+    if (now_ms < r->next_attempt_ms) {
+      *out_wait_ms = r->next_attempt_ms - now_ms;
+      return SALTS_EBUSY;
+    }
+    if (r->generation == UINT64_MAX) return SALTS_ERANGE;
+    impl->in_callback = true;
+    status = impl->admit(impl->admit_user);
+    impl->in_callback = false;
+    if (status != SALTS_OK) return status;
+  }
   status = cnet_reconnect_begin(
       &impl->recovery, now_ms, &ticket, out_wait_ms);
   if (status != SALTS_OK) return status;
@@ -199,6 +220,18 @@ int cnet_managed_dial_advance(cnet_managed_dial *dial, uint64_t now_ms,
      * Owner must still drive manager_advance to recycle it. */
     (void)cnet_reconnect_failed(
         &impl->recovery, ticket, CNET_RECONNECT_PERMANENT, now_ms);
+  }
+  return status;
+}
+int cnet_managed_dial_init_admitted(cnet_managed_dial *dial,
+    const cnet_managed_dial_config *config, cnet_dial_admit_fn admit, void *user) {
+  int status;
+  if (admit == NULL) return SALTS_EINVAL;
+  status = cnet_managed_dial_init(dial, config);
+  if (status == SALTS_OK) {
+    dial_impl *impl = (dial_impl *)dial->impl;
+    impl->admit = admit;
+    impl->admit_user = user;
   }
   return status;
 }

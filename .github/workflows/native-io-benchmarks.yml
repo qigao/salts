@@ -72,7 +72,7 @@ jobs:
             artifact: windows-iocp
             build_dir: build/Msvc-Release
             build_artifact: windows-release
-          - host: kqueue / macOS 15 GCC
+          - host: kqueue / macOS 15 AppleClang
             runner: macos-15
             family: mac
             backend: kqueue

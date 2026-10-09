@@ -1,5 +1,6 @@
 #include <cnet/cnet.h>
 #include <cnet/ipc.h>
+#include <cnet/websocket_transport.h>
 
 #include "cnet_client_internal.h"
 #include "cnet_dispatcher.h"
@@ -18,12 +19,29 @@
 #include <string.h>
 
 typedef struct cnet_client_impl cnet_client_impl;
+typedef struct cnet_ws_transport_impl {
+  cnet_client *client;
+  cnet_connection connection;
+  cnet_websocket websocket;
+  mem_buffer_t *output;
+  cnet_websocket_event_fn on_event;
+  void *event_user;
+  const void *owner;
+  int error;
+  bool submitting;
+  bool pending;
+  bool terminal;
+} cnet_ws_transport_impl;
+
+static void cnet_ws_sent(cnet_ws_transport_impl *bridge, size_t size);
+static void cnet_ws_terminal(cnet_ws_transport_impl *bridge, int status);
 
 typedef struct cnet_client_record {
   cnet_client_impl *client;
   cnet_shard_connection internal;
   cnet_connection public_handle;
   cnet_observer observer;
+  cnet_ws_transport_impl *ws_transport;
   cnet_receive_slice_fn receive_slice_handler;
   void *receive_slice_user;
   cnet_uri_scheme scheme;
@@ -258,7 +276,10 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
       if (record->pending_writes == 0u) cnet_client_record_error(impl, SALTS_EPROTO);
       else --record->pending_writes;
     }
-    if (record->observer.on_send != NULL) {
+    if (record->ws_transport != NULL) {
+      cnet_ws_sent(record->ws_transport, view->argument);
+      ++impl->poll_callback_count;
+    } else if (record->observer.on_send != NULL) {
       record->observer.on_send(record->observer.user, record->public_handle, view->argument);
       ++impl->poll_callback_count;
     }
@@ -278,6 +299,11 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
       error.native_status = cnet_client_cmeta_status(view->status) ? 0 : view->status;
       error.stage = cnet_client_stage_name(view->stage);
       error_view = &error;
+    }
+    if (cnet_client_terminal(view->state) && record->ws_transport != NULL) {
+      cnet_ws_transport_impl *bridge = record->ws_transport;
+      record->ws_transport = NULL;
+      cnet_ws_terminal(bridge, error_view != NULL ? error_view->status : SALTS_ECANCELED);
     }
     record->observer.on_state(record->observer.user, record->public_handle,
                               cnet_client_state(view->state), error_view);
@@ -784,7 +810,7 @@ int cnet_connection_shutdown(cnet_client *client,
   record = cnet_client_find_record(impl, connection, &internal);
   if (record == NULL) return SALTS_ENOENT;
   if (record->scheme != CNET_URI_TCP) return SALTS_ENOTSUP;
-  if (record->close_command_pending) return SALTS_EBUSY;
+  if (record->close_command_pending || record->ws_transport != NULL) return SALTS_EBUSY;
 
   status = cnet_shards_tcp_shutdown(
       &impl->shards, internal, how);
@@ -808,7 +834,8 @@ int cnet_connection_preserve_send_on_eof(cnet_client *client, cnet_connection co
   record = cnet_client_find_record(impl, connection, &internal);
   if (record == NULL) return SALTS_ENOENT;
   if (record->scheme != CNET_URI_TCP) return SALTS_ENOTSUP;
-  if (record->receive_pending || record->close_command_pending || record->tcp_shutdown_mask) return SALTS_EBUSY;
+  if (record->receive_pending || record->close_command_pending || record->tcp_shutdown_mask ||
+      record->ws_transport != NULL) return SALTS_EBUSY;
   status = cnet_shards_preserve_send_on_eof(&impl->shards, internal);
   if (status == SALTS_OK) record->preserve_send_on_eof = true;
   return status;
@@ -861,7 +888,7 @@ static int cnet_client_start_tls_ready(cnet_client_impl *impl, cnet_connection c
   else {
     record = cnet_client_find_record(impl, connection, out_internal);
     if (record == NULL) status = SALTS_ENOENT;
-    else if (record->tls_command_pending) status = SALTS_EBUSY;
+    else if (record->tls_command_pending || record->ws_transport != NULL) status = SALTS_EBUSY;
     else if (record->scheme != CNET_URI_TCP) status = SALTS_ENOTSUP;
     else {
       status = cnet_client_record_session_state(impl, record, &session_state);
@@ -884,7 +911,7 @@ static int cnet_client_admit_start_tls(cnet_client_impl *impl, cnet_connection c
   else {
     record = cnet_client_find_record(impl, connection, &internal);
     if (record == NULL) status = SALTS_ENOENT;
-    else if (record->tls_command_pending) status = SALTS_EBUSY;
+    else if (record->tls_command_pending || record->ws_transport != NULL) status = SALTS_EBUSY;
     else if (record->scheme != CNET_URI_TCP) status = SALTS_ENOTSUP;
     else if (record->pending_writes != 0u || record->receive_pending != 0u ||
              record->close_command_pending)
@@ -1403,7 +1430,8 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
   else {
     record = cnet_client_find_record(impl, connection, &internal);
     if (record == NULL) status = SALTS_ENOENT;
-    else if (record->close_command_pending || record->tls_command_pending)
+    else if ((record->ws_transport != NULL && !record->ws_transport->submitting) ||
+             record->close_command_pending || record->tls_command_pending)
       status = SALTS_EBUSY;
     else if (record->scheme == CNET_URI_TCP &&
              (record->tcp_shutdown_mask &
@@ -2097,4 +2125,144 @@ int cnet_client_destroy(cnet_client *client) {
   free(impl);
   client->impl = NULL;
   return cnet_module_shutdown();
+}
+
+/* Dedicated WS write binding lives beside admission/dispatch so it uses the
+ * actual pending-write and terminal facts, not an advisory host counter. */
+static int cnet_ws_check(cnet_websocket_transport *transport, cnet_ws_transport_impl **out) {
+  if (out != NULL) *out = NULL;
+  if (transport == NULL || transport->impl == NULL || out == NULL) return SALTS_EINVAL;
+  *out = (cnet_ws_transport_impl *)transport->impl;
+  return (*out)->owner == cmeta_thread_current_token() ? SALTS_OK : SALTS_EPERM;
+}
+static void cnet_ws_remember(cnet_ws_transport_impl *bridge, int status) {
+  if (status != SALTS_OK && bridge->error == SALTS_OK) bridge->error = status;
+}
+static void cnet_ws_event(void *user, cnet_websocket *ws, const cnet_websocket_event *event) {
+  cnet_ws_transport_impl *bridge = (cnet_ws_transport_impl *)user;
+  bridge->on_event(bridge->event_user, ws, event);
+}
+static int cnet_ws_write(void *user, const uint8_t *data, size_t size) {
+  cnet_ws_transport_impl *bridge = (cnet_ws_transport_impl *)user;
+  cnet_client_impl *client = cnet_client_get(bridge->client);
+  cnet_client_record *record;
+  int status;
+  if (bridge->owner != cmeta_thread_current_token()) return SALTS_EPERM;
+  if (bridge->terminal) return SALTS_ESHUTDOWN;
+  if (client == NULL) return SALTS_EINVAL;
+  record = cnet_client_find_record(client, bridge->connection, NULL);
+  if (record == NULL) return SALTS_ENOENT;
+  if (record->ws_transport != bridge || bridge->pending || bridge->submitting ||
+      (const void *)data != (const void *)mem_buffer_const_data(bridge->output) ||
+      size != mem_buffer_used(bridge->output))
+    return SALTS_EPROTO;
+  /* Closing is not a recoverable capacity shortage. */
+  if (!client->admission_open || record->close_command_pending || record->tcp_shutdown_mask)
+    return SALTS_ESHUTDOWN;
+  bridge->submitting = true;
+  status = cnet_send_buffer(bridge->client, bridge->connection, bridge->output);
+  bridge->submitting = false;
+  if (status == SALTS_OK) {
+    bridge->pending = true;
+    return CNET_WEBSOCKET_WRITE_PENDING;
+  }
+  return status == SALTS_ENOBUFS ? SALTS_EBUSY : status;
+}
+static void cnet_ws_sent(cnet_ws_transport_impl *bridge, size_t size) {
+  if (!bridge->pending || bridge->terminal) {
+    cnet_ws_remember(bridge, SALTS_EPROTO);
+    return;
+  }
+  bridge->pending = false;
+  cnet_ws_remember(bridge, cnet_websocket_write_complete(&bridge->websocket, size, SALTS_OK));
+}
+static void cnet_ws_terminal(cnet_ws_transport_impl *bridge, int status) {
+  int result;
+  bridge->terminal = true;
+  if (bridge->pending) {
+    bridge->pending = false;
+    cnet_ws_remember(bridge, cnet_websocket_write_complete(&bridge->websocket, 0u, status));
+  }
+  result = cnet_websocket_transport_closed(&bridge->websocket);
+  if (result != SALTS_EALREADY) cnet_ws_remember(bridge, result);
+}
+int cnet_websocket_transport_init(cnet_websocket_transport *transport,
+    cnet_client *client, cnet_connection connection,
+    const cnet_websocket_config *configuration,
+    const cnet_websocket_tagged_policy *policy) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_client_record *record;
+  cnet_ws_transport_impl *bridge;
+  cnet_websocket_config config;
+  cnet_session_state state;
+  int status;
+  if (transport == NULL || transport->impl != NULL || impl == NULL ||
+      configuration == NULL || configuration->size != sizeof(*configuration) ||
+      configuration->write != NULL || configuration->output_buffer == NULL ||
+      configuration->on_event == NULL || policy == NULL) return SALTS_EINVAL;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  record = cnet_client_find_record(impl, connection, NULL);
+  if (record == NULL) return SALTS_ENOENT;
+  if (record->scheme != CNET_URI_TCP && record->scheme != CNET_URI_TLS) return SALTS_ENOTSUP;
+  if (record->ws_transport != NULL || record->pending_writes != 0u ||
+      record->close_command_pending || record->tls_command_pending ||
+      record->tcp_shutdown_mask || record->preserve_send_on_eof) return SALTS_EBUSY;
+  status = cnet_client_record_session_state(impl, record, &state);
+  if (status != SALTS_OK) return status;
+  if (state != CNET_SESSION_OPEN) return SALTS_ENOTCONN;
+  if (configuration->max_frame_bytes > SIZE_MAX - CNET_WEBSOCKET_MAX_HEADER_BYTES)
+    return SALTS_ERANGE;
+  if (configuration->max_frame_bytes + CNET_WEBSOCKET_MAX_HEADER_BYTES > impl->max_send_bytes)
+    return SALTS_EMSGSIZE;
+  bridge = (cnet_ws_transport_impl *)calloc(1u, sizeof(*bridge));
+  if (bridge == NULL) return SALTS_ENOMEM;
+  bridge->client = client;
+  bridge->connection = connection;
+  bridge->output = configuration->output_buffer;
+  bridge->on_event = configuration->on_event;
+  bridge->event_user = configuration->user;
+  bridge->owner = cmeta_thread_current_token();
+  config = *configuration;
+  config.write = cnet_ws_write;
+  config.on_event = cnet_ws_event;
+  config.user = bridge;
+  status = cnet_websocket_init_tagged(&bridge->websocket, &config, policy);
+  if (status != SALTS_OK) { free(bridge); return status; }
+  record->ws_transport = bridge;
+  transport->impl = bridge;
+  return SALTS_OK;
+}
+int cnet_websocket_transport_session(cnet_websocket_transport *transport,
+                                    cnet_websocket **out_session) {
+  cnet_ws_transport_impl *bridge;
+  int status;
+  if (out_session == NULL) return SALTS_EINVAL;
+  *out_session = NULL;
+  status = cnet_ws_check(transport, &bridge);
+  if (status == SALTS_OK) *out_session = &bridge->websocket;
+  return status;
+}
+int cnet_websocket_transport_advance(cnet_websocket_transport *transport,
+                                    size_t max_frames, size_t *out_events) {
+  cnet_ws_transport_impl *bridge;
+  int status;
+  if (out_events != NULL) *out_events = 0u;
+  if (out_events == NULL || max_frames == 0u) return SALTS_EINVAL;
+  status = cnet_ws_check(transport, &bridge);
+  if (status != SALTS_OK) return status;
+  status = cnet_websocket_advance(&bridge->websocket, max_frames, out_events);
+  if (status == SALTS_EBUSY) return status;
+  cnet_ws_remember(bridge, status);
+  return bridge->error;
+}
+int cnet_websocket_transport_destroy(cnet_websocket_transport *transport) {
+  cnet_ws_transport_impl *bridge;
+  int status = cnet_ws_check(transport, &bridge);
+  if (status != SALTS_OK) return status;
+  if (!bridge->terminal || bridge->pending || bridge->submitting) return SALTS_EBUSY;
+  status = cnet_websocket_destroy(&bridge->websocket);
+  if (status != SALTS_OK) return status;
+  free(bridge);
+  transport->impl = NULL;
+  return SALTS_OK;
 }

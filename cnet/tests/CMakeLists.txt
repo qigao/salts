@@ -28,6 +28,21 @@ cmake_add_test(cnet_managed_dial_test
   LIBS Salts::CNet Salts::TinyTest
   FOLDER "cnet/tests")
 
+# Real WS writes, bounded backpressure and protocol/pool gates before redial.
+cmake_add_test(cnet_policy_composition_test
+  SOURCES cnet_policy_composition_test.c
+  LIBS Salts::CNet Salts::TinyTest
+  FOLDER "cnet/tests")
+
+cmake_add_test(cnet_policy_composition_tls_test
+  SOURCES cnet_policy_composition_test.c
+  LIBS Salts::CNet Salts::TinyTest
+  DEFS CNET_COMPOSITION_TLS=1
+    "CNET_COMPOSITION_CA=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ip-test-root-cert.pem\""
+    "CNET_COMPOSITION_CERT=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ip-test-server-cert.pem\""
+    "CNET_COMPOSITION_KEY=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ip-test-server-key.pem\""
+  FOLDER "cnet/tests")
+
 # Independent installed SDK gate: strict C11/C++17 via exported Salts targets.
 # Native host only; cross-compiled mobile builds remain build-only.
 if(NOT CMAKE_CROSSCOMPILING)
@@ -488,6 +503,8 @@ add_dependencies(cnet_api_test
   cnet_client_pool_test
   cnet_recovery_policy_test
   cnet_managed_dial_test
+  cnet_policy_composition_test
+  cnet_policy_composition_tls_test
   cnet_tcp_endpoint_test
   cnet_external_progress_test
   cnet_external_listener_test

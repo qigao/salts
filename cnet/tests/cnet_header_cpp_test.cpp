@@ -11,6 +11,7 @@
 static_assert(CNET_MANAGER_VERSION == 1u, "manager capability is versioned");
 #include <cnet/ipc.h>
 #include <cnet/websocket.h>
+#include <cnet/websocket_transport.h>
 #include <tinytest.hpp>
 
 #include <cstddef>
