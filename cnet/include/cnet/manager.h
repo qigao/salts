@@ -9,7 +9,7 @@ extern "C" {
 
 #define CNET_MANAGER_VERSION 1u
 
-/** Optional owner-local attachment manager. Zero initialize; link Salts::CNetManager.
+/** Optional owner-local attachment manager. Zero initialize; link Salts::CNet.
  * No thread, poll, timer, handoff queue, or implicit client stop is created.
  * All operations and callbacks belong to the initializing thread. The borrowed
  * client must remain initialized until manager destroy. Do not copy a live wrapper.

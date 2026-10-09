@@ -41,6 +41,8 @@ runs:
         if ($LASTEXITCODE -ne 0) { throw "ccache is unavailable" }
         "CCACHE_DIR=$(Join-Path $env:RUNNER_TEMP 'salts-compiler-cache')" >> $env:GITHUB_ENV
         "CCACHE_MAXSIZE=512M" >> $env:GITHUB_ENV
+        "CCACHE_COMPILERCHECK=content" >> $env:GITHUB_ENV
+        "CCACHE_BASEDIR=$env:GITHUB_WORKSPACE" >> $env:GITHUB_ENV
         "CCACHE_NODIRECT=true" >> $env:GITHUB_ENV
         if ($env:RUNNER_OS -eq "Windows") {
           "CCACHE_COMPILERTYPE=msvc" >> $env:GITHUB_ENV

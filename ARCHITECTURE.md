@@ -500,23 +500,19 @@ Queries retain stable callback slots through actual terminals, including logical
 cancellation/drop. Accepted results win cancellation; deadlines latch before
 progress and overflow never produces a truncated success. Numeric IPs bypass DNS.
 
-There is no complete IDNA implementation in the current dependency graph. Manual
-Punycode omits normalization/context checks; platform APIs differ. Private ICU
-UTS46 supplies nontransitional IDNA with STD3, Bidi and ContextJ/O checks. The
-existing vcpkg baseline pins ICU 74.2 revision 6 under the ICU/Unicode license.
-Only uc/data links/ships; data increases SDK size but no ICU types enter the ABI
-and no thread is created. Input is bounded to 4096 UTF-8 bytes, output to 253 DNS
-bytes excluding a root dot. Attribution is in THIRD_PARTY_NOTICES.md.
+CNet DNS deliberately accepts only ASCII LDH hostnames, pre-encoded A-labels,
+and numeric IPv4/IPv6 input; non-ASCII input fails closed. The full Unicode
+17.0.0 module migration plus UTS #46 IDNA support are future Salts work in
+[#1088](https://github.com/qigao/salts/issues/1088). There is no ICU link,
+IDNA library fallback, or Salts -> SaltsUtils dependency in the 2.3 SDK.
 
-Linux/Android build hosts install ICU's Autoconf prerequisites. The iOS preset
-selects a local triplet which supplies ICU 74's Darwin make fragment for the
-apple-ios host name; SDK/compiler selection still belongs to vcpkg. Darwin UDP
-disconnect uses disconnectx, avoiding connect(AF_UNSPEC)'s failure after mutation.
-Apple CNet targets explicitly link libc++ for vcpkg's ICU archives, including
-GNU builds; that C++ runtime dependency remains behind the C ABI.
+Canonical cross-platform vcpkg triplets remain in `qigao/vcpkg-cache`.
+Darwin UDP disconnect uses `disconnectx` rather than `connect(AF_UNSPEC)`
+when the latter mutates socket state before failing.
 
 Qualification covers IPv4/IPv6, empty/oversized messages, peer replacement,
-terminal pause, numeric/Unicode/invalid names, ordered results, bounded failures
+terminal pause, numeric/ASCII/A-label acceptance, Unicode/invalid-name rejection,
+ordered results, bounded failures
 and stale/cross-owner handles. Additive callers relink; old callers retain their
 behavior. Disabling the optional adapter is the rollback boundary.
 

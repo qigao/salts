@@ -14,7 +14,7 @@ suite("Salts static Component Configurator") {
         salts_component_instance instances[2];
         salts_component_dependency dependencies[2];
         size_t order[2];
-        salts_component_context context;
+        salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;
         salts_component_service service;
         test_app app_interface = test_app_bind(NULL, NULL);
 
@@ -62,7 +62,7 @@ suite("Salts static Component Configurator") {
         salts_component_deployment deployment;
         salts_component_instance instance;
         size_t order;
-        salts_component_context context;
+        salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;
 
         test_provider_state_init(&logger, 7, NULL);
         provider = TEST_PROVIDER_BINDING(
@@ -77,6 +77,37 @@ suite("Salts static Component Configurator") {
         check_equal(logger.creates, 0u);
     }
 
+
+    it("releases an owned partial ObjectRef on create failure") {
+        test_provider_state logger;
+        salts_component_provider_binding provider;
+        salts_component_deployment deployment;
+        salts_component_instance instance;
+        size_t order;
+        salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;
+
+        test_provider_state_init(&logger, 7, NULL);
+        provider = TEST_PROVIDER_BINDING(
+            TestLogger, &logger, test_logger_create_then_fail);
+        deployment = TEST_DEPLOYMENT(&provider, NULL, NULL);
+
+        check_equal(salts_component_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_resolve(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_start(&context),
+                    SALTS_COMPONENT_CREATE_FAILED);
+        check_equal(logger.creates, 1u);
+        check_equal(logger.activates, 0u);
+        check_equal(logger.deactivates, 0u);
+        check_equal(logger.destroys, 1u);
+        check_equal(logger.resource_acquires, 0u);
+        check_equal(logger.resource_releases, 0u);
+        check_equal(context.state, SALTS_COMPONENT_CONTEXT_FAILED);
+        check_equal(salts_component_context_failure(&context)->phase,
+                    SALTS_COMPONENT_PHASE_CREATE);
+    }
+
     it("fails closed when a required provider is missing") {
         int config = 1;
         test_provider_state app;
@@ -85,7 +116,7 @@ suite("Salts static Component Configurator") {
         salts_component_instance instance;
         salts_component_dependency dependency;
         size_t order;
-        salts_component_context context;
+        salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;
 
         test_provider_state_init(&app, 0, NULL);
         provider = TEST_PROVIDER_BINDING(TestApp, &app, test_app_create);
@@ -110,7 +141,7 @@ suite("Salts static Component Configurator") {
         salts_component_instance instances[3];
         salts_component_dependency dependencies[2];
         size_t order[3];
-        salts_component_context context;
+        salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;
 
         test_provider_state_init(&logger_a, 1, NULL);
         test_provider_state_init(&logger_b, 2, NULL);
@@ -145,7 +176,7 @@ suite("Salts static Component Configurator") {
         salts_component_instance instances[3];
         salts_component_dependency dependencies[2];
         size_t order[3];
-        salts_component_context context;
+        salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;
         salts_component_service service;
         test_app app_interface = test_app_bind(NULL, NULL);
 
@@ -201,7 +232,7 @@ suite("Salts static Component Configurator") {
         salts_component_instance instances[2];
         salts_component_dependency dependencies[2];
         size_t order[2];
-        salts_component_context context;
+        salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;
 
         test_provider_state_init(&a, 1, NULL);
         test_provider_state_init(&b, 2, NULL);
@@ -230,7 +261,7 @@ suite("Salts static Component Configurator") {
         salts_component_instance instance;
         salts_component_dependency dependency;
         size_t order;
-        salts_component_context context;
+        salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;
 
         test_provider_state_init(&app, 0, NULL);
         provider = TEST_PROVIDER_BINDING(TestApp, &app, test_app_create);
@@ -249,7 +280,7 @@ suite("Salts static Component Configurator") {
         salts_component_deployment deployment;
         salts_component_instance instance;
         size_t order;
-        salts_component_context context;
+        salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;
 
         test_provider_state_init(&broken, 9, NULL);
         provider = TEST_PROVIDER_BINDING(
@@ -265,6 +296,9 @@ suite("Salts static Component Configurator") {
         check_equal(broken.activates, 1u);
         check_equal(broken.deactivates, 1u);
         check_equal(broken.destroys, 1u);
+        check_equal(broken.resource_acquires, 1u);
+        check_equal(broken.resource_releases, 1u);
+        check_false(broken.resource_live);
         check_equal(salts_component_context_failure(&context)->phase,
                     SALTS_COMPONENT_PHASE_PROVIDE);
     }
@@ -280,8 +314,8 @@ suite("Salts static Component Configurator") {
         salts_component_instance right_instance;
         size_t left_order;
         size_t right_order;
-        salts_component_context left_context;
-        salts_component_context right_context;
+        salts_component_context left_context = SALTS_COMPONENT_CONTEXT_INIT;
+        salts_component_context right_context = SALTS_COMPONENT_CONTEXT_INIT;
         salts_component_service left_service;
         salts_component_service right_service;
         test_log left_log = test_log_bind(NULL, NULL);
@@ -323,6 +357,113 @@ suite("Salts static Component Configurator") {
         check_equal(salts_component_context_stop(&right_context), SALTS_COMPONENT_OK);
     }
 
+
+    it("rejects reinit in READY, RESOLVED and ACTIVE without losing owners") {
+        test_provider_state logger;
+        salts_component_provider_binding provider;
+        salts_component_deployment deployment;
+        salts_component_instance instance;
+        size_t order;
+        salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;
+        salts_component_service service;
+
+        test_provider_state_init(&logger, 13, NULL);
+        provider = TEST_PROVIDER_BINDING(TestLogger, &logger, test_logger_create);
+        deployment = TEST_DEPLOYMENT(&provider, NULL, NULL);
+
+        check_equal(salts_component_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_init(
+            &context, NULL, 0u, NULL, 0u, NULL, 0u,
+            NULL, 0u, NULL, 0u), SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_COMPONENT_CONTEXT_READY);
+        check_true(context.deployments == &deployment);
+
+        check_equal(salts_component_context_resolve(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_init(
+            &context, NULL, 0u, NULL, 0u, NULL, 0u,
+            NULL, 0u, NULL, 0u), SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_COMPONENT_CONTEXT_RESOLVED);
+        check_equal(context.activation_count, (size_t)1u);
+
+        check_equal(salts_component_context_start(&context), SALTS_COMPONENT_OK);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        check_true(instance.active);
+        check_equal(logger.resource_acquires, 1u);
+
+        check_equal(salts_component_context_init(
+            &context, NULL, 0u, NULL, 0u, NULL, 0u,
+            NULL, 0u, NULL, 0u), SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_COMPONENT_CONTEXT_ACTIVE);
+        check_true(context.instances == &instance);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        check_equal(logger.destroys, 0u);
+
+        check_equal(salts_component_context_find_service(
+            &context, test_log_interface(), &service), SALTS_COMPONENT_OK);
+        check_true(service.object == &instance.object);
+
+        check_equal(salts_component_context_stop(&context), SALTS_COMPONENT_OK);
+        check_equal(logger.deactivates, 1u);
+        check_equal(logger.destroys, 1u);
+        check_equal(logger.resource_acquires, 1u);
+        check_equal(logger.resource_releases, 1u);
+        check_false(logger.resource_live);
+
+        /* STOPPED reuse is permitted only after owned resources are closed. */
+        check_equal(salts_component_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_resolve(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_start(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_stop(&context), SALTS_COMPONENT_OK);
+        check_equal(logger.creates, 2u);
+        check_equal(logger.activates, 2u);
+        check_equal(logger.deactivates, 2u);
+        check_equal(logger.destroys, 2u);
+        check_equal(logger.resource_acquires, 2u);
+        check_equal(logger.resource_releases, 2u);
+    }
+
+    it("reuses a fully rolled-back FAILED context without double cleanup") {
+        test_provider_state logger;
+        salts_component_provider_binding provider;
+        salts_component_deployment deployment;
+        salts_component_instance instance;
+        size_t order;
+        salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;
+
+        test_provider_state_init(&logger, 3, NULL);
+        provider = TEST_PROVIDER_BINDING(
+            TestLogger, &logger, test_logger_create_then_fail);
+        deployment = TEST_DEPLOYMENT(&provider, NULL, NULL);
+
+        check_equal(salts_component_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_resolve(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_start(&context),
+                    SALTS_COMPONENT_CREATE_FAILED);
+        check_equal(context.state, SALTS_COMPONENT_CONTEXT_FAILED);
+        check_equal(logger.destroys, 1u);
+        check_false(cmeta_object_ref_valid(&instance.object));
+
+        provider.create = test_logger_create;
+        check_equal(salts_component_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_resolve(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_start(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_component_context_stop(&context), SALTS_COMPONENT_OK);
+        check_equal(logger.creates, 2u);
+        check_equal(logger.activates, 1u);
+        check_equal(logger.deactivates, 1u);
+        check_equal(logger.destroys, 2u);
+        check_equal(logger.resource_acquires, 1u);
+        check_equal(logger.resource_releases, 1u);
+    }
+
     it("rolls back prior active components exactly once on activation failure") {
         int config = 3;
         test_provider_state logger;
@@ -332,7 +473,7 @@ suite("Salts static Component Configurator") {
         salts_component_instance instances[2];
         salts_component_dependency dependencies[2];
         size_t order[2];
-        salts_component_context context;
+        salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;
 
         test_provider_state_init(&logger, 4, NULL);
         test_provider_state_init(&app, 0, NULL);
@@ -357,6 +498,12 @@ suite("Salts static Component Configurator") {
         check_equal(logger.destroys, 1u);
         check_equal(app.deactivates, 0u);
         check_equal(app.destroys, 1u);
+        check_equal(logger.resource_acquires, 1u);
+        check_equal(logger.resource_releases, 1u);
+        check_false(logger.resource_live);
+        check_equal(app.resource_acquires, 1u);
+        check_equal(app.resource_releases, 1u);
+        check_false(app.resource_live);
         check_equal(context.state, SALTS_COMPONENT_CONTEXT_FAILED);
         check_equal(salts_component_context_failure(&context)->phase,
                     SALTS_COMPONENT_PHASE_ACTIVATE);

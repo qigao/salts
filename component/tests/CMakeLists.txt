@@ -12,8 +12,9 @@ set_target_properties(cmeta_native_component_test PROPERTIES
 set_target_properties(cmeta_native_component_cpp_test PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 
-if(NOT WIN32)
-  add_test(
+# The unified 2.3 SDK must execute installed Component/Plugin scope consumers
+# on Windows too, not just on Unix. CNet already exercises the installed DSO.
+add_test(
     NAME cmeta_native_component_installed_test
     COMMAND "${CMAKE_COMMAND}"
       "-DSALTS_BINARY_DIR=${CMAKE_BINARY_DIR}"
@@ -21,8 +22,8 @@ if(NOT WIN32)
       "-DCONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_config/component"
       "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed-component"
       "-DCTEST_COMMAND=${CMAKE_CTEST_COMMAND}"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_installed_component.cmake")
-  set_tests_properties(cmeta_native_component_installed_test PROPERTIES
-    TIMEOUT 180
-    RUN_SERIAL TRUE)
-endif()
+      "-DSALTS_GENERATOR=${CMAKE_GENERATOR}"
+      "-DSALTS_TEST_CONFIG=$<CONFIG>"
+      -P "${PROJECT_SOURCE_DIR}/cmake/ci/verify-installed-consumer.cmake")
+set_tests_properties(cmeta_native_component_installed_test PROPERTIES
+  TIMEOUT 240 RUN_SERIAL TRUE)

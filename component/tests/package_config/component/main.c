@@ -3,7 +3,7 @@
 cmeta_component_empty(InstalledEmpty);
 
 int main(void) {
-    salts_component_context context;
+    salts_component_context context = SALTS_COMPONENT_CONTEXT_INIT;
 
     if (!cmeta_component_desc_valid(cmeta_component_meta(InstalledEmpty)))
         return 1;

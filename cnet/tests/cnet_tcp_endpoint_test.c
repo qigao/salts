@@ -449,6 +449,14 @@ static void test_tcp_endpoints(void) {
   check(send_one_byte(&client, connection) == SALTS_OK);
   check(cnet_connection_shutdown(&client, connection, CNET_TCP_SHUTDOWN_SEND) == SALTS_OK);
   check(send_one_byte(&client, connection) == SALTS_ESHUTDOWN);
+  /*
+   * Repeated native half-shutdown is idempotent while this generation is
+   * still live. Do not defer that check past CNet polling: the accepted
+   * peer has closed its receive direction, so the ensuing write can
+   * provoke a platform-specific reset and retire this connection.
+   */
+  check(cnet_connection_shutdown(&client, connection, CNET_TCP_SHUTDOWN_SEND) == SALTS_OK);
+  check(cnet_connection_shutdown(&client, connection, CNET_TCP_SHUTDOWN_BOTH) == SALTS_OK);
 
   deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
   while (atomic_load_explicit(&client_probe.sent, memory_order_acquire) == 0) {
@@ -464,11 +472,25 @@ static void test_tcp_endpoints(void) {
    */
   check(atomic_load_explicit(&accepted_probe.received, memory_order_acquire) == 0);
 
-  check(cnet_connection_shutdown(&client, connection, CNET_TCP_SHUTDOWN_SEND) == SALTS_OK);
-  check(cnet_connection_shutdown(&client, connection, CNET_TCP_SHUTDOWN_BOTH) == SALTS_OK);
-
-  check(cnet_close(&client, connection) == SALTS_OK);
-  check(cnet_close(&accepted_client, accepted) == SALTS_OK);
+  /*
+   * The final write to a peer that already shut down receive may trigger a
+   * platform-specific reset. Owner polling can publish terminal and retire
+   * its record before this explicit close call. Accept ONLY the documented
+   * closed/already-closing statuses: a vanished handle (ENOENT) is legal
+   * only after its terminal callback has actually been observed.
+   */
+  {
+    const int status = cnet_close(&client, connection);
+    check(status == SALTS_OK || status == SALTS_EALREADY ||
+          (status == SALTS_ENOENT &&
+           atomic_load_explicit(&client_probe.terminal, memory_order_acquire) != 0));
+  }
+  {
+    const int status = cnet_close(&accepted_client, accepted);
+    check(status == SALTS_OK || status == SALTS_EALREADY ||
+          (status == SALTS_ENOENT &&
+           atomic_load_explicit(&accepted_probe.terminal, memory_order_acquire) != 0));
+  }
 
   deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
   while (atomic_load_explicit(&client_probe.terminal, memory_order_acquire) == 0 ||

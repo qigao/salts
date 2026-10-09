@@ -490,7 +490,6 @@
                 "CMAKE_OSX_SYSROOT": "iphoneos",
                 "CMAKE_OSX_ARCHITECTURES": "arm64",
                 "VCPKG_TARGET_TRIPLET": "arm64-ios",
-                "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/vcpkg-triplets",
                 "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/arm64-ios",
                 "VCPKG_INSTALL_OPTIONS": "",
                 "ENABLE_TESTS": "OFF",

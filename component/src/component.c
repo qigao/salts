@@ -298,7 +298,16 @@ salts_component_status salts_component_context_init(
     if (context == NULL)
         return SALTS_COMPONENT_INVALID_ARGUMENT;
 
-    memset(context, 0, sizeof(*context));
+    /* The caller must explicitly initialize the context before first use.
+     * Never inspect an indeterminate automatic object. During legal reuse,
+     * only ZERO, fully rolled-back FAILED or STOPPED may be reset; otherwise
+     * resetting would discard live ObjectRef/graph teardown authority. */
+    if (context->state != SALTS_COMPONENT_CONTEXT_ZERO &&
+        context->state != SALTS_COMPONENT_CONTEXT_STOPPED &&
+        context->state != SALTS_COMPONENT_CONTEXT_FAILED)
+        return SALTS_COMPONENT_INVALID_STATE;
+
+    *context = (salts_component_context)SALTS_COMPONENT_CONTEXT_INIT;
     context->failure = salts_component_failure_none();
 
     if ((deployment_count != 0u &&

@@ -26,7 +26,9 @@ typedef struct cmeta_component_capability {
  * identity used for explicit selection and diagnostics; generated declarations
  * use the expanded C identifier spelling. Descriptor address is never identity.
  * config is an optional borrowed canonical DataDesc describing the exact native
- * configuration value accepted by the runtime provider binding. CMeta does not
+ * configuration value accepted by the runtime provider binding. When present,
+ * config must have a valid native storage_type; kind-only container DataDesc
+ * is not sufficient for a Component configuration. CMeta does not
  * parse external configuration formats. Manual empty tables and repeated/ordered
  * role rows are preserved. */
 typedef struct cmeta_component_desc {

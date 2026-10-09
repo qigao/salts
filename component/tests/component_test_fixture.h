@@ -47,6 +47,9 @@ typedef struct test_provider_state {
     unsigned activates;
     unsigned deactivates;
     unsigned destroys;
+    unsigned resource_acquires;
+    unsigned resource_releases;
+    bool resource_live;
     unsigned sequence;
     unsigned *clock;
     bool fail_activate;
@@ -102,9 +105,19 @@ static const cmeta_object_interface_provider test_interfaces = {
 CMETA_OBJECT_INTERFACE_ADAPTER(test_log);
 CMETA_OBJECT_INTERFACE_ADAPTER(test_app);
 
+/* One simulated externally acquired resource. Its owner must close it
+ * exactly once on both normal deactivation and failed activation rollback. */
+static void test_release_resource(test_provider_state *state) {
+    if (!state->resource_live)
+        return;
+    state->resource_live = false;
+    ++state->resource_releases;
+}
+
 static void test_destroy(void *context, void *object) {
     test_provider_state *state = (test_provider_state *)context;
     (void)object;
+    test_release_resource(state);
     ++state->destroys;
 }
 
@@ -145,6 +158,19 @@ static cmeta_status test_logger_create(
         return CMETA_CALLBACK_ERROR;
     ++state->creates;
     return test_publish_owned_int(state, out_instance);
+}
+
+static cmeta_status test_logger_create_then_fail(
+    void *provider_context,
+    const cmeta_data_desc *config_data,
+    const void *config_value,
+    const salts_component_dependency *dependencies,
+    size_t dependency_count,
+    cmeta_object_ref *out_instance) {
+    cmeta_status status = test_logger_create(
+        provider_context, config_data, config_value,
+        dependencies, dependency_count, out_instance);
+    return status == CMETA_OK ? CMETA_CALLBACK_ERROR : status;
 }
 
 static cmeta_status test_app_create(
@@ -190,6 +216,10 @@ static cmeta_status test_activate(
     ++state->activates;
     if (state->clock != NULL)
         state->sequence = ++*state->clock;
+    if (state->resource_live)
+        return CMETA_CALLBACK_ERROR;
+    state->resource_live = true;
+    ++state->resource_acquires;
     return state->fail_activate ? CMETA_CALLBACK_ERROR : CMETA_OK;
 }
 
@@ -198,6 +228,7 @@ static void test_deactivate(
     const cmeta_object_ref *instance) {
     test_provider_state *state = (test_provider_state *)provider_context;
     (void)instance;
+    test_release_resource(state);
     ++state->deactivates;
 }
 
