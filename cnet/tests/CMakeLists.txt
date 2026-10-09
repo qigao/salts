@@ -494,6 +494,22 @@ unset(CNET_EXTERNAL_TLS_CERT)
 unset(CNET_EXTERNAL_TLS_KEY)
 
 cmake_add_test(
+  cnet_external_gateway_owner_test
+  SOURCES
+  cnet_external_gateway_owner_test.c
+  LIBS
+  cnet
+  Salts::Core
+  Salts::NativeIO
+  Salts::TinyTest
+  FOLDER
+  "cnet/tests")
+set_target_properties(
+  cnet_external_gateway_owner_test
+  PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+add_dependencies(cnet_api_test cnet_external_gateway_owner_test)
+
+cmake_add_test(
   cnet_external_progress_test
   SOURCES
   cnet_external_progress_test.c
