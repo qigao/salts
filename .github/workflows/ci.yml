@@ -1,6 +1,11 @@
 name: Salts CI
 'on':
-  pull_request: null
+  # The unified 2.3 review needs two independent CI qualifications on the
+  # *same* immutable source commit: full [2.3-VERIFY] and selected [2.3-SAN].
+  # Title edits opt in to the latter without creating a new source SHA; the
+  # release candidate workflow remains a separate publication gate.
+  pull_request:
+    types: [opened, reopened, synchronize, edited]
   push:
     branches:
       - master
