@@ -15,10 +15,28 @@ static size_t next_index(size_t index, size_t count) {
   return index + 1u == count ? 0u : index + 1u;
 }
 
+/* Deterministic 64-bit avalanche permutation (odd multipliers, xor-shifts).
+ * Each endpoint_id scores independently; removing an unrelated endpoint
+ * cannot change the winning eligible/pinned identity for a given key.
+ */
+static uint64_t cnet_destination_mix64(uint64_t value) {
+  value ^= value >> 30u;
+  value *= UINT64_C(0xbf58476d1ce4e5b9);
+  value ^= value >> 27u;
+  value *= UINT64_C(0x94d049bb133111eb);
+  return value ^ (value >> 31u);
+}
+
+static uint64_t cnet_destination_rendezvous_score(uint64_t key_hash, uint64_t endpoint_id) {
+  const uint64_t key = cnet_destination_mix64(key_hash ^ UINT64_C(0x9e3779b97f4a7c15));
+  const uint64_t remote = cnet_destination_mix64(endpoint_id ^ UINT64_C(0xd6e8feb86659fd93));
+  return cnet_destination_mix64(key ^ remote);
+}
+
 int cnet_destination_choose(const cnet_destination_selection *selection,
                             cnet_destination_result *out) {
   size_t index, best;
-  uint64_t total = 0u, offset;
+  uint64_t total = 0u, offset, best_score = 0u;
   if (out == NULL) return SALTS_EINVAL;
   *out = (cnet_destination_result){0u, 0u, SIZE_MAX};
   if (selection == NULL || selection->size != sizeof(*selection) ||
@@ -43,8 +61,22 @@ int cnet_destination_choose(const cnet_destination_selection *selection,
 
     case CNET_DESTINATION_STRICT_KEY:
       if (!selection->key_known) return SALTS_EINVAL;
-      index = (size_t)(selection->key_hash % selection->endpoint_count);
-      if (!selection->endpoints[index].eligible) return SALTS_ENOBUFS;
+      /*
+       * Hash stable IDs, not snapshot indices. Include ineligible endpoints
+       * in the contest, then reject if the winner is unavailable: skipping
+       * them would silently move a strict key to a different remote.
+       */
+      best = SIZE_MAX;
+      for (index = 0u; index < selection->endpoint_count; ++index) {
+        const uint64_t score = cnet_destination_rendezvous_score(
+            selection->key_hash, selection->endpoints[index].endpoint_id);
+        if (best == SIZE_MAX || score > best_score) {
+          best = index;
+          best_score = score;
+        }
+      }
+      if (!selection->endpoints[best].eligible) return SALTS_ENOBUFS;
+      index = best;
       goto selected;
 
     case CNET_DESTINATION_ROUND_ROBIN:

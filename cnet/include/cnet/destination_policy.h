@@ -59,8 +59,10 @@ typedef struct cnet_destination_result {
   size_t index; /* SIZE_MAX on any error */
 } cnet_destination_result;
 
-/* Validate once when publishing a host-owned immutable endpoint-set snapshot.
+/* Validate a host-owned immutable endpoint-set snapshot.
  * EINVAL for null, empty, unsorted, duplicate IDs or zero weights.
+ * choose() also checks this O(N) invariant on every admission, so callers
+ * cannot bypass validation by submitting a modified/invalid borrowed snapshot.
  * Does not allocate or change source storage.
  */
 int cnet_destination_validate(const cnet_destination_hint *endpoints, size_t count);
@@ -71,7 +73,13 @@ int cnet_destination_validate(const cnet_destination_hint *endpoints, size_t cou
  * ETIMEDOUT for an expired snapshot; ERANGE on weighted sum overflow;
  * ENOENT for an unknown explicit ID; ENOBUFS when no allowed remote candidate.
  *
- * EXPLICIT and STRICT_KEY never redirect when their pinned endpoint is FULL.
+ * STRICT_KEY uses rendezvous hashing of stable endpoint_id values, not
+ * array positions: removing an unrelated endpoint preserves the winner.
+ * An ineligible winner fails ENOBUFS instead of selecting a healthy neighbor.
+ * Membership additions/removal of the winner can change the assignment on a
+ * subsequent new selection; callers requiring an immutable live-session peer
+ * must preserve its endpoint_id and use EXPLICIT on later acquisitions.
+ * EXPLICIT never redirects away from its requested endpoint ID.
  * Health/pressure snapshots are not reservations.  The actual dial/transport
  * and protocol-capacity admission is still responsible for final rejection.
  * No hidden retry, alternate TLS profile, origin coalescing or fallback occurs.

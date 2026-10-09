@@ -100,6 +100,49 @@ spec("CNet client destination selection") {
     check_equal(cnet_destination_choose(&s, &out), SALTS_EINVAL);
   }
 
+  it("strict key keeps the same remote when an unrelated endpoint disappears") {
+    cnet_destination_selection s = input(CNET_DESTINATION_STRICT_KEY);
+    cnet_destination_result original, updated;
+    cnet_destination_hint compact[3] = {endpoints[0], endpoints[2], endpoints[3]};
+    size_t kept = 0u;
+    size_t removed = 0u;
+
+    for (uint64_t key = 0u; key < 256u; ++key) {
+      s.key_hash = key;
+      s.endpoints = endpoints;
+      s.endpoint_count = 4u;
+      s.snapshot_generation = 7u;
+      check_equal(cnet_destination_choose(&s, &original), SALTS_OK);
+      if (original.endpoint_id == 22u) {
+        ++removed;
+        /* Do not silently switch to the next healthy endpoint on FULL. */
+        endpoints[original.index].eligible = false;
+        check_equal(cnet_destination_choose(&s, &updated), SALTS_ENOBUFS);
+        check_equal(updated.index, SIZE_MAX);
+        endpoints[original.index].eligible = true;
+        continue;
+      }
+      ++kept;
+      s.endpoints = compact;
+      s.endpoint_count = 3u;
+      s.snapshot_generation = 8u;
+      check_equal(cnet_destination_choose(&s, &updated), SALTS_OK);
+      check_equal(updated.endpoint_id, original.endpoint_id);
+      check_equal(updated.snapshot_generation, 8u);
+    }
+    check(kept != 0u && removed != 0u);
+
+    /* An actually pinned remote is also selectable by explicit stable ID.
+     * Removing that identity must reject, not pick a replacement.
+     */
+    s.kind = CNET_DESTINATION_EXPLICIT;
+    s.endpoints = compact;
+    s.endpoint_count = 3u;
+    s.explicit_endpoint_id = 22u;
+    check_equal(cnet_destination_choose(&s, &updated), SALTS_ENOENT);
+    check_equal(updated.endpoint_id, 0u);
+  }
+
   it("expired or malformed endpoints fail instead of fallback") {
     cnet_destination_selection s = input(CNET_DESTINATION_ROUND_ROBIN);
     cnet_destination_result out;
