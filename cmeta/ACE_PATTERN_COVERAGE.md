@@ -213,3 +213,38 @@ must be checked against this documentation commit and the selected CTest
 scope; a normal host matrix is not a sanitizer run. Draft PR #1013 stays
 **DO NOT MERGE / DO NOT PUBLISH**, and all immutable SDK/downstream release
 gates remain independent under #1018.
+
+
+## Current qualification ledger — 2026-10-09 (post-freeze, not release)
+
+This ledger supersedes *only* the outdated **evidence status** in the historical
+17-row inventory above; it does not redefine the canonical 17 patterns or
+retroactively change frozen commit `02b741a`.
+
+| Patterns | Actual observed evidence | Remaining qualification |
+|---|---|---|
+| Component Configurator, Extension Interface, Acceptor-Connector, Active Object, Half-Sync/Half-Async (5) | Frozen ACE host conformance plus later branch regressions | Final immutable 2.3 SDK, downstream and device release gates #1018 |
+| Reactor, Proactor (2) | Existing NativeIO/CNet readiness/completion runtimes, intentionally REUSE | No second runtime; exact backend evidence at release candidate |
+| Interceptor, ACT (2) | Real loaded ComponentPlugin DSO invocation and real NativeIO request/cancel association; full host [#37869377431](https://github.com/qigao/salts/actions/runs/37869377431) at `6185834`; selected sanitizer suites [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) on later source | No implicit lease; final candidate SDK, full composition and downstream |
+| Strategized Locking, Thread-Safe Interface, Monitor Object (3) | Reflected C11/C++17 lockable/synchronized/condition tests, wrong-owner rejection and selected ASan+UBSan/TSan [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) | Exact final installed SDK and closure of any outstanding specific issue acceptance |
+| Wrapper Facade, Scoped Locking, safe Once/DCL, Thread-Specific Storage (4) | Shared real Platform primitives, negative lifecycle tests and native threads; host [#37875659581](https://github.com/qigao/salts/actions/runs/37875659581), latest TLS worker-lifetime host [#37877642307](https://github.com/qigao/salts/actions/runs/37877642307), and selected sanitizer [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) at `c8c27cc` | Wrapper requires quiescent close, TLS scalar cleanup is explicit (not automatic destructor); cross-platform exact-head/installed SDK release gates remain |
+| Leader/Followers (1) | **DESIGN ONLY / NOT IMPLEMENTED**: optional, truly non-SG event source; see [ACE_COMPLETION_CONTRACT.md](ACE_COMPLETION_CONTRACT.md) and #1064 | Must name a real consumer before implementing an optional executor, then prove baton, exclusive leader and 1/2/4 workers |
+
+**Count:** 16 patterns have an implemented mechanism or executable composition
+at different qualification levels (including Reactor/Proactor REUSE);
+**Leader/Followers remains design-only**. This is explicitly **not** 16/17
+or 17/17 fully qualified for release. In particular the earlier five
+`GAP` rows now have post-freeze implementation evidence and should not be
+read as unimplemented. All run numbers above certify only the particular
+source and test selection they ran.
+
+**Admission decision:** no named non-SG consumer for #1064 has been
+established. A CNet SG owner lane is not a Leader/Followers executor. Do not
+add a speculative second queue/pool or relabel SG. Keep #1064 open and
+unimplemented pending a concrete consumer and explicit topology decision.
+
+**Release separation:** #1018 still requires immutable installed 2.3.0
+candidate, actual SONAME/package digest verification, Windows/macOS DSO
+consumers, downstream CHttp/TurboFlow/TurboSCXML, device runtime and final
+go/no-go. No merge, stable package or GitHub Release is authorized by these
+tests.
