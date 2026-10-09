@@ -2,12 +2,16 @@
 #include <cnet/sg_host.h>
 #include <cnet/owner_placement.h>
 #include <cnet/destination_policy.h>
+#include <cnet/manager.h>
+#include <cnet/client_pool.h>
+#include <cnet/managed_dial.h>
 #include <salts/native_io_sharded.h>
 #include <salts/clock.h>
 #include <salts/thread.h>
 #include <tinytest.h>
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #if defined(__linux__)
 #include <errno.h>
@@ -46,6 +50,15 @@ struct hosted_state {
   native_io_backend *backend;
   cnet_client inbound, outbound;
   cnet_listener listener;
+  /* Helpers borrow one outbound CNet client on the same SG Owner lane.
+   * They do not add a backend, progress thread, poll authority, or queue. */
+  cnet_manager manager;
+  cnet_managed_dial dial;
+  cnet_client_pool pool;
+  cnet_pool_key pool_key;
+  cnet_pool_connection physical;
+  cnet_pool_lease operation_lease;
+  size_t ready_published, pool_leases_settled;
   cnet_stream_endpoint local;
   cnet_connection accepted, outgoing;
   hosted_probe in_probe, out_probe;
@@ -212,7 +225,8 @@ static cnet_observer host_observer(hosted_probe *p) {
 static bool host_quiescent(void *arg) {
   hosted_state *f = (hosted_state *)arg;
   return f->clients_destroyed && !f->listener.impl &&
-         !f->inbound.impl && !f->outbound.impl;
+         !f->inbound.impl && !f->outbound.impl &&
+         !f->manager.impl && !f->dial.impl && !f->pool.impl;
 }
 #if defined(__linux__)
 static void host_pipe_terminal(native_io_sharded_context *context,
@@ -230,6 +244,166 @@ static void host_pipe_finalize(void *arg) {
 #define HOST_TASK_OK(f, expr) do { int host_rc = (expr); \
   if (host_rc != SALTS_OK) { host_record_error((f), host_rc); return; } \
 } while (0)
+
+
+/* Owner-local connection admission only. The configured policy previously
+ * selected one authorized endpoint; this helper performs the real bounded
+ * Pool, Manager, and ManagedDial reservations against that same identity. */
+static int host_start_managed_client(hosted_state *f,
+                                     const cnet_observer *observer) {
+  const cnet_manager_config manager_config = {
+    sizeof(cnet_manager_config), CNET_MANAGER_VERSION, &f->outbound, 1u, 1u
+  };
+  const cnet_pool_config pool_config = {
+    sizeof(cnet_pool_config), CNET_CLIENT_POOL_VERSION,
+    &f->manager, (uint64_t)f->owner_shard + 1u, 1u, 1u, 1u
+  };
+  cnet_managed_dial_config cfg = {0};
+  cnet_managed_dial_snapshot snap = {0};
+  cnet_pool_connection refused = {0};
+  uint64_t next_wait = 0u;
+  char uri[96];
+  int n, rc;
+
+  n = snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u",
+               (unsigned)f->local.port);
+  if (n <= 0 || (size_t)n >= sizeof(uri)) return SALTS_EINVAL;
+  rc = cnet_manager_init(&f->manager, &manager_config);
+  if (rc != SALTS_OK) return rc;
+  rc = cnet_pool_init(&f->pool, &pool_config);
+  if (rc != SALTS_OK) return rc;
+
+  f->pool_key = (cnet_pool_key){0};
+  f->pool_key.size = sizeof(f->pool_key);
+  f->pool_key.version = CNET_CLIENT_POOL_VERSION;
+  f->pool_key.runtime_id = (uint64_t)f->owner_shard + 1u;
+  f->pool_key.owner_id = (uint64_t)f->owner_shard + 1u;
+  f->pool_key.endpoint_id = f->policy.allowed_endpoint_id;
+  f->pool_key.authority_id = f->policy.allowed_endpoint_id;
+  f->pool_key.transport_id = 1u;
+  f->pool_key.protocol_id = 1u;
+  rc = cnet_pool_reserve_connecting(&f->pool, &f->pool_key,
+                                    &f->physical);
+  if (rc != SALTS_OK) return rc;
+  if (cnet_pool_reserve_connecting(&f->pool, &f->pool_key,
+                                   &refused) != SALTS_ENOBUFS ||
+      refused.slot != 0u) return SALTS_EPROTO;
+
+  cfg.size = sizeof(cfg);
+  cfg.version = CNET_MANAGED_DIAL_VERSION;
+  cfg.manager = &f->manager;
+  cfg.client = &f->outbound;
+  cfg.connection.uri = uri; /* ManagedDial copies URI into its own storage. */
+  cfg.connection.observer = *observer;
+  cfg.recovery = (cnet_reconnect_config){
+    sizeof(cnet_reconnect_config), CNET_RECOVERY_POLICY_VERSION,
+    1u, cmeta_monotonic_ms() + HOST_TIMEOUT_MS, 0u, 0u, 17u
+  };
+  cfg.recovery_episode_ms = HOST_TIMEOUT_MS;
+  /* An unspecified classifier is permanent failure, never DATA replay. */
+  rc = cnet_managed_dial_init(&f->dial, &cfg);
+  if (rc != SALTS_OK) return rc;
+  rc = cnet_managed_dial_advance(&f->dial, cmeta_monotonic_ms(),
+                                 &next_wait);
+  if (rc != SALTS_OK) return rc;
+  rc = cnet_managed_dial_get_snapshot(&f->dial, &snap);
+  if (rc != SALTS_OK) return rc;
+  if (snap.connection.slot == 0u || snap.managed.slot == 0u ||
+      snap.recovery_ticket.generation == 0u) return SALTS_EPROTO;
+  f->outgoing = snap.connection;
+  return SALTS_OK;
+}
+
+/* Explicit protocol READY follows the actual bidirectional application
+ * exchange. CONNECTED by itself must not authorize Pool reuse or reset
+ * ManagedDial's recovery episode. */
+static int host_confirm_protocol_ready(hosted_state *f) {
+  cnet_managed_dial_snapshot snap = {0};
+  cnet_reconnect_ticket stale = {0};
+  cnet_pool_key wrong_authority = f->pool_key;
+  cnet_pool_lease rejected = {0};
+  cnet_managed_connection resolved = {0};
+  int rc = cnet_managed_dial_get_snapshot(&f->dial, &snap);
+  if (rc != SALTS_OK) return rc;
+  if (!snap.recovery.awaiting_protocol ||
+      snap.recovery.protocol_ready || snap.managed.slot == 0u ||
+      snap.recovery_ticket.generation == 0u) return SALTS_EPROTO;
+  stale = snap.recovery_ticket;
+  ++stale.generation;
+  if (cnet_managed_dial_protocol_ready(
+        &f->dial, stale, cmeta_monotonic_ms()) != SALTS_ENOENT)
+    return SALTS_EPROTO;
+  rc = cnet_managed_dial_protocol_ready(
+    &f->dial, snap.recovery_ticket, cmeta_monotonic_ms());
+  if (rc != SALTS_OK) return rc;
+  if (cnet_managed_dial_protocol_ready(
+        &f->dial, snap.recovery_ticket,
+        cmeta_monotonic_ms()) != SALTS_EALREADY)
+    return SALTS_EPROTO;
+  ++f->ready_published;
+
+  rc = cnet_pool_bind_ready(&f->pool, f->physical, snap.managed, 1u);
+  if (rc != SALTS_OK) return rc;
+  wrong_authority.authority_id++;
+  if (cnet_pool_try_acquire(&f->pool, &wrong_authority, NULL,
+                            &rejected, &resolved) != SALTS_ENOBUFS ||
+      rejected.slot != 0u) return SALTS_EPROTO;
+  rc = cnet_pool_try_acquire(&f->pool, &f->pool_key, NULL,
+                             &f->operation_lease, &resolved);
+  if (rc != SALTS_OK) return rc;
+  if (resolved.manager != snap.managed.manager ||
+      resolved.incarnation != snap.managed.incarnation ||
+      resolved.generation != snap.managed.generation ||
+      resolved.slot != snap.managed.slot) return SALTS_EPROTO;
+  if (cnet_pool_try_acquire(&f->pool, &f->pool_key, NULL,
+                            &rejected, &resolved) != SALTS_ENOBUFS)
+    return SALTS_EPROTO;
+  /* App-level terminal assertions cannot overrule the real Manager state. */
+  if (cnet_pool_terminal(&f->pool, f->physical) != SALTS_EBUSY)
+    return SALTS_EPROTO;
+  rc = cnet_pool_begin_drain(&f->pool, f->physical);
+  if (rc != SALTS_OK) return rc;
+  rc = cnet_pool_seal(&f->pool);
+  if (rc != SALTS_OK) return rc;
+  if (cnet_pool_try_acquire(&f->pool, &f->pool_key, NULL,
+                            &rejected, &resolved) != SALTS_ESHUTDOWN)
+    return SALTS_EPROTO;
+  return SALTS_OK;
+}
+
+/* Release Pool only after the real transport is retired by Manager and
+ * ManagedDial's recycle callback has revoked its generation-scoped record. */
+static int host_finish_managed_client(hosted_state *f) {
+  cnet_manager_snapshot manager_state = {0};
+  cnet_pool_snapshot pool_state = {0};
+  int rc = cnet_pool_terminal(&f->pool, f->physical);
+  if (rc != SALTS_OK) return rc;
+  rc = cnet_pool_get_snapshot(&f->pool, &pool_state);
+  if (rc != SALTS_OK) return rc;
+  if (pool_state.active_leases != 1u ||
+      pool_state.terminal_waiting_for_leases != 1u ||
+      cnet_pool_destroy(&f->pool) != SALTS_EBUSY) return SALTS_EPROTO;
+  rc = cnet_pool_release(&f->pool, f->operation_lease);
+  if (rc != SALTS_OK) return rc;
+  if (cnet_pool_release(&f->pool, f->operation_lease) != SALTS_ENOENT)
+    return SALTS_EPROTO;
+  ++f->pool_leases_settled;
+  rc = cnet_pool_get_snapshot(&f->pool, &pool_state);
+  if (rc != SALTS_OK) return rc;
+  if (!pool_state.drained || pool_state.active_leases != 0u)
+    return SALTS_EPROTO;
+  rc = cnet_pool_destroy(&f->pool);
+  if (rc != SALTS_OK) return rc;
+  rc = cnet_managed_dial_destroy(&f->dial);
+  if (rc != SALTS_OK) return rc;
+  rc = cnet_manager_get_snapshot(&f->manager, &manager_state);
+  if (rc != SALTS_OK) return rc;
+  if (!manager_state.drained ||
+      manager_state.reserved != 0u ||
+      manager_state.bound != 0u ||
+      manager_state.retired != 0u) return SALTS_EPROTO;
+  return SALTS_OK;
+}
 
 static void host_initialize(native_io_sharded_context *context, void *arg) {
   hosted_state *f = (hosted_state *)arg;
@@ -299,8 +473,7 @@ static void host_initialize(native_io_sharded_context *context, void *arg) {
     }
   }
 #endif
-  HOST_TASK_OK(f, cnet_connect_endpoint(&f->outbound, &f->local, NULL,
-                                         &out, &f->outgoing));
+  HOST_TASK_OK(f, host_start_managed_client(f, &out));
 }
 
 static void host_send(hosted_state *f, cnet_client *client,
@@ -354,6 +527,10 @@ static void host_progress(native_io_sharded_context *context, void *arg) {
   }
   HOST_TASK_OK(f, cnet_client_advance_external(&f->inbound, &events));
   HOST_TASK_OK(f, cnet_client_advance_external(&f->outbound, &events));
+  {
+    size_t managed_work = 0u;
+    HOST_TASK_OK(f, cnet_manager_advance(&f->manager, 1u, &managed_work));
+  }
   if (!f->data_started && f->in_probe.connected && f->out_probe.connected) {
     f->data_started = true;
     HOST_TASK_OK(f, cnet_receive(&f->inbound, f->accepted, 1u));
@@ -369,15 +546,23 @@ static void host_progress(native_io_sharded_context *context, void *arg) {
       && f->sg_terminal == 1u && f->sg_finalize == 1u
 #endif
       ) {
+    HOST_TASK_OK(f, host_confirm_protocol_ready(f));
     f->closing = true;
     HOST_TASK_OK(f, cnet_listener_close(&f->listener));
     HOST_TASK_OK(f, cnet_listener_destroy(&f->listener));
     HOST_TASK_OK(f, cnet_close(&f->inbound, f->accepted));
-    HOST_TASK_OK(f, cnet_close(&f->outbound, f->outgoing));
+    HOST_TASK_OK(f, cnet_managed_dial_seal(&f->dial));
   }
   if (f->closing && f->in_probe.terminal && f->out_probe.terminal) {
+    cnet_managed_dial_snapshot dial_state = {0};
+    HOST_TASK_OK(f, cnet_managed_dial_get_snapshot(&f->dial, &dial_state));
+    /* CLOSED callback is not on_recycle: wait for real Manager settlement
+     * on the same SG Owner, without spinning or a second progress task. */
+    if (dial_state.managed.slot != 0u) return;
+    HOST_TASK_OK(f, host_finish_managed_client(f));
     HOST_TASK_OK(f, cnet_client_stop_external(&f->inbound));
     HOST_TASK_OK(f, cnet_client_stop_external(&f->outbound));
+    HOST_TASK_OK(f, cnet_manager_destroy(&f->manager));
     HOST_TASK_OK(f, cnet_client_destroy(&f->inbound));
     HOST_TASK_OK(f, cnet_client_destroy(&f->outbound));
 #if defined(__linux__)
@@ -461,6 +646,11 @@ static void host_run_topology(size_t owner_count) {
     check_equal(f->out_probe.connected, (size_t)1u);
     check_equal(f->in_probe.terminal, (size_t)1u);
     check_equal(f->out_probe.terminal, (size_t)1u);
+    check_equal(f->ready_published, (size_t)1u);
+    check_equal(f->pool_leases_settled, (size_t)1u);
+    check_null(f->manager.impl);
+    check_null(f->dial.impl);
+    check_null(f->pool.impl);
     /* One decision per admitted physical connection, never per I/O event. */
     check_equal(f->server_policy_calls, (size_t)1u);
     check_equal(f->client_policy_calls, (size_t)1u);
