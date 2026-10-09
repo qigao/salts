@@ -263,6 +263,46 @@ jobs:
             echo "Candidate requires successful Linux, macOS, Windows, ARM and mobile CI on $SOURCE_SHA" >&2
             exit 1
           }
+          # A green subset is not a release qualification. The *same*
+          # combined source must have executed all five complete native CTests.
+          full_ctest_count="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$full_ci_id/jobs?per_page=100" \
+            --jq '[.jobs[] |
+              select(.name == "native / linux-release" or
+                     .name == "native / linux-clang-release" or
+                     .name == "native / windows-release" or
+                     .name == "native / macos-release" or
+                     .name == "native / macos-clang-release") |
+              select(any(.steps[]; (
+                (.name == "Run complete Unix integration tests" or
+                 .name == "Run complete Windows ACE integration tests") and
+                .conclusion == "success")))] | length')"
+          test "$full_ctest_count" -eq 5 || {
+            echo "Unified SDK requires all five complete host CTest steps on $SOURCE_SHA" >&2
+            exit 1
+          }
+
+          # ASan+UBSan and TSan must both pass on this immutable combined SHA
+          # in one prior [2.3-SAN] CI run. Separate ACE/CNet branch success
+          # cannot authorize publication. The normal candidate matrix has
+          # exactly eight profiles and therefore does not repeat sanitizers.
+          sanitizer_verified=0
+          for san_run in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SOURCE_SHA&per_page=100" \
+                --jq '.workflow_runs[] | select(.event == "pull_request" and .conclusion == "success") | .id'); do
+            qualified="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$san_run/jobs?per_page=100" \
+              --jq '[.jobs[] | select(
+                (.name == "native / linux-ace-asan-ubsan" or
+                 .name == "native / linux-ace-tsan") and
+                .conclusion == "success")] | length')"
+            if [ "$qualified" -eq 2 ]; then
+              sanitizer_verified=1
+              echo "Combined-SHA sanitizer qualification: CI $san_run"
+              break
+            fi
+          done
+          test "$sanitizer_verified" -eq 1 || {
+            echo "No exact-SHA combined [2.3-SAN] ASan+UBSan/TSan success for $SOURCE_SHA" >&2
+            exit 1
+          }
           echo "Candidate source SHA $SOURCE_SHA qualified by eight-profile CI $full_ci_id"
 
       - name: Publish opt-in immutable prerelease (not a stable release)

@@ -6,7 +6,8 @@ param(
   [AllowEmptyString()][string]$HeadBranch = "",
   [bool]$PrepareRelease = $false,
   [bool]$AceMatrix = $false,
-  [bool]$AceSan = $false
+  [bool]$AceSan = $false,
+  [bool]$UnifiedSan = $false
 )
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -23,12 +24,23 @@ if (($AceMatrix -or $AceSan) -and -not $aceBranchPr) {
   throw "ACE qualification is restricted to its long-lived PR"
 }
 if ($AceMatrix -and $AceSan) { throw "ACE-MATRIX and ACE-SAN are exclusive" }
+$unified23Review = $HeadBranch -eq 'release/salts-2.3-ace-cnet-review' -and
+  $EventName -eq 'pull_request' -and -not $PrepareRelease
+if ($UnifiedSan -and -not $unified23Review) {
+  throw "Unified 2.3 sanitizers are restricted to the release review PR"
+}
+if ($UnifiedSan -and ($AceMatrix -or $AceSan)) {
+  throw "2.3-SAN and ACE qualifiers cannot be combined"
+}
 $acePatternsDevelopment = $aceBranchPr -and -not $AceMatrix
-$aceFullMatrixQualification = $aceBranchPr -and $AceMatrix
+# All 2.3 combined source host profiles must run their complete CTest, not
+# only native/execution projection subsets that can miss CNet/ACE composition.
+$aceFullMatrixQualification = ($aceBranchPr -and $AceMatrix) -or $unified23Review
 $aceSanitizerQualification = $aceBranchPr -and $AceSan
+$unifiedSanitizerQualification = $unified23Review -and $UnifiedSan
 # Preserve the historical integration branch's complete Linux coverage.
 $componentIntegration = ($HeadBranch -eq 'feature/cmeta-pattern-component-runtime' -and
-  -not $PrepareRelease) -or $aceBranchPr
+  -not $PrepareRelease) -or $aceBranchPr -or $unified23Review
 $changed = @()
 if (-not $full) {
   if ([string]::IsNullOrWhiteSpace($BaseRef)) { throw "Missing comparison base for $EventName" }
@@ -159,7 +171,7 @@ $profiles = @(
   @{ id = 'android-arm64-v8a-release'; runner = 'ubuntu-24.04'; family = 'android'; preset = 'android-arm64-v8a-release-ci'; build_dir = 'build/android-arm64-v8a-release'; sdk = 'android-arm64-v8a' },
   @{ id = 'ios-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-arm64-release-ci'; build_dir = 'build/ios-arm64'; sdk = 'ios-arm64'; triplet = 'arm64-ios' }
 )
-if ($aceSanitizerQualification) {
+if ($aceSanitizerQualification -or $unifiedSanitizerQualification) {
   # Reuse existing Debug ASan and independent TSan CMake presets; the ASan
   # profile adds UBSan via the canonical Sanitizers.cmake flag. Do not combine
   # TSan with ASan, or reuse release binaries for sanitizer checks.
@@ -170,6 +182,12 @@ if ($aceSanitizerQualification) {
 }
 $builds = @()
 foreach ($profile in $profiles) {
+  # [2.3-SAN] is a dedicated source-identical sanitizer gate; a separate
+  # [2.3-VERIFY] run must qualify the eight real host/build profiles. Keep
+  # the Release Linux smoke in this mode, never package or merge by default.
+  if ($unifiedSanitizerQualification -and
+      $profile.id -ne 'linux-release' -and
+      -not $profile.ContainsKey('sanitizer')) { continue }
   # Keep regular ACE PRs on Linux only, but do not discard the explicit
   # ASan+UBSan/TSan Debug profiles supplied for an [ACE-SAN] qualification.
   if ($acePatternsDevelopment -and $profile.id -ne 'linux-release' -and

@@ -44,7 +44,10 @@ jobs:
           # This is not SDK packaging, benchmark work or release publication.
           ACE_MATRIX: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[ACE-MATRIX]') }}
           ACE_SAN: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[ACE-SAN]') }}
-        run: ./cmake/ci/select-ci-scope.ps1 -EventName $env:CI_EVENT -BaseRef $env:CI_BASE -HeadRef $env:CI_HEAD -HeadBranch $env:CI_BRANCH -PrepareRelease ($env:PREPARE_RELEASE -eq "true") -AceMatrix ($env:ACE_MATRIX -eq "true") -AceSan ($env:ACE_SAN -eq "true")
+          # #1081: only the unified 2.3 review PR may opt in to exact-head
+          # ASan+UBSan/TSan. This cannot tag/merge or publish a stable SDK.
+          UNIFIED_SAN: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[2.3-SAN]') }}
+        run: ./cmake/ci/select-ci-scope.ps1 -EventName $env:CI_EVENT -BaseRef $env:CI_BASE -HeadRef $env:CI_HEAD -HeadBranch $env:CI_BRANCH -PrepareRelease ($env:PREPARE_RELEASE -eq "true") -AceMatrix ($env:ACE_MATRIX -eq "true") -AceSan ($env:ACE_SAN -eq "true") -UnifiedSan ($env:UNIFIED_SAN -eq "true")
       - name: Read package version
         shell: pwsh
         id: version
