@@ -141,11 +141,16 @@ jobs:
           ctest --preset "${{ matrix.preset }}" \
             --no-tests=error --output-on-failure --timeout 90 \
             -R '^(cmeta_native_component_(test|cpp_test|plugin_(abi_test|abi_cpp_test|dso_test|generation_test|scope_cpp_test|publication_test|act_native_io_test|runtime_failure_test|concurrency_test))|cmeta_fastpath_(component|pattern)(_cpp)?_test|cmeta_ace_sync(_cpp)?_test|cmeta_ace_leader_followers_contract(_cpp)?_test|platform_ace_leader_followers(_cpp)?_test|cflow_actor_test|cflow_ace_pipes_filters_test|cflow_ace_half_sync_async_test|cnet_ace_acceptor_connector_test|cnet_tcp_endpoint_test|cnet_(owner_placement|destination_policy|client_pool|recovery_policy|managed_dial|handoff|manager|sg_hosted_gateway|external_gateway_owner|native_io_sharded_ownership|shards_multi_owner)_test)$'
+      # Full functional qualification and performance sampling are different
+      # gates. CNet enables separately labeled benchmark CTests when native
+      # benchmark binaries are built for downstream measurement. The host
+      # qualification runs every non-benchmark test; the reusable benchmark
+      # workflow runs the labeled performance workloads from the exact SHA.
       - name: Run complete Unix integration tests
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.full_tests }}
         timeout-minutes: 30
         shell: bash
-        run: ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60
+        run: ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -LE benchmark
       - name: Run complete Windows ACE integration tests
         if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.full_tests }}
         timeout-minutes: 30
@@ -155,7 +160,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -LE benchmark
           if errorlevel 1 exit /b 1
       - name: Run Unix native and plugin contracts
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.native }}
