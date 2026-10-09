@@ -793,6 +793,17 @@ int cnet_connection_shutdown(cnet_client *client,
                              cnet_tcp_shutdown how);
 
 /**
+ * Opts one connected plaintext TCP owner into directional peer EOF handling.
+ * Install on the owner thread before receive demand, outside callbacks. EOF
+ * emits exactly one empty CNET_MESSAGE_BYTES receive callback, closes receive
+ * admission and keeps send admission open. Normal terminal state is still
+ * delivered only after close/failure. Existing connections retain close-on-EOF
+ * behavior unless explicitly opted in. This does not alter observer/config ABI.
+ * Returns SALTS_EINVAL, SALTS_ENOENT, SALTS_ENOTSUP, SALTS_EBUSY or SALTS_OK.
+ */
+int cnet_connection_preserve_send_on_eof(cnet_client *client, cnet_connection connection);
+
+/**
  * Reads or mutates one live TCP property through the generation-checked CNet
  * owner. These calls obey the same single-owner thread rule as client progress.
  * No native descriptor is exposed. Unsupported host properties return
@@ -1492,6 +1503,40 @@ int cnet_datagram_init(cnet_datagram *datagram, const cnet_datagram_config *conf
  */
 int cnet_datagram_init_external(cnet_datagram *datagram, const cnet_datagram_config *config,
                                  native_io_backend *backend);
+
+/** Additive socket-control capability; existing bound init/config layout is unchanged. */
+#define CNET_DATAGRAM_SOCKET_CONTROL_VERSION 1u
+/** Opens an unbound IP datagram socket on a borrowed backend. config.host/port
+ * must be NULL/zero. All other bounds/observer rules match external init.
+ * No receive/send admission is allowed before bind. No worker is created. */
+int cnet_datagram_open_external(cnet_datagram *datagram, const cnet_datagram_config *config,
+                               native_io_backend *backend, cnet_datagram_address_family family);
+/** Binds once; endpoint permits an unspecified IP and port zero. Preserves
+ * IPv6 flow-info/scope. EALREADY on rebinding, EBUSY on callback reentry. */
+int cnet_datagram_bind_endpoint(cnet_datagram *datagram, const cnet_stream_endpoint *endpoint);
+/** Native UDP connect/disconnect. NULL disconnects. Requires a bound socket
+ * and no retained receive/send requests; EBUSY preserves the association.
+ * Query the local address again after successful association/disassociation. */
+int cnet_datagram_associate_endpoint(cnet_datagram *datagram, const cnet_stream_endpoint *endpoint);
+int cnet_datagram_local_endpoint(const cnet_datagram *datagram, cnet_stream_endpoint *out);
+int cnet_datagram_remote_endpoint(const cnet_datagram *datagram, cnet_stream_endpoint *out);
+/** Lossless peer query allowed only during on_receive; its returned copy owns no socket. */
+int cnet_datagram_received_endpoint(const cnet_datagram *datagram, cnet_stream_endpoint *out);
+/** Stops receive demand and requests cancellation without early release. Route
+ * the actual terminal before quiescent becomes true. Accepted send terminals
+ * still run. Pause is idempotent and does not stop the socket or backend. */
+int cnet_datagram_pause_receive(cnet_datagram *datagram);
+int cnet_datagram_quiescent(const cnet_datagram *datagram, bool *out);
+/** UDP supports HOP_LIMIT, RECEIVE_BUFFER_BYTES and SEND_BUFFER_BYTES only.
+ * Queries report platform values; unsupported options return ENOTSUP.
+ * Values above platform int range clamp to INT_MAX; zero is invalid. */
+int cnet_datagram_option_get(const cnet_datagram *datagram, cnet_tcp_socket_option option, uint64_t *out);
+int cnet_datagram_option_set(cnet_datagram *datagram, cnet_tcp_socket_option option, uint64_t value);
+/** Endpoint NULL uses the current native association. Empty payloads are real
+ * datagrams; NULL data is allowed only with size zero. Same terminal tag and
+ * copied ownership contract as cnet_datagram_send. */
+int cnet_datagram_send_endpoint(cnet_datagram *datagram, const cnet_stream_endpoint *endpoint,
+                                const void *data, size_t size, uint64_t tag);
 
 /**
  * Advances deferred receive rearm and stop cleanup without observe or waiting.

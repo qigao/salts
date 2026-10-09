@@ -783,6 +783,14 @@ int cnet_shards_tcp_option_set(cnet_shards *shards, cnet_shard_connection connec
              : SALTS_ENOENT;
 }
 
+int cnet_shards_preserve_send_on_eof(cnet_shards *shards, cnet_shard_connection connection) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_shard_record *record;
+  if (impl == NULL || !cnet_shard_connection_valid(connection)) return SALTS_ENOENT;
+  record = cnet_shards_get_record(impl, connection.shard);
+  return record != NULL ? cnet_owner_preserve_send_on_eof(&record->owner, connection.session) : SALTS_ENOENT;
+}
+
 int cnet_shards_tcp_shutdown(cnet_shards *shards, cnet_shard_connection connection,
                              cnet_tcp_shutdown how) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
