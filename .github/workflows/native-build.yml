@@ -49,7 +49,7 @@ jobs:
         with:
           profile: ${{ matrix.id }}
       - name: Prepare macOS GNU compiler
-        if: matrix.family == 'mac' && !matrix.clang && !matrix.package
+        if: matrix.family == 'mac' && !matrix.clang && matrix.id != 'macos-release'
         shell: bash
         run: |
           set -euo pipefail
@@ -413,9 +413,9 @@ jobs:
           vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
           vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
           EOF
-        if: matrix.package && matrix.id == 'macos-release'
+        if: matrix.id == 'macos-release'
       - name: Verify installed macOS TinyTest native TLS ABI (C11)
-        if: matrix.package && matrix.id == 'macos-release'
+        if: matrix.id == 'macos-release'
         shell: bash
         run: |
           set -euo pipefail
@@ -442,13 +442,15 @@ jobs:
           /usr/bin/clang -std=c11 -O2 -arch arm64 -I"$prefix/include" \
             "$temp/consumer.c" "$archive" -o "$temp/consumer"
           "$temp/consumer"
+      # Test-only artifact on PR builds. Normal release packaging retains the
+      # canonical salts-sdk-macos name for the existing SDK aggregation job.
       - uses: actions/upload-artifact@v4
         with:
-          name: salts-sdk-macos
+          name: ${{ matrix.package && 'salts-sdk-macos' || 'salts-sdk-macos-tinytest-candidate' }}
           path: stage/sdk
           if-no-files-found: error
           compression-level: 9
-        if: matrix.package && matrix.id == 'macos-release'
+        if: matrix.id == 'macos-release'
       - name: Install native arm64 SDK
         shell: bash
         run: |
