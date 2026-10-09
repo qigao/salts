@@ -34,6 +34,10 @@ typedef struct cnet_managed_dial_config {
 
 typedef struct cnet_managed_dial_snapshot {
   cnet_reconnect_snapshot recovery;
+  /* Current opaque attempt capability, snapshot only, NOT a new ownership
+   * reference. The value becomes stale after a new attempt or dial destroy.
+   * Pass back unchanged to protocol_ready only after handshake/auth succeeds. */
+  cnet_reconnect_ticket recovery_ticket;
   cnet_managed_connection managed;
   cnet_connection connection;
   bool stopping;
@@ -57,7 +61,9 @@ int cnet_managed_dial_advance(cnet_managed_dial *dial, uint64_t now_ms,
 
 /* FlowMQ, HTTP, RPC etc. explicitly call this only after all of their
  * protocol authentication/handshake/admission is READY. CONNECTED alone
- * never resets backoff or grants application replay. */
+ * never resets backoff or grants application replay. Obtain the current
+ * snapshot.recovery_ticket after observing CONNECTED; copy it unchanged.
+ * Zero/stale/future attempt tickets fail closed (ENOENT/EALREADY). */
 int cnet_managed_dial_protocol_ready(cnet_managed_dial *dial,
                                      cnet_reconnect_ticket ticket,
                                      uint64_t now_ms);
