@@ -175,6 +175,25 @@ static void ace_sync_tls_run(void *user) {
     ace_sync_tls_counter = 0;
 }
 
+/* POSA2 safe Once/DCL intent: use the canonical Platform once primitive,
+ * never the historical unchecked read/unsynchronized double-check idiom.
+ * The published value is immutable after the one-time callback returns. */
+static cmeta_once_t ace_sync_once_guard = SALTS_ONCE_INIT;
+static int ace_sync_once_value;
+static int ace_sync_once_calls;
+static void ace_sync_once_initialize(void) {
+    ace_sync_once_value = 0x5a17;
+    ++ace_sync_once_calls;
+}
+typedef struct ace_sync_once_worker {
+    int observed;
+} ace_sync_once_worker;
+static void ace_sync_once_run(void *user) {
+    ace_sync_once_worker *worker = ACE_SYNC_CAST(ace_sync_once_worker *, user);
+    cmeta_once(&ace_sync_once_guard, ace_sync_once_initialize);
+    worker->observed = ace_sync_once_value;
+}
+
 /* Monitor Object: predicate, condition and close belong to the same guarded
  * native object. The public CMeta interface supplies exact synchronous ABI. */
 typedef struct ace_sync_monitor {
@@ -299,6 +318,21 @@ static cmeta_status ace_sync_throws(ace_sync_operation *operation) {
 #endif
 
 suite("CMeta ACE concurrent pattern composition") {
+    it("publishes initialized state exactly once across native concurrent callers") {
+        cmeta_thread_t threads[4] = {0};
+        ace_sync_once_worker workers[4] = {{0}, {0}, {0}, {0}};
+        for (size_t i = 0; i < 4u; ++i)
+            check_equal(cmeta_thread_create(&threads[i], ace_sync_once_run,
+                                             &workers[i]), 0);
+        for (size_t i = 0; i < 4u; ++i) {
+            check_equal(cmeta_thread_join(&threads[i]), 0);
+            check_equal(workers[i].observed, 0x5a17);
+        }
+        cmeta_once(&ace_sync_once_guard, ace_sync_once_initialize);
+        check_equal(ace_sync_once_value, 0x5a17);
+        check_equal(ace_sync_once_calls, 1);
+    }
+
     it("isolates real Thread-Specific Storage across native workers and nested calls") {
         cmeta_thread_t threads[2] = {0};
         ace_sync_tls_worker workers[2] = {{11, 0, 0, 0, NULL},
