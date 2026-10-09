@@ -16,7 +16,7 @@
 /* Real CNet inbound/outbound sharing a NativeIO SG backend, with one short
  * owner-progress task per cycle. SG-owned pipe terminal uses the same observe
  * authority; no Actor, duplicate NativeIO observe, or blocking forever task. */
-enum { HOST_BATCH = 16u, HOST_TIMEOUT_MS = 6000u };
+enum { HOST_BATCH = 16u, HOST_TIMEOUT_MS = 8000u, HOST_MAX_OWNERS = 4u };
 typedef struct hosted_state hosted_state;
 typedef struct hosted_probe {
   hosted_state *host;
@@ -26,6 +26,7 @@ typedef struct hosted_probe {
 } hosted_probe;
 struct hosted_state {
   native_io_sharded *sg;
+  size_t owner_shard;
   native_io_sharded_host_lease lease;
   native_io_backend *backend;
   cnet_client inbound, outbound;
@@ -124,7 +125,7 @@ static bool host_quiescent(void *arg) {
 static void host_pipe_terminal(native_io_sharded_context *context,
                                const native_io_sharded_completion *event, void *arg) {
   hosted_state *f = (hosted_state *)arg;
-  if (native_io_sharded_context_shard(context) != 0u ||
+  if (native_io_sharded_context_shard(context) != f->owner_shard ||
       event->status != SALTS_OK || event->bytes != 1u || f->pipe_byte != 'X')
     host_record_error(f, SALTS_EPROTO);
   ++f->sg_terminal;
@@ -143,6 +144,10 @@ static void host_initialize(native_io_sharded_context *context, void *arg) {
   cnet_observer out = host_observer(&f->out_probe);
   cnet_stream_endpoint bind = CNET_STREAM_ENDPOINT_INIT;
   native_io_request accepted = {0};
+  if (native_io_sharded_context_shard(context) != f->owner_shard) {
+    host_record_error(f, SALTS_EPERM);
+    return;
+  }
   f->owner_thread = cmeta_thread_current_token();
   f->in_probe.host = f; f->in_probe.client = &f->inbound;
   f->in_probe.expected = "client";
@@ -212,6 +217,10 @@ static void host_progress(native_io_sharded_context *context, void *arg) {
   size_t count = 0u, events = 0u;
   int status;
   if (f->status != SALTS_OK || f->done) return;
+  if (native_io_sharded_context_shard(context) != f->owner_shard) {
+    host_record_error(f, SALTS_EPERM);
+    return;
+  }
   HOST_TASK_OK(f, cnet_client_advance_external(&f->inbound, &events));
   HOST_TASK_OK(f, cnet_client_advance_external(&f->outbound, &events));
   status = native_io_sharded_context_observe_host(
@@ -274,38 +283,86 @@ static void host_progress(native_io_sharded_context *context, void *arg) {
   }
 }
 
-spec("CNet native SG leased host with real TCP + SG-owned completions") {
-  it("co-drives inbound and outbound without stealing SG completions or blocking the Owner") {
-    hosted_state f = {0};
-    const native_io_sharded_config config = {
-        1u, 8u, {host_kind(), 24u, 48u, HOST_BATCH}};
-    native_io_sharded_task initialize = {host_initialize, NULL, NULL, &f};
-    native_io_sharded_task progress = {host_progress, NULL, NULL, &f};
-    uint64_t deadline = cmeta_monotonic_ms() + HOST_TIMEOUT_MS;
-    check_equal(native_io_sharded_create(&config, &f.sg), SALTS_OK);
-    check_equal(native_io_sharded_submit_to(f.sg, 0u, &initialize), SALTS_OK);
-    check_equal(native_io_sharded_wait(f.sg), SALTS_OK);
-    check_equal(f.status, SALTS_OK);
-    while (!f.done && f.status == SALTS_OK && cmeta_monotonic_ms() < deadline) {
-      check_equal(native_io_sharded_submit_to(f.sg, 0u, &progress), SALTS_OK);
-      check_equal(native_io_sharded_wait(f.sg), SALTS_OK);
-      if (!f.done) cmeta_sleep_ms(1u);
+/*
+ * Drive each Owner with a bounded routed task. Only its Owner sees the CNet
+ * listener, clients, endpoint and completion records. Waiting for the finite
+ * task round is a test barrier, not a forever-running executor task.
+ * Three topologies exercise actual inbound/outbound TCP + SG-owned I/O on
+ * 1/2/4 shards, without a second NativeIO observe or cross-Owner migration.
+ */
+static void host_run_topology(size_t owner_count) {
+  hosted_state hosts[HOST_MAX_OWNERS] = {0};
+  native_io_sharded *sg = NULL;
+  native_io_sharded_task initialize[HOST_MAX_OWNERS] = {{0}};
+  native_io_sharded_task progress[HOST_MAX_OWNERS] = {{0}};
+  const native_io_sharded_config config = {
+      owner_count, 8u, {host_kind(), 24u, 48u, HOST_BATCH}};
+  const uint64_t deadline = cmeta_monotonic_ms() + HOST_TIMEOUT_MS;
+  bool all_done = false;
+
+  check(owner_count > 0u && owner_count <= HOST_MAX_OWNERS);
+  check_equal(native_io_sharded_create(&config, &sg), SALTS_OK);
+  check_not_null(sg);
+
+  for (size_t i = 0u; i < owner_count; ++i) {
+    hosts[i].sg = sg;
+    hosts[i].owner_shard = i;
+    initialize[i] = (native_io_sharded_task){host_initialize, NULL, NULL, &hosts[i]};
+    progress[i] = (native_io_sharded_task){host_progress, NULL, NULL, &hosts[i]};
+    check_equal(native_io_sharded_submit_to(sg, i, &initialize[i]), SALTS_OK);
+  }
+  check_equal(native_io_sharded_wait(sg), SALTS_OK);
+  for (size_t i = 0u; i < owner_count; ++i) {
+    check_equal(hosts[i].status, SALTS_OK);
+    check_equal(hosts[i].lease.owner_shard, (uint32_t)i);
+    for (size_t j = 0u; j < i; ++j)
+      check(hosts[i].backend != hosts[j].backend);
+  }
+
+  while (!all_done && cmeta_monotonic_ms() < deadline) {
+    all_done = true;
+    for (size_t i = 0u; i < owner_count; ++i) {
+      check_equal(hosts[i].status, SALTS_OK);
+      if (hosts[i].done) continue;
+      all_done = false;
+      check_equal(native_io_sharded_submit_to(sg, i, &progress[i]), SALTS_OK);
     }
-    check_equal(f.status, SALTS_OK);
-    check(f.done);
-    check_equal(f.in_probe.bytes, (size_t)6u);
-    check_equal(f.out_probe.bytes, (size_t)6u);
-    check_equal(f.in_probe.connected, (size_t)1u);
-    check_equal(f.out_probe.connected, (size_t)1u);
-    check_equal(f.in_probe.terminal, (size_t)1u);
-    check_equal(f.out_probe.terminal, (size_t)1u);
+    if (all_done) break;
+    check_equal(native_io_sharded_wait(sg), SALTS_OK);
+    cmeta_sleep_ms(1u);
+  }
+
+  for (size_t i = 0u; i < owner_count; ++i) {
+    hosted_state *f = &hosts[i];
+    check_equal(f->status, SALTS_OK);
+    check(f->done);
+    check_equal(f->in_probe.bytes, (size_t)6u);
+    check_equal(f->out_probe.bytes, (size_t)6u);
+    check_equal(f->in_probe.sent, (size_t)6u);
+    check_equal(f->out_probe.sent, (size_t)6u);
+    check_equal(f->in_probe.connected, (size_t)1u);
+    check_equal(f->out_probe.connected, (size_t)1u);
+    check_equal(f->in_probe.terminal, (size_t)1u);
+    check_equal(f->out_probe.terminal, (size_t)1u);
 #if defined(__linux__)
-    check_equal(f.sg_terminal, (size_t)1u);
-    check_equal(f.sg_finalize, (size_t)1u);
+    check_equal(f->sg_terminal, (size_t)1u);
+    check_equal(f->sg_finalize, (size_t)1u);
 #endif
-    if (f.done) {
-      check_equal(native_io_sharded_shutdown(f.sg), SALTS_OK);
-      check_equal(native_io_sharded_destroy(f.sg), SALTS_OK);
-    }
+  }
+  if (all_done) {
+    check_equal(native_io_sharded_shutdown(sg), SALTS_OK);
+    check_equal(native_io_sharded_destroy(sg), SALTS_OK);
+  }
+}
+
+spec("CNet native SG leased host with real TCP + SG-owned completions") {
+  it("co-drives one SG Owner lane") {
+    host_run_topology(1u);
+  }
+  it("co-drives independent inbound/outbound CNet and SG I/O on two Owner shards") {
+    host_run_topology(2u);
+  }
+  it("co-drives independent inbound/outbound CNet and SG I/O on four Owner shards") {
+    host_run_topology(4u);
   }
 }
