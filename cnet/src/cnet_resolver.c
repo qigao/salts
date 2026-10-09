@@ -5,7 +5,6 @@
 #include <ares.h>
 #include <cnet/name_lookup.h>
 #include <salts/clock.h>
-#include <unicode/uidna.h>
 #include <stdatomic.h>
 #include <salts/thread.h>
 
@@ -79,7 +78,6 @@ typedef struct cnet_resolver_impl {
   size_t result_capacity, name_capacity;
   uint32_t lookup_timeout;
   cnet_ip_address *lookup_storage;
-  UIDNA *idna;
 } cnet_resolver_impl;
 
 static cnet_resolver_impl *cnet_resolver_get_impl(cnet_resolver *resolver) {
@@ -503,7 +501,6 @@ int cnet_resolver_destroy(cnet_resolver *resolver) {
 
   cmeta_mutex_destroy(&impl->state_lock);
   cmeta_mutex_destroy(&impl->control_lock);
-  if (impl->idna) uidna_close(impl->idna);
   free(impl->lookup_storage);
   free(impl->ready_events);
   free(impl->poll_fds);
@@ -542,7 +539,7 @@ void cnet_name_lookup_config_init(cnet_name_lookup_config *c) {
 }
 int cnet_name_lookup_init(cnet_name_lookup *lookup, const cnet_name_lookup_config *config) {
   cnet_name_lookup_config defaults; cnet_resolver resolver = {0}; cnet_resolver_impl *p;
-  UErrorCode error = U_ZERO_ERROR; int rc;
+  int rc;
   if (!config) { cnet_name_lookup_config_init(&defaults); config = &defaults; }
   if (!lookup || lookup->impl || config->size != sizeof(*config) || config->version != 1 ||
       !config->query_capacity || !config->results_per_query || !config->max_name_bytes ||
@@ -554,12 +551,10 @@ int cnet_name_lookup_init(cnet_name_lookup *lookup, const cnet_name_lookup_confi
   if (rc != SALTS_OK) { (void)cnet_module_shutdown(); return rc; }
   p = resolver.impl;
   p->lookup_storage = calloc(config->query_capacity * config->results_per_query, sizeof(cnet_ip_address));
-  p->idna = uidna_openUTS46(UIDNA_USE_STD3_RULES | UIDNA_CHECK_BIDI | UIDNA_CHECK_CONTEXTJ |
-                           UIDNA_CHECK_CONTEXTO | UIDNA_NONTRANSITIONAL_TO_ASCII, &error);
   p->lookup_identity = lookup_new_identity();
   p->result_capacity = config->results_per_query; p->name_capacity = config->max_name_bytes;
   p->lookup_timeout = config->timeout_ms;
-  rc = !p->lookup_storage || !p->lookup_identity || !p->idna || U_FAILURE(error) ? SALTS_ENOMEM : SALTS_OK;
+  rc = !p->lookup_storage || !p->lookup_identity ? SALTS_ENOMEM : SALTS_OK;
   if (rc == SALTS_OK && config->servers_csv) {
     ares_status_t status = ares_set_servers_ports_csv(p->channel, config->servers_csv);
     if (status != ARES_SUCCESS) rc = status == ARES_ENOMEM ? SALTS_ENOMEM : SALTS_EINVAL;
@@ -570,29 +565,70 @@ int cnet_name_lookup_init(cnet_name_lookup *lookup, const cnet_name_lookup_confi
   for (size_t i = 0; i < p->capacity; ++i) p->slots[i].addresses = p->lookup_storage + i * p->result_capacity;
   lookup->impl = p; return SALTS_OK;
 }
+/* CNet DNS accepts ASCII LDH hostnames and already-encoded A-labels only.
+ * Unicode/UTS #46 and Punycode validation belong to future #1088. */
+static int cnet_name_lookup_ascii_hostname(const char *name, size_t size,
+                                           char result[256]) {
+  size_t label_size = 0u;
+  if (size == 0u || size > 254u ||
+      (size == 254u && name[size - 1u] != '.')) return SALTS_EINVAL;
+  for (size_t i = 0u; i < size; ++i) {
+    unsigned char c = (unsigned char)name[i];
+    if (c == '.') {
+      if (label_size == 0u || result[i - 1u] == '-') return SALTS_EINVAL;
+      label_size = 0u;
+      result[i] = '.';
+      continue;
+    }
+    if (c >= 'A' && c <= 'Z') c = (unsigned char)(c + ('a' - 'A'));
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+          (c == '-' && label_size != 0u))) return SALTS_EINVAL;
+    if (++label_size > 63u) return SALTS_EINVAL;
+    result[i] = (char)c;
+  }
+  if (label_size != 0u && result[size - 1u] == '-') return SALTS_EINVAL;
+  if (size - (name[size - 1u] == '.' ? 1u : 0u) > 253u) return SALTS_EINVAL;
+  result[size] = '\0';
+  return SALTS_OK;
+}
+
 int cnet_name_lookup_normalize(cnet_name_lookup *lookup, const char *name, size_t size,
                               char *ascii, size_t capacity, size_t *out_size,
                               bool *out_numeric, cnet_ip_address *out_address) {
-  cnet_resolver_impl *p = lookup_impl(lookup); char result[256], numeric[4097]; cnet_ip_address address = {0};
-  UIDNAInfo info = UIDNA_INFO_INITIALIZER; UErrorCode error = U_ZERO_ERROR; int32_t length; bool is_numeric = false;
+  cnet_resolver_impl *p = lookup_impl(lookup);
+  char result[256], numeric[4097];
+  cnet_ip_address address = {0};
+  bool is_numeric = false;
   if (!p || !name || !ascii || !out_size || !size ||
-      size > p->name_capacity || capacity < sizeof(result) || memchr(name, 0, size)) return SALTS_EINVAL;
-  memcpy(numeric, name, size); numeric[size] = 0;
-  if (inet_pton(AF_INET, numeric, address.address) == 1) { address.family = CNET_DATAGRAM_ADDRESS_IPV4; is_numeric = true; }
-  else if (inet_pton(AF_INET6, numeric, address.address) == 1) {
-    address.family = CNET_DATAGRAM_ADDRESS_IPV6; is_numeric = true;
-    struct in6_addr ip; memcpy(&ip, address.address, 16);
-    if (IN6_IS_ADDR_V4MAPPED(&ip)) { memmove(address.address, address.address + 12, 4);
-      memset(address.address + 4, 0, 12); address.family = CNET_DATAGRAM_ADDRESS_IPV4; }
+      size > p->name_capacity || capacity < sizeof(result) ||
+      memchr(name, 0, size)) return SALTS_EINVAL;
+  memcpy(numeric, name, size);
+  numeric[size] = '\0';
+  if (inet_pton(AF_INET, numeric, address.address) == 1) {
+    address.family = CNET_DATAGRAM_ADDRESS_IPV4;
+    is_numeric = true;
+  } else if (inet_pton(AF_INET6, numeric, address.address) == 1) {
+    address.family = CNET_DATAGRAM_ADDRESS_IPV6;
+    is_numeric = true;
+    struct in6_addr ip;
+    memcpy(&ip, address.address, 16);
+    if (IN6_IS_ADDR_V4MAPPED(&ip)) {
+      memmove(address.address, address.address + 12, 4);
+      memset(address.address + 4, 0, 12);
+      address.family = CNET_DATAGRAM_ADDRESS_IPV4;
+    }
   }
-  if (is_numeric) { length = (int32_t)size; if (size >= sizeof(result)) return SALTS_EINVAL; memcpy(result, numeric, size + 1); }
-  else {
-    length = uidna_nameToASCII_UTF8(p->idna, name, (int32_t)size, result, sizeof(result), &info, &error);
-    if (U_FAILURE(error) || info.errors || length <= 0 || length >= (int32_t)sizeof(result) ||
-        length - (result[length - 1] == '.') > 253) return SALTS_EINVAL;
-    result[length] = 0;
+  if (is_numeric) {
+    if (size >= sizeof(result)) return SALTS_EINVAL;
+    memcpy(result, name, size);
+    result[size] = '\0';
+  } else if (cnet_name_lookup_ascii_hostname(name, size, result) != SALTS_OK) {
+    return SALTS_EINVAL;
   }
-  memcpy(ascii, result, (size_t)length + 1); *out_size = (size_t)length; if (out_numeric) *out_numeric = is_numeric; if (out_address) *out_address = address;
+  memcpy(ascii, result, size + 1u);
+  *out_size = size;
+  if (out_numeric) *out_numeric = is_numeric;
+  if (out_address) *out_address = address;
   return SALTS_OK;
 }
 int cnet_name_lookup_submit(cnet_name_lookup *lookup, const char *name, size_t size, cnet_name_query *out) {

@@ -1,7 +1,6 @@
 set(TARGET_NAME cnet)
 
 find_package(c-ares CONFIG REQUIRED)
-find_package(ICU REQUIRED COMPONENTS uc data)
 find_package(kcp CONFIG REQUIRED)
 find_package(GmSSL CONFIG REQUIRED)
 if(APPLE)
@@ -61,18 +60,13 @@ function(cnet_configure_target target_name)
     ${target_name}
     PUBLIC Salts::NativeIO Salts::Concurrency Salts::Core
     PRIVATE Salts::UriParser Salts::Platform Salts::CSTL monocypher cmeta_reed
-            ${cnet_cares_link_items} kcp::kcp c-ares::cares ICU::uc ICU::data
+            ${cnet_cares_link_items} kcp::kcp c-ares::cares
             GmSSL::GmSSL
             $<$<PLATFORM_ID:Windows>:crypt32>
             "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
             "$<$<PLATFORM_ID:Darwin>:-framework Security>"
             "$<$<PLATFORM_ID:iOS>:-framework CoreFoundation>"
             "$<$<PLATFORM_ID:iOS>:-framework Security>")
-  if(APPLE)
-    # vcpkg's ICU archives use Apple's libc++, even when Salts uses GNU C++.
-    # Keep that dependency private to CNet's C ABI and diagnostic archives.
-    target_link_libraries(${target_name} PRIVATE c++)
-  endif()
 endfunction()
 
 add_library(${TARGET_NAME} SHARED ${CNET_SOURCE_FILES})
@@ -131,16 +125,3 @@ endif()
 if(BUILD_BENCHMARKS OR CNET_BUILD_BENCHMARKS)
   add_subdirectory(benchmarks)
 endif()
-
-if(WIN32)
-  get_filename_component(_cnet_icu_libdir "${ICU_UC_LIBRARY_RELEASE}" DIRECTORY)
-  string(REGEX REPLACE "^([0-9]+).*" "\\1" _cnet_icu_major "${ICU_VERSION}")
-  foreach(component uc dt)
-    find_file(CNET_ICU_${component}_DLL NAMES icu${component}${_cnet_icu_major}.dll icu${component}.dll
-      PATHS "${_cnet_icu_libdir}/../bin" NO_DEFAULT_PATH REQUIRED)
-    install(FILES "${CNET_ICU_${component}_DLL}" TYPE BIN)
-  endforeach()
-endif()
-
-install(FILES "${ICU_INCLUDE_DIR}/../share/icu/copyright"
-  DESTINATION share/licenses/Salts/icu)

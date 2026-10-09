@@ -21,12 +21,14 @@ void cnet_name_lookup_config_init(cnet_name_lookup_config *config);
 /** Single serialized owner. Copies config; query/result storage has hard bounds.
  * Acquires the module itself. Init errors publish no owner. No worker thread. */
 int cnet_name_lookup_init(cnet_name_lookup *lookup, const cnet_name_lookup_config *config);
-/** Validates bounded UTF-8/IDNA using nontransitional UTS46, STD3, Bidi and
- * context checks. Numeric IP literals require no DNS. Normalized names are at
- * most 253 bytes excluding the optional root dot. No partial output on error.
- * Output buffer needs 256 bytes. Numeric addresses produce normalized text
- * unchanged; IPv4-mapped literals become IPv4 results. out_numeric and
- * out_address are optional; all other output pointers are required. */
+/** Accepts numeric IPv4/IPv6 and ASCII LDH hostnames only. Labels are
+ * 1..63 bytes, max 253 bytes excluding optional final dot; uppercase ASCII
+ * is lowercased. Existing Punycode A-labels pass through as ASCII but are
+ * NOT decoded or IDNA-validated. Raw non-ASCII/UTF-8 names fail closed.
+ * Future Unicode/UTS #46 conversion is tracked in Salts #1088.
+ * No partial output on error. Buffer needs 256 bytes. Numeric addresses
+ * remain unchanged; mapped IPv6 produces an IPv4 result. out_numeric and
+ * out_address are optional; other output pointers are required. */
 int cnet_name_lookup_normalize(cnet_name_lookup *lookup, const char *name, size_t size,
                               char *ascii, size_t capacity, size_t *out_size,
                               bool *out_numeric, cnet_ip_address *out_address);
