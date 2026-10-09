@@ -79,6 +79,22 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     PROPERTIES TIMEOUT 60)
 endif()
 
+# Windows-native ACE conformance: real overlapped named-pipe IOCP completion
+# with a live borrowed ComponentPlugin DSO Scope, no synthetic completion.
+if(WIN32)
+  cmake_add_test(cmeta_native_component_plugin_act_iocp_test
+    SOURCES component_plugin_native_io_iocp_act_test.c
+    LIBS Salts::ComponentPlugin Salts::NativeIO Salts::TinyTest
+    DEFS "COMPONENT_PROVIDER_PLUGIN_PATH=\"$<TARGET_FILE:cmeta_component_plugin_provider_fixture>\""
+    FOLDER "component-plugin/tests")
+  add_dependencies(cmeta_native_component_plugin_act_iocp_test
+    cmeta_component_plugin_provider_fixture)
+  set_target_properties(cmeta_native_component_plugin_act_iocp_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  set_tests_properties(cmeta_native_component_plugin_act_iocp_test
+    PROPERTIES TIMEOUT 60)
+endif()
+
 # Compile the same lifecycle source against a test-owned platform adapter.
 # Do not link ComponentPlugin: the graph runtime uses the real Platform library.
 cmake_add_test(cmeta_native_component_plugin_runtime_failure_test

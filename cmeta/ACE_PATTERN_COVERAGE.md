@@ -122,6 +122,19 @@ request/Plugin registry. Windows IOCP owns its separate native regression
 path; do not infer IOCP + DSO end-to-end coverage from these POSIX tests.
 The current HEAD must pass full native CI before this can be claimed qualified.
 
+### Windows IOCP × ACT × Plugin DSO integration (post-freeze)
+
+[Windows IOCP conformance](../component-plugin/tests/component_plugin_native_io_iocp_act_test.c)
+uses **actual overlapped named pipes** through the existing NativeIO IOCP
+backend. Two explicit cases observe successful PIPE_READ and cancellation,
+match exactly one ACT terminal, reject a stale-generation token, and prove
+that closing ComponentPlugin admission / completing NativeIO does **not**
+reclaim the borrowed Plugin Scope. Only explicit Scope release permits DSO
+generation drain and Plugin unload. This Windows-only fixture complements
+the existing Linux epoll / macOS kqueue nonblocking-pipe fixture; it does
+not add a Reactor/Proactor, hidden queue, or duplicate Plugin lease.
+Status: newly submitted, **requires native Windows CI evidence**.
+
 ## Active pattern-gap tracking
 
 Umbrella: [#1058 — POSA2 17-pattern coverage and conformance](https://github.com/qigao/salts/issues/1058). Missing semantic/composition slices:
