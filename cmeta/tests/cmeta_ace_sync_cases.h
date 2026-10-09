@@ -393,13 +393,14 @@ suite("CMeta ACE concurrent pattern composition") {
             ace_sync_mutex_policy_as_cmeta_ace_lockable(&inner_mutex);
         cmeta_ace_guard outer_guard = {0}, inner_guard = {0};
         check_equal(cmeta_ace_guard_enter(&outer_guard, &outer), CMETA_OK);
-        check_equal(cmeta_ace_guard_enter(&inner_guard, &inner), CMETA_OK);
-        /* Error is reported by the guarded work, not by the lock. */
+        /* Inner typed public gate must release on failed body while outer
+         * remains held; this is deliberately not a recursive acquisition. */
         ace_sync_counter counter = {inner, 0, 0u};
         ace_sync_operation operation = {&counter, 7, 55};
-        check_equal(ace_sync_fail_body(&operation), CMETA_CALLBACK_ERROR);
+        check_equal(ace_sync_counter_gate_run(&inner, &operation,
+                                              ace_sync_fail_body),
+                    CMETA_CALLBACK_ERROR);
         check_equal(operation.result, 55);
-        check_equal(cmeta_ace_guard_leave(&inner_guard), CMETA_OK);
         check_equal(cmeta_ace_guard_leave(&outer_guard), CMETA_OK);
         check_equal(cmeta_ace_guard_leave(&inner_guard), CMETA_INVALID_ARGUMENT);
         /* A later operation must be able to reacquire both native locks. */
