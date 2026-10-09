@@ -422,172 +422,19 @@ jobs:
           prefix="$GITHUB_WORKSPACE/stage/sdk/macos-arm64"
           archive="$prefix/lib/libtinytest.a"
           test -f "$archive"
-          # Apple's native Clang C11 consumers reference _ttest_active_config__,
-          # NOT GCC's ___emutls_v.ttest_active_config__ wrapper. A source-tree
-          # test against a build-tree object would not catch this SDK ABI bug.
+          # The SDK may not expose GNU GCC's emulated TLS wrapper when
+          # AppleClang C11 consumers expect one native Mach-O TLS variable.
           if nm -gU "$archive" | grep -F '___emutls_v.ttest_active_config__'; then
-            echo "macOS SDK TinyTest was compiled with incompatible emulated TLS" >&2
+            echo 'TinyTest SDK contains incompatible GCC emulated TLS' >&2
             exit 1
           fi
-          nm -gU "$archive" | grep -E '[[:space:]]_ttest_active_config__
-      - name: Install native arm64 SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          prefix="$GITHUB_WORKSPACE/stage/sdk/linux-arm64"
-          cmake --build --preset install-strip-linux-arm64-release-ci --parallel 2
-          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
-          test -f "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          test -f "$prefix/include/cmeta/function.h"
-          test -f "$prefix/include/cflow/function_projection.h"
-          test -f "$prefix/include/cmeta/interface.h"
-          test -f "$prefix/include/tinytest/detail/equality.h"
-          grep -F "Salts::CMeta" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
-          version=${{ inputs.version }}
-          commit=${{ github.sha }}
-          os=linux
-          arch=arm64
-          rid=linux-arm64
-          triplet=arm64-linux
-          profile=release
-          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
-          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
-          EOF
-        if: matrix.package && matrix.id == 'linux-arm64-release'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: salts-sdk-linux-arm64
-          path: stage/sdk
-          if-no-files-found: error
-          compression-level: 9
-        if: matrix.package && matrix.id == 'linux-arm64-release'
-      - name: Install Android SDK
-        if: matrix.family == 'android'
-        shell: bash
-        run: |
-          set -euo pipefail
-          prefix="$GITHUB_WORKSPACE/stage/sdk/android-arm64-v8a"
-          cmake --build --preset install-android-arm64-v8a-release-ci --parallel 2
-          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
-          test -f "$prefix/include/cmeta/function.h"
-          test -f "$prefix/include/cflow/function_projection.h"
-          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
-          test -f "$prefix/include/cmeta/interface.h"
-          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
-          grep -F "cmeta_interface_desc_valid" "$prefix/include/cmeta/interface.h"
-          grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
-          grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
-          test -f "$prefix/include/tinytest/detail/equality.h"
-          test -f "$prefix/include/tinymock.h"
-          test -f "$prefix/include/tinymock_support.h"
-          test -f "$prefix/include/tinymock_cmeta.h"
-          test -f "$prefix/include/tinymock_value.h"
-          test -f "$prefix/include/tinymock_function.h"
-          test -f "$prefix/include/tinymock_history.h"
-          test -f "$prefix/include/tinymock_actions.h"
-          test -f "$prefix/include/tinymock_return.h"
-          grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
-          version=${{ inputs.version }}
-          commit=$(git rev-parse HEAD)
-          os=android
-          abi=arm64-v8a
-          api=android-24
-          profile=release
-          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
-          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
-          EOF
-      - uses: actions/upload-artifact@v4
-        if: matrix.family == 'android'
-        with:
-          name: salts-sdk-android-arm64-v8a
-          path: stage/sdk
-          if-no-files-found: error
-          compression-level: 9
-      - name: Install iOS SDK
-        if: matrix.family == 'ios'
-        shell: bash
-        run: |
-          set -euo pipefail
-          prefix="$GITHUB_WORKSPACE/stage/sdk/${{ matrix.sdk }}"
-          cmake --build --preset "install-strip-${{ matrix.sdk }}-release-ci" --parallel 2
-          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
-          test -f "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          test -f "$prefix/include/cmeta/function.h"
-          test -f "$prefix/include/cflow/function_projection.h"
-          test -f "$prefix/include/cmeta/interface.h"
-          test -f "$prefix/include/tinytest/detail/equality.h"
-          test -f "$prefix/include/tinymock.h"
-          test -f "$prefix/include/tinymock_cmeta.h"
-          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
-          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
-          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
-          version=${{ inputs.version }}
-          commit=$(git rev-parse HEAD)
-          os=ios
-          rid=${{ matrix.sdk }}
-          triplet=${{ matrix.triplet }}
-          profile=release
-          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
-          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
-          EOF
-      - uses: actions/upload-artifact@v4
-        if: matrix.family == 'ios'
-        with:
-          name: salts-sdk-${{ matrix.sdk }}
-          path: stage/sdk
-          if-no-files-found: error
-          compression-level: 9
-      - name: Archive the complete build and source timestamps
-        if: matrix.artifact && !matrix.cross
-        shell: bash
-        env:
-          BUILD_ARTIFACT: native-${{ matrix.id }}
-          BUILD_DIRECTORY: ${{ matrix.build_dir }}
-        run: |
-          set -euo pipefail
-          git rev-parse HEAD > native-build-commit.txt
-          pwd -P > native-build-workspace.txt
-          printf '%s/%s\n' "$ImageOS" "$ImageVersion" > native-build-image.txt
-          printf '%s/%s/%s\n' "$RUNNER_OS" "$RUNNER_ARCH" "$ImageOS" > native-build-platform.txt
-          printf '%s\n%s\n' "$BUILD_ARTIFACT" "$BUILD_DIRECTORY" > native-build-profile.txt
-          git ls-files -z > native-build-sources.txt
-          paths=("${{ matrix.build_dir }}" vcpkg_installed)
-          if [ -d stage ]; then paths+=(stage); fi
-          if [ -d build/pr-base ]; then paths+=(build/pr-base/build/Msvc-Release/bin); fi
-          tar --format=pax -cf native-build.tar --null -T native-build-sources.txt \
-            native-build-commit.txt native-build-workspace.txt native-build-image.txt \
-            native-build-platform.txt native-build-profile.txt "${paths[@]}"
-      - name: Upload compiled inputs for benchmarks
-        if: matrix.artifact && !matrix.cross
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-${{ matrix.id }}
-          path: native-build.tar
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 1
-
-      - name: Report ccache compilation statistics
-        if: ${{ always() && steps.compiler_cache.outcome == 'success' }}
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          ccache --show-stats
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
+          nm -gU "$archive" | grep -F ' _ttest_active_config__'
           temp="$RUNNER_TEMP/salts-tinytest-installed-c11"
           mkdir -p "$temp"
           cat > "$temp/consumer.c" <<'EOF'
           #include <tinytest.h>
           spec("installed TinyTest C11 native TLS") {
-              it("uses the one released TinyTest runtime") {
+              it("links the one installed TinyTest runtime") {
                   check_equal(1, 1);
               }
           }
@@ -595,7 +442,6 @@ jobs:
           /usr/bin/clang -std=c11 -O2 -arch arm64 -I"$prefix/include" \
             "$temp/consumer.c" "$archive" -o "$temp/consumer"
           "$temp/consumer"
-
       - uses: actions/upload-artifact@v4
         with:
           name: salts-sdk-macos
