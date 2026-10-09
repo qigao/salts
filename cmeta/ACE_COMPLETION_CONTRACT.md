@@ -1,6 +1,6 @@
 # ACE/POSA2 completion contract — opt-in Leader/Followers and primitive conformance
 
-Status: **post-freeze design** on `feature/cmeta-ace-patterns`. This is not executable qualification, a new Salts 2.3 public ABI, or release approval. See #1058, #1064 and #1018.
+Status: **post-freeze design + isolated test-local prototype** on `feature/cmeta-ace-patterns`. This is not a productized executor, fully qualified conformance, a new Salts 2.3 public ABI, or release approval. See #1058, #1064 and #1018.
 
 ## Non-negotiable architectural split
 
@@ -49,7 +49,7 @@ exactly-one settlement + owned payload release
 4. C11 and C++17 exact typed Callable declarations, compile-negative wrong signature, ASan+UBSan and TSan where supported.
 5. Independent installed-SDK consumer **if** anything public is exported, plus a workload-specific comparison against ordinary SG. No speedup claims without measured data.
 
-**Decision gate:** until a concrete non-SG event-source consumer is identified, #1064 stays DESIGN ONLY / unsupported execution topology rather than a fake 17/17 completion.
+**Decision gate:** the `platform_ace_leader_followers(_cpp)_test` fixtures now exercise a bounded CPU-event prototype with explicit pre-handler successor election and type checks. Until a concrete non-SG consumer is identified and lifetime/DSO/release gates pass, #1064 stays TEST-LOCAL ONLY / NOT QUALIFIED, not a fake 17/17 completion.
 
 ## Remaining primitive-to-pattern obligations (#1058 phase B)
 
@@ -67,7 +67,7 @@ For all four: type exactness, owned/borrowed lifetimes, C11/C++17 conformance an
 - Interceptor (#1059): actual loaded DSO and borrowed ComponentPlugin Scope at `6185834`, full CI run 37869377431 passed; pending new fixture sanitizer and final candidate.
 - ACT (#1060): genuine epoll/kqueue NativeIO plus Plugin Scope and Windows IOCP evidence exist on the branch; exact-head and targeted sanitizer acceptance remain distinct.
 - Strategized Locking (#1061), Thread-Safe Interface (#1062), Monitor (#1063): tested reflected ports, actual mutex/RW/condition and concurrent fixtures exist; exact HEAD, negative cases and sanitizer completion must be independently verified.
-- Leader/Followers (#1064): **not implemented or qualified**; above design is deliberately not a claim of functionality.
+- Leader/Followers (#1064): **test-local prototype, not qualified or exported**; commit `70c3f24` adds 1/2/4-worker FIFO/baton/concurrent-producer/close/worker-failure tests with C11/C++17 strict signatures. A named non-SG production consumer and DSO/SDK qualification remain open.
 
 ## Ordering
 
@@ -98,4 +98,4 @@ thread-local addresses across owner migration or after exit.
 **Next evidence gate:** rerun the existing opt-in `[ACE-SAN]` ASan+UBSan/TSan
 selection on the latest test source, then restore the Draft PR title. This
 qualification does not include packaging, immutable 2.3 SDK acceptance or
-non-SG Leader/Followers execution.
+production non-SG Leader/Followers execution.

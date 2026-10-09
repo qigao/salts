@@ -22,7 +22,7 @@ Status vocabulary:
 - **REUSE:** runtime pattern is already implemented and directly exercised; no duplicate CMeta implementation is justified. Link its existing evidence.
 - **IMPLEMENTED / POST-FREEZE TESTED:** typed implementation and executable branch evidence exist after the functional freeze; final-head/full SDK acceptance is separate.
 - **COMPOSED / PARTIAL CONFORMANCE:** Platform primitives and some real pattern tests exist; some negative/lifecycle/SDK checks remain.
-- **DESIGN ONLY:** proposed topology has no implementation or named consumer; explicitly not qualified.
+- **TEST-LOCAL PROTOTYPE:** a bounded reference fixture exists without a named real consumer; it is explicitly not a product runtime or qualified SDK pattern.
 - **PRIMITIVES / GAP (historical):** retained only when describing the original audit, not the current table.
 
 ## All 17 POSA2 patterns
@@ -44,10 +44,10 @@ Status vocabulary:
 | 13 | Concurrency — **Active Object** | CFlow Actor, typed bounded Mailbox, Executor/Scheduler | reflected producer / action Strategy Interface | **QUALIFIED** | Preserve bounded admission, FIFO, stale refs and no hidden worker/queue through existing ACE tests. |
 | 14 | Concurrency — **Monitor Object** | Platform mutex/condition + domain state | typed Interface + scoped guard + condition predicate/protocol | **IMPLEMENTED / POST-FREEZE TESTED** | Actual synchronized method entry, condition-loop waiting, signal, nonrecursive internal calls, cancellation/close and no lost wake or early destruction; a mutex alone is not a Monitor Object. |
 | 15 | Concurrency — **Half-Sync/Half-Async** | CNet TCP → bounded CFlow Channel → Subscription → Actor | typed Channel/Subscriber/Action interfaces and explicit transfer | **QUALIFIED** | Existing real-loopback ACE fixture proves explicit two-level FULL and shutdown; no extra queue. |
-| 16 | Concurrency — **Leader/Followers** | existing thread/notification/executor primitives; CNet SG has fixed owners | explicit typed leader election/handoff and follower execution roles, if selected | **DESIGN ONLY** | First prove genuine baton transfer, exclusivity, fairness, stop/cancel and completion progress on an **opt-in execution topology**. Do not rename fixed SG ownership as Leader/Followers, and do not change CNet owners. |
+| 16 | Concurrency — **Leader/Followers** | existing Platform thread/mutex/condition primitives; CNet SG has fixed owners | explicit typed leader election/handoff and follower execution roles, if selected | **TEST-LOCAL PROTOTYPE (NOT QUALIFIED)** | `platform_ace_leader_followers_test` and `_cpp_test` exercise bounded copied CPU-event dispatch, explicit successor election, 1/2/4 workers, FIFO, concurrent producers, safe cancellation/close, and exact callback typing. No named non-SG consumer, runtime export, real DSO lease or installed SDK; no owner migration. |
 | 17 | Concurrency — **Thread-Specific Storage** | Platform `SALTS_THREAD_LOCAL` / thread affinity; `cmeta_local_type` lifecycle adapter | typed per-thread value + explicit init/get/destroy and ownership | **COMPOSED / PARTIAL CONFORMANCE** | Prove per-thread isolation, creation/exit, cleanup, nested calls and no borrow crossing thread exit/migration. `cmeta_local_type` is thread-*affine* storage, not automatic TLS allocation by itself. |
 
-**Current evidence snapshot (2026-10-09):** QUALIFIED 5 / REUSE 2 / IMPLEMENTED POST-FREEZE 5 / COMPOSED PARTIAL 4 / DESIGN ONLY 1. These are **evidence categories**, not a release percentage. See the exact-SHA ledger below; neither existence of code nor a prior CI success automatically qualifies a final SDK.
+**Current evidence snapshot (2026-10-09):** QUALIFIED 5 / REUSE 2 / IMPLEMENTED POST-FREEZE 5 / COMPOSED PARTIAL 4 / TEST-LOCAL PROTOTYPE 1. These are **evidence categories**, not a release percentage. See the exact-SHA ledger below; neither existence of code nor a prior CI success automatically qualifies a final SDK.
 
 ## Qualification dimensions and evidence discipline (2026-10-09)
 
@@ -55,7 +55,7 @@ Status vocabulary:
 
 | Dimension | Evidence required | Current disposition |
 |---|---|---|
-| Implementation | Native typed contract and authoritative runtime source/commit | 16 have implementation/reuse/composition; #1064 design only |
+| Implementation | Native typed contract and authoritative runtime source/commit | 16 have implementation/reuse/composition; #1064 has a test-local prototype, not a consumer executor |
 | Behavioral conformance | Positive, invalid-admission, lifecycle/terminal and negative tests with CTest name | See pattern fixtures and exact-source ledger below; gaps must stay explicit |
 | Sanitizers | Selected ASan+UBSan / TSan results tied to exact commit and selected tests | [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) at `c8c27cc`; not final HEAD/release |
 | Installed SDK | Out-of-tree C11/C++17 compile+run, ABI/SONAME and wrong-minor rejection | Some installed ACE consumers exist; immutable candidate verification remains #1018 |
@@ -102,7 +102,7 @@ frozen SHA `02b741a` does **not** qualify these new commits.
 | Monitor Object | [real guarded monitor fixture](tests/cmeta_ace_sync_cases.h), using Platform condition | More cancellation/timeout/fairness cases, CI |
 
 No new Reactor, Proactor, Actor, worker pool or CMeta scheduler was created.
-Leader/Followers remains a separate scoped design under #1064.
+Leader/Followers remains an optional, non-SG **test-local only** topology under #1064.
 
 ### ACT / Plugin lease test (post-freeze)
 
@@ -246,11 +246,11 @@ retroactively change frozen commit `02b741a`.
 | Interceptor, ACT (2) | Real loaded ComponentPlugin DSO invocation and real NativeIO request/cancel association; full host [#37869377431](https://github.com/qigao/salts/actions/runs/37869377431) at `6185834`; selected sanitizer suites [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) on later source | No implicit lease; final candidate SDK, full composition and downstream |
 | Strategized Locking, Thread-Safe Interface, Monitor Object (3) | Reflected C11/C++17 lockable/synchronized/condition tests, wrong-owner rejection and selected ASan+UBSan/TSan [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) | Exact final installed SDK and closure of any outstanding specific issue acceptance |
 | Wrapper Facade, Scoped Locking, safe Once/DCL, Thread-Specific Storage (4) | Shared real Platform primitives, negative lifecycle tests and native threads; host [#37875659581](https://github.com/qigao/salts/actions/runs/37875659581), latest TLS worker-lifetime host [#37877642307](https://github.com/qigao/salts/actions/runs/37877642307), and selected sanitizer [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) at `c8c27cc` | Wrapper requires quiescent close, TLS scalar cleanup is explicit (not automatic destructor); cross-platform exact-head/installed SDK release gates remain |
-| Leader/Followers (1) | **DESIGN ONLY / NOT IMPLEMENTED**: optional, truly non-SG event source; see [ACE_COMPLETION_CONTRACT.md](ACE_COMPLETION_CONTRACT.md) and #1064 | Must name a real consumer before implementing an optional executor, then prove baton, exclusive leader and 1/2/4 workers |
+| Leader/Followers (1) | **TEST-LOCAL PROTOTYPE / NOT QUALIFIED**: explicit pre-handler successor election, real mutex/condition workers, bounded copied FIFO and typed C11/C++17 callback contract in `platform_ace_leader_followers(_cpp)_test`; see [#1064](https://github.com/qigao/salts/issues/1064) and [commit `70c3f24`](https://github.com/qigao/salts/commit/70c3f249d1eff06122f35549a0bf8e27f7d68f72) | Named non-SG consumer, DSO provider scope, production ownership and installed SDK (only if exported), cross-platform/sanitizer qualification, comparison with SG if applicable |
 
 **Count:** 16 patterns have an implemented mechanism or executable composition
 at different qualification levels (including Reactor/Proactor REUSE);
-**Leader/Followers remains design-only**. This is explicitly **not** 16/17
+**Leader/Followers has only a test-local prototype, not a consumer runtime**. This is explicitly **not** 16/17
 or 17/17 fully qualified for release. In particular the earlier five
 `GAP` rows now have post-freeze implementation evidence and should not be
 read as unimplemented. All run numbers above certify only the particular
@@ -258,8 +258,8 @@ source and test selection they ran.
 
 **Admission decision:** no named non-SG consumer for #1064 has been
 established. A CNet SG owner lane is not a Leader/Followers executor. Do not
-add a speculative second queue/pool or relabel SG. Keep #1064 open and
-unimplemented pending a concrete consumer and explicit topology decision.
+add a production queue/pool or relabel SG. Keep #1064 open; the bounded
+fixture is an isolated prototype, not a shipped execution topology.
 
 **Release separation:** #1018 still requires immutable installed 2.3.0
 candidate, actual SONAME/package digest verification, Windows/macOS DSO
