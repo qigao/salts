@@ -43,6 +43,8 @@ typedef struct actor_edge_probe {
     cflow_actor *actor;
     cflow_actor_ref *self_ref;
     actor_blocker *blocker;
+    actor_blocker *done_blocker;
+    atomic_bool block_done;
     atomic_bool block_action;
     atomic_bool fail_guard;
     atomic_bool fail_action;
@@ -269,7 +271,15 @@ static void actor_edge_on_error(void *user, const char *message) {
 
 static void actor_edge_on_done(void *user) {
     actor_edge_probe *probe = (actor_edge_probe *)user;
-    if (probe != NULL) atomic_fetch_add(&probe->dones, 1);
+    if (probe == NULL) return;
+    if (atomic_load(&probe->block_done) && probe->done_blocker != NULL) {
+        const uint64_t started = cmeta_monotonic_ms();
+        atomic_store(&probe->done_blocker->entered, true);
+        while (cmeta_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS &&
+               !atomic_load(&probe->done_blocker->release))
+            cmeta_sleep_ms(1u);
+    }
+    atomic_fetch_add(&probe->dones, 1);
 }
 
 static bool actor_edge_fixture_init_with_scheduler_capacity(
@@ -1540,6 +1550,48 @@ static void actor_foreign_stop(void *user) {
 /* #1105: foreign stop must synchronize with an executing worker pump.
  * Run under source-instrumented TSan, not merely a Release-only matrix. */
 suite("CFlow worker Actor cross-thread terminal synchronization") {
+    it("keeps wait blocked until a worker terminal callback is complete") {
+        actor_edge_fixture fixture;
+        actor_blocker terminal = {0};
+        actor_wait_stats_context waiter = {0};
+        cmeta_thread_t wait_thread = {0};
+        cflow_actor_ref ref = {0};
+        const int payload = 42;
+        const cflow_event_view event = {
+            100u, &cmeta_type_int, &payload};
+
+        check_true(actor_edge_fixture_init(&fixture, 1u));
+        fixture.probe.done_blocker = &terminal;
+        atomic_store(&fixture.probe.block_done, true);
+        check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
+        check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
+        check_equal(cflow_actor_ref_try_send(&ref, &event),
+                    CFLOW_ACTOR_SEND_ACCEPTED);
+        check_true(wait_until_at_least(&fixture.probe.values, 1));
+        check_equal(cflow_actor_request_stop(&fixture.actor), CFLOW_ACTOR_OK);
+        check_true(wait_until_true(&terminal.entered));
+
+        /* STOPPED is visible but wait must still protect borrowed callback
+         * storage. The callback is deliberately held on the worker lane. */
+        check_equal(cflow_actor_current_state(&fixture.actor),
+                    CFLOW_ACTOR_STATE_STOPPED);
+        waiter.actor = &fixture.actor;
+        check_equal(cmeta_thread_create(
+                        &wait_thread, actor_wait_and_snapshot, &waiter), 0);
+        check_true(wait_until_true(&waiter.started));
+        cmeta_sleep_ms(10u);
+        check_false(atomic_load(&waiter.completed));
+
+        atomic_store(&terminal.release, true);
+        check_true(wait_until_true(&waiter.completed));
+        check_equal(cmeta_thread_join(&wait_thread), 0);
+        check_equal(waiter.state, CFLOW_ACTOR_STATE_STOPPED);
+        check_true(waiter.stats_valid);
+        check_equal(atomic_load(&fixture.probe.dones), 1);
+        cflow_actor_ref_release(&ref);
+        actor_edge_fixture_destroy(&fixture);
+    }
+
     it("settles a blocked worker action and foreign stop exactly once") {
         enum { STOP_RACE_REPETITIONS = 50 };
         for (int iteration = 0; iteration < STOP_RACE_REPETITIONS; ++iteration) {
