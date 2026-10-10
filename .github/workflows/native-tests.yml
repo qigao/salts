@@ -82,7 +82,7 @@ jobs:
       - name: Run POSIX execution and nested CSTL contracts
         if: matrix.family != 'windows' && matrix.execution
         shell: bash
-        run: ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cnet_api_test$|cmeta_native_|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
+        run: ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(test_cmeta_process$|native_io_test$|cflow_io_(actor|native|native_adapter|pipe)_test$|tinytest_regression_runtime$|cnet_api_test$|cmeta_native_|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
       - name: Run Windows execution and nested CSTL contracts
         if: matrix.family == 'windows' && matrix.execution
         shell: cmd
@@ -91,7 +91,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cnet_api_test$|cmeta_native_|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
+          ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(test_cmeta_process$|native_io_test$|cflow_io_(actor|native|native_adapter|pipe)_test$|tinytest_regression_runtime$|cnet_api_test$|cmeta_native_|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
       - name: Run reflected CFlow contracts
         if: matrix.projection
         shell: bash
