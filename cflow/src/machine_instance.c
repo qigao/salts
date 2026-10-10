@@ -5,6 +5,7 @@
 
 #include <salts/thread.h>
 
+#include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1358,17 +1359,41 @@ const char *cflow_machine_instance_error(
 
 void cflow_machine_instance_destroy(cflow_machine_instance *instance) {
     cflow_machine_instance_impl *impl;
+    bool owner_bound;
+    bool mailbox_armed;
     if (instance == NULL) return;
     impl = (cflow_machine_instance_impl *)instance->impl;
-    instance->impl = NULL;
-    if (impl != NULL) {
-        bool mailbox_armed;
-        cmeta_mutex_lock(&impl->lock);
-        mailbox_armed = impl->mailbox_armed;
-        impl->mailbox_armed = false;
-        cmeta_mutex_unlock(&impl->lock);
-        if (mailbox_armed) cflow_waitable_cancel(&impl->mailbox_waitable);
+    if (impl == NULL) return;
+    owner_bound = cflow_executor_has(impl->executor, CMETA_EXEC_CAP_OWNER_AFFINE);
+
+    /* A host-owner Executor has no worker. Waiting for its outstanding tasks
+     * and then freeing the Machine would leave borrowed task state dangling.
+     * Only the captured owner thread may cooperatively settle these tasks.
+     * Callback/wrong-owner destroy is a caller violation. */
+    if (owner_bound &&
+        (!cflow_executor_owner_is_thread_internal(impl->executor) ||
+         cflow_executor_is_current_internal(impl->executor))) {
+        assert(!"owner-bound Machine destroy requires an idle owner caller");
+        abort(); /* a void destroy cannot safely report partial teardown */
+    }
+
+    cmeta_mutex_lock(&impl->lock);
+    mailbox_armed = impl->mailbox_armed;
+    impl->mailbox_armed = false;
+    cmeta_mutex_unlock(&impl->lock);
+    if (mailbox_armed) cflow_waitable_cancel(&impl->mailbox_waitable);
+
+    if (owner_bound) {
+        /* Host must quiesce new producers before destroying Machine state. */
+        while (cflow_executor_pending(impl->executor) != 0u) {
+            if (!cflow_executor_run_one(impl->executor)) {
+                assert(!"owner-bound Machine has unprogressable tasks");
+                abort(); /* never free a queued task's borrowed Machine state */
+            }
+        }
+    } else {
         (void)cflow_executor_wait_idle(impl->executor);
     }
+    instance->impl = NULL;
     instance_impl_free(impl);
 }

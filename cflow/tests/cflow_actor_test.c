@@ -282,11 +282,12 @@ static void actor_edge_on_done(void *user) {
     atomic_fetch_add(&probe->dones, 1);
 }
 
-static bool actor_edge_fixture_init_with_scheduler_capacity(
+static bool actor_edge_fixture_init_with_mode(
     actor_edge_fixture *fixture,
     size_t mailbox_capacity,
     size_t scheduler_ready_capacity,
-    size_t scheduler_timer_capacity) {
+    size_t scheduler_timer_capacity,
+    bool owner_driven) {
     cflow_machine_state states[1];
     cflow_event_type events[ACTOR_EDGE_EVENT_TYPES];
     cflow_machine_guard guards[ACTOR_EDGE_EVENT_TYPES];
@@ -334,11 +335,19 @@ static bool actor_edge_fixture_init_with_scheduler_capacity(
     if (cflow_machine_build(&fixture->machine, &definition) !=
         CFLOW_MACHINE_OK)
         return false;
-    if (!cflow_executor_serial_init(&fixture->executor)) return false;
-    if (!cflow_scheduler_worker_init_with_capacity(
-            &fixture->scheduler, 1u, scheduler_ready_capacity,
-            scheduler_timer_capacity))
-        return false;
+    if (owner_driven) {
+        if (!cflow_executor_owner_init_with_capacity(
+                &fixture->executor, scheduler_ready_capacity, NULL, NULL) ||
+            !cflow_scheduler_owner_bind(&fixture->scheduler,
+                &fixture->executor, scheduler_ready_capacity))
+            return false;
+    } else {
+        if (!cflow_executor_serial_init(&fixture->executor)) return false;
+        if (!cflow_scheduler_worker_init_with_capacity(
+                &fixture->scheduler, 1u, scheduler_ready_capacity,
+                scheduler_timer_capacity))
+            return false;
+    }
     fixture->probe.actor = &fixture->actor;
     atomic_init(&fixture->probe.self_send_status,
                 (int)CFLOW_ACTOR_SEND_INVALID_ARGUMENT);
@@ -360,6 +369,15 @@ static bool actor_edge_fixture_init_with_scheduler_capacity(
         actor_edge_on_done,
         &fixture->probe};
     return cflow_actor_init(&fixture->actor, &config).status == CFLOW_ACTOR_OK;
+}
+
+static bool actor_edge_fixture_init_with_scheduler_capacity(
+    actor_edge_fixture *fixture,
+    size_t mailbox_capacity,
+    size_t scheduler_ready_capacity,
+    size_t scheduler_timer_capacity) {
+    return actor_edge_fixture_init_with_mode(fixture, mailbox_capacity,
+        scheduler_ready_capacity, scheduler_timer_capacity, false);
 }
 
 static bool actor_edge_fixture_init(actor_edge_fixture *fixture,
@@ -1643,6 +1661,83 @@ suite("CFlow worker Actor cross-thread terminal synchronization") {
                         CFLOW_ACTOR_SEND_STALE);
             cflow_actor_ref_release(&ref);
         }
+    }
+}
+
+suite("CFlow owner Actor teardown") {
+    static actor_edge_fixture fixture;
+    static cflow_actor_ref ref;
+
+    before_each() {
+        ref = (cflow_actor_ref){0};
+        check_true(actor_edge_fixture_init_with_mode(
+            &fixture, 2u, 4u, 0u, true));
+        check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
+    }
+
+    after_each() {
+        cflow_executor_control control = {0};
+        cflow_actor_destroy(&fixture.actor);
+        /* Keep failure cleanup safe if a regression leaves borrowed Machine
+         * tasks queued: discard descriptors instead of executing them. */
+        if (cflow_executor_valid(&fixture.executor) &&
+            cflow_executor_project_control(&fixture.executor, &control)) {
+            (void)cflow_executor_control_shutdown(
+                &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING);
+            (void)cflow_executor_run_ready(&fixture.executor);
+        }
+        cflow_actor_ref_release(&ref);
+        actor_edge_fixture_destroy(&fixture);
+    }
+
+    it("settles queued Machine work before releasing the Actor") {
+        const int payload = 42;
+        const cflow_event_view event = {100u, &cmeta_type_int, &payload};
+        check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
+        check_equal(cflow_actor_ref_try_send(&ref, &event),
+                    CFLOW_ACTOR_SEND_ACCEPTED);
+        /* The first Subscription turn queues a Machine task and yields. */
+        check_true(cflow_executor_run_one(&fixture.executor));
+        check_equal(cflow_executor_pending(&fixture.executor), (size_t)1u);
+
+        cflow_actor_destroy(&fixture.actor);
+        check_null(fixture.actor.impl);
+        check_equal(cflow_executor_pending(&fixture.executor), (size_t)0u);
+        check_equal(cflow_scheduler_pending(&fixture.scheduler), (size_t)0u);
+        check_equal(atomic_load(&fixture.probe.action_calls), 0);
+        check_equal(atomic_load(&fixture.probe.values), 0);
+        check_equal(cflow_actor_ref_try_send(&ref, &event),
+                    CFLOW_ACTOR_SEND_STALE);
+
+        /* Actor teardown must leave its borrowed execution lane usable. */
+        check_equal(cflow_executor_try_post(
+                        &fixture.executor, actor_scheduler_slot, NULL),
+                    CFLOW_ADMISSION_ACCEPTED);
+        check_true(cflow_executor_run_one(&fixture.executor));
+        check_false(cflow_executor_run_one(&fixture.executor));
+    }
+
+    it("destroys an owner Actor after normal terminal settlement") {
+        const int payload = 17;
+        const cflow_event_view event = {100u, &cmeta_type_int, &payload};
+        check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
+        check_equal(cflow_actor_ref_try_send(&ref, &event),
+                    CFLOW_ACTOR_SEND_ACCEPTED);
+        (void)cflow_scheduler_run_until_idle(&fixture.scheduler, 0u);
+        check_equal(atomic_load(&fixture.probe.action_calls), 1);
+        check_equal(atomic_load(&fixture.probe.values), 1);
+        check_equal(cflow_actor_request_stop(&fixture.actor), CFLOW_ACTOR_OK);
+        (void)cflow_scheduler_run_until_idle(&fixture.scheduler, 0u);
+        check_equal(cflow_actor_wait(&fixture.actor), CFLOW_ACTOR_STATE_STOPPED);
+        check_equal(atomic_load(&fixture.probe.dones), 1);
+
+        cflow_actor_destroy(&fixture.actor);
+        cflow_actor_destroy(&fixture.actor);
+        check_null(fixture.actor.impl);
+        check_equal(cflow_executor_pending(&fixture.executor), (size_t)0u);
+        check_equal(cflow_scheduler_pending(&fixture.scheduler), (size_t)0u);
+        check_equal(cflow_actor_ref_try_send(&ref, &event),
+                    CFLOW_ACTOR_SEND_STALE);
     }
 }
 
