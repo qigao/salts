@@ -286,6 +286,13 @@ static void run_fail(run_impl *r, const char *message) {
     run_fail_status(r, CFLOW_STATUS_EXECUTION_ERROR, message);
 }
 
+static void mark_source_done(run_impl *r) {
+    /* Terminal flags share the control-plane lock, including adjacent flag loads. */
+    cmeta_mutex_lock(&r->lock);
+    r->source_done = true;
+    cmeta_mutex_unlock(&r->lock);
+}
+
 static bool terminal_nodes_done(const run_impl *r) {
     if (!r || !r->subgraph) return true;
     for (size_t i = 0; i < r->subgraph->node_count; ++i) {
@@ -339,7 +346,7 @@ static void short_circuit_before_current_node(run_impl *r,
                                               cflow_node_id current_node) {
     if (!r) return;
     if (!r->source_done) cflow_publisher_cancel(&r->source);
-    r->source_done = true;
+    mark_source_done(r);
     /* Every frame present while processing this value is upstream of the
      * current node. Mark it terminal without destroying the live frame being
      * unwound; a continuation created later in the same path is downstream
@@ -901,12 +908,12 @@ static bool process_source_step(run_impl *r) {
         case CFLOW_STEP_VALUE:
             return process_source_value(r, has_first, first, source_type);
         case CFLOW_STEP_VALUE_AND_DONE:
-            r->source_done = true;
+            mark_source_done(r);
             return process_source_value(r, has_first, first, source_type);
         case CFLOW_STEP_WAIT:
             return arm_waitable(r, step.waitable);
         case CFLOW_STEP_DONE:
-            r->source_done = true;
+            mark_source_done(r);
             return true;
         case CFLOW_STEP_ERROR:
             run_fail(r, step.error ? step.error : "source error");
@@ -921,7 +928,7 @@ static bool poll_source_terminal(run_impl *r) {
     const char *err = NULL;
     cflow_publisher_terminal st = cflow_publisher_poll_terminal(&r->source, &err);
     if (st == CFLOW_PUBLISHER_ERROR) { run_fail(r, err ? err : "source terminal error"); return true; }
-    if (st == CFLOW_PUBLISHER_DONE) { r->source_done = true; return true; }
+    if (st == CFLOW_PUBLISHER_DONE) { mark_source_done(r); return true; }
     return false;
 }
 
@@ -1437,7 +1444,7 @@ cflow_status_result cflow_subscribe_subgraph_with_options(
             subgraph, (cflow_node_id)i);
         if (node && node->op == CFLOW_OP_TAKE &&
             node->has_size_parameter && node->size_parameter == 0u) {
-            r->source_done = true;
+            mark_source_done(r);
             cflow_publisher_cancel(&r->source);
             break;
         }

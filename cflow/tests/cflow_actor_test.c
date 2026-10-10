@@ -13,6 +13,7 @@
 enum {
     ACTOR_EDGE_EVENT_TYPES = 4,
     ACTOR_EDGE_OBSERVATIONS = 256,
+    ACTOR_STOP_RACE_ROUNDS = 64,
     ACTOR_TEST_TIMEOUT_MS = 5000
 };
 
@@ -599,6 +600,29 @@ static void actor_fixture_destroy(actor_fixture *fixture) {
 }
 
 suite("CFlow Actor lifecycle") {
+    it("settles a concurrent stop and source completion exactly once") {
+        for (size_t round = 0u; round < ACTOR_STOP_RACE_ROUNDS; ++round) {
+            actor_edge_fixture fixture;
+            cflow_actor_ref ref = {0};
+            const int payload = 1;
+            const cflow_event_view event = {100u, &cmeta_type_int, &payload};
+
+            check_true(actor_edge_fixture_init(&fixture, 1u));
+            check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
+            check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
+            check_equal(cflow_actor_ref_try_send(&ref, &event),
+                        CFLOW_ACTOR_SEND_ACCEPTED);
+            check_true(wait_until_at_least(&fixture.probe.values, 1));
+            check_equal(cflow_actor_request_stop(&fixture.actor), CFLOW_ACTOR_OK);
+            check_equal(cflow_actor_wait(&fixture.actor), CFLOW_ACTOR_STATE_STOPPED);
+            cflow_actor_ref_release(&ref);
+            actor_edge_fixture_destroy(&fixture);
+            check_equal(atomic_load(&fixture.probe.values), 1);
+            check_equal(atomic_load(&fixture.probe.dones), 1);
+            check_equal(atomic_load(&fixture.probe.errors), 0);
+        }
+    }
+
     it("runs Machine transitions on the CNet-compatible host owner without a new worker") {
         actor_edge_fixture fixture;
         cflow_actor_ref ref = {0};
