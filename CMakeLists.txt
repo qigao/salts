@@ -89,6 +89,8 @@ add_subdirectory(cnet)
 add_subdirectory(cflow/cnet-adapter)
 add_subdirectory(cserde)
 add_subdirectory(utils)
+# Exact RC5 Unicode source component; exported Salts::Unicode is required by SaltsUtils.
+add_subdirectory(unicode)
 
 if(WIN32)
   enable_language(RC)
