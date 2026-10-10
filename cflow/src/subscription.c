@@ -1569,7 +1569,10 @@ void cflow_subscription_close(cflow_subscription *run) {
             task_generation = r->scheduled_task_generation;
             scheduler_settles_cancel = r->scheduler_settles_cancel;
         }
-        if (task_id == 0u && (caps & CMETA_SCHED_CAP_CONCURRENT)) {
+        /* A borrowed owner Scheduler must cooperate with its own executor
+         * during close, not deadlock while waiting for owner-side work. */
+        if (task_id == 0u && (caps & CMETA_SCHED_CAP_CONCURRENT) &&
+            !cflow_scheduler_owner_is_thread_internal(r->scheduler)) {
             cmeta_cond_wait(&r->task_cv, &r->lock);
             cmeta_mutex_unlock(&r->lock);
             continue;

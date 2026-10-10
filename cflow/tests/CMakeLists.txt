@@ -275,6 +275,17 @@ cmake_add_test(cflow_execution_test
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_owner_executor_test
+  SOURCES cflow_owner_executor_test.c
+  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  FOLDER "cflow/tests")
+
+cmake_add_test(cflow_owner_scheduler_test
+  SOURCES cflow_owner_scheduler_test.c
+  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
+  FOLDER "cflow/tests")
+
 if(WIN32 AND NOT BUILD_SHARED_LIBS)
   add_library(cflow_executor_dso_fixture SHARED
     cflow_executor_dso_fixture.c
@@ -333,6 +344,8 @@ set_target_properties(
   cflow_statechart_hierarchy_adapter_test
   cflow_machine_instance_test
   cflow_actor_test
+  cflow_owner_executor_test
+  cflow_owner_scheduler_test
   cflow_statechart_actor_test
   cflow_io_actor_test
   cflow_io_publisher_test
