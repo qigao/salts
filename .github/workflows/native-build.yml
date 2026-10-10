@@ -139,7 +139,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R '^test_salts_unicode($|_)'
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R '^(test_salts_(unicode|idna)($|_)|cnet_name_lookup(_dns)?_test$)'
       - name: Qualify Unicode 17 conformance (Windows)
         if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && !matrix.full_tests && matrix.family == 'windows' }}
         timeout-minutes: 15
@@ -149,7 +149,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R "^test_salts_unicode($|_)"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R "^(test_salts_(unicode|idna)($|_)|cnet_name_lookup(_dns)?_test$)"
           if errorlevel 1 exit /b 1
       # PR 1085 isolated SG runtime gate.
       - name: Qualify SG Owner tests (Unix)
@@ -308,6 +308,8 @@ jobs:
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           test -f "$prefix/include/unicode/salts_unicode.h"
+          test -f "$prefix/include/unicode/salts_unicode_normalize.h"
+          test -f "$prefix/include/idna/salts_idna.h"
           grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           # Installed C11/C++ tests already ran through the parent CTest preset.
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
@@ -376,6 +378,10 @@ jobs:
           }
           $unicodeHeader = Join-Path $prefix "include\unicode\salts_unicode.h"
           if (-not (Test-Path -LiteralPath $unicodeHeader -PathType Leaf)) { throw "missing $unicodeHeader" }
+          foreach ($relative in @("include\unicode\salts_unicode_normalize.h", "include\idna\salts_idna.h")) {
+            $header = Join-Path $prefix $relative
+            if (-not (Test-Path -LiteralPath $header -PathType Leaf)) { throw "missing $header" }
+          }
           if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::Unicode" -Quiet)) {
             throw "missing Salts::Unicode export in $targets"
           }
@@ -434,6 +440,8 @@ jobs:
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           test -f "$prefix/include/unicode/salts_unicode.h"
+          test -f "$prefix/include/unicode/salts_unicode_normalize.h"
+          test -f "$prefix/include/idna/salts_idna.h"
           grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           # Installed C11/C++ tests already ran through the parent CTest preset.
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
@@ -498,6 +506,8 @@ jobs:
           grep -F "Salts::CMeta" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           test -f "$prefix/include/unicode/salts_unicode.h"
+          test -f "$prefix/include/unicode/salts_unicode_normalize.h"
+          test -f "$prefix/include/idna/salts_idna.h"
           grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
@@ -547,6 +557,8 @@ jobs:
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           test -f "$prefix/include/unicode/salts_unicode.h"
+          test -f "$prefix/include/unicode/salts_unicode_normalize.h"
+          test -f "$prefix/include/idna/salts_idna.h"
           grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ inputs.version }}
@@ -582,6 +594,8 @@ jobs:
           test -f "$prefix/include/tinymock_cmeta.h"
           grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           test -f "$prefix/include/unicode/salts_unicode.h"
+          test -f "$prefix/include/unicode/salts_unicode_normalize.h"
+          test -f "$prefix/include/idna/salts_idna.h"
           grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"

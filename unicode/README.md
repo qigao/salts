@@ -151,80 +151,42 @@ Debug/Release 分别使用独立前缀和缓存；CTest 仍执行真正的 C/C++
 Unicode/完整测试步骤已包含此测试，安装打包步骤不重复创建另一个消费 build。
 Android/iOS 仅在构建阶段验证，不将宿主执行结果当作移动端运行证据。
 
-## #1091 NFC / IDNA 设计提案（尚未实现）
+## Unicode 17 NFC 与 IDNA（#1091）
 
-以下为实现前的契约提案，不增加公开头文件或可调用占位接口；公开 API/ABI 仍需在
-M3 中审查。NFC 归 `Salts::Unicode`；IDNA 的独立 target 只依赖 Unicode 和 Core。
-复用 scalar/property 查询和不可变数据，不能在 IDNA 中复制另一套 Unicode 数据所有者。
-CNet 的调用边界接入属于 M4，本次迁移不改变 resolver 的实际行为。
+`<salts_unicode_normalize.h>` 提供显式 `salts_unicode_nfc`，版本参数必须为
+`SALTS_UNICODE_NFC_17_0_0`。调用者提供 uint32_t workspace 和 UTF-8 output，
+无隐藏堆分配；所有区域互不重叠，任意失败保持 output 和成功长度不变。
+NFC 支持合法 NUL scalar，实施规范分解、CCC 稳定重排、受阻组合、composition
+exclusions 和 Hangul；不会隐式改变现有 scanner/case/property API 行为。
 
-### 固定处理规则
+```c
+#include <salts_unicode_normalize.h>
+uint32_t work[32];
+char output[32];
+size_t size = 0;
+salts_unicode_nfc_status rc = salts_unicode_nfc(
+    vstr_from_cstr("e\xcc\x81"), SALTS_UNICODE_NFC_17_0_0,
+    work, 32, output, sizeof output, &size);
+/* rc == SALTS_UNICODE_NFC_OK: output contains UTF-8 U+00E9, size == 2. */
+```
 
-首版明确请求 Unicode 17.0.0 和 UTS #46 revision 35，版本不支持时失败，不能随着
-宿主库或包更新默默切换。基础扫描仍不执行隐式规范化；NFC 不等于 NFKC、case folding
-或 locale case conversion。NFC 需要规范分解、稳定的 combining-class 重排、受阻组合、
-composition exclusions 和 Hangul 规则，数据来源固定为 Unicode 17 UCD。
+workspace_capacity 按 uint32_t 元素计，output_capacity 按字节计且需要包含末尾 NUL。
+每个输入字节预留四个 workspace 元素是充分上界；分配前由调用方检查乘法和预算，
+较小 workspace 在实际分解可容纳时同样可用。错误区分参数、版本、UTF-8、workspace、
+output capacity、overflow。重排最坏复杂度为最长组合序列长度的平方；应用需限定输入预算。
+`salts_unicode_normalization_properties_of` 返回 Unicode 17 CCC 与 General_Category=Mark
+判定，包含 CCC=0 的 Mark，不执行规范化。
 
-M3 需要补齐固定版本的 `DerivedNormalizationProps.txt` / composition exclusions、
-IDNA mapping、Joining_Type 及 Script 等实际规则输入。现有 UnicodeData/Bidi 数据
-不能替代全部这些属性；新增源文件与生成器必须记录官方 URL、版本、哈希和许可，
-生成结果可重现并只读，不依赖宿主 Python/ICU 的 Unicode 版本。
+独立的 [`Salts::IDNA`](../idna/README.md) 复用 NFC、scanner 和 Bidi_Class，提供
+固定版本的 UTS #46 nontransitional ToASCII，完整说明 profile、ContextJ/O、A-label、
+容量、错误和连接身份约束。它只依赖 Unicode/Core，不向基础 Unicode 引入 DNS、CNet、
+TLS、ICU 或 SaltsUtils。公开头文件只包含已实现的接口，不包含占位 API。
 
-ToASCII 首版提议固定为 nontransitional，`UseSTD3ASCIIRules`、`CheckHyphens`、
-`CheckBidi`、`CheckJoiners`、`VerifyDnsLength` 全部开启，`IgnoreInvalidPunycode` 关闭。
-ContextO 是另加的接纳规则，需独立错误分类与测试；这不构成完整的严格 IDNA2008
-接纳声明。若另需严格 IDNA2008，须单独审查它对 UTS #46 有效输入的进一步限制。
+正式 `test_salts_unicode_normalize` 运行 Unicode 17 `NormalizationTest.txt` 全部
+20,034 条五列 NFC 不变量及 Part 1 未列出合法 scalar 的恒等性；现有安装测试同时
+覆盖 C11/C++17 的 NFC/IDNA 导出。数据和生成方法见 [data/README.md](data/README.md)。
+平台与 sanitizer 验证以实际运行记录为准，不能将交叉编译当作设备运行结果。
 
-处理顺序为严格 UTF-8 解码、UTS #46 mapping、NFC、按映射后的点分标签、A-label
-解码及标签校验、Punycode 编码和 DNS 长度校验，全部成功后提交输出。已有 `xn--`
-输入必须验证，解码后不重新 mapping/NFC 来修复非法标签。Bidi 是否启用标签约束取决于
-整个解码后域名，不能只检查当前 RTL 标签。当前 Bidi_Class 查询可复用，但
-`salts_unicode_bidi_paragraph_level` 只实现 UAX #9 P2/P3，不能代替 RFC 5893。
-
-为使首版严格长度策略明确，提议拒绝空域名、根域名、内部空标签及尾点；不偷偷删除
-尾点改变绝对域名语义。如需支持带尾点 FQDN，须作为独立的显式策略审查和测试。
-长度在 ASCII 编码完成后按字节校验：标签 1–63，所选无尾点格式的域名 1–253。
-IPv4/IPv6 literal、URI authority、端口和 percent-decoding 由应用边界单独处理，
-ToASCII 不接收完整 URL。通用 NFC 保留合法 NUL scalar，域名接口明确拒绝 embedded NUL。
-
-### 所有权、容量和错误
-
-- 输入是调用期间不可变的显式长度 `vstr`，不保留、不异步使用；输出和 workspace
-  均由调用者唯一持有，输入、输出及 workspace 不得重叠。
-- 首版采用调用者提供的有界 workspace，不隐藏堆分配。API 设计需同时给出输入字节
-  预算、workspace 字节容量和输出容量；mapping/分解扩展及 Punycode 乘加必须检查
-  溢出。DNS 输出长度上限不能替代中间存储预算，资源超限与域名非法分别报告。
-- 先在 workspace 中完成验证和候选输出，再一次性写入 destination。任意错误保持
-  destination 与成功长度输出不变；workspace 内容不保证保留。成功的 ToASCII 输出
-  以 NUL 终止，报告长度不含 NUL，容量必须容纳 `length + 1`；不截断、不发布部分结果。
-- 错误至少区分参数、版本、UTF-8、mapping/禁止字符、标签/A-label、Bidi、ContextJ、
-  ContextO、DNS 长度、workspace/输出容量及算术溢出。确定失败即返回，调用者不得
-  使用失败输出发起 DNS。错误定位必须区分原始字节位置与规范化后标签索引；不能把
-  后者冒充源输入 offset。无需承诺返回官方测试文件的所有细分状态码。
-- 数据只读；不同线程可并发处理独立 workspace/output，输入可共享只读借用。
-  不建立全局可变转换 context，不增加隐藏锁、队列、缓存或初始化/关闭流程。
-
-### 实现与验收顺序
-
-先完成 NFC 和官方 `NormalizationTest.txt`，再实现版本化 mapping、Punycode 及标签
-规则；最后完成事务式输出和安装 ABI 测试。`IdnaTestV2.txt` 按 nontransitional 列和
-空字段继承规则解析，分别报告基准算法覆盖、资源限制及 ContextO 等附加接纳规则；
-文件本身不覆盖 ContextO，不能用它证明 ContextO 已通过。
-
-正式测试覆盖非法 UTF-8、NUL、组合顺序/Hangul、四种标签分隔符、sharp-s、joiner、
-伪 A-label、跨标签 Bidi、ContextO 正反例、空/尾点、标签 63/64 字节、域名 253/254
-字节，以及 workspace/output 恰限和不足时输出不变。fuzz 与 ASan/UBSan 覆盖实际
-算法库；只给外部测试 executable 加 sanitizer 不能声称整个 SDK 已插桩。
-Windows/Linux/macOS 执行 C11/C++ 安装测试，Android/iOS 单独报告交叉构建覆盖。
-
-M4 仅在应用边界成功转换后使用同一个 ASCII 身份进行 DNS、TLS hostname 验证及
-上层 authority 处理；保留 numeric-IP 的独立路径。显示用原始 Unicode 与连接身份
-分离，UTS #46 接纳不能作为视觉反欺骗结论。M3 未验收前不启用新的转换路径，也不
-新增 ICU fallback。回滚 M3/M4 时一起撤回调用点和对应导出，不保留只声明的接口。
-
-标准和测试事实源：
-[UAX #15 revision 57](https://www.unicode.org/reports/tr15/tr15-57.html)、
-[UTS #46 revision 35](https://www.unicode.org/reports/tr46/tr46-35.html)、
-[RFC 5893](https://www.rfc-editor.org/rfc/rfc5893.html)、
-[RFC 5892 Appendix A](https://www.rfc-editor.org/rfc/rfc5892.html#appendix-A)、
-[Unicode 17 IDNA tests](https://www.unicode.org/Public/17.0.0/idna/IdnaTestV2.txt)。
+原 SaltsUtils Unicode 所有权迁移的配对发布要求保持不变。当前只是提供可显式调用的
+转换库和本地 DNS 集成测试；不自动启用消费应用的转换路径，不修改 CNet 的 ASCII、
+尾点或 numeric-IP 接纳语义。DNS、TLS hostname 与 SNI 必须使用同一成功 ASCII 结果。

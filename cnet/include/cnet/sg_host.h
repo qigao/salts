@@ -34,6 +34,18 @@ int cnet_sg_host_route_batch(const native_io_sharded_completion *events,
                              size_t count, const cnet_sg_host_routes *routes,
                              size_t *out_accepts, size_t *out_sharded);
 
+/* Additive mixed-transport form; routes and its ABI are unchanged. The borrowed
+ * datagram array contains datagram_count live external instances on this Owner's
+ * backend. NULL is valid only for count zero. Datagram request identity is tried
+ * before listener/client routing. A consumed or failed route is never retried
+ * against another object; the whole batch is still examined. No observe occurs.
+ * Returns EINVAL for malformed arrays, otherwise the first route error. Output
+ * counters have the same meaning as route_batch; UDP callbacks run inline. */
+int cnet_sg_host_route_batch_with_datagrams(
+    const native_io_sharded_completion *events, size_t count,
+    const cnet_sg_host_routes *routes, cnet_datagram *const *datagrams,
+    size_t datagram_count, size_t *out_accepts, size_t *out_sharded);
+
 #ifdef __cplusplus
 }
 #endif

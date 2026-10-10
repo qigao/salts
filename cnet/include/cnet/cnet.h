@@ -326,7 +326,9 @@ typedef void (*cnet_receive_fn)(void *user, cnet_connection connection,
 typedef void (*cnet_receive_slice_fn)(void *user, cnet_connection connection,
                                       mem_slice_t slice, cnet_message_kind kind);
 
-/** Reports one successfully completed ordered write. */
+/** Reports one successfully completed ordered write. An opt-in dedicated WS
+ * transport binding consumes its own frame notifications instead of forwarding
+ * them here; receive/state observer ownership is unchanged. */
 typedef void (*cnet_send_fn)(void *user, cnet_connection connection, size_t size);
 
 typedef struct cnet_observer {

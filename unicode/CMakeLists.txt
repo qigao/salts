@@ -76,6 +76,7 @@ add_custom_command(
 add_library(
   salts_unicode STATIC
   include/salts_unicode.h src/salts_unicode_case.c src/unicode_case_data.h
+  include/salts_unicode_normalize.h src/salts_unicode_normalize.c src/unicode_normalization_data.h
   src/salts_unicode_grapheme.c src/unicode_grapheme_data.h
   src/salts_unicode_word.c src/unicode_word_data.h
   src/salts_unicode_line_break.c src/unicode_line_break_data.h
@@ -105,7 +106,7 @@ install(
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
-install(FILES include/salts_unicode.h DESTINATION include/unicode)
+install(FILES include/salts_unicode.h include/salts_unicode_normalize.h DESTINATION include/unicode)
 install(FILES data/LICENSE.txt
         DESTINATION share/licenses/salts_unicode)
 

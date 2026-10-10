@@ -1,3 +1,10 @@
+cmake_add_test(test_salts_unicode_normalize
+  SOURCES test_salts_unicode_normalize.c
+  LIBS Salts::Unicode Salts::TinyTest
+  DEFS SALTS_NFC_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/../data/17.0.0/NormalizationTest.txt"
+  FOLDER "unicode/tests")
+set_tests_properties(test_salts_unicode_normalize PROPERTIES LABELS "unicode;nfc;conformance")
+
 cmake_add_test(test_salts_unicode
   SOURCES test_salts_unicode.c
   LIBS Salts::Unicode Salts::TinyTest

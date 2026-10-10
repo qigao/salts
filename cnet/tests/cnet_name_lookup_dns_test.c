@@ -1,4 +1,5 @@
 #include <cnet/name_lookup.h>
+#include <salts_idna.h>
 #include <salts/error_codes.h>
 #include <salts/clock.h>
 #include <fmt.h>
@@ -12,6 +13,7 @@ static unsigned replies;
 static int response_status;
 static bool silent;
 static uint16_t server_port;
+static bool check_idna_question, idna_question_matches;
 static void sent(void *u, cnet_datagram *d, const cnet_datagram_peer *p, size_t n, int rc, uint64_t tag) {
   (void)u; (void)d; (void)p; (void)n; (void)tag; response_status = rc;
 }
@@ -25,6 +27,11 @@ static void received(void *u, cnet_datagram *d, const cnet_datagram_peer *p, con
     question += label + 1;
   }
   if (question + 5 > v->size) return;
+  if (check_idna_question) {
+    static const unsigned char expected[] = "\x0d" "xn--bcher-kva" "\x04" "test";
+    if (question + 1 - 12 != sizeof expected ||
+        memcmp(request + 12, expected, sizeof expected) != 0) idna_question_matches = false;
+  }
   unsigned type = ((unsigned)request[question + 1] << 8) | request[question + 2];
   memcpy(response,request,question + 5); response[2] = 0x81; response[3] = 0x80;
   response[6] = 0; response[7] = 2; response[8] = response[9] = response[10] = response[11] = 0;
@@ -57,6 +64,7 @@ suite("CNet deterministic local DNS address streams") {
   before_each() {
     memset(&server,0,sizeof(server)); memset(&lookup,0,sizeof(lookup)); memset(&query,0,sizeof(query));
     replies = 0; response_status = 0; silent = false;
+    check_idna_question = false; idna_question_matches = true;
     cnet_datagram_config dc = CNET_DATAGRAM_CONFIG_INIT;
 #if defined(_WIN32)
     dc.backend = NATIVE_IO_BACKEND_IOCP;
@@ -94,6 +102,28 @@ suite("CNet deterministic local DNS address streams") {
       else check_equal(addresses[i].address[15], ++v6);
     }
     check_equal(v4,2u); check_equal(v6,2u);
+  }
+  it("resolves an explicitly converted Unicode domain with its ASCII wire identity") {
+    char mapped[256], normalized[256], ascii[254]; uint32_t scalars[256];
+    salts_idna_workspace workspace = {mapped, sizeof mapped, normalized, sizeof normalized, scalars, 256};
+    vstr input = vstr_from_cstr("b\xc3\xbc" "cher.test");
+    size_t ascii_size = 0;
+    check_equal(cnet_name_lookup_submit(&lookup, input.data, input.len, &query), SALTS_EINVAL);
+    check_equal(query.owner, (uint64_t)0);
+    check_equal(salts_idna_to_ascii(input, SALTS_IDNA_UNICODE17_UTS46_35_STRICT,
+        &workspace, ascii, sizeof ascii, &ascii_size), SALTS_IDNA_OK);
+    check_equal(ascii, "xn--bcher-kva.test");
+    check_idna_question = true;
+    check_equal(cnet_name_lookup_submit(&lookup, ascii, ascii_size, &query), SALTS_OK);
+    cnet_ip_address address; size_t count = 0; int rc = SALTS_ETIMEDOUT;
+    uint64_t deadline = cmeta_monotonic_ms() + 5000;
+    while (cmeta_monotonic_ms() < deadline) {
+      progress(); rc = cnet_name_lookup_next(&lookup, query, &address);
+      if (rc == SALTS_OK) ++count;
+      else if (rc != SALTS_ETIMEDOUT) break;
+    }
+    check_equal(rc, SALTS_EOF); check_equal(count, (size_t)4);
+    check_equal(replies, 2u); check_true(idna_question_matches);
   }
   it("rejects overflowing result storage without a partial successful list") {
     check_equal(cnet_name_lookup_close(&lookup), SALTS_OK); check_equal(cnet_name_lookup_destroy(&lookup), SALTS_OK);

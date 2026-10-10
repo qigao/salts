@@ -37,3 +37,34 @@ python unicode/test/verify_names.py build/Clang-Release/bin/salts_unicode.dll --
 
 本批事实：全量校验 320,564 次查询通过。MSVC Release DLL 从 59,904 增至 2,214,400 字节，
 增量为 2,154,496 字节；不声称压缩或性能优化收益。
+
+## NFC / IDNA 数据（Unicode 17.0.0）
+
+原始文件未经修改，沿用 Unicode License v3。普通构建使用已提交的只读生成表，无运行时数据文件依赖。
+
+| 文件 | 官方来源 | SHA-256 |
+| --- | --- | --- |
+| `DerivedNormalizationProps.txt` | https://www.unicode.org/Public/17.0.0/ucd/DerivedNormalizationProps.txt | `71fd6a206a2c0cdd41feb6b7f656aa31091db45e9cedc926985d718397f9e488` |
+| `NormalizationTest.txt` | https://www.unicode.org/Public/17.0.0/ucd/NormalizationTest.txt | `5019ffd530751a741900c849c0e010332f142a3612234639bd200b82138a87db` |
+| `DerivedJoiningType.txt` | https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedJoiningType.txt | `f39ebe974825d6736aee15582250307aa532b2cfab3caf3f86bd23fddc9c5c4d` |
+| `Scripts.txt` | https://www.unicode.org/Public/17.0.0/ucd/Scripts.txt | `9f5e50d3abaee7d6ce09480f325c706f485ae3240912527e651954d2d6b035bf` |
+| `IdnaMappingTable.txt` | https://www.unicode.org/Public/17.0.0/idna/IdnaMappingTable.txt | `87f05505dc026fdb2bff16132bdc68a8014675836882a9a2b1844540ad3be382` |
+| `IdnaTestV2.txt` | https://www.unicode.org/Public/17.0.0/idna/IdnaTestV2.txt | `beb5d0be20e896189b03209a82fdc34f06351502bbd4b8e2523583fc2954d9cf` |
+
+`generate_normalization_data.py` 还使用现有 `UnicodeData.txt`，哈希为
+`2e1efc1dcb59c575eedf5ccae60f95229f706ee6d031835247d843c11d96470c`，
+来源 https://www.unicode.org/Public/17.0.0/ucd/UnicodeData.txt。
+Full_Composition_Exclusion 从 DerivedNormalizationProps 导出，覆盖完整排除集合。
+Joining_Type 和 Script 仅在 IDNA 中生成 RFC 5892 所需的上下文判定表；CCC、Mark、NFC
+与 Bidi 的运行时事实源归 Unicode，不复制进 IDNA。
+
+```powershell
+python unicode/tools/generate_normalization_data.py
+python idna/tools/generate_idna_data.py
+python unicode/tools/generate_normalization_data.py --check
+python idna/tools/generate_idna_data.py --check
+```
+
+两个生成器首先校验上述固定输入哈希，生成 LF/ASCII 表，不查询 Python 的 Unicode
+数据库。`--check` 核对提交的表与重建结果一致。源数据/版本升级须同时更新哈希、公开
+版本/profile、生成表和一致性测试。完整 NFC/IDNA 测试归正式 CTest，不在生成器中运行库。

@@ -19,7 +19,7 @@
 #include <unistd.h>
 #endif
 
-/* Real CNet inbound/outbound sharing a NativeIO SG backend, with one short
+/* Real CNet TCP inbound/outbound and UDP sharing a NativeIO SG backend, with one short
  * owner-progress task per cycle. SG-owned pipe terminal uses the same observe
  * authority; no Actor, duplicate NativeIO observe, or blocking forever task. */
 enum { HOST_BATCH = 16u, HOST_TIMEOUT_MS = 8000u, HOST_MAX_OWNERS = 4u,
@@ -49,6 +49,8 @@ struct hosted_state {
   native_io_sharded_host_lease lease;
   native_io_backend *backend;
   cnet_client inbound, outbound;
+  cnet_datagram datagrams[2];
+  size_t udp_received, udp_sent;
   cnet_listener listener;
   /* Helpers borrow one outbound CNet client on the same SG Owner lane.
    * They do not add a backend, progress thread, poll authority, or queue. */
@@ -410,6 +412,22 @@ static int host_finish_managed_client(hosted_state *f) {
   return SALTS_OK;
 }
 
+static void host_udp_received(void *user, cnet_datagram *datagram,
+    const cnet_datagram_peer *peer, const cnet_receive_view *view) {
+  hosted_state *f = (hosted_state *)user;
+  (void)datagram; (void)peer;
+  if (f->owner_thread != cmeta_thread_current_token() || view->size != 3u ||
+      memcmp(view->data, "udp", 3u) != 0) host_record_error(f, SALTS_EPROTO);
+  ++f->udp_received;
+}
+static void host_udp_sent(void *user, cnet_datagram *datagram,
+    const cnet_datagram_peer *peer, size_t size, int status, uint64_t tag) {
+  hosted_state *f = (hosted_state *)user;
+  (void)datagram; (void)peer;
+  if (f->owner_thread != cmeta_thread_current_token() || size != 3u ||
+      status != SALTS_OK || tag != 1u) host_record_error(f, SALTS_EPROTO);
+  ++f->udp_sent;
+}
 static void host_initialize(native_io_sharded_context *context, void *arg) {
   hosted_state *f = (hosted_state *)arg;
   cnet_client_config network = host_config();
@@ -431,6 +449,14 @@ static void host_initialize(native_io_sharded_context *context, void *arg) {
       context, host_quiescent, f, &f->lease, &f->backend));
   HOST_TASK_OK(f, cnet_client_init_external(&f->inbound, &network, f->backend));
   HOST_TASK_OK(f, cnet_client_init_external(&f->outbound, &network, f->backend));
+  for (size_t i = 0u; i < 2u; ++i) {
+    cnet_datagram_config udp = CNET_DATAGRAM_CONFIG_INIT;
+    udp.backend = host_kind(); udp.host = "127.0.0.1";
+    udp.send_capacity = 2u; udp.request_capacity = 3u; udp.completion_batch_capacity = 3u;
+    udp.max_datagram_bytes = 32u; udp.receive_buffer_bytes = 32u;
+    udp.observer = (cnet_datagram_observer){host_udp_received, host_udp_sent, f};
+    HOST_TASK_OK(f, cnet_datagram_init_external(&f->datagrams[i], &udp, f->backend));
+  }
   bind.family = CNET_DATAGRAM_ADDRESS_IPV4;
   bind.address[0] = 127u; bind.address[3] = 1u;
   HOST_TASK_OK(f, cnet_listener_open(&f->listener, host_kind(),
@@ -504,6 +530,8 @@ static void host_progress(native_io_sharded_context *context, void *arg) {
   }
   HOST_TASK_OK(f, cnet_client_advance_external(&f->inbound, &events));
   HOST_TASK_OK(f, cnet_client_advance_external(&f->outbound, &events));
+  for (size_t i = 0u; i < 2u; ++i)
+    HOST_TASK_OK(f, cnet_datagram_advance_external(&f->datagrams[i], &events));
   status = native_io_sharded_context_observe_host(
       context, f->lease, observed, HOST_BATCH, 0u, &count);
   if (status != SALTS_OK && status != SALTS_ETIMEDOUT) {
@@ -514,8 +542,9 @@ static void host_progress(native_io_sharded_context *context, void *arg) {
     cnet_sg_host_routes routes = {
         sizeof(routes), CNET_SG_HOST_ROUTING_VERSION, &f->listener, clients, 2u};
     size_t accepts = 0u, sg_completed = 0u;
-    status = cnet_sg_host_route_batch(
-        observed, count, &routes, &accepts, &sg_completed);
+    cnet_datagram *datagrams[2] = {&f->datagrams[1], &f->datagrams[0]};
+    status = cnet_sg_host_route_batch_with_datagrams(
+        observed, count, &routes, datagrams, 2u, &accepts, &sg_completed);
     if (status != SALTS_OK) { host_record_error(f, status); return; }
     if (accepts != 0u && f->accepting) {
       size_t chosen_owner = SIZE_MAX;
@@ -542,11 +571,17 @@ static void host_progress(native_io_sharded_context *context, void *arg) {
     HOST_TASK_OK(f, cnet_receive(&f->outbound, f->outgoing, 1u));
     host_send(f, &f->outbound, f->outgoing, "client", 6u);
     host_send(f, &f->inbound, f->accepted, "server", 6u);
+    cnet_datagram_peer peer = {0};
+    peer.family = CNET_DATAGRAM_ADDRESS_IPV4; peer.address[0] = 127u; peer.address[3] = 1u;
+    HOST_TASK_OK(f, cnet_datagram_port(&f->datagrams[1], &peer.port));
+    HOST_TASK_OK(f, cnet_datagram_receive(&f->datagrams[1], 1u));
+    HOST_TASK_OK(f, cnet_datagram_send(&f->datagrams[0], &peer, "udp", 3u, 1u));
     if (f->status != SALTS_OK) return;
   }
   if (!f->closing && f->data_started &&
       f->in_probe.bytes == 6u && f->out_probe.bytes == 6u &&
-      f->in_probe.sent == 6u && f->out_probe.sent == 6u
+      f->in_probe.sent == 6u && f->out_probe.sent == 6u &&
+      f->udp_received == 1u && f->udp_sent == 1u
 #if defined(__linux__)
       && f->sg_terminal == 1u && f->sg_finalize == 1u
 #endif
@@ -565,6 +600,12 @@ static void host_progress(native_io_sharded_context *context, void *arg) {
      * on the same SG Owner, without spinning or a second progress task. */
     if (dial_state.managed.slot != 0u) return;
     HOST_TASK_OK(f, host_finish_managed_client(f));
+    for (size_t i = 0u; i < 2u; ++i) {
+      bool quiet = false;
+      HOST_TASK_OK(f, cnet_datagram_stop_external(&f->datagrams[i], &quiet));
+      if (!quiet) { host_record_error(f, SALTS_EBUSY); return; }
+      HOST_TASK_OK(f, cnet_datagram_destroy(&f->datagrams[i]));
+    }
     HOST_TASK_OK(f, cnet_client_stop_external(&f->inbound));
     HOST_TASK_OK(f, cnet_client_stop_external(&f->outbound));
     HOST_TASK_OK(f, cnet_manager_destroy(&f->manager));
@@ -653,6 +694,8 @@ static void host_run_topology(size_t owner_count) {
     check_equal(f->out_probe.terminal, (size_t)1u);
     check_equal(f->ready_published, (size_t)1u);
     check_equal(f->pool_leases_settled, (size_t)1u);
+    check_equal(f->udp_received, (size_t)1u);
+    check_equal(f->udp_sent, (size_t)1u);
     check_null(f->manager.impl);
     check_null(f->dial.impl);
     check_null(f->pool.impl);

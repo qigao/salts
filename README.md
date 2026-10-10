@@ -10,6 +10,10 @@ These abstractions are designed to compile down to ordinary C data structures an
 
 **Tags:** C11 · generic-programming · systems-programming · typed-metadata · dataflow · reactive-streams · actor-model · state-machine · async-io · containers
 
+[Unicode](unicode/README.md) provides explicit Unicode 17 NFC normalization.
+[IDNA](idna/README.md) converts Unicode hostnames to a validated ASCII DNS/TLS
+identity using a versioned UTS #46 nontransitional profile and caller-owned storage.
+
 ## API namespace migration
 
 一方 API 的小写前缀统一为 `cmeta_`，包括平台、并发、Core 工具和 Plugin；对应文件名、
@@ -21,6 +25,17 @@ These abstractions are designed to compile down to ordinary C data structures an
 旧静态库或旧插件。数据布局与错误码没有因前缀迁移改变。
 
 ## Component migration for Salts 2.3.0
+
+The `2.3.0-rc.2` candidate combines [Unicode 17 NFC and explicit IDNA ToASCII
+conversion (#1094)](https://github.com/qigao/salts/pull/1094) with
+[UDP/WS composition boundaries (#1096)](https://github.com/qigao/salts/pull/1096).
+Unicode hostname conversion remains explicit before the ASCII DNS/TLS boundary.
+The new mixed SG router, dedicated TCP/TLS WS write bridge and admitted Dial
+initialization are opt-in; existing configuration layouts remain unchanged.
+HTTP Upgrade/authentication and H2 stream integration are separately tracked in
+[Chttp #238](https://github.com/qigao/chttp/issues/238) and are not jointly qualified
+by this candidate. Candidate CI and SDK packaging do not themselves publish a
+release; publication requires the exact version tag and its passing release gates.
 
 **Next release: 2.3.0** (last published Release: 2.2.0). The old 3.0.0
 Release was withdrawn; the interim 4.0.0 proposal is superseded.
@@ -92,7 +107,7 @@ The canonical module boundaries and dependency direction are documented in [ARCH
 
 ### Extension layer
 
-- [salts-utils](https://github.com/qigao/salts-utils) — DataBind schema/compiler/native-dynamic binding, parsers, QueryVM, crypto, filesystem/process adapters, templates, Unicode, media helpers, and other higher-level utilities.
+- [salts-utils](https://github.com/qigao/salts-utils) — DataBind schema/compiler/native-dynamic binding, parsers, QueryVM, crypto, filesystem/process adapters, templates, media helpers, and other higher-level utilities.
 - [salts-net](https://github.com/qigao/salts-net) — protocol and network tooling built on CNet/CMeta, including ICE/STUN/TURN, SNMP, LDAP, email, proxying, and related adapters.
 
 ### Domain infrastructure

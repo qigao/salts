@@ -72,12 +72,12 @@ jobs:
             artifact: windows-iocp
             build_dir: build/Msvc-Release
             build_artifact: windows-release
-          - host: kqueue / macOS 15 GCC
+          - host: kqueue / macOS 15 AppleClang
             runner: macos-15
             family: mac
             backend: kqueue
             artifact: macos-kqueue
-            build_dir: build/mac-arm64-gcc-release
+            build_dir: build/mac-arm64-appleclang-package-release
             build_artifact: macos-release
     steps:
       - uses: actions/checkout@v6

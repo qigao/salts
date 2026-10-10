@@ -1204,6 +1204,15 @@ platform, benchmark and SDK release gates below are not declared complete.
 `cnet_connect()` supports `ipc://`, but does not add `ws://` or `kcp://`.
 Current headers and executable tests remain the implementation authority.
 
+For UDP/WS destination, Owner placement, admission, recovery and pool boundaries,
+see the [#1095 strategy applicability review](SG_POLICY_HOST_CONTRACT.md#udp-and-websocket-policy-review-1095),
+including the source-based acceptance inventory and remaining composition gates.
+The [implemented composition boundaries](SG_POLICY_HOST_CONTRACT.md#implemented-composition-boundaries)
+describe opt-in mixed SG routing, the dedicated TCP/TLS
+[WS write bridge](include/cnet/websocket_transport.h), and admitted ManagedDial
+initialization. These preserve existing config layouts and keep HTTP/WS
+handshake policy in the host.
+
 Prerequisite and governing progress contract:
 [Salts #999: UDP multi-owner composition and datagram external progress](https://github.com/qigao/salts/issues/999).
 Its datagram external APIs are present in the current headers and implementation.
@@ -1867,8 +1876,13 @@ buffers before binding. The backend remains owned and observed by the host.
 
 `<cnet/name_lookup.h>` exposes bounded ordered address streams using existing
 c-ares progress and strict ASCII LDH hostname validation. Already-encoded
-Punycode A-labels pass through unchanged; raw non-ASCII names fail closed
-until the future Unicode/IDNA implementation in #1088. Numeric literals issue no DNS
+Punycode A-labels pass through unchanged without IDNA validation; raw non-ASCII
+names fail closed. Applications accepting Unicode domains explicitly call
+[`Salts::IDNA`](../idna/README.md) before submission, then use the same validated
+ASCII identity for DNS, TLS hostname verification and SNI. CNet itself has no
+IDNA dependency or implicit conversion. Its existing trailing-dot and numeric
+address behavior is unchanged; the IDNA strict profile rejects trailing dots.
+Numeric literals issue no DNS
 request. Every query is scoped to its owner and generation; result overflow is
 an error instead of truncated success. Pending is `SALTS_ETIMEDOUT`, exhaustion
 is `SALTS_EOF`, and a query deadline is `SALTS_EAI_AGAIN`.
