@@ -2,6 +2,7 @@
 #include <salts/error_codes.h>
 #include <salts/thread.h>
 #include <salts/thread_pool.h>
+#include "thread_pool_lf.h"
 
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -13,6 +14,7 @@ typedef struct worker_context_s {
 } worker_context_t;
 
 struct cmeta_threadpool_s {
+  cmeta_threadpool_lf *lf;
   cmeta_thread_t *threads;
   worker_context_t *workers;
   int num_threads;
@@ -43,6 +45,15 @@ struct cmeta_threadpool_s {
 #define SALTS_THREADPOOL_NO_SHUTDOWN_POLICY (-1)
 
 static _Thread_local cmeta_threadpool_t *cmeta_threadpool_current = NULL;
+
+void cmeta_threadpool_call_internal(cmeta_threadpool_t *owner,
+    cmeta_task_fn fn, void *arg) {
+  if (fn == NULL) return;
+  cmeta_threadpool_t *previous = cmeta_threadpool_current;
+  cmeta_threadpool_current = owner;
+  fn(arg);
+  cmeta_threadpool_current = previous;
+}
 
 /* Private cross-library query used by CFlow to reject synchronous joins that
  * cannot make progress from the same pool callback. */
@@ -81,6 +92,11 @@ static uint64_t cmeta_threadpool_round_up_pow2(size_t value) {
 
 static int64_t cmeta_threadpool_pending_tasks(const cmeta_threadpool_t *pool) {
   if (pool == NULL) return 0;
+  if (pool->lf != NULL) {
+    cmeta_threadpool_stats_t stats;
+    cmeta_threadpool_lf_stats(pool->lf, &stats, NULL);
+    return stats.pending_tasks;
+  }
   return atomic_load(&pool->tasks_submitted) -
          atomic_load(&pool->tasks_completed) -
          atomic_load(&pool->tasks_cancelled);
@@ -352,6 +368,32 @@ cmeta_threadpool_t *cmeta_threadpool_create(int num_threads) {
   return cmeta_threadpool_create_with_config(&config);
 }
 
+int cmeta_threadpool_create_leader_followers(
+    const cmeta_threadpool_lf_config_t *config, cmeta_threadpool_t **out_pool) {
+  if (config == NULL || out_pool == NULL || *out_pool != NULL ||
+      config->struct_size != sizeof(*config) || config->version != SALTS_THREADPOOL_LF_VERSION ||
+      config->num_threads <= 0 || config->queue_capacity == 0 ||
+      config->max_batch == 0 || config->max_batch > SALTS_THREADPOOL_LF_MAX_BATCH)
+    return SALTS_EINVAL;
+  cmeta_threadpool_t *pool = calloc(1, sizeof(*pool));
+  if (pool == NULL) return SALTS_ENOMEM;
+  const int status = cmeta_threadpool_lf_create(config, pool, &pool->lf);
+  if (status != SALTS_OK) { free(pool); return status; }
+  pool->num_threads = config->num_threads;
+  pool->queue_capacity = config->queue_capacity;
+  *out_pool = pool;
+  return SALTS_OK;
+}
+
+int cmeta_threadpool_get_lf_stats(cmeta_threadpool_t *pool,
+    cmeta_threadpool_lf_stats_t *out_stats) {
+  if (pool == NULL || out_stats == NULL || out_stats->struct_size != sizeof(*out_stats) ||
+      out_stats->version != SALTS_THREADPOOL_LF_VERSION) return SALTS_EINVAL;
+  if (pool->lf == NULL) return SALTS_ENOTSUP;
+  cmeta_threadpool_lf_stats(pool->lf, NULL, out_stats);
+  return SALTS_OK;
+}
+
 int cmeta_threadpool_shutdown_with_policy(
     cmeta_threadpool_t *pool, cmeta_threadpool_shutdown_policy_t policy) {
   int expected = SALTS_THREADPOOL_NO_SHUTDOWN_POLICY;
@@ -359,6 +401,7 @@ int cmeta_threadpool_shutdown_with_policy(
       (policy != SALTS_THREADPOOL_SHUTDOWN_DRAIN &&
        policy != SALTS_THREADPOOL_SHUTDOWN_CANCEL_PENDING))
     return SALTS_EINVAL;
+  if (pool->lf != NULL) return cmeta_threadpool_lf_shutdown(pool->lf, policy);
   if (!atomic_compare_exchange_strong(&pool->shutdown_policy, &expected,
                                       (int)policy) &&
       expected != (int)policy)
@@ -382,6 +425,13 @@ void cmeta_threadpool_shutdown(cmeta_threadpool_t *pool) {
 
 void cmeta_threadpool_destroy(cmeta_threadpool_t *pool) {
   if (pool == NULL) return;
+  if (pool->lf != NULL) {
+    /* Same-pool destroy violates the callback contract; never self-join/free. */
+    if (cmeta_threadpool_current == pool) return;
+    cmeta_threadpool_lf_destroy(pool->lf);
+    free(pool);
+    return;
+  }
   cmeta_threadpool_shutdown(pool);
   for (int i = 0; i < pool->num_threads; ++i)
     (void)cmeta_thread_join(&pool->threads[i]);
@@ -401,6 +451,9 @@ static int cmeta_threadpool_submit_internal(cmeta_threadpool_t *pool,
   unsigned int wait_rounds = 0U;
 
   if (pool == NULL || task == NULL || task->run == NULL) return SALTS_EINVAL;
+  if (pool->lf != NULL)
+    return cmeta_threadpool_lf_submit(pool->lf, task, blocking,
+                                    cmeta_threadpool_current == pool);
   if (!atomic_load(&pool->accepting) || atomic_load(&pool->shutdown)) {
     atomic_fetch_add(&pool->tasks_rejected, 1);
     return SALTS_ESHUTDOWN;
@@ -485,6 +538,7 @@ int cmeta_threadpool_try_submit(cmeta_threadpool_t *pool,
 int cmeta_threadpool_wait_status(cmeta_threadpool_t *pool) {
   if (pool == NULL) return SALTS_EINVAL;
   if (cmeta_threadpool_current == pool) return SALTS_EBUSY;
+  if (pool->lf != NULL) return cmeta_threadpool_lf_wait(pool->lf);
   cmeta_mutex_lock(&pool->wait_mutex);
   while (cmeta_threadpool_pending_tasks(pool) > 0)
     cmeta_cond_wait(&pool->all_done, &pool->wait_mutex);
@@ -501,6 +555,11 @@ int cmeta_threadpool_pending(cmeta_threadpool_t *pool) {
 }
 
 int64_t cmeta_threadpool_cancelled(cmeta_threadpool_t *pool) {
+  if (pool != NULL && pool->lf != NULL) {
+    cmeta_threadpool_lf_stats_t stats;
+    cmeta_threadpool_lf_stats(pool->lf, NULL, &stats);
+    return stats.cancelled_tasks;
+  }
   return pool != NULL ? atomic_load(&pool->tasks_cancelled) : 0;
 }
 
@@ -513,6 +572,11 @@ size_t cmeta_threadpool_capacity(cmeta_threadpool_t *pool) {
 }
 
 int cmeta_threadpool_is_accepting(cmeta_threadpool_t *pool) {
+  if (pool != NULL && pool->lf != NULL) {
+    cmeta_threadpool_stats_t stats;
+    cmeta_threadpool_lf_stats(pool->lf, &stats, NULL);
+    return stats.accepting;
+  }
   return pool != NULL ? atomic_load(&pool->accepting) : 0;
 }
 
@@ -523,6 +587,10 @@ void cmeta_threadpool_get_stats(cmeta_threadpool_t *pool,
   int64_t completed;
 
   if (pool == NULL || stats == NULL) return;
+  if (pool->lf != NULL) {
+    cmeta_threadpool_lf_stats(pool->lf, stats, NULL);
+    return;
+  }
   memset(stats, 0, sizeof(*stats));
 
   submitted = atomic_load(&pool->tasks_submitted);

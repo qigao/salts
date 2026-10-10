@@ -1202,7 +1202,124 @@ CMETA_IMPLEMENTS(cflow_publisher, runtime_demand_source, 0,
     .poll_terminal = runtime_demand_source_poll
 );
 
+typedef struct concurrent_wake_probe {
+    cflow_subscription *run;
+    atomic_bool stop;
+    atomic_int wakes;
+    atomic_int values;
+    atomic_int errors;
+    atomic_int dones;
+} concurrent_wake_probe;
+
+static void runtime_concurrent_wake(void *user) {
+    concurrent_wake_probe *probe = (concurrent_wake_probe *)user;
+    const uint64_t started = cmeta_monotonic_ms();
+    while (!atomic_load(&probe->stop) &&
+           cmeta_monotonic_ms() - started < RUNTIME_SATURATION_TIMEOUT_MS) {
+        cflow_subscription_wake(probe->run);
+        atomic_fetch_add(&probe->wakes, 1);
+    }
+}
+
+static bool runtime_concurrent_wake_value(
+    void *user, const cmeta_type_desc *type, const void *value) {
+    concurrent_wake_probe *probe = (concurrent_wake_probe *)user;
+    const int expected = atomic_fetch_add(&probe->values, 1);
+    if (!cmeta_type_equal(type, &cmeta_type_int) ||
+        *(const int *)value != expected) {
+        atomic_fetch_add(&probe->errors, 1);
+        return false;
+    }
+    return true;
+}
+
+static void runtime_concurrent_wake_error(void *user, const char *error) {
+    concurrent_wake_probe *probe = (concurrent_wake_probe *)user;
+    (void)error;
+    atomic_fetch_add(&probe->errors, 1);
+}
+
+static void runtime_concurrent_wake_done(void *user) {
+    concurrent_wake_probe *probe = (concurrent_wake_probe *)user;
+    atomic_fetch_add(&probe->dones, 1);
+}
+
 suite("CFlow runtime") {
+    group("worker pump ownership") {
+        static cflow_graph surface, normalized;
+        static cflow_scheduler scheduler;
+        static cflow_subscription run;
+        static concurrent_wake_probe probe;
+        static cflow_subscriber_callbacks callbacks;
+        static cmeta_thread_t waker_thread;
+        static bool waker_started;
+        static int inputs[1025];
+
+        before_each() {
+            memset(&surface, 0, sizeof(surface));
+            memset(&normalized, 0, sizeof(normalized));
+            memset(&scheduler, 0, sizeof(scheduler));
+            memset(&run, 0, sizeof(run));
+            memset(&probe, 0, sizeof(probe));
+            probe.run = &run;
+            atomic_init(&probe.stop, false);
+            atomic_init(&probe.wakes, 0);
+            atomic_init(&probe.values, 0);
+            atomic_init(&probe.errors, 0);
+            atomic_init(&probe.dones, 0);
+            waker_started = false;
+            normalized.root = CMETA_INVALID_ID;
+            cflow_graph_init(&surface, &cmeta_type_int);
+            check_true(cflow_graph_normalize(&normalized, &surface));
+            check_true(cflow_scheduler_worker_init(&scheduler, 4u));
+            callbacks = (cflow_subscriber_callbacks){
+                runtime_concurrent_wake_value, runtime_concurrent_wake_error,
+                runtime_concurrent_wake_done, &probe};
+            for (size_t i = 0; i < sizeof(inputs) / sizeof(inputs[0]); ++i)
+                inputs[i] = (int)i;
+        }
+
+        after_each() {
+            atomic_store(&probe.stop, true);
+            if (waker_started) cmeta_thread_join(&waker_thread);
+            cflow_subscription_close(&run);
+            cflow_scheduler_destroy(&scheduler);
+            cflow_graph_destroy(&normalized);
+            cflow_graph_destroy(&surface);
+        }
+
+        it("serializes quantum handoff and terminal completion with concurrent wakes") {
+            for (unsigned round = 0; round < 32u; ++round) {
+                cflow_publisher source = {0};
+                cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
+                atomic_store(&probe.stop, false);
+                atomic_store(&probe.wakes, 0);
+                atomic_store(&probe.values, 0);
+                atomic_store(&probe.errors, 0);
+                atomic_store(&probe.dones, 0);
+                check_true(cflow_publisher_from_array(
+                    &source, &cmeta_type_int, inputs,
+                    sizeof(inputs) / sizeof(inputs[0])));
+                check_true(cflow_subscribe(
+                    &run, &normalized, &source, &scheduler, &sink));
+                const int rc = cmeta_thread_create(
+                    &waker_thread, runtime_concurrent_wake, &probe);
+                waker_started = rc == 0;
+                check_equal(rc, 0);
+                check_true(runtime_wait_until_at_least(&probe.wakes, 1));
+                check_true(cflow_subscription_request(&run, SIZE_MAX));
+                check_true(runtime_wait_until_at_least(&probe.dones, 1));
+                atomic_store(&probe.stop, true);
+                cmeta_thread_join(&waker_thread);
+                waker_started = false;
+                cflow_subscription_close(&run);
+                check_equal(atomic_load(&probe.values), 1025);
+                check_equal(atomic_load(&probe.errors), 0);
+                check_equal(atomic_load(&probe.dones), 1);
+            }
+        }
+    }
+
     it("passes outstanding downstream demand to each source resume") {
         runtime_demand_probe probe = {0};
         cflow_graph surface = {0};

@@ -1,5 +1,15 @@
 # CMeta x ACE / POSA2 — 17-pattern coverage matrix
 
+> **Post-rc.5 LF implementation (2026-10-10):** the opt-in CPU backend now lives in
+> [Salts::Concurrency](../concurrency/src/thread_pool_lf.c), with a versioned
+> [public creator/stats contract](../concurrency/include/salts/thread_pool.h),
+> [formal lifecycle tests](../concurrency/tests/thread_pool_lf_test.c) and a
+> [small public-API benchmark](../concurrency/benchmarks/thread_pool_lf_benchmark.c).
+> See [design and validation scope](../concurrency/LEADER_FOLLOWERS_DESIGN.md).
+> The matrix and release ledgers below describe their historical source checkpoints.
+> This implementation is separate from the published rc.5; it does not establish
+> FlowMQ integration, DSO provider qualification or 17/17 final release acceptance.
+
 > **Status:** design/coverage inventory, **not** 17/17 implementation or release qualification.
 > **Baseline:** `feature/cmeta-ace-patterns`; ACE functional-freeze code SHA [`02b741a`](https://github.com/qigao/salts/commit/02b741a7f2ebceaeed68c681898d09072c5323d1), qualified by [CI #37775060929](https://github.com/qigao/salts/actions/runs/37775060929). This document is documentation-only: it does not reopen or supersede the frozen source contract in [ACE_FREEZE.md](ACE_FREEZE.md).
 > **Change policy:** [#1012](https://github.com/qigao/salts/issues/1012), draft [PR #1013](https://github.com/qigao/salts/pull/1013) **DO NOT MERGE / DO NOT PUBLISH**; [#1018](https://github.com/qigao/salts/issues/1018) independently owns 2.3.0 package, ABI and downstream release qualification.

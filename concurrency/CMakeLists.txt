@@ -1,7 +1,8 @@
 set(TARGET_NAME cmeta_concurrency)
 
 add_library(${TARGET_NAME} STATIC src/deadline_queue.c src/disruptor.c
-                                  src/rcu.c src/spsc_ring.c src/thread_pool.c)
+                                  src/rcu.c src/spsc_ring.c src/thread_pool.c
+                                  src/thread_pool_lf.c)
 
 cmake_config_target(
   ${TARGET_NAME}
@@ -45,4 +46,8 @@ install(
 
 if(BUILD_TESTS)
   add_subdirectory(tests)
+endif()
+
+if(BUILD_BENCHMARKS OR CONCURRENCY_BUILD_BENCHMARKS)
+  add_subdirectory(benchmarks)
 endif()
