@@ -149,6 +149,12 @@ static void cflow_mailbox_impl_free(cflow_mailbox_impl *impl) {
     free(impl);
 }
 
+static int cflow_event_type_compare(const void *left, const void *right) {
+    const cflow_event_type *a = (const cflow_event_type *)left;
+    const cflow_event_type *b = (const cflow_event_type *)right;
+    return a->id < b->id ? -1 : a->id > b->id;
+}
+
 cflow_mailbox_status cflow_mailbox_init(cflow_mailbox *mailbox,
                                         const cflow_event_type *schema,
                                         size_t schema_count,
@@ -186,6 +192,7 @@ cflow_mailbox_status cflow_mailbox_init(cflow_mailbox *mailbox,
     }
 
     memcpy(impl->schema, schema, schema_bytes);
+    qsort(impl->schema, schema_count, sizeof(*impl->schema), cflow_event_type_compare);
     impl->schema_count = schema_count;
     impl->capacity = capacity;
     impl->payload_stride = payload_stride;
@@ -198,33 +205,55 @@ cflow_mailbox_status cflow_mailbox_init(cflow_mailbox *mailbox,
 static bool cflow_mailbox_type_index(const cflow_mailbox_impl *impl,
                                      cflow_event_id id,
                                      size_t *type_index) {
-    size_t index;
+    size_t left = 0u;
+    size_t right;
 
     if (impl == NULL || type_index == NULL || id == 0u) return false;
-    for (index = 0u; index < impl->schema_count; ++index) {
-        if (impl->schema[index].id == id) {
-            *type_index = index;
+    /* O(log schema_count) lookup, O(1) additional storage. The copied immutable
+     * schema is sorted once; producer count never changes this index. */
+    right = impl->schema_count;
+    while (left < right) {
+        const size_t middle = left + (right - left) / 2u;
+        if (impl->schema[middle].id == id) {
+            *type_index = middle;
             return true;
         }
+        if (impl->schema[middle].id < id)
+            left = middle + 1u;
+        else
+            right = middle;
     }
     return false;
 }
 
 cflow_mailbox_status cflow_mailbox_try_send(cflow_mailbox *mailbox,
                                             const cflow_event_view *event) {
+    cflow_waker waker = {0};
+    const cflow_mailbox_status status =
+        cflow_mailbox_try_send_detach_internal(mailbox, event, &waker);
+    cflow_waker_invoke(waker);
+    return status;
+}
+
+cflow_mailbox_status cflow_mailbox_try_send_detach_internal(
+    cflow_mailbox *mailbox, const cflow_event_view *event,
+    cflow_waker *out_waker) {
     cflow_mailbox_impl *impl =
         mailbox != NULL ? (cflow_mailbox_impl *)mailbox->impl : NULL;
     const cmeta_type_desc *schema_type;
     size_t type_index;
     size_t tail;
-    cflow_waker waker = {0};
 
-    if (impl == NULL || event == NULL || event->payload_type == NULL ||
+    if (out_waker != NULL) *out_waker = (cflow_waker){0};
+    if (impl == NULL || out_waker == NULL || event == NULL || event->payload_type == NULL ||
         event->payload == NULL ||
         !cflow_mailbox_type_index(impl, event->id, &type_index))
         return CFLOW_MAILBOX_INVALID_ARGUMENT;
     schema_type = impl->schema[type_index].payload_type;
-    if (!cmeta_type_equal(schema_type, event->payload_type))
+    /* The canonical descriptor was validated at init and is immutable. Other
+     * descriptor addresses still require CMeta semantic equality (TU/DSO). */
+    if (schema_type != event->payload_type &&
+        !cmeta_type_equal(schema_type, event->payload_type))
         return CFLOW_MAILBOX_TYPE_MISMATCH;
 
     cmeta_mutex_lock(&impl->lock);
@@ -243,7 +272,9 @@ cflow_mailbox_status cflow_mailbox_try_send(cflow_mailbox *mailbox,
         cmeta_mutex_unlock(&impl->lock);
         return CFLOW_MAILBOX_FULL;
     }
-    tail = (impl->head + impl->count) % impl->capacity;
+    tail = impl->count >= impl->capacity - impl->head
+        ? impl->count - (impl->capacity - impl->head)
+        : impl->head + impl->count;
     memcpy(impl->payloads + tail * impl->payload_stride,
            event->payload, schema_type->size);
     impl->slots[tail].type_index = type_index;
@@ -251,10 +282,9 @@ cflow_mailbox_status cflow_mailbox_try_send(cflow_mailbox *mailbox,
     if (impl->count > impl->peak_pending)
         impl->peak_pending = impl->count;
     cflow_counter_increment(&impl->accepted);
-    waker = impl->waiter;
+    *out_waker = impl->waiter;
     impl->waiter = (cflow_waker){0};
     cmeta_mutex_unlock(&impl->lock);
-    cflow_waker_invoke(waker);
     return CFLOW_MAILBOX_OK;
 }
 
@@ -299,7 +329,7 @@ cflow_mailbox_status cflow_mailbox_try_receive(
 
     memcpy(out_payload, impl->payloads + head * impl->payload_stride,
            event_type->payload_type->size);
-    impl->head = (head + 1u) % impl->capacity;
+    impl->head = head + 1u == impl->capacity ? 0u : head + 1u;
     --impl->count;
     cflow_counter_increment(&impl->received);
     *out_id = event_type->id;
@@ -310,6 +340,12 @@ cflow_mailbox_status cflow_mailbox_try_receive(
 
 bool cflow_mailbox_get_stats(const cflow_mailbox *mailbox,
                              cflow_mailbox_stats *out) {
+    return cflow_mailbox_get_stats_observe_internal(mailbox, out, NULL, NULL);
+}
+
+bool cflow_mailbox_get_stats_observe_internal(
+    const cflow_mailbox *mailbox, cflow_mailbox_stats *out,
+    void (*observe)(void *, const cflow_mailbox_stats *), void *user) {
     cflow_mailbox_impl *impl =
         mailbox != NULL ? (cflow_mailbox_impl *)mailbox->impl : NULL;
     cflow_mailbox_stats snapshot;
@@ -328,6 +364,7 @@ bool cflow_mailbox_get_stats(const cflow_mailbox *mailbox,
     snapshot.rejected_closed = impl->rejected_closed;
     snapshot.rejected_cancelled = impl->rejected_cancelled;
     snapshot.cancelled = impl->cancelled;
+    if (observe != NULL) observe(user, &snapshot);
     cmeta_mutex_unlock(&impl->lock);
     *out = snapshot;
     return true;

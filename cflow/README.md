@@ -864,6 +864,71 @@ The send path does not retry, wait, overwrite, resize, silently drop, or
 allocate. `machine.mailbox_capacity` is required and non-zero; callers decide
 whether and when to retry `FULL`.
 
+Admission commits the payload under the Actor gate, detaches any progress wake,
+and invokes that wake after releasing the gate. Owner destruction marks refs
+stale and waits for detached wakes before releasing instance storage. This
+keeps synchronous Executor/Scheduler rejection and error callbacks from
+reentering a held admission gate. Startup also installs the receiving lifecycle
+before subscribing, so a Statechart already at root FINAL can complete during
+attachment without being misclassified as a startup failure.
+
+Mailbox initialization sorts its private schema copy; send uses binary search
+and accepts its validated canonical descriptor directly. Descriptors from other
+translation units or shared libraries still use CMeta semantic equality. Ring
+wrap uses bounded subtraction rather than division and supports arbitrary
+non-zero capacities. Payload copying, FIFO, capacity, and public interfaces are
+unchanged. Machine statistics hold the mailbox snapshot while reading instance
+accounting in mailbox-to-instance lock order; the public in-flight count is
+derived from received and settled events until lifetime counters saturate.
+The receive path keeps its existing separate lock acquisitions.
+
+The Worker Scheduler transfers zero-delay tasks directly to its worker queue
+when no timer or timer dispatcher precedes them. It still performs bounded
+timer admission and assigns the same task IDs. If the worker queue is full, the
+accepted timer follows the existing timer-thread handoff. Delayed work retains
+its timer ordering; callbacks remain asynchronous, and cancellation can fail
+once a task has transferred to the worker queue.
+
+`cflow_actor_mailbox_benchmark` separates schema sizes 1/64 and single-producer
+Actor bursts with/without a value for each transition. Setup and teardown are
+outside measured samples; accepted/received/completed counts are checked.
+Run the Release target and its CTest benchmark (the normal test preset excludes
+the `benchmark` label):
+
+```powershell
+cmake --build --preset win-release-user --target cflow_actor_mailbox_benchmark
+ctest --preset win-release-user -LE '^$' -R '^cflow_actor_mailbox_benchmark$' -V
+```
+
+The native CI build enables `CFLOW_BUILD_BENCHMARKS` while the global
+`BUILD_BENCHMARKS` option is off. Its primary Linux,
+Windows, and macOS Release profiles run this CTest five times and upload
+`cflow-actor-mailbox-<profile>` logs. These runs report candidate measurements;
+they do not establish a baseline/candidate performance ratio or enforce a
+cross-host speed threshold.
+
+On 2026-10-10, Windows x64 Release (MSVC 19.44.35217, Ryzen 9 7940HX),
+the same benchmark was linked against CFlow at `a6502620` and this change.
+Five alternating baseline/changed runs used 512 mailbox samples of 8192
+operations and 128 Actor samples of 4096 messages. The table reports the median
+of each run's average, including synchronization with the completion probe:
+
+| Path | Baseline ns/op | Changed ns/op | Throughput ratio |
+| --- | ---: | ---: | ---: |
+| Mailbox, schema=1 | 20.510 | 16.647 | 1.23x |
+| Mailbox, schema=64 | 33.639 | 23.928 | 1.41x |
+| Actor, no value delivery | 220.760 | 211.598 | 1.04x |
+| Actor, value per transition | 18262.311 | 3056.178 | 5.98x |
+
+These are local measurements without CPU affinity or an isolated host. Baseline
+value-delivery averages ranged from 12.69 to 24.13 us/message; changed averages
+ranged from 2.73 to 3.75 us/message. Scheduler load affects the measured ratio.
+
+This benchmark measures the CFlow path, including the completion probe. It
+does not measure network throughput, multi-producer contention, retained
+application buffer scanning, or producer retry loops. Measure those separately
+in the consuming application before attributing its CPU usage to Actor.
+
 ### Statechart-backed Actor
 
 `cflow_statechart_actor_init()` uses the same `cflow_actor` owner handle,

@@ -109,7 +109,7 @@ jobs:
           elif [ "${{ matrix.sanitizer }}" = 'tsan' ]; then
             set -- -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_UNDEFINED=OFF -DENABLE_SANITIZER_THREAD=ON
           fi
-          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} "$@"
+          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCFLOW_BUILD_BENCHMARKS=${{ matrix.benchmarks }} "$@"
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
       - name: Configure and build all modules on Windows
         id: build_windows
@@ -120,7 +120,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
+          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCFLOW_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
           if errorlevel 1 exit /b 1
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
           if errorlevel 1 exit /b 1
@@ -131,6 +131,36 @@ jobs:
           set -euo pipefail
           cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
+      - name: Run Actor and mailbox benchmark (Unix)
+        id: actor_bench_unix
+        if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.benchmarks == 'ON' }}
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --preset "${{ matrix.preset }}" --no-tests=error -LE '^$' \
+            -R '^cflow_actor_mailbox_benchmark$' --repeat until-fail:5 -V \
+            --output-log '${{ matrix.build_dir }}/actor-mailbox-benchmark.log'
+      - name: Run Actor and mailbox benchmark (Windows)
+        id: actor_bench_windows
+        if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.benchmarks == 'ON' }}
+        timeout-minutes: 10
+        shell: cmd
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error -LE "^$" -R "^cflow_actor_mailbox_benchmark$" --repeat until-fail:5 -V --output-log "${{ matrix.build_dir }}/actor-mailbox-benchmark.log"
+          if errorlevel 1 exit /b 1
+      - name: Upload Actor and mailbox benchmark evidence
+        if: ${{ always() && (steps.actor_bench_unix.outcome == 'success' || steps.actor_bench_unix.outcome == 'failure' || steps.actor_bench_windows.outcome == 'success' || steps.actor_bench_windows.outcome == 'failure') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cflow-actor-mailbox-${{ matrix.id }}
+          path: ${{ matrix.build_dir }}/actor-mailbox-benchmark.log
+          if-no-files-found: error
+          retention-days: 30
       # Unicode conformance must execute (not merely compile) on each native OS.
       # Linux's full suite already covers these tests; do not run them twice there.
       - name: Qualify Unicode 17 conformance (Unix)

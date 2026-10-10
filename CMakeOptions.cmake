@@ -18,6 +18,8 @@ option(COROUTINE_BUILD_BENCHMARKS
        "Build Coroutine benchmark executables independently" OFF)
 option(CNET_BUILD_BENCHMARKS
        "Build CNet benchmark executables independently" OFF)
+option(CFLOW_BUILD_BENCHMARKS
+       "Build CFlow benchmark executables independently" OFF)
 option(CFLOW_ENABLE_MINICORO
        "Build the optional minicoro-backed CFlow Resumable adapter" OFF)
 option(CMETA_BUILD_BENCHMARKS

@@ -2,6 +2,9 @@
 
 #include <cflow/lower.h>
 
+#include "machine_instance_internal.h"
+#include "statechart_instance_internal.h"
+
 #include <salts/thread.h>
 
 #include <stdatomic.h>
@@ -19,7 +22,7 @@ typedef enum cflow_actor_runtime_kind {
 typedef struct cflow_actor_runtime_ops {
     bool (*as_source)(cflow_actor_impl *impl, cflow_publisher *out);
     cflow_mailbox_status (*try_send)(
-        cflow_actor_impl *impl, const cflow_event_view *event);
+        cflow_actor_impl *impl, const cflow_event_view *event, cflow_waker *wake);
     void (*close)(cflow_actor_impl *impl);
     void (*cancel)(cflow_actor_impl *impl);
     void (*destroy)(cflow_actor_impl *impl);
@@ -35,6 +38,10 @@ struct cflow_actor_impl {
     /* FAILED stays externally visible while waiters remain behind settlement. */
     bool terminal_settled;
     bool stale;
+    bool starting;
+    /* Only detached progress wakes need a lifetime reservation. Ordinary
+     * commits stay under gate and require no second lock/unlock pair. */
+    size_t pending_wakes;
     cflow_actor_runtime_kind runtime_kind;
     const cflow_actor_runtime_ops *runtime_ops;
     cflow_machine_instance machine;
@@ -62,8 +69,8 @@ static bool actor_machine_as_source(
 }
 
 static cflow_mailbox_status actor_machine_try_send(
-    cflow_actor_impl *impl, const cflow_event_view *event) {
-    return cflow_machine_instance_try_send(&impl->machine, event);
+    cflow_actor_impl *impl, const cflow_event_view *event, cflow_waker *wake) {
+    return cflow_machine_instance_try_send_detach_internal(&impl->machine, event, wake);
 }
 
 static void actor_machine_close(cflow_actor_impl *impl) {
@@ -95,8 +102,9 @@ static bool actor_statechart_as_source(
 }
 
 static cflow_mailbox_status actor_statechart_try_send(
-    cflow_actor_impl *impl, const cflow_event_view *event) {
-    return cflow_statechart_instance_try_send(&impl->statechart, event);
+    cflow_actor_impl *impl, const cflow_event_view *event, cflow_waker *wake) {
+    return cflow_statechart_instance_try_send_detach_internal(
+        &impl->statechart, event, UINT64_C(0), wake);
 }
 
 static void actor_statechart_close(cflow_actor_impl *impl) {
@@ -166,6 +174,7 @@ static void actor_mark_failed(cflow_actor_impl *impl, const char *message) {
     if (impl == NULL) return;
     copy = actor_copy_error(message);
     cmeta_mutex_lock(&impl->gate);
+    impl->starting = false;
     if (impl->state != CFLOW_ACTOR_STATE_STOPPED &&
         impl->state != CFLOW_ACTOR_STATE_FAILED) {
         impl->terminal_settled = false;
@@ -408,6 +417,12 @@ cflow_actor_status cflow_actor_start(cflow_actor *actor) {
     if (impl == NULL) return CFLOW_ACTOR_INVALID_ARGUMENT;
     cmeta_mutex_lock(&impl->gate);
     status = actor_state_status(impl->state);
+    if (status == CFLOW_ACTOR_OK) {
+        /* subscribe may deliver a terminal signal before it returns. Publish
+         * the receiving lifecycle first, while ingress still reports START. */
+        impl->starting = true;
+        impl->state = CFLOW_ACTOR_STATE_RUNNING;
+    }
     cmeta_mutex_unlock(&impl->gate);
     if (status != CFLOW_ACTOR_OK) return status;
 
@@ -425,23 +440,26 @@ cflow_actor_status cflow_actor_start(cflow_actor *actor) {
     }
 
     cmeta_mutex_lock(&impl->gate);
-    impl->state = CFLOW_ACTOR_STATE_RUNNING;
-    if (!cflow_subscription_request(&impl->run, SIZE_MAX)) {
-        impl->terminal_settled = false;
-        impl->state = CFLOW_ACTOR_STATE_FAILED;
-        cmeta_cond_broadcast(&impl->changed);
-        status = CFLOW_ACTOR_FAILED;
-    } else {
-        status = CFLOW_ACTOR_OK;
-    }
+    impl->starting = false;
     cmeta_mutex_unlock(&impl->gate);
-    if (status != CFLOW_ACTOR_OK) {
-        actor_mark_failed(impl, "actor could not request Run demand");
+    if (!cflow_subscription_request(&impl->run, SIZE_MAX)) {
+        bool terminal;
+        cmeta_mutex_lock(&impl->gate);
+        terminal = impl->state == CFLOW_ACTOR_STATE_STOPPED;
+        status = impl->state == CFLOW_ACTOR_STATE_FAILED
+            ? CFLOW_ACTOR_FAILED : CFLOW_ACTOR_OK;
+        cmeta_mutex_unlock(&impl->gate);
+        if (!terminal) {
+            actor_mark_failed(impl, "actor could not request Run demand");
+            status = CFLOW_ACTOR_FAILED;
+        }
         cflow_subscription_close(&impl->run);
         cmeta_mutex_lock(&impl->gate);
         impl->terminal_settled = true;
         cmeta_cond_broadcast(&impl->changed);
         cmeta_mutex_unlock(&impl->gate);
+    } else {
+        status = CFLOW_ACTOR_OK;
     }
     return status;
 }
@@ -612,6 +630,7 @@ cflow_actor_send_status cflow_actor_ref_try_send(
         ? (cflow_actor_impl *)ref->impl : NULL;
     cflow_mailbox_status mailbox_status;
     cflow_actor_send_status result;
+    cflow_waker wake = {0};
     if (impl == NULL) return CFLOW_ACTOR_SEND_INVALID_ARGUMENT;
 
     cmeta_mutex_lock(&impl->gate);
@@ -621,7 +640,7 @@ cflow_actor_send_status cflow_actor_ref_try_send(
     } else if (event == NULL || event->id == 0u ||
                event->payload_type == NULL || event->payload == NULL) {
         result = CFLOW_ACTOR_SEND_INVALID_ARGUMENT;
-    } else if (impl->state == CFLOW_ACTOR_STATE_START) {
+    } else if (impl->state == CFLOW_ACTOR_STATE_START || impl->starting) {
         ++impl->rejected_not_started;
         result = CFLOW_ACTOR_SEND_NOT_STARTED;
     } else if (impl->state == CFLOW_ACTOR_STATE_STOPPING) {
@@ -634,7 +653,15 @@ cflow_actor_send_status cflow_actor_ref_try_send(
         ++impl->rejected_failed;
         result = CFLOW_ACTOR_SEND_FAILED;
     } else {
-        mailbox_status = impl->runtime_ops->try_send(impl, event);
+        /* A finite control block cannot admit more wake reservations than
+         * size_t represents. Reject before committing in that impossible-full
+         * case rather than wrapping the destruction barrier. */
+        if (impl->pending_wakes == SIZE_MAX) {
+            cmeta_mutex_unlock(&impl->gate);
+            return CFLOW_ACTOR_SEND_FULL;
+        }
+        mailbox_status = impl->runtime_ops->try_send(impl, event, &wake);
+        if (wake.wake != NULL) ++impl->pending_wakes;
         switch (mailbox_status) {
             case CFLOW_MAILBOX_OK:
                 result = CFLOW_ACTOR_SEND_ACCEPTED;
@@ -660,6 +687,14 @@ cflow_actor_send_status cflow_actor_ref_try_send(
         }
     }
     cmeta_mutex_unlock(&impl->gate);
+    if (wake.wake != NULL) {
+        wake.wake(wake.user);
+        cmeta_mutex_lock(&impl->gate);
+        --impl->pending_wakes;
+        if (impl->stale && impl->pending_wakes == 0u)
+            cmeta_cond_broadcast(&impl->changed);
+        cmeta_mutex_unlock(&impl->gate);
+    }
     return result;
 }
 
@@ -674,6 +709,8 @@ void cflow_actor_destroy(cflow_actor *actor) {
         impl->state = CFLOW_ACTOR_STATE_STOPPED;
     else if (impl->state == CFLOW_ACTOR_STATE_RUNNING)
         impl->state = CFLOW_ACTOR_STATE_STOPPING;
+    while (impl->pending_wakes != 0u)
+        cmeta_cond_wait(&impl->changed, &impl->gate);
     cmeta_mutex_unlock(&impl->gate);
 
     impl->runtime_ops->close(impl);

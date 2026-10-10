@@ -45,6 +45,19 @@ typedef struct statechart_actor_fixture {
     int initial_state;
 } statechart_actor_fixture;
 
+/* Force the already-terminal source's pump to finish during subscribe, before
+ * start can request demand. Keep the real concurrent backend and its methods. */
+static SALTS_THREAD_LOCAL cflow_scheduler *early_terminal_scheduler;
+
+static cflow_schedule_result early_terminal_post(
+    void *self, uint64_t delay, cflow_task_fn fn, void *user) {
+    cflow_schedule_result result = early_terminal_scheduler->vtable->try_post_after(
+        self, delay, fn, user);
+    if (result.status == CFLOW_ADMISSION_ACCEPTED)
+        (void)cflow_scheduler_wait_idle(early_terminal_scheduler);
+    return result;
+}
+
 static bool statechart_actor_wait_flag(atomic_bool *value) {
     const uint64_t started = cmeta_monotonic_ms();
     while (cmeta_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
@@ -225,6 +238,49 @@ spec("CFlow Statechart Actor facade") {
         check_equal(result.statechart_status, CFLOW_STATECHART_INSTANCE_OK);
         check_null(fixture.actor.impl);
         statechart_actor_fixture_destroy(&fixture);
+    }
+
+    it("preserves root FINAL delivered before start requests demand") {
+        const cflow_statechart_state root = {ACTOR_ROOT, 0u, CFLOW_STATECHART_FINAL, 0u};
+        const cflow_statechart_definition definition = {
+            &cmeta_type_int, &root, 1u, NULL, 0u, NULL, 0u,
+            NULL, 0u, NULL, 0u, NULL, 0u, NULL, 0u};
+        cflow_statechart statechart = {0};
+        cflow_executor executor = {0};
+        cflow_scheduler scheduler = {0};
+        cflow_scheduler proxy;
+        cflow_scheduler_vtable proxy_vtable;
+        cflow_actor actor = {0};
+        statechart_actor_probe probe = {0};
+        const int initial = 0;
+        cflow_statechart_actor_config config = {0};
+        check_equal(cflow_statechart_build(&statechart, &definition), CFLOW_STATECHART_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_true(cflow_scheduler_worker_init(&scheduler, 1u));
+        proxy_vtable = *scheduler.vtable;
+        proxy_vtable.try_post_after = early_terminal_post;
+        proxy = scheduler;
+        proxy.vtable = &proxy_vtable;
+        config.statechart = (cflow_statechart_instance_config){
+            .statechart = &statechart, .initial_state = &initial,
+            .external_event_capacity = 1u, .internal_event_capacity = 1u,
+            .completion_capacity = 1u, .microstep_limit = 1u, .executor = &executor};
+        config.scheduler = &proxy;
+        config.callbacks = (cflow_subscriber_callbacks){
+            statechart_actor_on_value, statechart_actor_on_error,
+            statechart_actor_on_done, &probe};
+        check_equal(cflow_statechart_actor_init(&actor, &config).status, CFLOW_ACTOR_OK);
+        early_terminal_scheduler = &scheduler;
+        check_equal(cflow_actor_start(&actor), CFLOW_ACTOR_OK);
+        early_terminal_scheduler = NULL;
+        check_equal(cflow_actor_wait(&actor), CFLOW_ACTOR_STATE_STOPPED);
+        check_equal(atomic_load(&probe.dones), 1);
+        check_equal(atomic_load(&probe.errors), 0);
+        check_null(cflow_actor_error(&actor));
+        cflow_actor_destroy(&actor);
+        cflow_scheduler_destroy(&scheduler);
+        cflow_executor_destroy(&executor);
+        cflow_statechart_destroy(&statechart);
     }
 
     it("maps bounded admission and treats root FINAL as normal completion") {

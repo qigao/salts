@@ -24,6 +24,17 @@ cmake_add_benchmark(cflow_reactive_benchmark
   LIBS Salts::CFlow Salts::TinyTest
   FOLDER "cflow/benchmarks")
 
+cmake_add_benchmark(cflow_actor_mailbox_benchmark
+  SOURCES cflow_actor_mailbox_benchmark.c
+  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  FOLDER "cflow/benchmarks")
+add_test(NAME cflow_actor_mailbox_benchmark COMMAND cflow_actor_mailbox_benchmark)
+set_tests_properties(cflow_actor_mailbox_benchmark PROPERTIES LABELS benchmark TIMEOUT 60)
+set_target_properties(cflow_actor_mailbox_benchmark PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
 set_target_properties(cflow_direct_benchmark PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON

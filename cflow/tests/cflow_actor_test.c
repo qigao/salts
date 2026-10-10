@@ -1389,6 +1389,39 @@ suite("CFlow Actor lifecycle") {
         actor_edge_fixture_destroy(&fixture);
     }
 
+    it("returns from send when Executor rejection also meets a full Scheduler") {
+        actor_edge_fixture fixture;
+        cflow_actor_ref ref = {0};
+        actor_sender_context sender = {0};
+        cmeta_thread_t thread = {0};
+        cflow_schedule_result occupied;
+        check_true(actor_edge_fixture_init_with_scheduler_capacity(
+            &fixture, 2u, 1u, 1u));
+        check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
+        check_true(cflow_scheduler_wait_idle(&fixture.scheduler));
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_true(cflow_executor_shutdown(&fixture.executor));
+        occupied = cflow_scheduler_try_post_after(
+            &fixture.scheduler, UINT64_C(60000), actor_scheduler_slot, NULL);
+        check_equal(occupied.status, CFLOW_ADMISSION_ACCEPTED);
+        check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
+        sender.ref = &ref;
+        sender.event_id = 100u;
+        sender.first_payload = 9;
+        sender.count = 1;
+        check_equal(cmeta_thread_create(&thread, actor_sender, &sender), 0);
+        /* A deadlock must fail the test process instead of hanging teardown. */
+        if (!wait_until_true(&sender.completed)) abort();
+        check_equal(cmeta_thread_join(&thread), 0);
+        check_equal(atomic_load(&sender.accepted), 1);
+        check_equal(cflow_actor_wait(&fixture.actor), CFLOW_ACTOR_STATE_FAILED);
+        check_equal(atomic_load(&fixture.probe.errors), 1);
+        check_contains(cflow_actor_error(&fixture.actor), "scheduler is full");
+        check_true(cflow_scheduler_cancel(&fixture.scheduler, occupied.task_id));
+        cflow_actor_ref_release(&ref);
+        actor_edge_fixture_destroy(&fixture);
+    }
+
     it("keeps retained refs stale until each shell reference is released") {
         actor_edge_fixture fixture;
         cflow_actor_ref first = {0};

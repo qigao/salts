@@ -223,6 +223,52 @@ suite("CFlow typed event mailbox") {
         cflow_mailbox_destroy(&mailbox);
     }
 
+    it("indexes unsorted schema IDs and accepts an equivalent descriptor") {
+        const cflow_event_type schema[] = {
+            {UINT64_MAX, &cmeta_type_double}, {7u, &cmeta_type_int},
+            {1u, &cmeta_type_bool}};
+        const cmeta_type_desc equivalent = cmeta_type_int;
+        const int payload = 19;
+        const cflow_event_view event = {7u, &equivalent, &payload};
+        const cflow_event_view unknown = {8u, &equivalent, &payload};
+        cflow_mailbox mailbox = {0};
+        cflow_event_id id;
+        const cmeta_type_desc *type;
+        int observed = 0;
+        check_equal(cflow_mailbox_init(&mailbox, schema, 3u, 3u), CFLOW_MAILBOX_OK);
+        check_equal(cflow_mailbox_try_send(&mailbox, &unknown), CFLOW_MAILBOX_INVALID_ARGUMENT);
+        /* A non-power-of-two queue repeatedly crosses its wrap boundary. */
+        for (size_t index = 0u; index < 20u; ++index) {
+            check_equal(cflow_mailbox_try_send(&mailbox, &event), CFLOW_MAILBOX_OK);
+            check_equal(cflow_mailbox_try_receive(
+                &mailbox, &id, &type, &observed, sizeof(observed)), CFLOW_MAILBOX_OK);
+            check_equal(id, (cflow_event_id)7u);
+            check_true(type == &cmeta_type_int);
+            check_equal(observed, payload);
+        }
+        const double double_payload = 2.5;
+        const bool bool_payload = true;
+        const cflow_event_view mixed[] = {
+            event, {UINT64_MAX, &cmeta_type_double, &double_payload},
+            {1u, &cmeta_type_bool, &bool_payload}};
+        union { int integer; double decimal; bool boolean; } output;
+        for (size_t round = 0u; round < 4u; ++round) {
+            for (size_t index = 0u; index < 3u; ++index)
+                check_equal(cflow_mailbox_try_send(&mailbox, &mixed[index]), CFLOW_MAILBOX_OK);
+            check_equal(cflow_mailbox_try_send(&mailbox, &event), CFLOW_MAILBOX_FULL);
+            for (size_t index = 0u; index < 3u; ++index) {
+                check_equal(cflow_mailbox_try_receive(
+                    &mailbox, &id, &type, &output, sizeof(output)), CFLOW_MAILBOX_OK);
+                check_equal(id, mixed[index].id);
+                check_true(type == schema[index == 0u ? 1u : index == 1u ? 0u : 2u].payload_type);
+                if (index == 0u) check_equal(output.integer, payload);
+                else if (index == 1u) check_true(output.decimal == double_payload);
+                else check_true(output.boolean);
+            }
+        }
+        cflow_mailbox_destroy(&mailbox);
+    }
+
     it("drains after close and discards on cancellation") {
         const cflow_event_type schema[] = {{1u, &cmeta_type_int}};
         const int first = 11;

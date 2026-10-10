@@ -3,6 +3,10 @@
 
 #include <cflow/machine_instance.h>
 
+cflow_mailbox_status cflow_machine_instance_try_send_detach_internal(
+    cflow_machine_instance *instance, const cflow_event_view *event,
+    cflow_waker *out_waker);
+
 typedef void (*cflow_machine_transition_commit_hook)(
     void *user,
     /* SIZE_MAX denotes a non-transition terminal/runtime-failure update. */
