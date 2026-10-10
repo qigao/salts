@@ -178,18 +178,21 @@ endif()
 
 # Real installed-SDK test; use the shared CMake consumer harness without
 # linking against in-tree CMeta/CFlow targets or a duplicate test wrapper.
-if(NOT WIN32)
-  add_test(NAME cflow_ace_active_object_installed_test
-    COMMAND "${CMAKE_COMMAND}"
-      "-DSALTS_BINARY_DIR=${CMAKE_BINARY_DIR}"
-      "-DSALTS_TEST_VERSION=${PROJECT_VERSION}"
-      "-DCONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_config/ace_actor"
-      "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed-ace-actor"
-      "-DCTEST_COMMAND=${CMAKE_CTEST_COMMAND}"
-      -P "${PROJECT_SOURCE_DIR}/cmake/ci/verify-installed-consumer.cmake")
-  set_tests_properties(cflow_ace_active_object_installed_test PROPERTIES
-    TIMEOUT 180 RUN_SERIAL TRUE)
-endif()
+add_test(NAME cflow_ace_active_object_installed_test
+  COMMAND "${CMAKE_COMMAND}"
+    "-DSALTS_BINARY_DIR=${CMAKE_BINARY_DIR}"
+    "-DSALTS_TEST_VERSION=${PROJECT_VERSION}"
+    "-DSALTS_TEST_CONFIG=$<CONFIG>"
+    "-DSALTS_GENERATOR=${CMAKE_GENERATOR}"
+    "-DSALTS_C_COMPILER=${CMAKE_C_COMPILER}"
+    "-DSALTS_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+    "-DSALTS_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+    "-DCONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_config/ace_actor"
+    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed-ace-actor"
+    "-DCTEST_COMMAND=${CMAKE_CTEST_COMMAND}"
+    -P "${PROJECT_SOURCE_DIR}/cmake/ci/verify-installed-consumer.cmake")
+set_tests_properties(cflow_ace_active_object_installed_test PROPERTIES
+  TIMEOUT 300 RUN_SERIAL TRUE)
 
 cmake_add_test(cflow_statechart_actor_test
   SOURCES cflow_statechart_actor_test.c
@@ -357,6 +360,8 @@ set_target_properties(
   cflow_statechart_hierarchy_adapter_test
   cflow_machine_instance_test
   cflow_actor_test
+  cflow_owner_executor_test
+  cflow_owner_scheduler_test
   cflow_statechart_actor_test
   cflow_io_actor_test
   cflow_io_publisher_test

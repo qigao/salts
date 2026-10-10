@@ -160,6 +160,11 @@ const char *cflow_machine_instance_error(
  *
  * Producers and any attached adapter must already be quiescent. The borrowed
  * Machine, executor, callbacks, and user data may be released afterwards.
+ * With an owner-affine executor, call on its captured owner outside callbacks.
+ * Destruction drains accepted work on the shared executor before freeing the
+ * instance, so all executor producers must be quiescent. It may execute other
+ * accepted tasks and does not shut down the borrowed executor. A wrong-owner
+ * or callback invocation, or unprogressable pending work, aborts.
  */
 void cflow_machine_instance_destroy(cflow_machine_instance *instance);
 

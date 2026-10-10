@@ -23,7 +23,11 @@ $full = ($EventName -eq "workflow_dispatch") -or $release23Push -or $releaseTagP
 # Normal ACE development runs full Linux CTest. An explicit [ACE-MATRIX]
 # marker on the same long-lived Draft PR runs host-complete integration tests
 # and cross-builds; the marker is removable after the qualification checkpoint.
-$aceBranchPr = $HeadBranch -eq 'feature/cmeta-ace-patterns' -and
+$cflow1105Qualification = $HeadBranch -in @(
+  'fix/cflow-1105-cross-thread-stop', 'integrate/cflow-1107-master') -and
+  $EventName -eq 'pull_request' -and -not $PrepareRelease
+$aceBranchPr = ($HeadBranch -eq 'feature/cmeta-ace-patterns' -or
+  ($cflow1105Qualification -and $AceSan)) -and
   $EventName -eq 'pull_request' -and -not $PrepareRelease
 if (($AceMatrix -or $AceSan) -and -not $aceBranchPr) {
   throw "ACE qualification is restricted to its long-lived PR"
@@ -37,10 +41,10 @@ if ($UnifiedSan -and -not $unified23Review) {
 if ($UnifiedSan -and ($AceMatrix -or $AceSan)) {
   throw "2.3-SAN and ACE qualifiers cannot be combined"
 }
-$acePatternsDevelopment = $aceBranchPr -and -not $AceMatrix
+$acePatternsDevelopment = $aceBranchPr -and -not $AceMatrix -and -not $cflow1105Qualification
 # All 2.3 combined source host profiles must run their complete CTest, not
 # only native/execution projection subsets that can miss CNet/ACE composition.
-$aceFullMatrixQualification = ($aceBranchPr -and $AceMatrix) -or $unified23Review
+$aceFullMatrixQualification = ($aceBranchPr -and $AceMatrix) -or $unified23Review -or $cflow1105Qualification
 $aceSanitizerQualification = $aceBranchPr -and $AceSan
 $unifiedSanitizerQualification = $unified23Review -and ($UnifiedSan -or $release23Push -or $releaseTagPush)
 # Preserve the historical integration branch's complete Linux coverage.
@@ -207,6 +211,13 @@ foreach ($profile in $profiles) {
   if ($unifiedSanitizerQualification -and -not $release23Push -and -not $releaseTagPush -and
       $profile.id -ne 'linux-release' -and
       -not $profile.ContainsKey('sanitizer')) { continue }
+  # #1105 runs existing Linux sanitizer profiles and the full host test matrix,
+  # not cross-compilation/package jobs. This cannot affect the long-lived ACE PR.
+  if ($cflow1105Qualification -and $profile.id -notin @(
+      'linux-release', 'windows-release', 'macos-release',
+      'macos-clang-release', 'linux-ace-asan-ubsan', 'linux-ace-tsan')) {
+    continue
+  }
   # Keep regular ACE PRs on Linux only, but do not discard the explicit
   # ASan+UBSan/TSan Debug profiles supplied for an [ACE-SAN] qualification.
   if ($acePatternsDevelopment -and $profile.id -ne 'linux-release' -and

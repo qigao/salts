@@ -168,10 +168,11 @@ static bool actor_retain(cflow_actor_impl *impl) {
     return false;
 }
 
-static void actor_mark_failed(cflow_actor_impl *impl, const char *message) {
+static bool actor_mark_failed(cflow_actor_impl *impl, const char *message,
+                              bool defer_callback_settlement) {
     char *copy;
     bool first = false;
-    if (impl == NULL) return;
+    if (impl == NULL) return false;
     copy = actor_copy_error(message);
     cmeta_mutex_lock(&impl->gate);
     impl->starting = false;
@@ -190,11 +191,14 @@ static void actor_mark_failed(cflow_actor_impl *impl, const char *message) {
     free(copy);
     if (first) {
         impl->runtime_ops->cancel(impl);
-        cmeta_mutex_lock(&impl->gate);
-        impl->terminal_settled = true;
-        cmeta_cond_broadcast(&impl->changed);
-        cmeta_mutex_unlock(&impl->gate);
+        if (!defer_callback_settlement) {
+            cmeta_mutex_lock(&impl->gate);
+            impl->terminal_settled = true;
+            cmeta_cond_broadcast(&impl->changed);
+            cmeta_mutex_unlock(&impl->gate);
+        }
     }
+    return first;
 }
 
 static bool actor_sink_value(void *user,
@@ -209,11 +213,18 @@ static void actor_sink_error(void *user, const char *message) {
     cflow_actor_impl *impl = (cflow_actor_impl *)user;
     cflow_error_fn callback;
     void *callback_user;
+    bool settle;
     if (impl == NULL) return;
-    actor_mark_failed(impl, message);
+    settle = actor_mark_failed(impl, message, true);
     callback = impl->callbacks.on_error;
     callback_user = impl->callbacks.user;
     if (callback != NULL) callback(callback_user, message);
+    if (settle) {
+        cmeta_mutex_lock(&impl->gate);
+        impl->terminal_settled = true;
+        cmeta_cond_broadcast(&impl->changed);
+        cmeta_mutex_unlock(&impl->gate);
+    }
 }
 
 static void actor_sink_done(void *user) {
@@ -226,6 +237,7 @@ static void actor_sink_done(void *user) {
     bool running;
     bool natural_done_is_success;
     bool failed = false;
+    bool settle = false;
     if (impl == NULL) return;
 
     cmeta_mutex_lock(&impl->gate);
@@ -238,14 +250,16 @@ static void actor_sink_done(void *user) {
 
     cmeta_mutex_lock(&impl->gate);
     if (impl->state == CFLOW_ACTOR_STATE_STOPPING) {
+        impl->terminal_settled = false;
         impl->state = CFLOW_ACTOR_STATE_STOPPED;
-        cmeta_cond_broadcast(&impl->changed);
         done_callback = impl->callbacks.on_done;
+        settle = true;
     } else if (impl->state == CFLOW_ACTOR_STATE_RUNNING &&
                natural_done_is_success) {
+        impl->terminal_settled = false;
         impl->state = CFLOW_ACTOR_STATE_STOPPED;
-        cmeta_cond_broadcast(&impl->changed);
         done_callback = impl->callbacks.on_done;
+        settle = true;
     } else if (impl->state == CFLOW_ACTOR_STATE_RUNNING) {
         if (impl->error == NULL && copy != NULL) {
             impl->error = copy;
@@ -257,20 +271,24 @@ static void actor_sink_done(void *user) {
         cmeta_cond_broadcast(&impl->changed);
         error_callback = impl->callbacks.on_error;
         failed = true;
+        settle = true;
     }
     callback_user = impl->callbacks.user;
     cmeta_mutex_unlock(&impl->gate);
     free(copy);
 
-    if (failed) {
-        impl->runtime_ops->cancel(impl);
+    if (failed) impl->runtime_ops->cancel(impl);
+    if (error_callback != NULL) error_callback(callback_user, error);
+    if (done_callback != NULL) done_callback(callback_user);
+    /* Expose terminal settlement only after the user callback returns.
+     * cflow_actor_wait cannot release borrowed Scope/DSO callback storage
+     * while the worker is still executing on_done/on_error. */
+    if (settle) {
         cmeta_mutex_lock(&impl->gate);
         impl->terminal_settled = true;
         cmeta_cond_broadcast(&impl->changed);
         cmeta_mutex_unlock(&impl->gate);
     }
-    if (error_callback != NULL) error_callback(callback_user, error);
-    if (done_callback != NULL) done_callback(callback_user);
 }
 
 static cflow_actor_status actor_state_status(cflow_actor_state state) {
@@ -427,7 +445,7 @@ cflow_actor_status cflow_actor_start(cflow_actor *actor) {
     if (status != CFLOW_ACTOR_OK) return status;
 
     if (!impl->runtime_ops->as_source(impl, &source)) {
-        actor_mark_failed(impl, impl->runtime_ops->attach_error);
+        (void)actor_mark_failed(impl, impl->runtime_ops->attach_error, false);
         return CFLOW_ACTOR_FAILED;
     }
     sink = cflow_subscriber_from_callbacks(&impl->bridge_callbacks);
@@ -435,7 +453,7 @@ cflow_actor_status cflow_actor_start(cflow_actor *actor) {
                             impl->scheduler, &sink);
     if (!opened) {
         if (cflow_publisher_valid(&source)) cflow_publisher_destroy(&source);
-        actor_mark_failed(impl, "actor could not open Run");
+        (void)actor_mark_failed(impl, "actor could not open Run", false);
         return CFLOW_ACTOR_FAILED;
     }
 
@@ -450,7 +468,7 @@ cflow_actor_status cflow_actor_start(cflow_actor *actor) {
             ? CFLOW_ACTOR_FAILED : CFLOW_ACTOR_OK;
         cmeta_mutex_unlock(&impl->gate);
         if (!terminal) {
-            actor_mark_failed(impl, "actor could not request Run demand");
+            (void)actor_mark_failed(impl, "actor could not request Run demand", false);
             status = CFLOW_ACTOR_FAILED;
         }
         cflow_subscription_close(&impl->run);
@@ -475,6 +493,7 @@ cflow_actor_status cflow_actor_request_stop(cflow_actor *actor) {
     switch (impl->state) {
         case CFLOW_ACTOR_STATE_START:
             impl->state = CFLOW_ACTOR_STATE_STOPPED;
+            impl->terminal_settled = true;
             cmeta_cond_broadcast(&impl->changed);
             close_runtime = true;
             result = CFLOW_ACTOR_OK;
@@ -508,9 +527,9 @@ cflow_actor_state cflow_actor_wait(cflow_actor *actor) {
     cflow_actor_state state;
     if (impl == NULL) return CFLOW_ACTOR_STATE_FAILED;
     cmeta_mutex_lock(&impl->gate);
-    while (impl->state != CFLOW_ACTOR_STATE_STOPPED &&
-           (impl->state != CFLOW_ACTOR_STATE_FAILED ||
-            !impl->terminal_settled))
+    while ((impl->state != CFLOW_ACTOR_STATE_STOPPED &&
+            impl->state != CFLOW_ACTOR_STATE_FAILED) ||
+           !impl->terminal_settled)
         cmeta_cond_wait(&impl->changed, &impl->gate);
     state = impl->state;
     cmeta_mutex_unlock(&impl->gate);
@@ -721,6 +740,7 @@ void cflow_actor_destroy(cflow_actor *actor) {
     cmeta_mutex_lock(&impl->gate);
     if (impl->state != CFLOW_ACTOR_STATE_FAILED)
         impl->state = CFLOW_ACTOR_STATE_STOPPED;
+    impl->terminal_settled = true;
     cmeta_cond_broadcast(&impl->changed);
     cmeta_mutex_unlock(&impl->gate);
     actor->impl = NULL;

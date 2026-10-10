@@ -64,10 +64,9 @@ typedef struct run_impl {
 
     continuation_frame continuations[CMETA_RUN_MAX_CONTINUATIONS];
     size_t continuation_count;
-    /* Pump-owned state stays separate from the lock-protected lifecycle flags.
-     * Adjacent bool predicates may otherwise use a widened load that overlaps
-     * an unlocked source-completion write on another thread. */
-    bool source_done;
+    /* Pump completion is observed across lifecycle and worker boundaries.
+     * Keep it atomic and separate from lock-protected lifecycle flags. */
+    atomic_bool source_done;
 
     cmeta_mutex_t lock;
     cmeta_cond_t task_cv;
@@ -88,7 +87,7 @@ typedef struct run_impl {
     cflow_waitable active_wait;
     bool cancel_requested;
     bool cancelled;
-    bool terminated;
+    atomic_bool terminated;
     bool close_requested;
     bool external_closer;
     bool destroying;
@@ -1319,6 +1318,8 @@ cflow_status_result cflow_subscribe_subgraph_with_options(
     r->resume_ctx.scheduler = scheduler;
     if (sink) r->sink = *sink;
     atomic_init(&r->demand, 0u);
+    atomic_init(&r->source_done, false);
+    atomic_init(&r->terminated, false);
     r->identity_path =
         cflow_subgraph_out_degree(subgraph, subgraph->entry) == 0u;
     if (!cflow_value_slot_init(&r->source_slot, source_type)) {
