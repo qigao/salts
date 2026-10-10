@@ -36,6 +36,47 @@ typedef struct {
   size_t queue_capacity;
 } cmeta_threadpool_config_t;
 
+enum { SALTS_THREADPOOL_LF_VERSION = 1, SALTS_THREADPOOL_LF_MAX_BATCH = 32 };
+
+/** Versioned, explicit configuration for the optional CPU Leader/Followers pool.
+ * queue_capacity bounds queued descriptors; up to num_threads * max_batch
+ * additional descriptors may be claimed/executing/finalizing. Payload storage
+ * is borrowed and must be bounded separately by the application. */
+typedef struct cmeta_threadpool_lf_config {
+  size_t struct_size;
+  uint32_t version;
+  int num_threads;
+  size_t queue_capacity;
+  size_t max_batch;
+} cmeta_threadpool_lf_config_t;
+
+/** Initialize struct_size and version before querying. Snapshot counters are
+ * mutually consistent under the LF monitor. running/cancelling exclude
+ * finalizing; terminal counts include finalize completion. SIZE_MAX leader_id
+ * means no worker is eligible to lead, or the pool is closed and settled.
+ * An idle open pool may retain a sleeping leader. Wake/election
+ * telemetry saturates at UINT64_MAX; rejected_tasks saturates at INT64_MAX.
+ * Reaching INT64_MAX accepted tasks closes admission with DRAIN, so lifetime
+ * counters never silently wrap. */
+typedef struct cmeta_threadpool_lf_stats {
+  size_t struct_size;
+  uint32_t version;
+  size_t max_batch;
+  size_t queued_tasks;
+  size_t claimed_tasks;
+  size_t running_tasks;
+  size_t cancelling_tasks;
+  size_t finalizing_tasks;
+  size_t sleeping_workers;
+  size_t leader_id;
+  int64_t accepted_tasks;
+  int64_t completed_tasks;
+  int64_t cancelled_tasks;
+  uint64_t handoffs;
+  uint64_t wake_signals;
+  uint64_t empty_wakes;
+} cmeta_threadpool_lf_stats_t;
+
 typedef enum cmeta_threadpool_shutdown_policy {
   SALTS_THREADPOOL_SHUTDOWN_DRAIN = 0,
   SALTS_THREADPOOL_SHUTDOWN_CANCEL_PENDING
@@ -58,6 +99,32 @@ typedef struct {
 
 cmeta_threadpool_t *cmeta_threadpool_create(int num_threads);
 cmeta_threadpool_t *cmeta_threadpool_create_with_config(const cmeta_threadpool_config_t *config);
+/** Create an independent CPU LF pool; does not move or progress any I/O owner.
+ * config requires exact struct_size, version=SALTS_THREADPOOL_LF_VERSION,
+ * num_threads>0, queue_capacity>0 and 1<=max_batch<=32. Existing create APIs
+ * keep their original backend. FIFO claims do not imply ordered execution or
+ * completion. Callbacks run outside the monitor; successor election precedes
+ * handling. CANCEL_PENDING also cancels claimed tasks that have not started.
+ *
+ * out_pool must point to NULL; failures preserve it. Returns SALTS_EINVAL for
+ * invalid/overflowing configuration, SALTS_ENOMEM for unavailable resources.
+ * Join all API callers before destroy, and keep callback code/arg providers
+ * alive until callbacks/finalize return. Callbacks must return normally.
+ *
+ * Example:
+ *   cmeta_threadpool_lf_config_t config = {
+ *     sizeof(config), SALTS_THREADPOOL_LF_VERSION, 4, 128, 1};
+ *   cmeta_threadpool_t *pool = NULL;
+ *   int status = cmeta_threadpool_create_leader_followers(&config, &pool);
+ *   // On SALTS_OK use try_submit_task, shutdown_with_policy, wait_status,
+ *   // then destroy. Rejected task admission invokes no callback.
+ */
+int cmeta_threadpool_create_leader_followers(
+    const cmeta_threadpool_lf_config_t *config, cmeta_threadpool_t **out_pool);
+/** Returns SALTS_ENOTSUP for a legacy pool, SALTS_EINVAL for invalid version,
+ * size or arguments. Failed queries leave out_stats unchanged. */
+int cmeta_threadpool_get_lf_stats(cmeta_threadpool_t *pool,
+                                 cmeta_threadpool_lf_stats_t *out_stats);
 void cmeta_threadpool_destroy(cmeta_threadpool_t *pool);
 /**
  * Submit a copied descriptor, waiting for bounded queue space if necessary.

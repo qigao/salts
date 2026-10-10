@@ -73,6 +73,8 @@ $componentRuntime = Test-Changed '^component/(include/|src/|CMakeLists\.txt$|tes
 $componentPluginRuntime = Test-Changed '^component-plugin/(include/|src/|CMakeLists\.txt$|tests/)'
 $platformRuntime = Test-Changed '^platform/(include/|src/|arch/|CMakeLists\.txt$)'
 $concurrencyRuntime = Test-Changed '^concurrency/(include/|src/|CMakeLists\.txt$)'
+$concurrencyQualification = (-not $PrepareRelease) -and ($full -or $concurrencyRuntime -or
+  (Test-Changed '^concurrency/tests/(thread_pool(_lf)?_test\.c|concurrency_header_cpp_test\.cpp|CMakeLists\.txt)$'))
 $coroutineRuntime = Test-Changed '^coroutine/(include/|src/|arch/|CMakeLists\.txt$)'
 $cflowRuntime = Test-Changed '^cflow/(include/|src/|CMakeLists\.txt$|tests/CMakeLists\.txt$|cnet-adapter/)'
 $pluginRuntime = Test-Changed '^plugin/(include/|src/|CMakeLists\.txt$)'
@@ -186,7 +188,7 @@ $profiles = @(
   @{ id = 'android-arm64-v8a-release'; runner = 'ubuntu-24.04'; family = 'android'; preset = 'android-arm64-v8a-release-ci'; build_dir = 'build/android-arm64-v8a-release'; sdk = 'android-arm64-v8a' },
   @{ id = 'ios-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-arm64-release-ci'; build_dir = 'build/ios-arm64'; sdk = 'ios-arm64'; triplet = 'arm64-ios' }
 )
-if ($aceSanitizerQualification -or $unifiedSanitizerQualification) {
+if ($aceSanitizerQualification -or $unifiedSanitizerQualification -or $concurrencyQualification) {
   # Reuse existing Debug ASan and independent TSan CMake presets; the ASan
   # profile adds UBSan via the canonical Sanitizers.cmake flag. Do not combine
   # TSan with ASan, or reuse release binaries for sanitizer checks.

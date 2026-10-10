@@ -18,7 +18,8 @@
  */
 enum {
     MAX_THREADS = 4, MAX_BATCH = 32, MAX_PAYLOAD_BYTES = 65536,
-    CAPACITY = 128, MESSAGES = 2048, SAMPLES = 16
+    CAPACITY = 128, MAX_MESSAGES = 2048, FULL_SAMPLES = 16,
+    QUICK_MESSAGES = 1024, QUICK_SAMPLES = 8
 };
 enum dispatch_mode { ACTOR_NONE, ACTOR_VALUE, LEADER_FOLLOWERS, SERIAL_TOKEN };
 typedef struct completion { uint64_t id, digest; } completion;
@@ -77,14 +78,18 @@ struct bench_context {
     size_t wake_signals, worker_waits, empty_wakes;
     size_t in_flight_items, peak_in_flight_items, max_claimed_batch;
     size_t accepted, dequeued, next_settlement;
-    size_t observations[MESSAGES];
-    uint64_t expected[MESSAGES];
+    size_t observations[MAX_MESSAGES];
+    uint64_t expected[MAX_MESSAGES];
     unsigned char *payloads;
     uint64_t deadline;
     bool closing, failed, hold_first, held, release, coalesce_wakes, dispatch_paused;
 };
 
 static bench_context *current;
+/* Immutable while a case's threads are alive; full preserves the RC5 dataset. */
+static bool full_profile;
+static size_t message_count = QUICK_MESSAGES;
+static size_t sample_count = QUICK_SAMPLES;
 static tstr title;
 static tlog_t *metrics_logger;
 static cmeta_log_sink_t *metrics_sink;
@@ -153,14 +158,14 @@ static void elect_locked(bench_context *context) {
 }
 
 static void settle_locked(bench_context *context, completion result) {
-    if (result.id >= MESSAGES || result.digest != context->expected[result.id] ||
+    if (result.id >= message_count || result.digest != context->expected[result.id] ||
         context->observations[result.id] >= context->epoch) {
         fail_locked(context);
         return;
     }
     ++context->observations[result.id];
     ++context->completed;
-    if (context->completed % MESSAGES == 0u)
+    if (context->completed % message_count == 0u)
         cmeta_cond_broadcast(&context->changed);
 }
 
@@ -320,7 +325,7 @@ static void run_producer(void *user) {
         const uint64_t deadline = context->deadline;
         cmeta_mutex_unlock(&context->lock);
         bool valid = true;
-        for (size_t id = self->id; id < MESSAGES && valid; id += context->producer_count) {
+        for (size_t id = self->id; id < message_count && valid; id += context->producer_count) {
             const cflow_event_view event = {
                 1u, context->payload_type, context->payloads + id * context->payload_type->size};
             for (;;) {
@@ -391,11 +396,11 @@ static bool init_case(enum dispatch_mode mode, size_t producers, size_t workers,
     cmeta_mutex_init(&context->lock);
     cmeta_cond_init(&context->changed);
     if (context->lock == NULL || context->changed == NULL) return false;
-    /* Packed, size-specific pools keep small-message cases from reserving
-     * maximum-payload storage. Bounds above cap multiplication at 128 MiB. */
-    context->payloads = (unsigned char *)calloc(MESSAGES, type->size);
+    /* Packed, size-specific pools reserve at most 64 MiB in quick mode,
+     * 128 MiB in full mode. Profile constants bound the multiplication. */
+    context->payloads = (unsigned char *)calloc(message_count, type->size);
     if (context->payloads == NULL) return false;
-    for (size_t id = 0u; id < MESSAGES; ++id) {
+    for (size_t id = 0u; id < message_count; ++id) {
         unsigned char *payload = context->payloads + id * type->size;
         for (size_t index = 0u; index < type->size / sizeof(uint64_t); ++index) {
             const uint64_t word = index == 0u ? id :
@@ -446,7 +451,7 @@ static void run_sample(void) {
     cmeta_cond_broadcast(&context->changed);
     while (!context->failed &&
            (context->producers_done < context->producer_count ||
-            context->completed < context->epoch * MESSAGES)) (void)wait_locked(context);
+            context->completed < context->epoch * message_count)) (void)wait_locked(context);
     cmeta_mutex_unlock(&context->lock);
     /* Do not report a partial batch as a full throughput sample. */
     check_false(context->failed);
@@ -492,7 +497,7 @@ static void destroy_case(void) {
 static void verify_case(size_t samples) {
     bench_context *context = current;
     cflow_mailbox_stats mailbox = {0};
-    const size_t expected = samples * MESSAGES;
+    const size_t expected = samples * message_count;
     /* NONE completion is counted within the action, before Machine accounting
      * commits. Wait for real executor/scheduler quiescence before snapshot. */
     if (context->actor.impl != NULL) {
@@ -532,7 +537,7 @@ static void verify_case(size_t samples) {
         check_equal(mailbox.rejected_full, full_retries);
     }
     check_equal(context->completed, expected);
-    for (size_t id = 0u; id < MESSAGES; ++id)
+    for (size_t id = 0u; id < message_count; ++id)
         check_equal(context->observations[id], samples);
 }
 
@@ -572,6 +577,14 @@ static void report_case(void) {
 }
 
 suite("ACE CPU payload throughput, bounded admission to verified completion") {
+    before_each() {
+        const char *profile = getenv("CFLOW_ACE_BENCH_PROFILE");
+        check_true(profile == NULL || strcmp(profile, "quick") == 0 ||
+                                     strcmp(profile, "full") == 0);
+        full_profile = profile != NULL && strcmp(profile, "full") == 0;
+        message_count = full_profile ? MAX_MESSAGES : QUICK_MESSAGES;
+        sample_count = full_profile ? FULL_SAMPLES : QUICK_SAMPLES;
+    }
     after_each() {
         destroy_case();
         cmeta_sink_destroy(metrics_sink);
@@ -606,7 +619,7 @@ suite("ACE CPU payload throughput, bounded admission to verified completion") {
             context->release = true;
             cmeta_cond_broadcast(&context->changed);
             while (!context->failed &&
-                   (context->producers_done != 1u || context->completed != MESSAGES))
+                   (context->producers_done != 1u || context->completed != message_count))
                 (void)wait_locked(context);
             cmeta_mutex_unlock(&context->lock);
             check_false(context->failed);
@@ -631,7 +644,7 @@ suite("ACE CPU payload throughput, bounded admission to verified completion") {
         ++context->epoch;
         cmeta_mutex_unlock(&context->lock);
         size_t submitted = 0u;
-        while (submitted < MESSAGES) {
+        while (submitted < message_count) {
             cmeta_mutex_lock(&context->lock);
             context->deadline = cmeta_monotonic_ms() + 10000u;
             for (;;) {
@@ -647,7 +660,7 @@ suite("ACE CPU payload throughput, bounded admission to verified completion") {
             /* Singles force empty-to-nonempty wakeups; later waves contain at
              * most one batch, including a final 31-message partial batch. */
             size_t count = submitted < 65u ? 1u : MAX_BATCH;
-            if (count > MESSAGES - submitted) count = MESSAGES - submitted;
+            if (count > message_count - submitted) count = message_count - submitted;
             for (size_t index = 0u; index < count; ++index) {
                 const cflow_event_view event = {
                     1u, &type1024, context->payloads + (submitted + index) * type1024.size};
@@ -686,6 +699,9 @@ suite("ACE CPU payload throughput, bounded admission to verified completion") {
         const cmeta_type_desc *types[] = {
             &type16, &type64, &type256, &type1024, &type4096, &type16384, &type65536};
         for (size_t payload = 0u; payload < sizeof(types) / sizeof(types[0]); ++payload) {
+            if (!full_profile && types[payload] != &type16 &&
+                                 types[payload] != &type1024 &&
+                                 types[payload] != &type65536) continue;
             for (size_t producers = 1u; producers <= MAX_THREADS; producers *= MAX_THREADS) {
                 for (size_t index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index) {
                     check_true(init_case(cases[index].mode, producers, cases[index].workers,
@@ -696,10 +712,11 @@ suite("ACE CPU payload throughput, bounded admission to verified completion") {
                                         producers, cases[index].workers, cases[index].batch,
                                         types[payload]->size);
                     check_not_null(title);
-                    benchmark_io(title, SAMPLES, MESSAGES, MESSAGES * types[payload]->size) {
+                    benchmark_io(title, sample_count, message_count,
+                                 message_count * types[payload]->size) {
                         run_sample();
                     }
-                    verify_case(SAMPLES + 1u);
+                    verify_case(sample_count + 1u);
                     report_case();
                     destroy_case();
                 }
