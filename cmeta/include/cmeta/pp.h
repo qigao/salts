@@ -21,7 +21,12 @@
 #define CMETA_PP_CAT_I(a, b) a##b
 #define CMETA_PP_CAT(a, b) CMETA_PP_CAT_I(a, b)
 #define CMETA_PP_UNPAREN(...) __VA_ARGS__
-#define CMETA_PP_FIRST(first, ...) first
+/* ISO C11 requires at least one argument for the inner variadic tail.
+ * Pad a discarded final argument so even FIRST(single) stays conforming;
+ * multi-element callers still select their original first token unchanged.
+ * Do not rely on C23's omitted-variadic-argument extension here. */
+#define CMETA_PP_FIRST_I(first, ...) first
+#define CMETA_PP_FIRST(...) CMETA_PP_FIRST_I(__VA_ARGS__, cmeta_pp_first_unused)
 
 #define CMETA_PP_NARG_I(_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,N,...) N
 #define CMETA_PP_NARG(...) CMETA_PP_NARG_I(__VA_ARGS__,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0)

@@ -1,3 +1,18 @@
+# A public one-row TypeFunction must compile as *strict ISO C11* on
+# AppleClang as well as GNU/Clang; no omitted-variadic C23 extension or
+# warning downgrade is accepted.
+add_executable(cmeta_pp_iso_c11_test cmeta_pp_iso_c11_test.c)
+target_link_libraries(cmeta_pp_iso_c11_test PRIVATE Salts::CMeta)
+set_target_properties(cmeta_pp_iso_c11_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_pp_iso_c11_test PRIVATE
+    -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME cmeta_pp_iso_c11_test COMMAND cmeta_pp_iso_c11_test)
+set_target_properties(cmeta_pp_iso_c11_test PROPERTIES
+  FOLDER "cmeta/tests")
+
 cmake_add_test(cmeta_data_reflect_test
   SOURCES cmeta_data_reflect_test.c cmeta_data_reflect_peer.c
   LIBS Salts::CMeta Salts::TinyTest
