@@ -82,10 +82,10 @@ typedef struct run_impl {
     bool pump_running;
     bool waiting;
     cflow_waitable active_wait;
-    bool source_done;
+    atomic_bool source_done;
     bool cancel_requested;
     bool cancelled;
-    bool terminated;
+    atomic_bool terminated;
     bool close_requested;
     bool external_closer;
     bool destroying;
@@ -1314,6 +1314,8 @@ cflow_status_result cflow_subscribe_subgraph_with_options(
     r->resume_ctx.scheduler = scheduler;
     if (sink) r->sink = *sink;
     atomic_init(&r->demand, 0u);
+    atomic_init(&r->source_done, false);
+    atomic_init(&r->terminated, false);
     r->identity_path =
         cflow_subgraph_out_degree(subgraph, subgraph->entry) == 0u;
     if (!cflow_value_slot_init(&r->source_slot, source_type)) {
