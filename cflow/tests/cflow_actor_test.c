@@ -1522,6 +1522,53 @@ suite("CFlow Actor lifecycle") {
     }
 }
 
+/* #1105: foreign stop must synchronize with an executing worker pump. */
+suite("CFlow worker Actor cross-thread terminal synchronization") {
+    it("settles a blocked worker action and foreign stop exactly once") {
+        enum { STOP_RACE_REPETITIONS = 50 };
+        for (int iteration = 0; iteration < STOP_RACE_REPETITIONS; ++iteration) {
+            actor_edge_fixture fixture;
+            actor_blocker blocker = {0};
+            cflow_actor_ref ref = {0};
+            const int payload = iteration % ACTOR_EDGE_OBSERVATIONS;
+            const cflow_event_view event = {
+                100u, &cmeta_type_int, &payload};
+            cflow_actor_stats stats = {0};
+
+            check_true(actor_edge_fixture_init(&fixture, 1u));
+            fixture.probe.blocker = &blocker;
+            atomic_store(&fixture.probe.block_action, true);
+            check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
+            check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
+            check_equal(cflow_actor_ref_try_send(&ref, &event),
+                        CFLOW_ACTOR_SEND_ACCEPTED);
+            check_true(wait_until_true(&blocker.entered));
+
+            /* Main/control lane requests stop while worker is inside
+             * a real Machine action; callback never holds run lock. */
+            check_equal(cflow_actor_request_stop(&fixture.actor),
+                        CFLOW_ACTOR_OK);
+            atomic_store(&blocker.release, true);
+            check_equal(cflow_actor_wait(&fixture.actor),
+                        CFLOW_ACTOR_STATE_STOPPED);
+            check_true(cflow_actor_get_stats(&fixture.actor, &stats));
+            check_equal(stats.machine.accepted, (uint64_t)1u);
+            check_equal(stats.machine.accepted,
+                        stats.machine.completed +
+                            stats.machine.cancelled_events);
+            check_equal(stats.machine.in_flight, (size_t)0u);
+            check_equal(stats.machine.pending, (size_t)0u);
+            check_equal(atomic_load(&fixture.probe.errors), 0);
+            check_equal(atomic_load(&fixture.probe.dones), 1);
+
+            actor_edge_fixture_destroy(&fixture);
+            check_equal(cflow_actor_ref_try_send(&ref, &event),
+                        CFLOW_ACTOR_SEND_STALE);
+            cflow_actor_ref_release(&ref);
+        }
+    }
+}
+
 /* ACE Active Object: one reflected CMeta typed sender and one borrowed action
  * Strategy consume the existing Actor implementation without a second queue
  * or runtime. The strategy is called only by the Actor's serial execution. */
