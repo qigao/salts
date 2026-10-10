@@ -1,6 +1,7 @@
 #include <cflow/machine_instance.h>
 
 #include "machine_instance_internal.h"
+#include "executor_internal.h"
 
 #include <salts/thread.h>
 
@@ -1068,7 +1069,10 @@ cflow_machine_instance_status cflow_machine_instance_init_internal(
         return CFLOW_MACHINE_INSTANCE_INVALID_ARGUMENT;
     if (!cflow_executor_valid(config->executor) ||
         !cflow_executor_has(config->executor, CMETA_EXEC_CAP_SERIAL) ||
-        cflow_executor_has(config->executor, CMETA_EXEC_CAP_MANUAL))
+        (cflow_executor_has(config->executor, CMETA_EXEC_CAP_MANUAL) &&
+         !cflow_executor_has(config->executor, CMETA_EXEC_CAP_OWNER_AFFINE)) ||
+        (cflow_executor_has(config->executor, CMETA_EXEC_CAP_OWNER_AFFINE) &&
+         !cflow_executor_owner_is_thread_internal(config->executor)))
         return CFLOW_MACHINE_INSTANCE_INVALID_EXECUTOR;
 
     initial = find_state(config->machine,
