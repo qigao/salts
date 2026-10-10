@@ -920,19 +920,29 @@ completion token. No network or native request ownership transfers here.
 | Leader/Followers, 1/2/4 workers, batch 1/32 | One elected dequeue owner; successor is elected before independent payload or batch processing, so completion can reorder | 1/2/4 workers |
 | Serial token, 4 workers, batch 1/32 | One processing owner; token passes after completion or after up to 32 messages, preserving FIFO settlement | 4 workers |
 
-Every path uses 1 or 4 persistent producers, schema size 1, mailbox capacity
-128, and copied payloads of 16, 64, 256, 1024, 4096, 16384 or 65536 bytes.
+Every path uses 1 or 4 persistent producers, schema size 1, and mailbox capacity
+128. The default quick profile copies payloads of 16, 1024 or 65536 bytes.
+`CFLOW_ACE_BENCH_PROFILE=full` selects the original seven sizes:
+16, 64, 256, 1024, 4096, 16384 and 65536 bytes. An unset variable selects quick;
+only `quick` and `full` are accepted values.
 A sample includes producer
 admission, FULL retries with yield, identical full-payload checksums, exact-once
-result accounting, and the completion barrier. It contains 2048 messages;
-one warmup sample precedes 16 measured samples. Setup, precomputed inputs,
+result accounting, and the completion barrier. Quick uses 1024 messages and
+8 measured samples; full uses 2048 messages and 16 measured samples. One
+warmup sample precedes measurement. Setup, precomputed inputs,
 thread creation, and teardown are outside the measurement. Each sample has a
-10-second deadline. The packed input pool reserves `2048 * payload_bytes`,
-from 32 KiB to 128 MiB per case; mailbox payload storage is bounded by 128
+10-second deadline. The packed input pool reserves `messages * payload_bytes`,
+from 16 KiB to 64 MiB in quick, or 32 KiB to 128 MiB in full; mailbox payload storage is bounded by 128
 payloads, up to 8 MiB. This is a saturated burst test, not a
 per-message latency, CPU utilization, allocation profile, or transport test.
 
-The 182 cases retain eager LF notification (signal on every admission/election,
+Quick runs 78 cases and full runs 182. Both retain all dispatch configurations,
+producer/worker counts, and the stalled-handler and sparse-wakeup checks.
+Quick measures 638,976 messages versus full's 5,963,776 (10.7%); aggregate
+measured payload bytes are 19.0% of full. These are workload calculations,
+not a runtime speedup claim. Historical measurements below use the full dataset.
+
+Both profiles retain eager LF notification (signal on every admission/election,
 batch 1) as a comparison and add coalesced notification with batch 1/32. With
 coalescing, empty-to-nonempty admission signals only a waiting leader; election
 signals a waiting successor only if pending work exists. Waiting state is
@@ -979,6 +989,21 @@ their output in the existing `cflow-actor-mailbox-<profile>` artifacts:
 cmake --build --preset win-release-user --target cflow_ace_throughput_benchmark
 ctest --preset win-release-user -LE '^$' -R '^cflow_ace_throughput_benchmark$' -V
 ```
+
+For an explicit full measurement in PowerShell:
+
+```powershell
+$env:CFLOW_ACE_BENCH_PROFILE = 'full'
+try {
+  ctest --preset win-release-user -LE '^$' -R '^cflow_ace_throughput_benchmark$' -V
+} finally {
+  Remove-Item Env:CFLOW_ACE_BENCH_PROFILE
+}
+```
+
+Native CI uses quick by default. For performance comparisons, use the same
+profile and message/sample counts on both revisions; quick and full averages
+are separate datasets.
 
 Original eager LF measurements at `a125c701` on 2026-10-10 (Ryzen 9 7940HX, MSVC
 19.44, no CPU affinity) used five consecutive CTest executions. For four
