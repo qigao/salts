@@ -852,6 +852,13 @@ to the provider. ALPN wire behavior follows
 
 ## Ownership and progress
 
+`cnet_managed_dial_seal` seals recovery immediately and closes only its own
+physical connection. If bounded close admission fails, retain the dial, advance
+the client and Manager, and retry `seal`; sealing recovery does not discharge
+that pending close. Once close is accepted, repeated `seal` is idempotent.
+`cnet_managed_dial_advance` returns `ESHUTDOWN` after seal. Continue transport
+progress and Manager recycle before destroying the dial or its borrowed owners.
+
 One client owns one session engine and one NativeIO backend. CNet creates no
 I/O worker thread. The application repeatedly calls `cnet_client_poll`; that
 call drains bounded commands, observes NativeIO direct completions, routes those

@@ -27,6 +27,7 @@ typedef struct dial_impl {
   uint64_t episode_ms;
   int last_error;
   bool stopping;
+  bool close_admitted;
   bool in_callback;
 } dial_impl;
 
@@ -105,6 +106,7 @@ static void dial_on_recycle(void *user) {
   impl->in_callback = true;
   impl->managed = (cnet_managed_connection){0};
   impl->connection = (cnet_connection){0};
+  impl->close_admitted = false;
   impl->in_callback = false;
 }
 
@@ -274,15 +276,19 @@ int cnet_managed_dial_seal(cnet_managed_dial *dial) {
   int status = dial_owner(dial, &impl);
   if (status != SALTS_OK) return status;
   if (impl->in_callback) return SALTS_EBUSY;
-  if (impl->stopping) return SALTS_OK;
-  impl->stopping = true;
-  status = cnet_reconnect_seal(&impl->recovery);
-  if (status != SALTS_OK) return status;
-  if (impl->connection.slot != 0u) {
-    status = cnet_close(impl->client, impl->connection);
-    if (status != SALTS_OK && status != SALTS_EALREADY &&
-        status != SALTS_ENOENT) return status;
+  if (!impl->stopping) {
+    status = cnet_reconnect_seal(&impl->recovery);
+    if (status != SALTS_OK) return status;
+    impl->stopping = true;
   }
+  /* Sealing recovery does not prove that the bounded transport queue accepted
+   * close. Preserve that obligation for the next seal call until admission or
+   * actual terminal/recycle; never stop the borrowed client or its neighbors. */
+  if (impl->close_admitted || impl->connection.slot == 0u) return SALTS_OK;
+  status = cnet_close(impl->client, impl->connection);
+  if (status != SALTS_OK && status != SALTS_EALREADY &&
+      status != SALTS_ENOENT) return status;
+  impl->close_admitted = true;
   return SALTS_OK;
 }
 int cnet_managed_dial_destroy(cnet_managed_dial *dial) {
