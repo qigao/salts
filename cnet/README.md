@@ -125,10 +125,13 @@ ctest --preset win-release-ci -R '^cnet_.*test$' --output-on-failure
 ctest --preset win-release-ci -LE '^$' -R '^cnet_progress_strategy_benchmark$' -V
 ```
 
-Benchmark passed in 12.71 s. Build/test log:
-`build/strategy-final-validation.log`. Linux/macOS execution, sanitizers, mixed
-heavy/light connections, remote peers and integrated FlowMQ/LF return paths were
-not run for this change; PR #1104's qualification does not cover this new API.
+Benchmark passed in 12.71 s. Local build/test log:
+`build/strategy-final-validation.log`. These local measurements do not qualify
+Linux/macOS behavior or sanitizer safety. CI runs the strategy contracts on the
+native hosts and ASan/UBSan/TSan profiles, and archives the three Release hosts'
+45-row measurements as `cnet-progress-strategy-<profile>`. Use the matching PR
+check results for qualification. Mixed heavy/light connections, remote peers
+and integrated FlowMQ/LF return paths need separate application measurements.
 
 CNet is the connection-oriented layer above NativeIO. Applications see a
 client, generation-checked connections, send/receive operations, explicit
