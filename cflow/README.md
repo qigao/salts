@@ -907,6 +907,75 @@ Windows, and macOS Release profiles run this CTest five times and upload
 they do not establish a baseline/candidate performance ratio or enforce a
 cross-host speed threshold.
 
+`cflow_ace_throughput_benchmark` compares CPU payload dispatch using Active
+Object (the real Machine Actor), Leader/Followers, and a serial scheduling token.
+The latter two are benchmark-local prototypes borrowing the existing mailbox
+and platform primitives; they do not export a scheduler or change Actor policy.
+The token is exclusive processing ownership, not a NativeIO asynchronous
+completion token. No network or native request ownership transfers here.
+
+| Path | Processing contract | Background threads, excluding producers |
+| --- | --- | --- |
+| Actor NONE / VALUE | One serial state owner; VALUE delivers one typed checksum result per message | SerialExecutor + one Scheduler worker + timer thread |
+| Leader/Followers, 1/2/4 workers | One elected dequeue owner; successor is elected before independent payload processing, so completion can reorder | 1/2/4 workers |
+| Serial token, 4 workers, batch 1/32 | One processing owner; token passes after completion or after up to 32 messages, preserving FIFO settlement | 4 workers |
+
+Every path uses 1 or 4 persistent producers, schema size 1, mailbox capacity
+128, and copied 64-byte or 1024-byte payloads. A sample includes producer
+admission, FULL retries with yield, identical full-payload checksums, exact-once
+result accounting, and the completion barrier. It contains 2048 messages;
+one warmup sample precedes 16 measured samples. Setup, precomputed inputs,
+thread creation, and teardown are outside the measurement. Each sample has a
+10-second deadline. The input pool reserves 2 MiB per case; mailbox payload
+storage is bounded by 128 payloads. This is a saturated burst test, not a
+per-message latency, CPU utilization, allocation profile, or transport test.
+
+The monitor serializes the prototypes' election and mailbox admission/dequeue;
+only the elected leader receives, with no outstanding mailbox waker across
+ownership transfer. Handlers execute outside the monitor. All paths include
+the result-accounting mutex, while Actor retains its own gate, Machine,
+Subscription and scheduling costs. Consequently these are complete topology
+comparisons with different thread counts and ordering contracts, rather than
+an isolated measurement of an ACE pattern's overhead or an interchangeable
+Actor implementation. A stalled-handler check proves LF successor progress
+and token exclusivity; token FIFO settlement, bounded peak occupancy, accepted
+counts, content checksums, and exact completion counts are verified.
+
+`ops/s` counts completed messages; `MiB/s = ops/s * payload_bytes / 2^20`, with
+application payload bytes counted once. Copies and VALUE observation bytes
+are not added to this byte count. Min/max values describe whole samples.
+The native CI profiles run both throughput benchmarks five times and preserve
+their output in the existing `cflow-actor-mailbox-<profile>` artifacts:
+
+```powershell
+cmake --build --preset win-release-user --target cflow_ace_throughput_benchmark
+ctest --preset win-release-user -LE '^$' -R '^cflow_ace_throughput_benchmark$' -V
+```
+
+Local Windows x64 Release measurements on 2026-10-10 (Ryzen 9 7940HX, MSVC
+19.44, no CPU affinity) used five consecutive CTest executions. For four
+producers and 1024-byte payloads, these are medians of the per-run average
+ns/message, converted to throughput:
+
+| Path | ns/message | Million messages/s | MiB/s |
+| --- | ---: | ---: | ---: |
+| Actor NONE | 675.546 | 1.480 | 1445.59 |
+| Actor VALUE | 2624.561 | 0.381 | 372.09 |
+| Leader/Followers, 1 worker | 913.394 | 1.095 | 1069.16 |
+| Leader/Followers, 2 workers | 699.457 | 1.430 | 1396.17 |
+| Leader/Followers, 4 workers | 7449.509 | 0.134 | 131.09 |
+| Serial token, batch 1 | 8288.913 | 0.121 | 117.82 |
+| Serial token, batch 32 | 1205.991 | 0.829 | 809.76 |
+
+Token batching achieved 6.87 times the throughput of one-message token
+handoff in this workload. LF worker count alone did not improve throughput
+monotonically. The inference is that amortizing ownership handoff merits
+further investigation for short CPU handlers; the measurements do not isolate
+context-switch costs or qualify a new Actor runtime. The existing Actor NONE
+path was faster than either token variant here. Host scheduling and contention
+vary between runs and operating systems; CI results must be interpreted on
+their own runner, with the same ordering and callback distinctions above.
+
 On 2026-10-10, Windows x64 Release (MSVC 19.44.35217, Ryzen 9 7940HX),
 the same benchmark was linked against CFlow at `a6502620` and this change.
 Five alternating baseline/changed runs used 512 mailbox samples of 8192

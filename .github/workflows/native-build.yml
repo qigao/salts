@@ -131,7 +131,7 @@ jobs:
           set -euo pipefail
           cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
-      - name: Run Actor and mailbox benchmark (Unix)
+      - name: Run Actor, mailbox and ACE throughput benchmarks (Unix)
         id: actor_bench_unix
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.benchmarks == 'ON' }}
         timeout-minutes: 10
@@ -139,9 +139,9 @@ jobs:
         run: |
           set -euo pipefail
           ctest --preset "${{ matrix.preset }}" --no-tests=error -LE '^$' \
-            -R '^cflow_actor_mailbox_benchmark$' --repeat until-fail:5 -V \
+            -R '^cflow_(actor_mailbox|ace_throughput)_benchmark$' --repeat until-fail:5 -V \
             --output-log '${{ matrix.build_dir }}/actor-mailbox-benchmark.log'
-      - name: Run Actor and mailbox benchmark (Windows)
+      - name: Run Actor, mailbox and ACE throughput benchmarks (Windows)
         id: actor_bench_windows
         if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.benchmarks == 'ON' }}
         timeout-minutes: 10
@@ -151,7 +151,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error -LE "^$" -R "^cflow_actor_mailbox_benchmark$" --repeat until-fail:5 -V --output-log "${{ matrix.build_dir }}/actor-mailbox-benchmark.log"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error -LE "^$" -R "^cflow_(actor_mailbox|ace_throughput)_benchmark$" --repeat until-fail:5 -V --output-log "${{ matrix.build_dir }}/actor-mailbox-benchmark.log"
           if errorlevel 1 exit /b 1
       - name: Upload Actor and mailbox benchmark evidence
         if: ${{ always() && (steps.actor_bench_unix.outcome == 'success' || steps.actor_bench_unix.outcome == 'failure' || steps.actor_bench_windows.outcome == 'success' || steps.actor_bench_windows.outcome == 'failure') }}
