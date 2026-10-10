@@ -4456,11 +4456,26 @@ cflow_mailbox_status cflow_statechart_instance_try_send(
 cflow_mailbox_status cflow_statechart_instance_try_send_tagged(
     cflow_statechart_instance *instance, const cflow_event_view *event,
     uint64_t origin_token) {
+    cflow_waker waker = {0};
+    cflow_mailbox_status status = cflow_statechart_instance_try_send_detach_internal(
+        instance, event, origin_token, &waker);
+    invoke_detached_waker(waker);
+    return status;
+}
+
+static void statechart_send_wake(void *user) {
+    (void)schedule_statechart_driver((cflow_statechart_instance_impl *)user);
+}
+
+cflow_mailbox_status cflow_statechart_instance_try_send_detach_internal(
+    cflow_statechart_instance *instance, const cflow_event_view *event,
+    uint64_t origin_token, cflow_waker *out_waker) {
     cflow_statechart_instance_impl *impl = instance != NULL
         ? (cflow_statechart_instance_impl *)instance->impl : NULL;
     cflow_mailbox_status status;
     bool cancelled;
-    if (impl == NULL || !impl->external_mailbox_initialized)
+    if (out_waker != NULL) *out_waker = (cflow_waker){0};
+    if (impl == NULL || out_waker == NULL || !impl->external_mailbox_initialized)
         return CFLOW_MAILBOX_INVALID_ARGUMENT;
     cmeta_mutex_lock(&impl->lock);
     cancelled = impl->cancelled || impl->exit_requested;
@@ -4479,6 +4494,12 @@ cflow_mailbox_status cflow_statechart_instance_try_send_tagged(
         }
         counter_increment(&impl->external_accepted);
         ++impl->external_pending;
+        /* A queued/running driver owns progress; retain its existing rerun
+         * signal without another scheduler call on every ingress message. */
+        if (impl->driver_scheduled || impl->microstep_pending)
+            impl->driver_repost = true;
+        else
+            *out_waker = (cflow_waker){statechart_send_wake, impl};
     }
     cancelled = impl->cancelled || impl->exit_requested;
     cmeta_mutex_unlock(&impl->lock);
@@ -4488,7 +4509,6 @@ cflow_mailbox_status cflow_statechart_instance_try_send_tagged(
                              : CFLOW_MAILBOX_CLOSED;
         return status;
     }
-    (void)schedule_statechart_driver(impl);
     return CFLOW_MAILBOX_OK;
 }
 

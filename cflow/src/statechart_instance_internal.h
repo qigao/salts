@@ -5,6 +5,10 @@
 
 #include "timer_event_internal.h"
 
+cflow_mailbox_status cflow_statechart_instance_try_send_detach_internal(
+    cflow_statechart_instance *instance, const cflow_event_view *event,
+    uint64_t origin_token, cflow_waker *out_waker);
+
 #ifndef CFLOW_STATECHART_MAX_INSTANCE_BYTES
 #define CFLOW_STATECHART_MAX_INSTANCE_BYTES 67108864u
 #endif

@@ -106,6 +106,7 @@ static cflow_schedule_result worker_try_post_task_after(
     cflow_instant now;
     cflow_deadline deadline;
     cflow_schedule_result result;
+    bool immediate;
 
     if (!state || !task || !task->run)
         return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
@@ -116,11 +117,23 @@ static cflow_schedule_result worker_try_post_task_after(
         return (cflow_schedule_result){CFLOW_ADMISSION_CLOSED, 0u};
     }
 
+    /* Keep the bounded timer admission/ID contract. With no older timer or
+     * dispatcher ahead, zero-delay work can transfer straight to the existing
+     * worker queue, avoiding a timer-thread round trip for every Run wake.
+     * If that queue is full, the accepted timer retains progress exactly as
+     * before; no caller waits for worker capacity. */
+    immediate = delay_ms == 0u && state->dispatching == 0u &&
+        cflow_timer_queue_pending(&state->timers) == 0u;
     now = cflow_clock_now(&state->clock);
     deadline = cflow_deadline_after(now, cflow_duration_from_ms(delay_ms));
     result = cflow_timer_queue_try_schedule_task(
         &state->timers, deadline, task);
     if (result.status == CFLOW_ADMISSION_ACCEPTED) {
+        if (immediate && cflow_executor_try_post_task(&state->executor, task) ==
+                         CFLOW_ADMISSION_ACCEPTED) {
+            cflow_timer_task transferred;
+            (void)cflow_timer_queue_take(&state->timers, result.task_id, &transferred);
+        }
         ++state->accepted;
         worker_update_peak_locked(state);
         cmeta_cond_broadcast(&state->changed);

@@ -1,5 +1,6 @@
 #include <cflow/machine_instance.h>
 
+#include <salts/clock.h>
 #include <salts/thread.h>
 
 #include "../src/machine_instance_internal.h"
@@ -7,6 +8,8 @@
 
 #include <stdatomic.h>
 #include <string.h>
+
+enum { MACHINE_STATS_TIMEOUT_MS = 5000 };
 
 typedef struct runtime_probe {
     atomic_int guards;
@@ -1210,7 +1213,7 @@ suite("CFlow Machine Resumable runtime") {
     it("serializes transitions admitted by concurrent producers") {
         enum {
             PRODUCER_COUNT = 4,
-            EVENTS_PER_PRODUCER = 8,
+            EVENTS_PER_PRODUCER = 256,
             TOTAL_EVENTS = PRODUCER_COUNT * EVENTS_PER_PRODUCER
         };
         const cflow_machine_state states[] = {
@@ -1263,6 +1266,14 @@ suite("CFlow Machine Resumable runtime") {
         step = resumable.ops->resume(
             resumable.state, &resume_context, &output);
         check_equal(step.kind, CFLOW_STEP_WAIT);
+        const uint64_t stats_started = cmeta_monotonic_ms();
+        do {
+            check_true(cflow_machine_instance_get_stats(&instance, &stats));
+            check_equal(stats.accepted, stats.completed + stats.failed +
+                stats.cancelled_events + stats.pending + stats.in_flight);
+        } while (stats.completed != TOTAL_EVENTS &&
+                 cmeta_monotonic_ms() - stats_started < MACHINE_STATS_TIMEOUT_MS);
+        check_equal(stats.completed, (uint64_t)TOTAL_EVENTS);
         check_true(cflow_executor_wait_idle(&executor));
         cflow_machine_instance_close(&instance);
         check_true(cflow_machine_instance_get_stats(&instance, &stats));

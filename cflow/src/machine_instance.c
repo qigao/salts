@@ -2,6 +2,7 @@
 
 #include "machine_instance_internal.h"
 #include "executor_internal.h"
+#include "event_internal.h"
 
 #include <salts/thread.h>
 
@@ -1158,6 +1159,17 @@ cflow_mailbox_status cflow_machine_instance_try_send(
     return cflow_mailbox_try_send(&impl->mailbox, event);
 }
 
+cflow_mailbox_status cflow_machine_instance_try_send_detach_internal(
+    cflow_machine_instance *instance, const cflow_event_view *event,
+    cflow_waker *out_waker) {
+    cflow_machine_instance_impl *impl = instance != NULL
+        ? (cflow_machine_instance_impl *)instance->impl : NULL;
+    if (out_waker != NULL) *out_waker = (cflow_waker){0};
+    if (impl == NULL || !impl->mailbox_initialized)
+        return CFLOW_MAILBOX_INVALID_ARGUMENT;
+    return cflow_mailbox_try_send_detach_internal(&impl->mailbox, event, out_waker);
+}
+
 bool cflow_machine_instance_timer_payload_capacity(
     const cflow_machine_instance *instance,
     size_t *out_capacity) {
@@ -1314,34 +1326,57 @@ cflow_machine_state_id cflow_machine_instance_current_state(
     return result;
 }
 
+typedef struct machine_stats_observer {
+    cflow_machine_instance_impl *impl;
+    cflow_machine_instance_stats snapshot;
+} machine_stats_observer;
+
+static void machine_observe_stats(void *user, const cflow_mailbox_stats *mailbox_stats) {
+    machine_stats_observer *observer = (machine_stats_observer *)user;
+    cflow_machine_instance_impl *impl = observer->impl;
+    cflow_machine_instance_stats *snapshot = &observer->snapshot;
+    cmeta_mutex_lock(&impl->lock);
+    snapshot->accepted = mailbox_stats->accepted;
+    snapshot->completed = impl->completed;
+    snapshot->failed = impl->failed;
+    snapshot->cancelled_events = mailbox_stats->cancelled +
+                                impl->cancelled_in_flight;
+    snapshot->emitted_values = impl->emitted_values;
+    snapshot->emitted_events = impl->emitted_events;
+    snapshot->pending = mailbox_stats->pending;
+    /* Dequeue and terminal accounting are frozen by mailbox -> instance lock
+     * order. Derive the public count so the interval before the worker records
+     * its current event cannot disappear from this snapshot. Receive itself
+     * needs no nested locks. Saturated counters no longer encode a difference;
+     * retain the existing live count in that case. */
+    snapshot->in_flight = mailbox_stats->received == UINT64_MAX
+        ? impl->in_flight
+        : (size_t)(mailbox_stats->received - impl->completed - impl->failed -
+                   impl->cancelled_in_flight);
+    snapshot->current_state = impl->state->id;
+    snapshot->closed = impl->closed;
+    snapshot->cancelled = impl->cancelled;
+    snapshot->done = impl->done;
+    snapshot->errored = impl->error != NULL;
+    cmeta_mutex_unlock(&impl->lock);
+}
+
 bool cflow_machine_instance_get_stats(
     const cflow_machine_instance *instance,
     cflow_machine_instance_stats *out) {
     cflow_machine_instance_impl *impl = instance != NULL
         ? (cflow_machine_instance_impl *)instance->impl : NULL;
-    cflow_machine_instance_stats snapshot = {0};
+    machine_stats_observer observer = {impl, {0}};
     cflow_mailbox_stats mailbox_stats = {0};
     if (impl == NULL || out == NULL) return false;
-    if (impl->mailbox_initialized &&
-        !cflow_mailbox_get_stats(&impl->mailbox, &mailbox_stats))
-        return false;
-    cmeta_mutex_lock(&impl->lock);
-    snapshot.accepted = mailbox_stats.accepted;
-    snapshot.completed = impl->completed;
-    snapshot.failed = impl->failed;
-    snapshot.cancelled_events = mailbox_stats.cancelled +
-                                impl->cancelled_in_flight;
-    snapshot.emitted_values = impl->emitted_values;
-    snapshot.emitted_events = impl->emitted_events;
-    snapshot.pending = mailbox_stats.pending;
-    snapshot.in_flight = impl->in_flight;
-    snapshot.current_state = impl->state->id;
-    snapshot.closed = impl->closed;
-    snapshot.cancelled = impl->cancelled;
-    snapshot.done = impl->done;
-    snapshot.errored = impl->error != NULL;
-    cmeta_mutex_unlock(&impl->lock);
-    *out = snapshot;
+    if (impl->mailbox_initialized) {
+        if (!cflow_mailbox_get_stats_observe_internal(
+                &impl->mailbox, &mailbox_stats, machine_observe_stats, &observer))
+            return false;
+    } else {
+        machine_observe_stats(&observer, &mailbox_stats);
+    }
+    *out = observer.snapshot;
     return true;
 }
 

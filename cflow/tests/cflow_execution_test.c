@@ -905,6 +905,47 @@ spec("CFlow execution foundation") {
     cflow_scheduler_destroy(&scheduler);
   }
 
+  it("transfers immediate Worker Scheduler descriptors without a timer handoff") {
+    cflow_scheduler scheduler = {0};
+    cflow_scheduler_stats stats = {0};
+    cflow_task_lifecycle_probe probe = {0};
+    cflow_executor_task task = {
+        .run = cflow_lifecycle_run,
+        .cancel = cflow_lifecycle_cancel,
+        .finalize = cflow_lifecycle_finalize,
+        .user = &probe,
+    };
+    cflow_schedule_result result = {0};
+    int attempts = 0;
+
+    atomic_store(&worker_gate_open, 0);
+    atomic_store(&worker_gate_started, 0);
+    check_true(cflow_scheduler_worker_init_with_capacity(&scheduler, 1u, 1u, 1u));
+    check(cflow_scheduler_post(&scheduler, gated_count_task, NULL) != 0u);
+    while (!atomic_load(&worker_gate_started) && attempts++ < 200)
+      cmeta_sleep_ms(1);
+    check_equal(atomic_load(&worker_gate_started), 1);
+
+    check_true(cflow_scheduler_try_post_task_after_internal(
+        &scheduler, 0u, &task, &result));
+    check_equal(result.status, CFLOW_ADMISSION_ACCEPTED);
+    check_not_equal(result.task_id, (cflow_task_id)0u);
+    check_true(cflow_scheduler_get_stats(&scheduler, &stats));
+    check_equal(stats.ready_pending, (size_t)2u);
+    check_equal(stats.timer_pending, (size_t)0u);
+    check_equal(stats.dispatching, (size_t)0u);
+    check_false(cflow_scheduler_cancel(&scheduler, result.task_id));
+
+    atomic_store(&worker_gate_open, 1);
+    check_true(cflow_scheduler_wait_idle(&scheduler));
+    check_equal(atomic_load(&probe.run_count), 1);
+    check_equal(atomic_load(&probe.cancel_count), 0);
+    check_equal(atomic_load(&probe.finalize_count), 1);
+    check_equal(atomic_load(&probe.run_sequence), 1);
+    check_equal(atomic_load(&probe.finalize_sequence), 2);
+    cflow_scheduler_destroy(&scheduler);
+  }
+
   it("settles a worker Scheduler descriptor exactly once on shutdown") {
     cflow_scheduler scheduler = {0};
     cflow_task_lifecycle_probe probe = {0};

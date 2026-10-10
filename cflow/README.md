@@ -864,6 +864,220 @@ The send path does not retry, wait, overwrite, resize, silently drop, or
 allocate. `machine.mailbox_capacity` is required and non-zero; callers decide
 whether and when to retry `FULL`.
 
+Admission commits the payload under the Actor gate, detaches any progress wake,
+and invokes that wake after releasing the gate. Owner destruction marks refs
+stale and waits for detached wakes before releasing instance storage. This
+keeps synchronous Executor/Scheduler rejection and error callbacks from
+reentering a held admission gate. Startup also installs the receiving lifecycle
+before subscribing, so a Statechart already at root FINAL can complete during
+attachment without being misclassified as a startup failure.
+
+Mailbox initialization sorts its private schema copy; send uses binary search
+and accepts its validated canonical descriptor directly. Descriptors from other
+translation units or shared libraries still use CMeta semantic equality. Ring
+wrap uses bounded subtraction rather than division and supports arbitrary
+non-zero capacities. Payload copying, FIFO, capacity, and public interfaces are
+unchanged. Machine statistics hold the mailbox snapshot while reading instance
+accounting in mailbox-to-instance lock order; the public in-flight count is
+derived from received and settled events until lifetime counters saturate.
+The receive path keeps its existing separate lock acquisitions.
+
+The Worker Scheduler transfers zero-delay tasks directly to its worker queue
+when no timer or timer dispatcher precedes them. It still performs bounded
+timer admission and assigns the same task IDs. If the worker queue is full, the
+accepted timer follows the existing timer-thread handoff. Delayed work retains
+its timer ordering; callbacks remain asynchronous, and cancellation can fail
+once a task has transferred to the worker queue.
+
+`cflow_actor_mailbox_benchmark` separates schema sizes 1/64 and single-producer
+Actor bursts with/without a value for each transition. Setup and teardown are
+outside measured samples; accepted/received/completed counts are checked.
+Run the Release target and its CTest benchmark (the normal test preset excludes
+the `benchmark` label):
+
+```powershell
+cmake --build --preset win-release-user --target cflow_actor_mailbox_benchmark
+ctest --preset win-release-user -LE '^$' -R '^cflow_actor_mailbox_benchmark$' -V
+```
+
+The native CI build enables `CFLOW_BUILD_BENCHMARKS` while the global
+`BUILD_BENCHMARKS` option is off. Its primary Linux,
+Windows, and macOS Release profiles run this CTest five times and upload
+`cflow-actor-mailbox-<profile>` logs. These runs report candidate measurements;
+they do not establish a baseline/candidate performance ratio or enforce a
+cross-host speed threshold.
+
+`cflow_ace_throughput_benchmark` compares CPU payload dispatch using Active
+Object (the real Machine Actor), Leader/Followers, and a serial scheduling token.
+The latter two are benchmark-local prototypes borrowing the existing mailbox
+and platform primitives; they do not export a scheduler or change Actor policy.
+The token is exclusive processing ownership, not a NativeIO asynchronous
+completion token. No network or native request ownership transfers here.
+
+| Path | Processing contract | Background threads, excluding producers |
+| --- | --- | --- |
+| Actor NONE / VALUE | One serial state owner; VALUE delivers one typed checksum result per message | SerialExecutor + one Scheduler worker + timer thread |
+| Leader/Followers, 1/2/4 workers, batch 1/32 | One elected dequeue owner; successor is elected before independent payload or batch processing, so completion can reorder | 1/2/4 workers |
+| Serial token, 4 workers, batch 1/32 | One processing owner; token passes after completion or after up to 32 messages, preserving FIFO settlement | 4 workers |
+
+Every path uses 1 or 4 persistent producers, schema size 1, mailbox capacity
+128, and copied payloads of 16, 64, 256, 1024, 4096, 16384 or 65536 bytes.
+A sample includes producer
+admission, FULL retries with yield, identical full-payload checksums, exact-once
+result accounting, and the completion barrier. It contains 2048 messages;
+one warmup sample precedes 16 measured samples. Setup, precomputed inputs,
+thread creation, and teardown are outside the measurement. Each sample has a
+10-second deadline. The packed input pool reserves `2048 * payload_bytes`,
+from 32 KiB to 128 MiB per case; mailbox payload storage is bounded by 128
+payloads, up to 8 MiB. This is a saturated burst test, not a
+per-message latency, CPU utilization, allocation profile, or transport test.
+
+The 182 cases retain eager LF notification (signal on every admission/election,
+batch 1) as a comparison and add coalesced notification with batch 1/32. With
+coalescing, empty-to-nonempty admission signals only a waiting leader; election
+signals a waiting successor only if pending work exists. Waiting state is
+published under the same monitor before the condition variable atomically
+unlocks and waits. A running leader rechecks pending work before sleeping.
+This keeps admission and sleep transitions synchronized without a lost wake.
+
+LF claims up to 32 messages and elects its successor before processing them;
+it does not hold serial token ownership throughout the batch. Per-worker
+payload scratch is allocated during setup for `batch * payload_bytes`, up
+to 2 MiB; four LF workers reserve at most 8 MiB of payload scratch. The four
+worker slots also contain 2 KiB of fixed checksum results. Token workers each
+reserve one payload because their batch controls ownership, not dequeue count.
+The maximum in-flight count is `workers * batch`, up to 128, in addition to
+the 128 pending mailbox slots. A slow first message can delay other messages
+claimed by that worker; batch size therefore needs latency qualification for
+an application. No new memory is allocated per batch.
+
+The monitor serializes the prototypes' election and mailbox admission/dequeue;
+only the elected leader receives, with no outstanding mailbox waker across
+ownership transfer. Handlers execute outside the monitor. All paths include
+the result-accounting mutex, while Actor retains its own gate, Machine,
+Subscription and scheduling costs. Consequently these are complete topology
+comparisons with different thread counts and ordering contracts, rather than
+an isolated measurement of an ACE pattern's overhead or an interchangeable
+Actor implementation. A stalled-handler check proves LF successor progress
+and token exclusivity; token FIFO settlement, bounded peak occupancy, accepted
+counts, content checksums, and exact completion counts are verified.
+The stalled-handler check covers both LF notification policies and batch 32.
+A separate sparse-admission check repeatedly puts every worker to sleep,
+then verifies empty-to-nonempty wakeup, single messages, and partial-batch drain.
+Post-measurement `ACE_METRICS` summaries record notification requests, condition
+waits, empty wakes, elections, bounded occupancy and FULL retries. These counts
+include setup and warmup, exclude shutdown, and do not measure OS context
+switches. The summary logger is created and destroyed outside timed samples.
+
+`ops/s` counts completed messages; `MiB/s = ops/s * payload_bytes / 2^20`, with
+application payload bytes counted once. Copies and VALUE observation bytes
+are not added to this byte count. Min/max values describe whole samples.
+The native CI profiles run both throughput benchmarks five times and preserve
+their output in the existing `cflow-actor-mailbox-<profile>` artifacts:
+
+```powershell
+cmake --build --preset win-release-user --target cflow_ace_throughput_benchmark
+ctest --preset win-release-user -LE '^$' -R '^cflow_ace_throughput_benchmark$' -V
+```
+
+Original eager LF measurements at `a125c701` on 2026-10-10 (Ryzen 9 7940HX, MSVC
+19.44, no CPU affinity) used five consecutive CTest executions. For four
+producers and 1024-byte payloads, these are medians of the per-run average
+ns/message, converted to throughput:
+
+| Path | ns/message | Million messages/s | MiB/s |
+| --- | ---: | ---: | ---: |
+| Actor NONE | 675.546 | 1.480 | 1445.59 |
+| Actor VALUE | 2624.561 | 0.381 | 372.09 |
+| Leader/Followers, 1 worker | 913.394 | 1.095 | 1069.16 |
+| Leader/Followers, 2 workers | 699.457 | 1.430 | 1396.17 |
+| Leader/Followers, 4 workers | 7449.509 | 0.134 | 131.09 |
+| Serial token, batch 1 | 8288.913 | 0.121 | 117.82 |
+| Serial token, batch 32 | 1205.991 | 0.829 | 809.76 |
+
+Token batching achieved 6.87 times the throughput of one-message token
+handoff in this workload. LF worker count alone did not improve throughput
+monotonically. The inference is that amortizing ownership handoff merits
+further investigation for short CPU handlers; the measurements do not isolate
+context-switch costs or qualify a new Actor runtime. The existing Actor NONE
+path was faster than either token variant here. Host scheduling and contention
+vary between runs and operating systems; CI results must be interpreted on
+their own runner, with the same ordering and callback distinctions above.
+
+The LF optimization at `0caaee51` was measured separately on the same Windows host with
+five consecutive Release CTest executions. Eager and coalesced paths share
+the new batch-capable harness and counters; this is a within-harness policy
+comparison, not an alternating comparison against the original source binary.
+For four producers and 1024-byte payloads, medians of per-run averages were:
+
+| LF workers | Eager batch 1, million messages/s | Coalesced batch 1 | Coalesced batch 32 | Batch 32 / eager |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 1.302 | 1.505 | 3.652 | 2.80x |
+| 2 | 1.837 | 1.740 | 3.395 | 1.85x |
+| 4 | 0.148 | 0.139 | 2.940 | 19.89x |
+
+The four-worker policy reduced median condition waits from 34,287 to 1,058
+per run (34,816 messages including warmup). Coalescing alone did not improve
+throughput consistently; batching reduced the number of ownership transfers.
+One worker with batch 32 was fastest in this cheap-checksum workload, so more
+workers are not a default performance improvement. These results qualify the
+benchmark-local optimization only; they do not establish production LF
+stability, tail latency, network throughput, or an Actor runtime speedup.
+
+The seven-size matrix uses packed, size-specific input and worker pools so
+small messages do not reserve 64 KiB per slot. Allocation and initialization
+remain outside timing; all source storage is retained until producer/worker
+joins and Actor shutdown. Each size keeps the same sample message count,
+capacity, producer counts, checksum algorithm and completion checks. Pending
+byte capacity and checksum cost therefore grow with payload size; messages/s
+and MiB/s must both be considered. Its eager and optimized paths share these
+pools. Compare them within this matrix rather than attributing differences
+against earlier input layouts solely to the dispatch policy.
+
+Five consecutive seven-size Release runs on the same local Windows host
+passed all 182 cases. For four producers and four LF workers, medians of
+per-run average ns/message converted to throughput were:
+
+| Payload | Eager batch 1, million messages/s | Coalesced batch 32, million messages/s | Batch 32 MiB/s | Batch 32 / eager |
+| --- | ---: | ---: | ---: | ---: |
+| 16 B | 0.104 | 2.750 | 41.96 | 26.34x |
+| 64 B | 0.103 | 2.328 | 142.07 | 22.63x |
+| 256 B | 0.088 | 2.269 | 553.94 | 25.75x |
+| 1 KiB | 0.085 | 1.072 | 1046.43 | 12.55x |
+| 4 KiB | 0.090 | 0.479 | 1871.41 | 5.30x |
+| 16 KiB | 0.101 | 0.172 | 2681.47 | 1.70x |
+| 64 KiB | 0.041 | 0.039 | 2467.78 | 0.97x |
+
+At 64 KiB, batch 32 did not improve median throughput on this host. Growing
+payloads increase copied bytes and checksum work while the mailbox monitor
+still serializes admission/dequeue. The measurements do not isolate which
+cost dominates. A fixed message-count batch should therefore be qualified
+across the application's payload distribution and latency requirements,
+rather than assumed to help all sizes. The raw per-run averages vary with
+host load; no CPU affinity or isolated host was used.
+
+On 2026-10-10, Windows x64 Release (MSVC 19.44.35217, Ryzen 9 7940HX),
+the same benchmark was linked against CFlow at `a6502620` and this change.
+Five alternating baseline/changed runs used 512 mailbox samples of 8192
+operations and 128 Actor samples of 4096 messages. The table reports the median
+of each run's average, including synchronization with the completion probe:
+
+| Path | Baseline ns/op | Changed ns/op | Throughput ratio |
+| --- | ---: | ---: | ---: |
+| Mailbox, schema=1 | 20.510 | 16.647 | 1.23x |
+| Mailbox, schema=64 | 33.639 | 23.928 | 1.41x |
+| Actor, no value delivery | 220.760 | 211.598 | 1.04x |
+| Actor, value per transition | 18262.311 | 3056.178 | 5.98x |
+
+These are local measurements without CPU affinity or an isolated host. Baseline
+value-delivery averages ranged from 12.69 to 24.13 us/message; changed averages
+ranged from 2.73 to 3.75 us/message. Scheduler load affects the measured ratio.
+
+This benchmark measures the CFlow path, including the completion probe. It
+does not measure network throughput, multi-producer contention, retained
+application buffer scanning, or producer retry loops. Measure those separately
+in the consuming application before attributing its CPU usage to Actor.
+
 ### Statechart-backed Actor
 
 `cflow_statechart_actor_init()` uses the same `cflow_actor` owner handle,
