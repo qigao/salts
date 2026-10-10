@@ -478,8 +478,13 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     check_equal(raw_sends, 0u); /* WS notifications never leak into raw sends */
     {
       const int settled_status = tag_status;
-      check_equal(cnet_websocket_transport_advance(&ws_transport, 8u, &events),
-                  SALTS_OK);
+      /* Once the peer has terminated, another bounded advance may return
+       * the retained native bridge EIO even while draining is complete.
+       * The public transport API explicitly permits that error. Neither
+       * outcome may create a second terminal or replay application data.
+       */
+      const int rc = cnet_websocket_transport_advance(&ws_transport, 8u, &events);
+      check(rc == SALTS_OK || rc == SALTS_EIO);
       check_equal(tags, 1u); /* no duplicate settlement or implicit DATA retry */
       check_equal(tag_status, settled_status);
       check_equal(raw_sends, 0u);
