@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(cflow_ace_actor_installed_consumer LANGUAGES C)
+project(cflow_ace_actor_installed_consumer LANGUAGES C CXX)
 
 if(NOT DEFINED SALTS_TEST_PREFIX OR NOT DEFINED SALTS_TEST_VERSION)
   message(FATAL_ERROR "installed SDK prefix and expected version required")
@@ -46,6 +46,30 @@ if(WIN32)
 endif()
 add_test(NAME cflow_ace_half_sync_installed_consumer
   COMMAND cflow_ace_half_sync_installed_consumer)
+
+# Exact installed Owner Executor/Scheduler ABI and lifetime contract, in
+# separate C11 and C++17 consumers. The runtime always owns one bounded queue.
+foreach(kind IN ITEMS c11 cpp17)
+  if(kind STREQUAL "c11")
+    set(owner_source owner.c)
+  else()
+    set(owner_source owner.cpp)
+  endif()
+  add_executable(cflow_owner_installed_${kind} ${owner_source})
+  target_link_libraries(cflow_owner_installed_${kind} PRIVATE Salts::CFlow)
+  if(kind STREQUAL "c11")
+    target_compile_features(cflow_owner_installed_${kind} PRIVATE c_std_11)
+    set_target_properties(cflow_owner_installed_${kind} PROPERTIES
+      C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  else()
+    target_compile_features(cflow_owner_installed_${kind} PRIVATE cxx_std_17)
+    set_target_properties(cflow_owner_installed_${kind} PROPERTIES
+      CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+  endif()
+  add_test(NAME cflow_owner_installed_${kind}
+    COMMAND cflow_owner_installed_${kind})
+endforeach()
+
 # Fail early on undeclared C APIs on every supported GCC/Clang host.
 # The installed SDK consumer must include each API's declaring public header;
 # GNU C11 warning permissiveness must not hide macOS Clang errors.
@@ -53,7 +77,8 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
   foreach(ace_consumer IN ITEMS
       cflow_ace_actor_installed_consumer
       cflow_ace_pipes_installed_consumer
-      cflow_ace_half_sync_installed_consumer)
+      cflow_ace_half_sync_installed_consumer
+      cflow_owner_installed_c11)
     target_compile_options(${ace_consumer} PRIVATE
       -Werror=implicit-function-declaration)
   endforeach()

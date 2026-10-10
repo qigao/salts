@@ -86,7 +86,9 @@ typedef struct cflow_machine_instance {
  *
  * The instance copies initial state bytes and binding rows. It borrows the
  * immutable Machine, SerialExecutor, callbacks, and callback user data until
- * destroy. The executor must be a non-manual SerialExecutor.
+ * destroy. The executor must be a non-manual SerialExecutor or the built-in
+ * owner-affine SerialExecutor. Owner-affine initialization must run on the
+ * captured owner thread; the host drives subsequent execution there.
  */
 cflow_machine_instance_status cflow_machine_instance_init(
     cflow_machine_instance *instance,
@@ -157,6 +159,11 @@ const char *cflow_machine_instance_error(
  *
  * Producers and any attached adapter must already be quiescent. The borrowed
  * Machine, executor, callbacks, and user data may be released afterwards.
+ * With an owner-affine executor, call on its captured owner outside callbacks.
+ * Destruction drains accepted work on the shared executor before freeing the
+ * instance, so all executor producers must be quiescent. It may execute other
+ * accepted tasks and does not shut down the borrowed executor. A wrong-owner
+ * or callback invocation, or unprogressable pending work, aborts.
  */
 void cflow_machine_instance_destroy(cflow_machine_instance *instance);
 

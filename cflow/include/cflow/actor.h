@@ -155,7 +155,9 @@ cflow_actor_status cflow_actor_start(cflow_actor *actor);
 cflow_actor_status cflow_actor_request_stop(cflow_actor *actor);
 
 /**
- * Block until `STOPPED` or `FAILED`.
+ * Block until `STOPPED` or `FAILED` and the terminal user callback
+ * (on_done/on_error, if any) has returned. Observing STOPPED through
+ * cflow_actor_current_state() alone does not guarantee callback quiescence.
  *
  * This control-plane call must not run from a Machine/Statechart guard or
  * action, Actor sink callback, scheduler worker callback, or concurrently with

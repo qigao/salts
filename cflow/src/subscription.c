@@ -82,10 +82,10 @@ typedef struct run_impl {
     bool pump_running;
     bool waiting;
     cflow_waitable active_wait;
-    bool source_done;
+    atomic_bool source_done;
     bool cancel_requested;
     bool cancelled;
-    bool terminated;
+    atomic_bool terminated;
     bool close_requested;
     bool external_closer;
     bool destroying;
@@ -1314,6 +1314,8 @@ cflow_status_result cflow_subscribe_subgraph_with_options(
     r->resume_ctx.scheduler = scheduler;
     if (sink) r->sink = *sink;
     atomic_init(&r->demand, 0u);
+    atomic_init(&r->source_done, false);
+    atomic_init(&r->terminated, false);
     r->identity_path =
         cflow_subgraph_out_degree(subgraph, subgraph->entry) == 0u;
     if (!cflow_value_slot_init(&r->source_slot, source_type)) {
@@ -1567,7 +1569,10 @@ void cflow_subscription_close(cflow_subscription *run) {
             task_generation = r->scheduled_task_generation;
             scheduler_settles_cancel = r->scheduler_settles_cancel;
         }
-        if (task_id == 0u && (caps & CMETA_SCHED_CAP_CONCURRENT)) {
+        /* A borrowed owner Scheduler must cooperate with its own executor
+         * during close, not deadlock while waiting for owner-side work. */
+        if (task_id == 0u && (caps & CMETA_SCHED_CAP_CONCURRENT) &&
+            !cflow_scheduler_owner_is_thread_internal(r->scheduler)) {
             cmeta_cond_wait(&r->task_cv, &r->lock);
             cmeta_mutex_unlock(&r->lock);
             continue;

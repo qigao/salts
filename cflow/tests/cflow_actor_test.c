@@ -43,6 +43,8 @@ typedef struct actor_edge_probe {
     cflow_actor *actor;
     cflow_actor_ref *self_ref;
     actor_blocker *blocker;
+    actor_blocker *done_blocker;
+    atomic_bool block_done;
     atomic_bool block_action;
     atomic_bool fail_guard;
     atomic_bool fail_action;
@@ -269,14 +271,23 @@ static void actor_edge_on_error(void *user, const char *message) {
 
 static void actor_edge_on_done(void *user) {
     actor_edge_probe *probe = (actor_edge_probe *)user;
-    if (probe != NULL) atomic_fetch_add(&probe->dones, 1);
+    if (probe == NULL) return;
+    if (atomic_load(&probe->block_done) && probe->done_blocker != NULL) {
+        const uint64_t started = cmeta_monotonic_ms();
+        atomic_store(&probe->done_blocker->entered, true);
+        while (cmeta_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS &&
+               !atomic_load(&probe->done_blocker->release))
+            cmeta_sleep_ms(1u);
+    }
+    atomic_fetch_add(&probe->dones, 1);
 }
 
-static bool actor_edge_fixture_init_with_scheduler_capacity(
+static bool actor_edge_fixture_init_with_mode(
     actor_edge_fixture *fixture,
     size_t mailbox_capacity,
     size_t scheduler_ready_capacity,
-    size_t scheduler_timer_capacity) {
+    size_t scheduler_timer_capacity,
+    bool owner_driven) {
     cflow_machine_state states[1];
     cflow_event_type events[ACTOR_EDGE_EVENT_TYPES];
     cflow_machine_guard guards[ACTOR_EDGE_EVENT_TYPES];
@@ -324,11 +335,19 @@ static bool actor_edge_fixture_init_with_scheduler_capacity(
     if (cflow_machine_build(&fixture->machine, &definition) !=
         CFLOW_MACHINE_OK)
         return false;
-    if (!cflow_executor_serial_init(&fixture->executor)) return false;
-    if (!cflow_scheduler_worker_init_with_capacity(
-            &fixture->scheduler, 1u, scheduler_ready_capacity,
-            scheduler_timer_capacity))
-        return false;
+    if (owner_driven) {
+        if (!cflow_executor_owner_init_with_capacity(
+                &fixture->executor, scheduler_ready_capacity, NULL, NULL) ||
+            !cflow_scheduler_owner_bind(&fixture->scheduler,
+                &fixture->executor, scheduler_ready_capacity))
+            return false;
+    } else {
+        if (!cflow_executor_serial_init(&fixture->executor)) return false;
+        if (!cflow_scheduler_worker_init_with_capacity(
+                &fixture->scheduler, 1u, scheduler_ready_capacity,
+                scheduler_timer_capacity))
+            return false;
+    }
     fixture->probe.actor = &fixture->actor;
     atomic_init(&fixture->probe.self_send_status,
                 (int)CFLOW_ACTOR_SEND_INVALID_ARGUMENT);
@@ -350,6 +369,15 @@ static bool actor_edge_fixture_init_with_scheduler_capacity(
         actor_edge_on_done,
         &fixture->probe};
     return cflow_actor_init(&fixture->actor, &config).status == CFLOW_ACTOR_OK;
+}
+
+static bool actor_edge_fixture_init_with_scheduler_capacity(
+    actor_edge_fixture *fixture,
+    size_t mailbox_capacity,
+    size_t scheduler_ready_capacity,
+    size_t scheduler_timer_capacity) {
+    return actor_edge_fixture_init_with_mode(fixture, mailbox_capacity,
+        scheduler_ready_capacity, scheduler_timer_capacity, false);
 }
 
 static bool actor_edge_fixture_init(actor_edge_fixture *fixture,
@@ -1519,6 +1547,197 @@ suite("CFlow Actor lifecycle") {
                 cflow_actor_ref_release(&refs[producer]);
             actor_edge_fixture_destroy(&fixture);
         }
+    }
+}
+
+typedef struct actor_foreign_stop_context {
+    cflow_actor *actor;
+    atomic_bool started;
+    atomic_bool finished;
+    atomic_int status;
+} actor_foreign_stop_context;
+
+static void actor_foreign_stop(void *user) {
+    actor_foreign_stop_context *context = (actor_foreign_stop_context *)user;
+    atomic_store(&context->started, true);
+    atomic_store(&context->status,
+                 (int)cflow_actor_request_stop(context->actor));
+    atomic_store(&context->finished, true);
+}
+
+/* #1105: foreign stop must synchronize with an executing worker pump.
+ * Run under source-instrumented TSan, not merely a Release-only matrix. */
+suite("CFlow worker Actor cross-thread terminal synchronization") {
+    it("keeps wait blocked until a worker terminal callback is complete") {
+        actor_edge_fixture fixture;
+        actor_blocker terminal = {0};
+        actor_wait_stats_context waiter = {0};
+        cmeta_thread_t wait_thread = {0};
+        cflow_actor_ref ref = {0};
+        const int payload = 42;
+        const cflow_event_view event = {
+            100u, &cmeta_type_int, &payload};
+
+        check_true(actor_edge_fixture_init(&fixture, 1u));
+        fixture.probe.done_blocker = &terminal;
+        atomic_store(&fixture.probe.block_done, true);
+        check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
+        check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
+        check_equal(cflow_actor_ref_try_send(&ref, &event),
+                    CFLOW_ACTOR_SEND_ACCEPTED);
+        check_true(wait_until_at_least(&fixture.probe.values, 1));
+        check_equal(cflow_actor_request_stop(&fixture.actor), CFLOW_ACTOR_OK);
+        check_true(wait_until_true(&terminal.entered));
+
+        /* STOPPED is visible but wait must still protect borrowed callback
+         * storage. The callback is deliberately held on the worker lane. */
+        check_equal(cflow_actor_current_state(&fixture.actor),
+                    CFLOW_ACTOR_STATE_STOPPED);
+        waiter.actor = &fixture.actor;
+        check_equal(cmeta_thread_create(
+                        &wait_thread, actor_wait_and_snapshot, &waiter), 0);
+        check_true(wait_until_true(&waiter.started));
+        cmeta_sleep_ms(10u);
+        check_false(atomic_load(&waiter.completed));
+
+        atomic_store(&terminal.release, true);
+        check_true(wait_until_true(&waiter.completed));
+        check_equal(cmeta_thread_join(&wait_thread), 0);
+        check_equal(waiter.state, CFLOW_ACTOR_STATE_STOPPED);
+        check_true(waiter.stats_valid);
+        check_equal(atomic_load(&fixture.probe.dones), 1);
+        cflow_actor_ref_release(&ref);
+        actor_edge_fixture_destroy(&fixture);
+    }
+
+    it("settles a blocked worker action and foreign stop exactly once") {
+        enum { STOP_RACE_REPETITIONS = 50 };
+        for (int iteration = 0; iteration < STOP_RACE_REPETITIONS; ++iteration) {
+            actor_edge_fixture fixture;
+            actor_blocker blocker = {0};
+            cflow_actor_ref ref = {0};
+            const int payload = iteration % ACTOR_EDGE_OBSERVATIONS;
+            const cflow_event_view event = {
+                100u, &cmeta_type_int, &payload};
+            cflow_actor_stats stats = {0};
+            actor_foreign_stop_context stop = {0};
+            cmeta_thread_t stop_thread = {0};
+
+            check_true(actor_edge_fixture_init(&fixture, 1u));
+            fixture.probe.blocker = &blocker;
+            atomic_store(&fixture.probe.block_action, true);
+            check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
+            check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
+            check_equal(cflow_actor_ref_try_send(&ref, &event),
+                        CFLOW_ACTOR_SEND_ACCEPTED);
+            check_true(wait_until_true(&blocker.entered));
+
+            /* Main/control lane requests stop while worker is inside
+             * a real Machine action; callback never holds run lock. */
+            stop.actor = &fixture.actor;
+            check_equal(cmeta_thread_create(
+                            &stop_thread, actor_foreign_stop, &stop), 0);
+            check_true(wait_until_true(&stop.started));
+            /* Release the owner worker while a separate control lane is
+             * independently requesting termination. */
+            atomic_store(&blocker.release, true);
+            check_true(wait_until_true(&stop.finished));
+            check_equal(cmeta_thread_join(&stop_thread), 0);
+            check_equal(atomic_load(&stop.status), (int)CFLOW_ACTOR_OK);
+            check_equal(cflow_actor_wait(&fixture.actor),
+                        CFLOW_ACTOR_STATE_STOPPED);
+            check_true(cflow_actor_get_stats(&fixture.actor, &stats));
+            check_equal(stats.machine.accepted, (uint64_t)1u);
+            check_equal(stats.machine.accepted,
+                        stats.machine.completed +
+                            stats.machine.cancelled_events);
+            check_equal(stats.machine.in_flight, (size_t)0u);
+            check_equal(stats.machine.pending, (size_t)0u);
+            check_equal(atomic_load(&fixture.probe.errors), 0);
+            check_equal(atomic_load(&fixture.probe.dones), 1);
+
+            actor_edge_fixture_destroy(&fixture);
+            check_equal(cflow_actor_ref_try_send(&ref, &event),
+                        CFLOW_ACTOR_SEND_STALE);
+            cflow_actor_ref_release(&ref);
+        }
+    }
+}
+
+suite("CFlow owner Actor teardown") {
+    static actor_edge_fixture fixture;
+    static cflow_actor_ref ref;
+
+    before_each() {
+        ref = (cflow_actor_ref){0};
+        check_true(actor_edge_fixture_init_with_mode(
+            &fixture, 2u, 4u, 0u, true));
+        check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
+    }
+
+    after_each() {
+        cflow_executor_control control = {0};
+        cflow_actor_destroy(&fixture.actor);
+        /* Keep failure cleanup safe if a regression leaves borrowed Machine
+         * tasks queued: discard descriptors instead of executing them. */
+        if (cflow_executor_valid(&fixture.executor) &&
+            cflow_executor_project_control(&fixture.executor, &control)) {
+            (void)cflow_executor_control_shutdown(
+                &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING);
+            (void)cflow_executor_run_ready(&fixture.executor);
+        }
+        cflow_actor_ref_release(&ref);
+        actor_edge_fixture_destroy(&fixture);
+    }
+
+    it("settles queued Machine work before releasing the Actor") {
+        const int payload = 42;
+        const cflow_event_view event = {100u, &cmeta_type_int, &payload};
+        check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
+        check_equal(cflow_actor_ref_try_send(&ref, &event),
+                    CFLOW_ACTOR_SEND_ACCEPTED);
+        /* The first Subscription turn queues a Machine task and yields. */
+        check_true(cflow_executor_run_one(&fixture.executor));
+        check_equal(cflow_executor_pending(&fixture.executor), (size_t)1u);
+
+        cflow_actor_destroy(&fixture.actor);
+        check_null(fixture.actor.impl);
+        check_equal(cflow_executor_pending(&fixture.executor), (size_t)0u);
+        check_equal(cflow_scheduler_pending(&fixture.scheduler), (size_t)0u);
+        check_equal(atomic_load(&fixture.probe.action_calls), 0);
+        check_equal(atomic_load(&fixture.probe.values), 0);
+        check_equal(cflow_actor_ref_try_send(&ref, &event),
+                    CFLOW_ACTOR_SEND_STALE);
+
+        /* Actor teardown must leave its borrowed execution lane usable. */
+        check_equal(cflow_executor_try_post(
+                        &fixture.executor, actor_scheduler_slot, NULL),
+                    CFLOW_ADMISSION_ACCEPTED);
+        check_true(cflow_executor_run_one(&fixture.executor));
+        check_false(cflow_executor_run_one(&fixture.executor));
+    }
+
+    it("destroys an owner Actor after normal terminal settlement") {
+        const int payload = 17;
+        const cflow_event_view event = {100u, &cmeta_type_int, &payload};
+        check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
+        check_equal(cflow_actor_ref_try_send(&ref, &event),
+                    CFLOW_ACTOR_SEND_ACCEPTED);
+        (void)cflow_scheduler_run_until_idle(&fixture.scheduler, 0u);
+        check_equal(atomic_load(&fixture.probe.action_calls), 1);
+        check_equal(atomic_load(&fixture.probe.values), 1);
+        check_equal(cflow_actor_request_stop(&fixture.actor), CFLOW_ACTOR_OK);
+        (void)cflow_scheduler_run_until_idle(&fixture.scheduler, 0u);
+        check_equal(cflow_actor_wait(&fixture.actor), CFLOW_ACTOR_STATE_STOPPED);
+        check_equal(atomic_load(&fixture.probe.dones), 1);
+
+        cflow_actor_destroy(&fixture.actor);
+        cflow_actor_destroy(&fixture.actor);
+        check_null(fixture.actor.impl);
+        check_equal(cflow_executor_pending(&fixture.executor), (size_t)0u);
+        check_equal(cflow_scheduler_pending(&fixture.scheduler), (size_t)0u);
+        check_equal(cflow_actor_ref_try_send(&ref, &event),
+                    CFLOW_ACTOR_SEND_STALE);
     }
 }
 
