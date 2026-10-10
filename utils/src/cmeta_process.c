@@ -30,6 +30,9 @@
   #include <signal.h>
   #include <sys/wait.h>
   #include <unistd.h>
+  #ifdef __APPLE__
+    #include <sys/sysctl.h>
+  #endif
 
 extern char **environ;
 #endif
@@ -1266,6 +1269,27 @@ static int drain_posix_fd(cmeta_process_t *process, int fd, int is_stdout, atomi
   return SALTS_OK;
 }
 
+static int process_cleanup_shell_group(pid_t pid) {
+  int error;
+  if (kill(-pid, SIGKILL) == 0) return SALTS_OK;
+  error = errno;
+#ifdef __APPLE__
+  if (error == EPERM) {
+    int query[] = {CTL_KERN, KERN_PROC, KERN_PROC_PGRP, pid};
+    struct kinfo_proc remaining;
+    size_t size = sizeof(remaining);
+    /* Darwin skips zombies when signalling a group and reports EPERM when
+     * none remain signalable. Only accept the known unreaped root (or an
+     * empty group); additional members or a failed query retain the error. */
+    if (sysctl(query, sizeof(query) / sizeof(query[0]), &remaining, &size, NULL, 0) == 0 &&
+        (size == 0u || (size == sizeof(remaining) && remaining.kp_proc.p_pid == pid &&
+                       remaining.kp_proc.p_stat == SZOMB)))
+      return SALTS_OK;
+  }
+#endif
+  return error == ESRCH ? SALTS_OK : -error;
+}
+
 static pid_t process_poll_posix(cmeta_process_t *process, int *status, int *tree_error) {
   if (process->shell_command) {
     siginfo_t info;
@@ -1277,7 +1301,7 @@ static pid_t process_poll_posix(cmeta_process_t *process, int *status, int *tree
     if (rc < 0) return -1;
     if (info.si_pid == 0) return 0;
     /* Keep the root waitable until group cleanup, preventing PID/PGID reuse. */
-    if (kill(-process->pid, SIGKILL) != 0 && errno != ESRCH) *tree_error = -errno;
+    *tree_error = process_cleanup_shell_group(process->pid);
   }
   return waitpid(process->pid, status, WNOHANG);
 }
