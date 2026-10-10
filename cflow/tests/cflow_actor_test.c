@@ -1537,7 +1537,8 @@ static void actor_foreign_stop(void *user) {
     atomic_store(&context->finished, true);
 }
 
-/* #1105: foreign stop must synchronize with an executing worker pump. */
+/* #1105: foreign stop must synchronize with an executing worker pump.
+ * Run under source-instrumented TSan, not merely a Release-only matrix. */
 suite("CFlow worker Actor cross-thread terminal synchronization") {
     it("settles a blocked worker action and foreign stop exactly once") {
         enum { STOP_RACE_REPETITIONS = 50 };
