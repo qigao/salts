@@ -174,6 +174,7 @@ spec("cmeta_process") {
       cmeta_process_destroy(process);
       check_equal(wait_status, SALTS_OK);
       check_true(read_status == SALTS_OK || read_status == SALTS_EOF);
+      info("shell state=%d exit=%d error=%d", result.state, result.exit_code, result.error_code);
       check_equal(result.state, SALTS_PROCESS_EXITED);
       check_equal(result.exit_code, 7);
       check_contains(output, "quoted & text");
