@@ -917,7 +917,7 @@ completion token. No network or native request ownership transfers here.
 | Path | Processing contract | Background threads, excluding producers |
 | --- | --- | --- |
 | Actor NONE / VALUE | One serial state owner; VALUE delivers one typed checksum result per message | SerialExecutor + one Scheduler worker + timer thread |
-| Leader/Followers, 1/2/4 workers | One elected dequeue owner; successor is elected before independent payload processing, so completion can reorder | 1/2/4 workers |
+| Leader/Followers, 1/2/4 workers, batch 1/32 | One elected dequeue owner; successor is elected before independent payload or batch processing, so completion can reorder | 1/2/4 workers |
 | Serial token, 4 workers, batch 1/32 | One processing owner; token passes after completion or after up to 32 messages, preserving FIFO settlement | 4 workers |
 
 Every path uses 1 or 4 persistent producers, schema size 1, mailbox capacity
@@ -930,6 +930,23 @@ thread creation, and teardown are outside the measurement. Each sample has a
 storage is bounded by 128 payloads. This is a saturated burst test, not a
 per-message latency, CPU utilization, allocation profile, or transport test.
 
+The 52 cases retain eager LF notification (signal on every admission/election,
+batch 1) as a comparison and add coalesced notification with batch 1/32. With
+coalescing, empty-to-nonempty admission signals only a waiting leader; election
+signals a waiting successor only if pending work exists. Waiting state is
+published under the same monitor before the condition variable atomically
+unlocks and waits. A running leader rechecks pending work before sleeping.
+This keeps admission and sleep transitions synchronized without a lost wake.
+
+LF claims up to 32 messages and elects its successor before processing them;
+it does not hold serial token ownership throughout the batch. The fixed
+per-worker scratch stores 32 maximum-size payloads and 32 checksum results
+(32.5 KiB); all four worker slots reserve 130 KiB per case, outside measurement.
+The maximum in-flight count is `workers * batch`, up to 128, in addition to
+the 128 pending mailbox slots. A slow first message can delay other messages
+claimed by that worker; batch size therefore needs latency qualification for
+an application. No new memory is allocated per batch.
+
 The monitor serializes the prototypes' election and mailbox admission/dequeue;
 only the elected leader receives, with no outstanding mailbox waker across
 ownership transfer. Handlers execute outside the monitor. All paths include
@@ -940,6 +957,13 @@ an isolated measurement of an ACE pattern's overhead or an interchangeable
 Actor implementation. A stalled-handler check proves LF successor progress
 and token exclusivity; token FIFO settlement, bounded peak occupancy, accepted
 counts, content checksums, and exact completion counts are verified.
+The stalled-handler check covers both LF notification policies and batch 32.
+A separate sparse-admission check repeatedly puts every worker to sleep,
+then verifies empty-to-nonempty wakeup, single messages, and partial-batch drain.
+Post-measurement `ACE_METRICS` summaries record notification requests, condition
+waits, empty wakes, elections, bounded occupancy and FULL retries. These counts
+include setup and warmup, exclude shutdown, and do not measure OS context
+switches. The summary logger is created and destroyed outside timed samples.
 
 `ops/s` counts completed messages; `MiB/s = ops/s * payload_bytes / 2^20`, with
 application payload bytes counted once. Copies and VALUE observation bytes
@@ -952,7 +976,7 @@ cmake --build --preset win-release-user --target cflow_ace_throughput_benchmark
 ctest --preset win-release-user -LE '^$' -R '^cflow_ace_throughput_benchmark$' -V
 ```
 
-Local Windows x64 Release measurements on 2026-10-10 (Ryzen 9 7940HX, MSVC
+Original eager LF measurements at `a125c701` on 2026-10-10 (Ryzen 9 7940HX, MSVC
 19.44, no CPU affinity) used five consecutive CTest executions. For four
 producers and 1024-byte payloads, these are medians of the per-run average
 ns/message, converted to throughput:
@@ -975,6 +999,26 @@ context-switch costs or qualify a new Actor runtime. The existing Actor NONE
 path was faster than either token variant here. Host scheduling and contention
 vary between runs and operating systems; CI results must be interpreted on
 their own runner, with the same ordering and callback distinctions above.
+
+The LF optimization was measured separately on the same Windows host with
+five consecutive Release CTest executions. Eager and coalesced paths share
+the new batch-capable harness and counters; this is a within-harness policy
+comparison, not an alternating comparison against the original source binary.
+For four producers and 1024-byte payloads, medians of per-run averages were:
+
+| LF workers | Eager batch 1, million messages/s | Coalesced batch 1 | Coalesced batch 32 | Batch 32 / eager |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 1.302 | 1.505 | 3.652 | 2.80x |
+| 2 | 1.837 | 1.740 | 3.395 | 1.85x |
+| 4 | 0.148 | 0.139 | 2.940 | 19.89x |
+
+The four-worker policy reduced median condition waits from 34,287 to 1,058
+per run (34,816 messages including warmup). Coalescing alone did not improve
+throughput consistently; batching reduced the number of ownership transfers.
+One worker with batch 32 was fastest in this cheap-checksum workload, so more
+workers are not a default performance improvement. These results qualify the
+benchmark-local optimization only; they do not establish production LF
+stability, tail latency, network throughput, or an Actor runtime speedup.
 
 On 2026-10-10, Windows x64 Release (MSVC 19.44.35217, Ryzen 9 7940HX),
 the same benchmark was linked against CFlow at `a6502620` and this change.
