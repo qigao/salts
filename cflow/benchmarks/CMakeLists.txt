@@ -40,7 +40,7 @@ cmake_add_benchmark(cflow_ace_throughput_benchmark
   LIBS Salts::CFlow Salts::Core Salts::Platform Salts::TinyTest
   FOLDER "cflow/benchmarks")
 add_test(NAME cflow_ace_throughput_benchmark COMMAND cflow_ace_throughput_benchmark)
-set_tests_properties(cflow_ace_throughput_benchmark PROPERTIES LABELS benchmark TIMEOUT 180)
+set_tests_properties(cflow_ace_throughput_benchmark PROPERTIES LABELS benchmark TIMEOUT 600)
 set_target_properties(cflow_ace_throughput_benchmark PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON

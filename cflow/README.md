@@ -921,16 +921,18 @@ completion token. No network or native request ownership transfers here.
 | Serial token, 4 workers, batch 1/32 | One processing owner; token passes after completion or after up to 32 messages, preserving FIFO settlement | 4 workers |
 
 Every path uses 1 or 4 persistent producers, schema size 1, mailbox capacity
-128, and copied 64-byte or 1024-byte payloads. A sample includes producer
+128, and copied payloads of 16, 64, 256, 1024, 4096, 16384 or 65536 bytes.
+A sample includes producer
 admission, FULL retries with yield, identical full-payload checksums, exact-once
 result accounting, and the completion barrier. It contains 2048 messages;
 one warmup sample precedes 16 measured samples. Setup, precomputed inputs,
 thread creation, and teardown are outside the measurement. Each sample has a
-10-second deadline. The input pool reserves 2 MiB per case; mailbox payload
-storage is bounded by 128 payloads. This is a saturated burst test, not a
+10-second deadline. The packed input pool reserves `2048 * payload_bytes`,
+from 32 KiB to 128 MiB per case; mailbox payload storage is bounded by 128
+payloads, up to 8 MiB. This is a saturated burst test, not a
 per-message latency, CPU utilization, allocation profile, or transport test.
 
-The 52 cases retain eager LF notification (signal on every admission/election,
+The 182 cases retain eager LF notification (signal on every admission/election,
 batch 1) as a comparison and add coalesced notification with batch 1/32. With
 coalescing, empty-to-nonempty admission signals only a waiting leader; election
 signals a waiting successor only if pending work exists. Waiting state is
@@ -939,9 +941,11 @@ unlocks and waits. A running leader rechecks pending work before sleeping.
 This keeps admission and sleep transitions synchronized without a lost wake.
 
 LF claims up to 32 messages and elects its successor before processing them;
-it does not hold serial token ownership throughout the batch. The fixed
-per-worker scratch stores 32 maximum-size payloads and 32 checksum results
-(32.5 KiB); all four worker slots reserve 130 KiB per case, outside measurement.
+it does not hold serial token ownership throughout the batch. Per-worker
+payload scratch is allocated during setup for `batch * payload_bytes`, up
+to 2 MiB; four LF workers reserve at most 8 MiB of payload scratch. The four
+worker slots also contain 2 KiB of fixed checksum results. Token workers each
+reserve one payload because their batch controls ownership, not dequeue count.
 The maximum in-flight count is `workers * batch`, up to 128, in addition to
 the 128 pending mailbox slots. A slow first message can delay other messages
 claimed by that worker; batch size therefore needs latency qualification for
@@ -1000,7 +1004,7 @@ path was faster than either token variant here. Host scheduling and contention
 vary between runs and operating systems; CI results must be interpreted on
 their own runner, with the same ordering and callback distinctions above.
 
-The LF optimization was measured separately on the same Windows host with
+The LF optimization at `0caaee51` was measured separately on the same Windows host with
 five consecutive Release CTest executions. Eager and coalesced paths share
 the new batch-capable harness and counters; this is a within-harness policy
 comparison, not an alternating comparison against the original source binary.
@@ -1019,6 +1023,38 @@ One worker with batch 32 was fastest in this cheap-checksum workload, so more
 workers are not a default performance improvement. These results qualify the
 benchmark-local optimization only; they do not establish production LF
 stability, tail latency, network throughput, or an Actor runtime speedup.
+
+The seven-size matrix uses packed, size-specific input and worker pools so
+small messages do not reserve 64 KiB per slot. Allocation and initialization
+remain outside timing; all source storage is retained until producer/worker
+joins and Actor shutdown. Each size keeps the same sample message count,
+capacity, producer counts, checksum algorithm and completion checks. Pending
+byte capacity and checksum cost therefore grow with payload size; messages/s
+and MiB/s must both be considered. Its eager and optimized paths share these
+pools. Compare them within this matrix rather than attributing differences
+against earlier input layouts solely to the dispatch policy.
+
+Five consecutive seven-size Release runs on the same local Windows host
+passed all 182 cases. For four producers and four LF workers, medians of
+per-run average ns/message converted to throughput were:
+
+| Payload | Eager batch 1, million messages/s | Coalesced batch 32, million messages/s | Batch 32 MiB/s | Batch 32 / eager |
+| --- | ---: | ---: | ---: | ---: |
+| 16 B | 0.104 | 2.750 | 41.96 | 26.34x |
+| 64 B | 0.103 | 2.328 | 142.07 | 22.63x |
+| 256 B | 0.088 | 2.269 | 553.94 | 25.75x |
+| 1 KiB | 0.085 | 1.072 | 1046.43 | 12.55x |
+| 4 KiB | 0.090 | 0.479 | 1871.41 | 5.30x |
+| 16 KiB | 0.101 | 0.172 | 2681.47 | 1.70x |
+| 64 KiB | 0.041 | 0.039 | 2467.78 | 0.97x |
+
+At 64 KiB, batch 32 did not improve median throughput on this host. Growing
+payloads increase copied bytes and checksum work while the mailbox monitor
+still serializes admission/dequeue. The measurements do not isolate which
+cost dominates. A fixed message-count batch should therefore be qualified
+across the application's payload distribution and latency requirements,
+rather than assumed to help all sizes. The raw per-run averages vary with
+host load; no CPU affinity or isolated host was used.
 
 On 2026-10-10, Windows x64 Release (MSVC 19.44.35217, Ryzen 9 7940HX),
 the same benchmark was linked against CFlow at `a6502620` and this change.

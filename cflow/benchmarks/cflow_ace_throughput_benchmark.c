@@ -16,21 +16,28 @@
  * joined. Capacity is fixed; FULL retries yield and have a sample deadline.
  * Destruction joins producers and workers before freeing callback storage.
  */
-enum { MAX_THREADS = 4, MAX_BATCH = 32, CAPACITY = 128, MESSAGES = 2048, SAMPLES = 16 };
+enum {
+    MAX_THREADS = 4, MAX_BATCH = 32, MAX_PAYLOAD_BYTES = 65536,
+    CAPACITY = 128, MESSAGES = 2048, SAMPLES = 16
+};
 enum dispatch_mode { ACTOR_NONE, ACTOR_VALUE, LEADER_FOLLOWERS, SERIAL_TOKEN };
-typedef struct payload64 { uint64_t words[8]; } payload64;
-typedef struct payload1024 { uint64_t words[128]; } payload1024;
-typedef union payload_storage { payload64 small; payload1024 large; } payload_storage;
 typedef struct completion { uint64_t id, digest; } completion;
 
 static const cmeta_type_traits trivial_traits = {
     .flags = CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY};
-static const cmeta_type_desc type64 = {
-    "ace_bench_payload64", sizeof(payload64), CMETA_ALIGNOF(payload64),
-    CMETA_T_OBJECT, NULL, &trivial_traits, NULL};
-static const cmeta_type_desc type1024 = {
-    "ace_bench_payload1024", sizeof(payload1024), CMETA_ALIGNOF(payload1024),
-    CMETA_T_OBJECT, NULL, &trivial_traits, NULL};
+#define BENCH_PAYLOAD_TYPE(bytes) \
+    typedef struct payload##bytes { uint64_t words[(bytes) / sizeof(uint64_t)]; } payload##bytes; \
+    static const cmeta_type_desc type##bytes = { \
+        "ace_bench_payload" #bytes, sizeof(payload##bytes), CMETA_ALIGNOF(payload##bytes), \
+        CMETA_T_OBJECT, NULL, &trivial_traits, NULL}
+BENCH_PAYLOAD_TYPE(16);
+BENCH_PAYLOAD_TYPE(64);
+BENCH_PAYLOAD_TYPE(256);
+BENCH_PAYLOAD_TYPE(1024);
+BENCH_PAYLOAD_TYPE(4096);
+BENCH_PAYLOAD_TYPE(16384);
+BENCH_PAYLOAD_TYPE(65536);
+#undef BENCH_PAYLOAD_TYPE
 static const cmeta_type_desc completion_type = {
     "ace_bench_completion", sizeof(completion), CMETA_ALIGNOF(completion),
     CMETA_T_OBJECT, NULL, &trivial_traits, NULL};
@@ -49,7 +56,7 @@ typedef struct worker {
     cmeta_cond_t wake;
     size_t id;
     bool eligible, waiting;
-    payload_storage payloads[MAX_BATCH];
+    unsigned char *payloads;
     completion results[MAX_BATCH];
 } worker;
 struct bench_context {
@@ -72,7 +79,7 @@ struct bench_context {
     size_t accepted, dequeued, next_settlement;
     size_t observations[MESSAGES];
     uint64_t expected[MESSAGES];
-    payload_storage payloads[MESSAGES];
+    unsigned char *payloads;
     uint64_t deadline;
     bool closing, failed, hold_first, held, release, coalesce_wakes, dispatch_paused;
 };
@@ -218,7 +225,8 @@ static void run_worker(void *user) {
             cflow_event_id id;
             const cmeta_type_desc *type;
             if (cflow_mailbox_try_receive(&context->mailbox, &id, &type,
-                                          &self->payloads[count], sizeof(payload_storage)) !=
+                                          self->payloads + count * context->payload_type->size,
+                                          context->payload_type->size) !=
                 CFLOW_MAILBOX_OK || id != 1u || type != context->payload_type) {
                 fail_locked(context);
                 break;
@@ -249,7 +257,7 @@ static void run_worker(void *user) {
             cmeta_mutex_unlock(&context->lock);
         }
         for (size_t index = 0u; index < count; ++index)
-            self->results[index] = process_payload(&self->payloads[index],
+            self->results[index] = process_payload(self->payloads + index * context->payload_type->size,
                                                     context->payload_type->size);
         cmeta_mutex_lock(&context->lock);
         if (context->mode == SERIAL_TOKEN && first_ticket != context->next_settlement++)
@@ -313,7 +321,8 @@ static void run_producer(void *user) {
         cmeta_mutex_unlock(&context->lock);
         bool valid = true;
         for (size_t id = self->id; id < MESSAGES && valid; id += context->producer_count) {
-            const cflow_event_view event = {1u, context->payload_type, &context->payloads[id]};
+            const cflow_event_view event = {
+                1u, context->payload_type, context->payloads + id * context->payload_type->size};
             for (;;) {
                 const int result = send_payload(self, &event);
                 if (result == 1) break;
@@ -365,7 +374,8 @@ static bool init_actor(bench_context *context) {
 static bool init_case(enum dispatch_mode mode, size_t producers, size_t workers,
                        size_t batch, bool coalesce_wakes, const cmeta_type_desc *type) {
     if (batch == 0u || batch > MAX_BATCH || producers > MAX_THREADS ||
-        workers > MAX_THREADS) return false;
+        workers > MAX_THREADS || type == NULL || type->size < sizeof(uint64_t) ||
+        type->size > MAX_PAYLOAD_BYTES || type->size % sizeof(uint64_t) != 0u) return false;
     current = (bench_context *)calloc(1u, sizeof(*current));
     if (current == NULL) return false;
     bench_context *context = current;
@@ -381,11 +391,18 @@ static bool init_case(enum dispatch_mode mode, size_t producers, size_t workers,
     cmeta_mutex_init(&context->lock);
     cmeta_cond_init(&context->changed);
     if (context->lock == NULL || context->changed == NULL) return false;
+    /* Packed, size-specific pools keep small-message cases from reserving
+     * maximum-payload storage. Bounds above cap multiplication at 128 MiB. */
+    context->payloads = (unsigned char *)calloc(MESSAGES, type->size);
+    if (context->payloads == NULL) return false;
     for (size_t id = 0u; id < MESSAGES; ++id) {
-        for (size_t index = 0u; index < type->size / sizeof(uint64_t); ++index)
-            context->payloads[id].large.words[index] =
-                index == 0u ? id : UINT64_C(0xd6e8feb86659fd93) * (id + index);
-        context->expected[id] = process_payload(&context->payloads[id], type->size).digest;
+        unsigned char *payload = context->payloads + id * type->size;
+        for (size_t index = 0u; index < type->size / sizeof(uint64_t); ++index) {
+            const uint64_t word = index == 0u ? id :
+                UINT64_C(0xd6e8feb86659fd93) * (id + index);
+            memcpy(payload + index * sizeof(word), &word, sizeof(word));
+        }
+        context->expected[id] = process_payload(payload, type->size).digest;
     }
     if (mode == ACTOR_NONE || mode == ACTOR_VALUE) {
         if (!init_actor(context)) return false;
@@ -397,6 +414,9 @@ static bool init_case(enum dispatch_mode mode, size_t producers, size_t workers,
             worker *self = &context->workers[index];
             self->context = context;
             self->id = index;
+            const size_t slots = mode == LEADER_FOLLOWERS ? batch : 1u;
+            self->payloads = (unsigned char *)calloc(slots, type->size);
+            if (self->payloads == NULL) return false;
             cmeta_cond_init(&self->wake);
             if (self->wake == NULL ||
                 cmeta_thread_create(&self->thread, run_worker, self) != 0) return false;
@@ -450,6 +470,7 @@ static void destroy_case(void) {
         worker *self = &context->workers[index];
         if (self->thread != NULL && cmeta_thread_join(&self->thread) != 0) abort();
         cmeta_cond_destroy(&self->wake);
+        free(self->payloads);
     }
     if (context->actor.impl != NULL) {
         (void)cflow_actor_request_stop(&context->actor);
@@ -462,6 +483,7 @@ static void destroy_case(void) {
     cflow_mailbox_destroy(&context->mailbox);
     cmeta_cond_destroy(&context->changed);
     cmeta_mutex_destroy(&context->lock);
+    free(context->payloads);
     free(context);
     current = NULL;
     tstr_freep(&title);
@@ -628,7 +650,7 @@ suite("ACE CPU payload throughput, bounded admission to verified completion") {
             if (count > MESSAGES - submitted) count = MESSAGES - submitted;
             for (size_t index = 0u; index < count; ++index) {
                 const cflow_event_view event = {
-                    1u, &type1024, &context->payloads[submitted + index]};
+                    1u, &type1024, context->payloads + (submitted + index) * type1024.size};
                 check_equal(send_payload(&sender, &event), 1);
             }
             submitted += count;
@@ -661,8 +683,9 @@ suite("ACE CPU payload throughput, bounded admission to verified completion") {
             {"Leader/Followers coalesced", LEADER_FOLLOWERS, 4u, MAX_BATCH, true},
             {"Serial token", SERIAL_TOKEN, 4u, 1u, false},
             {"Serial token", SERIAL_TOKEN, 4u, MAX_BATCH, false}};
-        const cmeta_type_desc *types[] = {&type64, &type1024};
-        for (size_t payload = 0u; payload < 2u; ++payload) {
+        const cmeta_type_desc *types[] = {
+            &type16, &type64, &type256, &type1024, &type4096, &type16384, &type65536};
+        for (size_t payload = 0u; payload < sizeof(types) / sizeof(types[0]); ++payload) {
             for (size_t producers = 1u; producers <= MAX_THREADS; producers *= MAX_THREADS) {
                 for (size_t index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index) {
                     check_true(init_case(cases[index].mode, producers, cases[index].workers,
