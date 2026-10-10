@@ -17,7 +17,8 @@ $full = $EventName -eq "workflow_dispatch"
 # Normal ACE development runs full Linux CTest. An explicit [ACE-MATRIX]
 # marker on the same long-lived Draft PR runs host-complete integration tests
 # and cross-builds; the marker is removable after the qualification checkpoint.
-$aceBranchPr = $HeadBranch -eq 'feature/cmeta-ace-patterns' -and
+$aceBranchPr = ($HeadBranch -eq 'feature/cmeta-ace-patterns' -or
+  ($HeadBranch -eq 'fix/cflow-1105-cross-thread-stop' -and $AceSan)) -and
   $EventName -eq 'pull_request' -and -not $PrepareRelease
 if (($AceMatrix -or $AceSan) -and -not $aceBranchPr) {
   throw "ACE qualification is restricted to its long-lived PR"
