@@ -223,6 +223,7 @@ static void test_external_native_io_progress(bool preserve_eof) {
              &client, &client_config, &backend) == SALTS_OK);
   check(cnet_client_poll(
              &client, 0u, &events) == SALTS_ENOTSUP);
+  check(cnet_client_poll_strategy(&client, NULL, 0u, &events) == SALTS_ENOTSUP);
   check(cnet_client_stop(
              &client, 0u) == SALTS_ENOTSUP);
 

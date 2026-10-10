@@ -77,6 +77,12 @@ int main(void) {
   client_config.max_send_bytes = 1024u;
   client_config.receive_buffer_bytes = 1024u;
   CHECK(cnet_client_init(&client, &client_config) == SALTS_OK);
+  cnet_progress_strategy progress = CNET_PROGRESS_STRATEGY_INIT;
+  CHECK(cnet_client_poll_strategy(&client, &progress, 0u, &events) == SALTS_OK);
+  CHECK(events == 0u);
+  cnet_progress_strategy spin_progress = CNET_PROGRESS_STRATEGY_SPIN_INIT;
+  CHECK(cnet_client_poll_strategy(&client, &spin_progress, 1000u, &events) == SALTS_OK);
+  CHECK(events == 0u);
   /* These calls use only the installed CNet shared library and SDK headers. */
   CHECK(CNET_NAME_LOOKUP_API_VERSION == 1u);
   CHECK(CNET_DATAGRAM_SOCKET_CONTROL_VERSION == 1u);

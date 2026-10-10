@@ -1906,10 +1906,13 @@ int cnet_client_stop_external(cnet_client *client) {
   return first_status;
 }
 
-int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_events) {
+static int cnet_client_poll_impl(cnet_client *client, uint32_t timeout_ms,
+                                 size_t drain_passes, size_t *out_events) {
   cnet_client_impl *impl = cnet_client_get(client);
   const uint64_t started_ms = cmeta_monotonic_ms();
-  uint32_t remaining_ms = timeout_ms;
+  uint32_t remaining_ms = drain_passes != 0u ? 0u : timeout_ms;
+  size_t drained = 0u;
+  bool waiting = drain_passes == 0u;
   int status;
 #if defined(CNET_INTERNAL_PROFILING)
   uint64_t profile_started = 0u;
@@ -1935,11 +1938,13 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
 
   for (;;) {
     bool externally_woken = false;
+    const size_t callbacks_before = impl->poll_callback_count;
     if (atomic_exchange_explicit(&impl->external_wake_pending, 0, memory_order_acq_rel) != 0) break;
+    if (!waiting) ++drained;
     status = cnet_shards_poll(&impl->shards, remaining_ms);
     if (status == SALTS_OK)
       status = atomic_load_explicit(&impl->callback_error, memory_order_acquire);
-    if (status == SALTS_OK && impl->poll_callback_count != 0u)
+    if (status == SALTS_OK && impl->poll_callback_count != callbacks_before)
       status = cnet_shards_flush_deferred(&impl->shards);
     /* A callback may publish a wake after the backend selected its callback
        event. Preserve that edge for the next poll so native wake coalescing
@@ -1947,12 +1952,22 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
     if (status == SALTS_OK && impl->poll_callback_count == 0u)
       externally_woken =
           atomic_exchange_explicit(&impl->external_wake_pending, 0, memory_order_acq_rel) != 0;
-    if (status != SALTS_OK || impl->poll_callback_count != 0u || timeout_ms == 0u ||
-        externally_woken)
-      break;
+    if (status != SALTS_OK || externally_woken) break;
+    if (impl->poll_callback_count != 0u) {
+      /* A fixed owner drains under one admission guard. Do not consume a
+         callback-issued wake merely to enter another internal pass. */
+      if (waiting || drained >= drain_passes ||
+          impl->poll_callback_count == callbacks_before ||
+          atomic_load_explicit(&impl->external_wake_pending, memory_order_acquire) != 0)
+        break;
+      remaining_ms = 0u;
+      continue;
+    }
+    if (timeout_ms == 0u) break;
     {
       const uint64_t elapsed_ms = cmeta_monotonic_ms() - started_ms;
       if (elapsed_ms >= timeout_ms) break;
+      waiting = true;
       remaining_ms = timeout_ms - (uint32_t)elapsed_ms;
     }
   }
@@ -1968,6 +1983,26 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
   impl->poll_active = false;
   cmeta_mutex_unlock(&impl->control_lock);
   return status;
+}
+
+int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_events) {
+  return cnet_client_poll_impl(client, timeout_ms, 0u, out_events);
+}
+
+int cnet_client_poll_strategy(cnet_client *client,
+                              const cnet_progress_strategy *strategy,
+                              uint32_t timeout_ms, size_t *out_events) {
+  cnet_progress_strategy selected = CNET_PROGRESS_STRATEGY_INIT;
+  if (out_events == NULL) return SALTS_EINVAL;
+  *out_events = 0u;
+  if (strategy != NULL) {
+    if (strategy->size != sizeof(selected)) return SALTS_EINVAL;
+    selected = *strategy;
+  }
+  if (selected.max_poll_passes == 0u || selected.max_poll_passes > CNET_PROGRESS_MAX_PASSES)
+    return SALTS_EINVAL;
+  if (timeout_ms > selected.idle_wait_ms) timeout_ms = selected.idle_wait_ms;
+  return cnet_client_poll_impl(client, timeout_ms, selected.max_poll_passes, out_events);
 }
 
 #if defined(CNET_INTERNAL_PROFILING)
