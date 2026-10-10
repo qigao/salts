@@ -9,6 +9,7 @@ extern "C" {
 
 /* A fixed profile, not a set of independent flags. No implicit version upgrade. */
 #define SALTS_IDNA_UNICODE17_UTS46_35_STRICT 1u
+#define SALTS_IDNA_UNICODE17_UTS46_35_DNS 2u
 #define SALTS_IDNA_MAX_LABEL_BYTES 63u
 #define SALTS_IDNA_MAX_DOMAIN_BYTES 253u
 
@@ -49,9 +50,14 @@ typedef struct salts_idna_workspace {
 } salts_idna_workspace;
 
 /** Synchronous UTF-8 domain -> lowercase ASCII connection identity.
- * profile must be SALTS_IDNA_UNICODE17_UTS46_35_STRICT: nontransitional,
+ * Both SALTS_IDNA_UNICODE17_UTS46_35_STRICT and SALTS_IDNA_UNICODE17_UTS46_35_DNS
+ * use the same nontransitional mapping,
  * STD3, hyphen, Bidi, ContextJ, DNS length checks; invalid Punycode rejected.
- * Additionally enforces RFC 5892 ContextO and rejects trailing dots/empty labels.
+ * Both additionally enforce RFC 5892 ContextO and reject empty non-root labels.
+ * STRICT rejects trailing dots. DNS accepts one optional root separator after
+ * mapping/NFC (including ignored suffixes) and preserves it as an ASCII dot.
+ * Root-only names and repeated trailing separators are invalid in both profiles.
+ * SALTS_IDNA_MAX_DOMAIN_BYTES excludes the optional DNS root separator.
  * This profile is not full IDNA2008 or visual spoof/confusable detection.
  * Not a URL/IP/port parser; callers keep numeric-address handling separate.
  * Existing A-labels are decoded and validated, never repaired by normalization.
@@ -67,7 +73,9 @@ typedef struct salts_idna_workspace {
  * rule/resource; this API does not report source offsets or partial labels.
  * Example: salts_idna_to_ascii(vstr_from_cstr("b\xC3\xBC" "cher.de"),
  *   SALTS_IDNA_UNICODE17_UTS46_35_STRICT, &scratch, ascii, sizeof ascii, &size);
- * yields "xn--bcher-kva.de". A 254-byte output holds any successful result.
+ * yields "xn--bcher-kva.de". A 254-byte output holds any STRICT result;
+ * DNS needs 255 bytes for a maximal absolute name, including terminal NUL.
+ * With DNS, "b\xC3\xBC" "cher.de.\xC2\xAD" yields "xn--bcher-kva.de.".
  */
 salts_idna_status salts_idna_to_ascii(vstr input, uint32_t profile,
     const salts_idna_workspace *workspace, char *output, size_t output_capacity,

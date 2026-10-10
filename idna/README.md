@@ -6,11 +6,22 @@ URL 解析、缓存或后台线程，不依赖 ICU 或 SaltsUtils。开发事项
 
 ## 契约与使用
 
-包含 `<salts_idna.h>`，链接 `Salts::IDNA`。首版唯一 profile 为
-`SALTS_IDNA_UNICODE17_UTS46_35_STRICT`：固定 Unicode 17.0.0 / UTS #46 revision 35，
+包含 `<salts_idna.h>`，链接 `Salts::IDNA`。两个显式 profile 均固定
+Unicode 17.0.0 / UTS #46 revision 35：
 nontransitional；开启 STD3、CheckHyphens、CheckBidi、CheckJoiners、VerifyDnsLength，
 拒绝无效 Punycode；另外执行 RFC 5892 ContextO。未知 profile 明确失败。
 它不是完整严格 IDNA2008，也不检测混合文字、视觉相似或同形欺骗。
+
+- `SALTS_IDNA_UNICODE17_UTS46_35_STRICT` 保留原契约，拒绝尾点。
+- `SALTS_IDNA_UNICODE17_UTS46_35_DNS` 允许一个最终根分隔符，在 mapping/NFC
+  之后识别并保留为 ASCII 点。因此 `example.com.` 后跟 U+00AD 等 ignored
+  字符仍得到 `example.com.`；只有根节点、重复分隔符和空内部标签仍失败。
+
+DNS profile 沿用同一函数签名、workspace 与错误码，不改变 STRICT 的接纳范围。
+域名主体上限仍是 253 字节；DNS 的绝对名称最多 254 字节，输出含 NUL 需 255 字节。
+例如将下例 profile 换成 DNS、输出容量改为 255，并传入 `bücher.de.\xC2\xAD`，
+成功结果为 `xn--bcher-kva.de.`。该 profile 是 rc.2 之后的新增能力；消费端必须
+使用包含它的同一套 SDK 头文件和库。
 
 ```c
 #include <salts_idna.h>
@@ -53,7 +64,8 @@ Punycode 编码 → 域名整体 Bidi 与长度校验 → 一次性提交。
 mapping/NFC 修复。编码回查保证规范 A-label。Bidi 的启用条件检查整个解码后域名，
 包括前置 ASCII 标签；`123.א` 和 `123.xn--4db` 都失败。
 
-空域名、空标签、尾点、embedded NUL 拒绝；ASCII 标签 1–63 字节，域名 1–253 字节。
+空域名、空非根标签、embedded NUL 拒绝；ASCII 标签 1–63 字节，域名主体 1–253 字节。
+STRICT 拒绝尾点；DNS 仅在完整映射后允许并保留一个根分隔符。
 例如 `faß.de` 保留 nontransitional 语义，得到 `xn--fa-hia.de`，不会变成 `fass.de`。
 点的兼容变体按 mapping 表统一。NFC 不执行 NFKC，也不是一般 case-folding 接口。
 
@@ -89,7 +101,8 @@ CTest 中的正式覆盖：
   正确处理空字段继承；549 条成功精确比对及幂等回查，5,842 条失败核对输出不变。
   无跳过项；不声明 ToUnicode/transitional 覆盖，ContextO 由独立测试覆盖。
 - `test_salts_idna`：ContextJ/O、全域 Bidi、NFC、伪 A-label、非法 UTF-8/NUL、
-  四种分隔符、63/64 与 253/254 字节界限、恰限/不足容量、alias 与溢出。
+  四种分隔符及 ignored 后缀、STRICT 与 DNS 的根分隔符差异、63/64 与
+  253/254 字节界限、绝对名称 255 字节输出、恰限/不足容量、alias 与溢出。
 - `cnet_name_lookup_dns_test`：本地 UDP DNS fixture，核对转换后名称和 A/AAAA 结果。
 - 现有 `test_salts_unicode_installed_sdk`：安装后仅通过导出 target 编译并运行
   C11/C++17 NFC/IDNA 调用，复用原安装测试，未新增临时消费工程。

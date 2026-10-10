@@ -2,34 +2,95 @@
 #include "tinytest.h"
 #include <string.h>
 
-static salts_idna_status convert(vstr in, char *out, size_t cap, size_t *n) {
+static salts_idna_status convert_profile(vstr in, uint32_t profile, char *out, size_t cap, size_t *n) {
   char mapped[4096], normalized[4096];
   uint32_t scalars[4096];
   salts_idna_workspace w = {mapped, sizeof mapped, normalized, sizeof normalized, scalars, 4096};
-  return salts_idna_to_ascii(in, SALTS_IDNA_UNICODE17_UTS46_35_STRICT, &w, out, cap, n);
+  return salts_idna_to_ascii(in, profile, &w, out, cap, n);
 }
 
-static void accepted(const char *in, const char *expected) {
-  char out[254], again[254];
+static salts_idna_status convert(vstr in, char *out, size_t cap, size_t *n) {
+  return convert_profile(in, SALTS_IDNA_UNICODE17_UTS46_35_STRICT, out, cap, n);
+}
+
+static void accepted_profile(const char *in, const char *expected, uint32_t profile) {
+  char out[255], again[255];
   size_t n = 999, second = 999;
-  check_equal(convert(vstr_from_cstr(in), out, sizeof out, &n), SALTS_IDNA_OK);
+  check_equal(convert_profile(vstr_from_cstr(in), profile, out, sizeof out, &n), SALTS_IDNA_OK);
   check_equal(out, expected);
   check_equal(n, strlen(expected));
-  check_equal(convert(vstr_from_buf(out, n), again, sizeof again, &second), SALTS_IDNA_OK);
+  check_equal(convert_profile(vstr_from_buf(out, n), profile, again, sizeof again, &second), SALTS_IDNA_OK);
   check_equal(again, expected);
   check_equal(second, n);
 }
 
-static void rejected(const char *in, salts_idna_status expected) {
-  char out[254];
+static void accepted(const char *in, const char *expected) {
+  accepted_profile(in, expected, SALTS_IDNA_UNICODE17_UTS46_35_STRICT);
+}
+
+static void rejected_profile(const char *in, salts_idna_status expected, uint32_t profile) {
+  char out[255];
   memset(out, 0x5a, sizeof out);
   size_t n = 999;
-  check_equal(convert(vstr_from_cstr(in), out, sizeof out, &n), expected);
+  check_equal(convert_profile(vstr_from_cstr(in), profile, out, sizeof out, &n), expected);
   check_equal(n, (size_t)999);
   for (size_t i = 0; i < sizeof out; ++i) check_equal(out[i], (char)0x5a);
 }
 
+static void rejected(const char *in, salts_idna_status expected) {
+  rejected_profile(in, expected, SALTS_IDNA_UNICODE17_UTS46_35_STRICT);
+}
+
 spec("Unicode 17 IDNA connection identity") {
+  it("recognizes absolute DNS roots after mapping without changing STRICT") {
+    const char *names[] = {
+      "B\xc3\xbc" "cher.de.\xc2\xad",
+      "bu\xcc\x88" "cher.de\xe3\x80\x82\xcd\x8f",
+      "XN--BCHER-KVA.de\xef\xbc\x8e\xe2\x80\x8b",
+      "b\xc3\xbc" "cher.de\xef\xbd\xa1\xc2\xad\xcd\x8f\xe2\x80\x8b",
+      "b\xc3\xbc" "cher.de."
+    };
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; ++i) {
+      accepted_profile(names[i], "xn--bcher-kva.de.", SALTS_IDNA_UNICODE17_UTS46_35_DNS);
+      rejected(names[i], SALTS_IDNA_INVALID_LABEL);
+    }
+    accepted_profile("Example.COM\xc2\xad", "example.com", SALTS_IDNA_UNICODE17_UTS46_35_DNS);
+    accepted_profile("abc.\xd7\x90.\xc2\xad", "abc.xn--4db.", SALTS_IDNA_UNICODE17_UTS46_35_DNS);
+  }
+
+  it("keeps invalid DNS roots and label failures atomic") {
+    const char *invalid[] = {"", ".", ".\xc2\xad", "\xe3\x80\x82\xcd\x8f",
+      "a..", "a.\xc2\xad.\xcd\x8f", "a..b.", "a.\xc2\xad.b.", ".a."};
+    for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; ++i)
+      rejected_profile(invalid[i], SALTS_IDNA_INVALID_LABEL, SALTS_IDNA_UNICODE17_UTS46_35_DNS);
+    rejected_profile("a.\xff", SALTS_IDNA_INVALID_UTF8, SALTS_IDNA_UNICODE17_UTS46_35_DNS);
+    rejected_profile("123.\xd7\x90.\xc2\xad", SALTS_IDNA_BIDI, SALTS_IDNA_UNICODE17_UTS46_35_DNS);
+    rejected_profile("a\xe2\x80\x8d.b.", SALTS_IDNA_CONTEXTJ, SALTS_IDNA_UNICODE17_UTS46_35_DNS);
+    rejected_profile("a\xc2\xb7" "b.", SALTS_IDNA_CONTEXTO, SALTS_IDNA_UNICODE17_UTS46_35_DNS);
+    rejected_profile("xn--abc-.", SALTS_IDNA_INVALID_ALABEL, SALTS_IDNA_UNICODE17_UTS46_35_DNS);
+  }
+
+  it("counts the optional DNS root separately and includes it in output capacity") {
+    char in[259], out[255]; size_t n = 999;
+    memset(in, 'a', 253);
+    in[63] = in[127] = in[191] = '.';
+    memcpy(in + 253, ".\xc2\xad", 4);
+    memset(out, 0x5a, sizeof out);
+    check_equal(convert_profile(vstr_from_cstr(in), SALTS_IDNA_UNICODE17_UTS46_35_DNS,
+      out, sizeof out - 1, &n), SALTS_IDNA_OUTPUT_CAPACITY);
+    check_equal(n, (size_t)999);
+    for (size_t i = 0; i < sizeof out; ++i) check_equal(out[i], (char)0x5a);
+    check_equal(convert_profile(vstr_from_cstr(in), SALTS_IDNA_UNICODE17_UTS46_35_DNS,
+      out, sizeof out, &n), SALTS_IDNA_OK);
+    check_equal(n, (size_t)254); check_equal(out[253], '.'); check_equal(out[254], '\0');
+    check_equal(out, in, 254);
+    accepted_profile(out, out, SALTS_IDNA_UNICODE17_UTS46_35_DNS);
+    memcpy(in + 253, "a.\xc2\xad", 5);
+    rejected_profile(in, SALTS_IDNA_DNS_LENGTH, SALTS_IDNA_UNICODE17_UTS46_35_DNS);
+    memset(in, 'a', 64); in[64] = '.'; in[65] = '\0';
+    rejected_profile(in, SALTS_IDNA_DNS_LENGTH, SALTS_IDNA_UNICODE17_UTS46_35_DNS);
+  }
+
   it("maps case width delimiters and NFC while keeping nontransitional sharp-s") {
     accepted("Example.COM", "example.com");
     accepted("B\xc3\xbc" "cher.de", "xn--bcher-kva.de");

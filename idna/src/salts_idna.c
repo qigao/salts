@@ -254,7 +254,8 @@ salts_idna_status salts_idna_to_ascii(vstr input, uint32_t profile,
   if (!w || !output || !out_size || (!input.data && input.len) ||
       (!w->mapped && w->mapped_capacity) || (!w->normalized && w->normalized_capacity) ||
       (!w->scalars && w->scalar_capacity)) return SALTS_IDNA_INVALID_ARGUMENT;
-  if (profile != SALTS_IDNA_UNICODE17_UTS46_35_STRICT) return SALTS_IDNA_UNSUPPORTED_PROFILE;
+  if (profile != SALTS_IDNA_UNICODE17_UTS46_35_STRICT &&
+      profile != SALTS_IDNA_UNICODE17_UTS46_35_DNS) return SALTS_IDNA_UNSUPPORTED_PROFILE;
   if (input.len > PTRDIFF_MAX || capacity > PTRDIFF_MAX ||
       w->mapped_capacity > PTRDIFF_MAX || w->normalized_capacity > PTRDIFF_MAX ||
       w->scalar_capacity > (size_t)PTRDIFF_MAX / sizeof(uint32_t)) return SALTS_IDNA_OVERFLOW;
@@ -291,12 +292,19 @@ salts_idna_status salts_idna_to_ascii(vstr input, uint32_t profile,
   if (ns == SALTS_UNICODE_NFC_OVERFLOW) return SALTS_IDNA_OVERFLOW;
   if (ns != SALTS_UNICODE_NFC_OK) return SALTS_IDNA_WORKSPACE;
 
+  /* Mapping can expose the root marker by removing ignored suffix scalars.
+   * Remove exactly one here; normal label validation still rejects empty names
+   * and repeated separators. STRICT keeps its original empty-label behavior. */
+  int absolute = profile == SALTS_IDNA_UNICODE17_UTS46_35_DNS &&
+      normalized && w->normalized[normalized - 1] == '.';
+  if (absolute) --normalized;
+
   /* Any valid DNS result bounds its decoded scalar count and label count too.
    * Retain decoded labels until domain-wide Bidi activation is known. */
   uint32_t domain[SALTS_IDNA_MAX_DOMAIN_BYTES];
   size_t starts[(SALTS_IDNA_MAX_DOMAIN_BYTES + 1) / 2 + 1];
   size_t total = 0, labels = 0, start = 0, ascii_size = 0;
-  char ascii[SALTS_IDNA_MAX_DOMAIN_BYTES + 1];
+  char ascii[SALTS_IDNA_MAX_DOMAIN_BYTES + 2];
   int bidi_domain = 0;
   for (size_t end = 0; end <= normalized; ++end) {
     if (end != normalized && w->normalized[end] != '.') continue;
@@ -354,6 +362,7 @@ salts_idna_status salts_idna_to_ascii(vstr input, uint32_t profile,
   if (bidi_domain)
     for (size_t i = 0; i < labels; ++i)
       if (!idna_bidi_valid(domain + starts[i], starts[i + 1] - starts[i])) return SALTS_IDNA_BIDI;
+  if (absolute) ascii[ascii_size++] = '.';
   if (capacity <= ascii_size) return SALTS_IDNA_OUTPUT_CAPACITY;
   ascii[ascii_size] = '\0';
   memcpy(output, ascii, ascii_size + 1);
