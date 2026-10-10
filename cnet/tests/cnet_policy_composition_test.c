@@ -452,12 +452,16 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     check_equal(tags, 1u);
     check_equal(raw_sends, 0u); /* no replay */
   }
-  it("settles a real failed write through connection terminal without a success callback") {
+  it("settles the accepted tagged write once across an abortive peer close, without replay") {
     size_t events, work;
     const uint64_t until = cmeta_monotonic_ms() + WAIT_MS;
     check_equal(bind_ws(), SALTS_OK);
-    /* Stop the abortive peer before submitting the retained WS frame. Native
-     * progress observes the reset; no synthetic write_complete is injected. */
+    /* The peer closes with SO_LINGER(0), but a locally accepted TCP write may
+     * still finish successfully before the RST is observed, especially with a
+     * separate TLS record / NativeIO completion already in flight. Kernel
+     * write completion never proves peer application delivery. Keep both valid
+     * completion orders observable instead of assuming every send must fail.
+     */
     stopping = true;
     check_equal(cnet_client_stop(&peers, WAIT_MS), SALTS_OK);
     check_equal(cnet_websocket_send_tagged(ws, CNET_WEBSOCKET_MESSAGE_BINARY,
@@ -470,9 +474,21 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
       (void)cnet_websocket_transport_advance(&ws_transport, 1u, &events);
     }
     check_equal(terminals, 1u);
-    check_equal(tags, 1u);
-    check_not_equal(tag_status, SALTS_OK);
-    check_equal(raw_sends, 0u);
+    check_equal(tags, 1u); /* one authoritative terminal, OK or native failure */
+    check_equal(raw_sends, 0u); /* WS notifications never leak into raw sends */
+    {
+      const int settled_status = tag_status;
+      /* Once the peer has terminated, another bounded advance may return
+       * the retained native bridge EIO even while draining is complete.
+       * The public transport API explicitly permits that error. Neither
+       * outcome may create a second terminal or replay application data.
+       */
+      const int rc = cnet_websocket_transport_advance(&ws_transport, 8u, &events);
+      check(rc == SALTS_OK || rc == SALTS_EIO);
+      check_equal(tags, 1u); /* no duplicate settlement or implicit DATA retry */
+      check_equal(tag_status, settled_status);
+      check_equal(raw_sends, 0u);
+    }
     check_equal(cnet_websocket_transport_destroy(&ws_transport), SALTS_OK);
   }
   it("rejects impossible encoded frame budgets before binding the connection") {
