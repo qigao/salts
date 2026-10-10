@@ -64,6 +64,10 @@ typedef struct run_impl {
 
     continuation_frame continuations[CMETA_RUN_MAX_CONTINUATIONS];
     size_t continuation_count;
+    /* Pump-owned state stays separate from the lock-protected lifecycle flags.
+     * Adjacent bool predicates may otherwise use a widened load that overlaps
+     * an unlocked source-completion write on another thread. */
+    bool source_done;
 
     cmeta_mutex_t lock;
     cmeta_cond_t task_cv;
@@ -82,7 +86,6 @@ typedef struct run_impl {
     bool pump_running;
     bool waiting;
     cflow_waitable active_wait;
-    bool source_done;
     bool cancel_requested;
     bool cancelled;
     bool terminated;
@@ -1044,18 +1047,20 @@ static void pump_task(void *user) {
 
     bool terminated = false, waiting = false;
     cmeta_mutex_lock(&r->lock);
-    r->pump_running = false;
     terminated = r->terminated;
     waiting = r->waiting;
-    cmeta_mutex_unlock(&r->lock);
+    /* Retain exclusive pump ownership through the last source/operator read.
+     * A concurrent wake may admit the next pump as soon as we unlock. */
     size_t d = demand_get(r);
     bool continuation_runnable = r->continuation_count &&
                           (r->continuations[r->continuation_count - 1].done || d > 0);
-    bool runnable = continuation_runnable ||
+    bool runnable = r->cancel_requested || continuation_runnable ||
                     (!r->source_done && d > 0) ||
                     (r->source_done && r->continuation_count == 0 &&
                      terminal_nodes_done(r)) ||
                     (r->source_done && !terminal_nodes_done(r) && d > 0);
+    r->pump_running = false;
+    cmeta_mutex_unlock(&r->lock);
     if (!terminated && !waiting && runnable) (void)schedule_pump(r, true);
 
     active_pump_run = previous_active_run;
