@@ -18,6 +18,17 @@ static_assert(CNET_MANAGER_VERSION == 1u, "manager capability is versioned");
 #include <cstdint>
 #include <type_traits>
 
+static_assert(std::is_standard_layout<cnet_progress_strategy>::value,
+              "Progress strategy is caller-owned C configuration");
+static_assert(std::is_same<decltype(&cnet_client_poll_strategy),
+              int (*)(cnet_client *, const cnet_progress_strategy *, uint32_t, size_t *)>::value,
+              "Progress strategy preserves exact C linkage");
+static constexpr cnet_progress_strategy default_progress = CNET_PROGRESS_STRATEGY_INIT;
+static constexpr cnet_progress_strategy spinning_progress = CNET_PROGRESS_STRATEGY_SPIN_INIT;
+static_assert(default_progress.size == sizeof(cnet_progress_strategy) &&
+              default_progress.max_poll_passes == CNET_PROGRESS_DEFAULT_PASSES &&
+              spinning_progress.idle_wait_ms == 0u, "C++ strategy initializers are usable");
+
 static_assert(std::is_standard_layout<cnet_sg_host_routes>::value,
               "SG host route table is a stable C descriptor");
 static_assert(CNET_SG_HOST_ROUTING_VERSION == 1u,

@@ -992,6 +992,62 @@ int cnet_close(cnet_client *client, cnet_connection connection);
  */
 int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_events);
 
+#define CNET_PROGRESS_STRATEGY_VERSION 1u
+#define CNET_PROGRESS_DEFAULT_PASSES 32u
+#define CNET_PROGRESS_DEFAULT_IDLE_WAIT_MS 10u
+#define CNET_PROGRESS_MAX_PASSES 1024u
+
+/** Caller-owned value configuration; no threads, buffers or retained pointers. */
+typedef struct cnet_progress_strategy {
+  size_t size;
+  size_t max_poll_passes;
+  uint32_t idle_wait_ms;
+} cnet_progress_strategy;
+
+#define CNET_PROGRESS_STRATEGY_INIT \
+  { sizeof(cnet_progress_strategy), CNET_PROGRESS_DEFAULT_PASSES, \
+    CNET_PROGRESS_DEFAULT_IDLE_WAIT_MS }
+
+/** Explicit CPU-for-latency tradeoff: bounded draining with no idle blocking. */
+#define CNET_PROGRESS_STRATEGY_SPIN_INIT \
+  { sizeof(cnet_progress_strategy), CNET_PROGRESS_DEFAULT_PASSES, 0u }
+
+/**
+ * Drives an ordinary client using bounded draining followed by an idle wait.
+ *
+ * Performs up to max_poll_passes nonblocking progress passes, stopping at the
+ * first pass without callbacks. If no callback was delivered by the entire
+ * call, it may then request a wait for a callback or external wake for at most
+ * min(timeout_ms, idle_wait_ms), less time already spent in this call. Once
+ * callbacks have been delivered it never enters an idle wait. A callback that
+ * issues cnet_client_wake() ends draining and preserves that wake for the next
+ * call. One pass can deliver multiple callbacks; this is not a message budget.
+ *
+ * NULL strategy selects CNET_PROGRESS_STRATEGY_INIT. A non-NULL strategy must
+ * have size == sizeof(cnet_progress_strategy) and max_poll_passes in [1, 1024].
+ * idle_wait_ms == 0 or timeout_ms == 0 disables blocking, not bounded draining.
+ * Timeout caps the requested wait, not scheduling latency: OS timer granularity
+ * and descheduling may delay return beyond it. Timeout and pass limits cannot
+ * preempt a callback; callbacks must not block.
+ * Zero callbacks does not establish quiescence or release pending I/O storage.
+ *
+ * Call on the client's fixed owner, outside callbacks. No owner migration,
+ * workers, application queues or send aggregation are introduced. External
+ * clients must use their host's progress policy instead (SALTS_ENOTSUP).
+ * The configuration is copied on entry; no pointer is retained. *out_events
+ * reports all callbacks delivered, including before a progress error.
+ * Returns the same errors as cnet_client_poll, plus SALTS_EINVAL for an invalid
+ * strategy. Existing cnet_client_poll semantics are unchanged.
+ *
+ * Example: cnet_client_poll_strategy(&client, NULL, remaining_ms, &events).
+ * Pass timeout zero while the application has runnable work; otherwise cap
+ * the wait by its next timer/cancellation-check deadline. Other threads may
+ * use cnet_client_wake(), not this progress function.
+ */
+int cnet_client_poll_strategy(cnet_client *client,
+                              const cnet_progress_strategy *strategy,
+                              uint32_t timeout_ms, size_t *out_events);
+
 /**
  * Advances CNet-owned command, session, resolver and deadline state without
  * observing NativeIO. Valid only for a client created by

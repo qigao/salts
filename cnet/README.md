@@ -1,5 +1,138 @@
 # CNet
 
+## Default progress strategy for an ordinary client
+
+`cnet_client_poll_strategy` provides an opt-in balanced policy on the existing
+fixed owner. `NULL` selects `CNET_PROGRESS_STRATEGY_INIT`: up to 32 nonblocking
+progress passes and a maximum 10 ms idle wait. A pass with no callbacks stops
+draining. Waiting is permitted only if the whole call delivered no callbacks;
+the caller's timeout further caps it. Timeout zero means bounded nonblocking
+draining. This does not change `cnet_client_poll(..., 0, ...)`, which still makes
+one nonblocking pass, or any existing config layout. The timeout caps the
+requested OS wait, not actual return latency: timer granularity and scheduling
+can overshoot it. Use `CNET_PROGRESS_STRATEGY_SPIN_INIT` (32 passes, no blocking)
+when timer latency matters more than idle CPU, and measure on the target OS.
+
+```c
+cnet_progress_strategy strategy = CNET_PROGRESS_STRATEGY_INIT;
+size_t events = 0;
+/* application_ready and until_next_timer_ms belong to the application. */
+int status = cnet_client_poll_strategy(
+    &client, &strategy, application_ready ? 0u : until_next_timer_ms, &events);
+/* Propagate status; inspect application state even when events == 0. */
+```
+
+The strategy is copied on entry, holds no resources, and allocates no queues or
+threads. `max_poll_passes` accepts 1–1024; `idle_wait_ms=0` explicitly selects
+continuous nonblocking progress. These are progress-pass and wait budgets, not
+message batch size, send aggregation, a delay before sending, or a hard callback
+time limit. Callbacks stay ordered and inline and must not block. Stop/cancel
+still requires real terminal completion and drain before storage is released.
+
+The existing wake primitive interrupts an idle wait. Callback-issued wakes end
+draining and remain pending for the next call. Zero callbacks is not proof of
+quiescence. Recursive/concurrent progress is rejected throughout the strategy
+call, and external clients return `SALTS_ENOTSUP`: their host owns backend
+observation and must choose its own policy.
+
+### Decision and compatibility
+
+FlowMQ's direct rc.5 CNet experiment showed that batching owner progress can
+reduce queue residence without reducing total polls per message. That supports
+an explicit drain budget, but does not prove that 32 passes is optimal for every
+connection count or handler. Unlike that caller experiment's 32-record receive
+target, this library cannot infer protocol message boundaries; one pass may
+deliver many callbacks. Applications must bound their admission and callback
+work separately. Send-buffer/SG/packing selection remains explicit because CNet
+does not own the consumer's record framing or permission to copy.
+
+Alternatives considered were changing legacy poll semantics, adding I/O worker
+handoff, and keeping a caller-only loop. The selected API shares the existing
+poll guard and wake protocol, avoiding a lost application wake between a public
+nonblocking poll and a separate blocking call. Its additional state is local to
+one call; work is bounded by the configured passes plus the capped idle wait.
+It adds no client fields or CFlow dependency. Adoption is one call-site change;
+rollback is to `cnet_client_poll`. max_poll_passes=1/idle_wait_ms=0 reproduces its
+nonblocking progression shape, not its positive-timeout waiting behavior.
+
+[LF CPU pool PR #1104](https://github.com/qigao/salts/pull/1104) is a separate,
+explicitly selected `Salts::Concurrency` backend. Its input/provider lifetimes
+and application result return path remain the consumer's responsibility. It
+does not transfer this client's I/O ownership, and is not enabled by this
+strategy. Short transport callbacks have no measured reason to enter a worker
+pool; heavy application handlers need their own bounded handoff measurement.
+
+Formal coverage lives in `cnet_progress_strategy_test`, the ordinary API and
+external-progress suites, C++ headers, and the installed C11/C++17 strategy
+consumer. `cnet_progress_strategy_benchmark` compares legacy spin, bounded-drain
+spin and balanced waiting for idle, scheduled bursts and saturated callback
+chains. Results and platform limits are recorded after execution below.
+
+### Windows qualification, 2026-10-10
+
+This change is based on published rc.5 source
+`d04b3c909a5f1ac49883f36dcaa7b57de71627cb`, in the isolated
+`work/cnet-default-poll-strategy` worktree. It does not alter the released SDK.
+The Windows MSVC 19.44 Release full configured build and all **59 CNet CTests**
+passed (16.04 s), including the installed C11/C++17 consumer, external progress,
+retained sends, TLS, stop and header contracts. The strategy-specific cases
+cover invalid bounds, caller timeout, default/nonblocking profiles, budgets
+1/32/1024, callback counting, recursive/concurrent rejection, callback wake
+preservation, cross-thread wake, and shutdown with an unfinished retained chain.
+
+The [45 raw observations](benchmarks/cnet-progress-strategy-windows-20261010.csv)
+are three policies × three loads × five repetitions, with rotated policy order.
+Hardware: Ryzen 9 7940HX; one ordinary CNet owner, both loopback TCP endpoints on
+that owner, unbound affinity, 64-byte fully checked immutable records. One send
+completion admits the next record; native completion capacity is deliberately
+one. This isolates progress behavior and is not a maximum-throughput SG/packed
+write benchmark. Establishment, warmup and shutdown are outside measurement.
+
+| Load / metric, median of five | Legacy spin | Drain spin | Balanced default |
+| --- | ---: | ---: | ---: |
+| Idle, CPU equivalents | 1.016 | 1.016 | below CPU timer resolution |
+| Idle, public poll calls | 1,108,006 | 1,034,863 | 25 |
+| Paced, CPU equivalents | 1.024 | 1.024 | 0.048 |
+| Paced, maximum scheduled completion, ms | 0.618 | 0.600 | 18.237 |
+| Paced, maximum burst service time, ms | 0.617 | 0.600 | 0.731 |
+| Saturated, 16,384 records elapsed, ms | 100.897 | 111.424 | 103.511 |
+| Saturated, public poll calls | 32,768 | 1,024 | 1,024 |
+
+Idle runs request 400 ms with receive demand outstanding. Paced runs release
+32-record bursts every 5 ms on a fixed schedule, 64 bursts total; delayed releases
+catch up without loss. The two latency columns are medians of **per-run maxima**,
+not P99: completion relative to the planned release includes timer overshoot,
+whereas burst service time begins at actual admission. They do not measure
+remote network-arrival wake latency. Public poll-call reduction does not imply
+the same reduction in native observations/syscalls. CPU is whole-process CPU
+time divided by wall time; Windows accounting is quantized, hence zeros and
+values slightly above one. No zero-CPU or universal throughput gain is claimed.
+
+The balanced profile is suitable when idle CPU matters and OS timer granularity
+is acceptable. The 5 ms timer workload shows why it must remain explicit:
+blocking saved CPU but substantially delayed planned releases on this machine.
+Use the spin initializer for tight timer workloads, or timeout zero while the
+application has runnable work. Neither profile enables LF/Token or automatically
+changes FlowMQ's external-owner path. That host needs separate policy adoption.
+
+With the repository's SDK/vcpkg environment and Re2c configured:
+
+```powershell
+cmake --preset win-release-ci -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCNET_BUILD_BENCHMARKS=ON
+cmake --build --preset win-release-ci -j 12
+ctest --preset win-release-ci -R '^cnet_.*test$' --output-on-failure
+# Override the normal preset's benchmark-label exclusion for this one test.
+ctest --preset win-release-ci -LE '^$' -R '^cnet_progress_strategy_benchmark$' -V
+```
+
+Benchmark passed in 12.71 s. Local build/test log:
+`build/strategy-final-validation.log`. These local measurements do not qualify
+Linux/macOS behavior or sanitizer safety. CI runs the strategy contracts on the
+native hosts and ASan/UBSan/TSan profiles, and archives the three Release hosts'
+45-row measurements as `cnet-progress-strategy-<profile>`. Use the matching PR
+check results for qualification. Mixed heavy/light connections, remote peers
+and integrated FlowMQ/LF return paths need separate application measurements.
+
 CNet is the connection-oriented layer above NativeIO. Applications see a
 client, generation-checked connections, send/receive operations, explicit
 progress polling, and ordered state notifications. NativeIO remains the raw,

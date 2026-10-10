@@ -60,6 +60,18 @@ if(NOT CMAKE_CROSSCOMPILING)
 endif()
 
 set(CNET_TEST_PRIVATE_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+cmake_add_benchmark(cnet_progress_strategy_test
+  SOURCES cnet_progress_strategy_test.c
+  LIBS cnet Salts::Core Salts::TinyTest FOLDER "cnet/tests")
+add_test(NAME cnet_progress_strategy_test
+  COMMAND cnet_progress_strategy_test --filter "strategy correctness:")
+set_tests_properties(cnet_progress_strategy_test PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+if(BUILD_BENCHMARKS OR CNET_BUILD_BENCHMARKS)
+  add_test(NAME cnet_progress_strategy_benchmark
+    COMMAND cnet_progress_strategy_test --filter "strategy measurements:")
+  set_tests_properties(cnet_progress_strategy_benchmark PROPERTIES
+    LABELS benchmark TIMEOUT 120 RUN_SERIAL TRUE)
+endif()
 cmake_add_test(cnet_handoff_test SOURCES cnet_handoff_test.c
   LIBS Salts::CNet Salts::TinyTest FOLDER "cnet/tests")
 cmake_add_test(cnet_manager_test SOURCES cnet_manager_test.c
