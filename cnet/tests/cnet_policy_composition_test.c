@@ -22,6 +22,7 @@ static mem_buffer_t *output;
 static cnet_connection outgoing, accepted[3];
 static tstr uri;
 static size_t connected, terminals, raw_sends, tags, received, accept_count, gate_calls;
+static size_t client_received;
 static int tag_status;
 static uint64_t last_tag;
 static unsigned char wire[256];
@@ -58,6 +59,11 @@ static void sent_cb(void *u, cnet_connection c, size_t n) {
   (void)c;
   (void)n;
   ++raw_sends;
+}
+static void client_receive_cb(void *u, cnet_connection c, const cnet_receive_view *v) {
+  (void)u;
+  (void)c;
+  client_received += v->size;
 }
 static void receive_cb(void *u, cnet_connection c, const cnet_receive_view *v) {
   (void)u;
@@ -191,6 +197,7 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     uint64_t wait;
     stopping = false;
     connected = terminals = raw_sends = tags = received = accept_count = gate_calls = 0u;
+    client_received = 0u;
     tag_status = SALTS_OK;
     last_tag = 0u;
 #if defined(CNET_COMPOSITION_TLS)
@@ -241,7 +248,8 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     d.client = &client;
     d.manager = &manager;
     d.connection.uri = uri;
-    d.connection.observer = (cnet_observer){.on_state = state_cb, .on_send = sent_cb};
+    d.connection.observer = (cnet_observer){
+        .on_state = state_cb, .on_send = sent_cb, .on_receive = client_receive_cb};
     d.recovery = (cnet_reconnect_config){sizeof(d.recovery),
                                          CNET_RECOVERY_POLICY_VERSION,
                                          3u,
@@ -468,6 +476,9 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
                                            "abcdefghijklmnopqrstuvwx", 24u, 11u),
                 SALTS_OK);
     check_equal(cnet_websocket_transport_advance(&ws_transport, 1u, &events), SALTS_OK);
+    /* The bridge owns writes only. If the local write completes successfully,
+     * host receive demand is still needed to observe the peer's EOF/reset. */
+    check_equal(cnet_receive(&client, outgoing, 1u), SALTS_OK);
     while (terminals == 0u && cmeta_monotonic_ms() < until) {
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       check_equal(cnet_manager_advance(&manager, 2u, &work), SALTS_OK);
@@ -476,6 +487,7 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     check_equal(terminals, 1u);
     check_equal(tags, 1u); /* one authoritative terminal, OK or native failure */
     check_equal(raw_sends, 0u); /* WS notifications never leak into raw sends */
+    check_equal(client_received, (size_t)0u);
     {
       const int settled_status = tag_status;
       /* Once the peer has terminated, another bounded advance may return
