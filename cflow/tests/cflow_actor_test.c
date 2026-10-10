@@ -1522,6 +1522,21 @@ suite("CFlow Actor lifecycle") {
     }
 }
 
+typedef struct actor_foreign_stop_context {
+    cflow_actor *actor;
+    atomic_bool started;
+    atomic_bool finished;
+    atomic_int status;
+} actor_foreign_stop_context;
+
+static void actor_foreign_stop(void *user) {
+    actor_foreign_stop_context *context = (actor_foreign_stop_context *)user;
+    atomic_store(&context->started, true);
+    atomic_store(&context->status,
+                 (int)cflow_actor_request_stop(context->actor));
+    atomic_store(&context->finished, true);
+}
+
 /* #1105: foreign stop must synchronize with an executing worker pump. */
 suite("CFlow worker Actor cross-thread terminal synchronization") {
     it("settles a blocked worker action and foreign stop exactly once") {
@@ -1534,6 +1549,8 @@ suite("CFlow worker Actor cross-thread terminal synchronization") {
             const cflow_event_view event = {
                 100u, &cmeta_type_int, &payload};
             cflow_actor_stats stats = {0};
+            actor_foreign_stop_context stop = {0};
+            cmeta_thread_t stop_thread = {0};
 
             check_true(actor_edge_fixture_init(&fixture, 1u));
             fixture.probe.blocker = &blocker;
@@ -1546,9 +1563,16 @@ suite("CFlow worker Actor cross-thread terminal synchronization") {
 
             /* Main/control lane requests stop while worker is inside
              * a real Machine action; callback never holds run lock. */
-            check_equal(cflow_actor_request_stop(&fixture.actor),
-                        CFLOW_ACTOR_OK);
+            stop.actor = &fixture.actor;
+            check_equal(cmeta_thread_create(
+                            &stop_thread, actor_foreign_stop, &stop), 0);
+            check_true(wait_until_true(&stop.started));
+            /* Release the owner worker while a separate control lane is
+             * independently requesting termination. */
             atomic_store(&blocker.release, true);
+            check_true(wait_until_true(&stop.finished));
+            check_equal(cmeta_thread_join(&stop_thread), 0);
+            check_equal(atomic_load(&stop.status), (int)CFLOW_ACTOR_OK);
             check_equal(cflow_actor_wait(&fixture.actor),
                         CFLOW_ACTOR_STATE_STOPPED);
             check_true(cflow_actor_get_stats(&fixture.actor, &stats));
