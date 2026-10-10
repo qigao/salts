@@ -91,6 +91,7 @@ add_subdirectory(cserde)
 add_subdirectory(utils)
 # Exact RC5 Unicode source component; exported Salts::Unicode is required by SaltsUtils.
 add_subdirectory(unicode)
+add_subdirectory(idna)
 
 if(WIN32)
   enable_language(RC)
