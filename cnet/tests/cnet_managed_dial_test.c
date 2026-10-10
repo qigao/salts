@@ -1,4 +1,5 @@
 #include <cnet/managed_dial.h>
+#include <fmt.h>
 #include <salts/clock.h>
 #include <salts/thread.h>
 #include <tinytest.h>
@@ -49,6 +50,7 @@ static cnet_manager close_manager;
 static cnet_managed_dial close_dial;
 static cnet_listener close_listener;
 static dial_close_probe close_target, close_neighbor, close_peer;
+static tstr close_uri;
 
 static void close_state(void *user, cnet_connection connection,
                          cnet_connection_state state, const cnet_error *error) {
@@ -116,6 +118,8 @@ spec("ManagedDial close admission under bounded backpressure") {
       check_warn(cnet_listener_close(&close_listener) == SALTS_OK);
       check_warn(cnet_listener_destroy(&close_listener) == SALTS_OK);
     }
+    tstr_free(close_uri);
+    close_uri = NULL;
   }
   it("retains failed close admission until retry without closing a managed neighbor") {
     cnet_managed_dial_config config = {0};
@@ -129,15 +133,15 @@ spec("ManagedDial close admission under bounded backpressure") {
                    .user = &close_neighbor}};
     cnet_connect_options options = {.observer = attachment.observer};
     uint16_t port = 0u;
-    char uri[128];
     uint64_t wait = 0u, until = cmeta_monotonic_ms() + DIAL_TEST_MAX_MS;
     check_equal(cnet_listener_port(&close_listener, &port), SALTS_OK);
-    (void)snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned)port);
+    close_uri = tstr_format("tcp://127.0.0.1:{}", port);
+    check_not_null(close_uri);
     config.size = sizeof(config);
     config.version = CNET_MANAGED_DIAL_VERSION;
     config.client = &close_client;
     config.manager = &close_manager;
-    config.connection.uri = uri;
+    config.connection.uri = close_uri;
     config.connection.observer = (cnet_observer){
       .on_state = close_state, .on_receive = close_receive, .user = &close_target};
     config.recovery = (cnet_reconnect_config){
@@ -155,7 +159,7 @@ spec("ManagedDial close admission under bounded backpressure") {
      * real CONNECT fills its only slot; no poll occurs before both seal calls. */
     check_equal(cnet_receive(&close_client, snapshot.connection, 1u), SALTS_OK);
     check_equal(cnet_manager_reserve(&close_manager, &attachment, &neighbor), SALTS_OK);
-    options.uri = uri;
+    options.uri = close_uri;
     check_equal(cnet_manager_connect(&close_manager, neighbor, &options,
                                      &neighbor_connection), SALTS_OK);
     check_equal(cnet_managed_dial_seal(&close_dial), SALTS_ENOBUFS);
