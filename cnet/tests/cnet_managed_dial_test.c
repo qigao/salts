@@ -40,6 +40,161 @@ static cnet_reconnect_failure_kind transient_network(void *user,
   /* This test expressly authorizes retry of a refused *connection only*. */
   return CNET_RECONNECT_TRANSIENT;
 }
+
+typedef struct dial_close_probe {
+  size_t connected, terminal, received;
+} dial_close_probe;
+static cnet_client close_client, close_peers;
+static cnet_manager close_manager;
+static cnet_managed_dial close_dial;
+static cnet_listener close_listener;
+static dial_close_probe close_target, close_neighbor, close_peer;
+
+static void close_state(void *user, cnet_connection connection,
+                         cnet_connection_state state, const cnet_error *error) {
+  dial_close_probe *probe = user;
+  (void)connection; (void)error;
+  if (state == CNET_CONNECTION_CONNECTED) ++probe->connected;
+  if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED)
+    ++probe->terminal;
+}
+static void close_receive(void *user, cnet_connection connection,
+                           const cnet_receive_view *view) {
+  dial_close_probe *probe = user;
+  (void)connection;
+  const char expected[] = "ok";
+  check_true(probe->received <= 2u && view->size <= 2u - probe->received);
+  check_equal(view->data, expected + probe->received, view->size);
+  probe->received += view->size;
+}
+static void close_progress(void) {
+  size_t events = 0u, work = 0u;
+  check_equal(cnet_client_poll(&close_client, 1u, &events), SALTS_OK);
+  check_equal(cnet_client_poll(&close_peers, 1u, &events), SALTS_OK);
+  check_equal(cnet_manager_advance(&close_manager, 2u, &work), SALTS_OK);
+}
+
+spec("ManagedDial close admission under bounded backpressure") {
+  before_each() {
+    const cnet_client_config config = {
+      .backend = dial_backend(), .connection_capacity = 2u,
+      .command_capacity = 1u, .request_capacity = 8u,
+      .completion_batch_capacity = 8u, .event_capacity = 8u,
+      .max_send_bytes = 1024u, .receive_buffer_bytes = 1024u,
+      .connect_timeout_ms = DIAL_TEST_MAX_MS,
+      .read_timeout_ms = DIAL_TEST_MAX_MS,
+      .write_timeout_ms = DIAL_TEST_MAX_MS};
+    cnet_client_config peers = config;
+    peers.command_capacity = 4u;
+    const cnet_listener_config listener = {dial_backend(), "127.0.0.1", 0u, 8u};
+    const cnet_manager_config manager = {
+      sizeof(manager), CNET_MANAGER_VERSION, &close_client, 2u, 2u};
+    close_target = close_neighbor = close_peer = (dial_close_probe){0};
+    check_equal(cnet_client_init(&close_client, &config), SALTS_OK);
+    check_equal(cnet_client_init(&close_peers, &peers), SALTS_OK);
+    check_equal(cnet_listener_init(&close_listener, &listener), SALTS_OK);
+    check_equal(cnet_manager_init(&close_manager, &manager), SALTS_OK);
+  }
+  after_each() {
+    size_t work = 0u;
+    if (close_dial.impl != NULL) (void)cnet_managed_dial_seal(&close_dial);
+    if (close_client.impl != NULL)
+      check_warn(cnet_client_stop(&close_client, DIAL_TEST_MAX_MS) == SALTS_OK);
+    if (close_manager.impl != NULL)
+      check_warn(cnet_manager_advance(&close_manager, 2u, &work) == SALTS_OK);
+    if (close_dial.impl != NULL)
+      check_warn(cnet_managed_dial_destroy(&close_dial) == SALTS_OK);
+    if (close_manager.impl != NULL)
+      check_warn(cnet_manager_destroy(&close_manager) == SALTS_OK);
+    if (close_client.impl != NULL)
+      check_warn(cnet_client_destroy(&close_client) == SALTS_OK);
+    if (close_peers.impl != NULL) {
+      check_warn(cnet_client_stop(&close_peers, DIAL_TEST_MAX_MS) == SALTS_OK);
+      check_warn(cnet_client_destroy(&close_peers) == SALTS_OK);
+    }
+    if (close_listener.impl != NULL) {
+      check_warn(cnet_listener_close(&close_listener) == SALTS_OK);
+      check_warn(cnet_listener_destroy(&close_listener) == SALTS_OK);
+    }
+  }
+  it("retains failed close admission until retry without closing a managed neighbor") {
+    cnet_managed_dial_config config = {0};
+    cnet_managed_dial_snapshot snapshot = {0};
+    cnet_managed_connection neighbor = {0};
+    cnet_connection neighbor_connection = {0}, target_peer = {0}, neighbor_peer = {0};
+    const cnet_observer peer_observer = {
+      .on_state = close_state, .on_receive = close_receive, .user = &close_peer};
+    const cnet_manager_attachment attachment = {
+      .observer = {.on_state = close_state, .on_receive = close_receive,
+                   .user = &close_neighbor}};
+    cnet_connect_options options = {.observer = attachment.observer};
+    uint16_t port = 0u;
+    char uri[128];
+    uint64_t wait = 0u, until = cmeta_monotonic_ms() + DIAL_TEST_MAX_MS;
+    check_equal(cnet_listener_port(&close_listener, &port), SALTS_OK);
+    (void)snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned)port);
+    config.size = sizeof(config);
+    config.version = CNET_MANAGED_DIAL_VERSION;
+    config.client = &close_client;
+    config.manager = &close_manager;
+    config.connection.uri = uri;
+    config.connection.observer = (cnet_observer){
+      .on_state = close_state, .on_receive = close_receive, .user = &close_target};
+    config.recovery = (cnet_reconnect_config){
+      sizeof(cnet_reconnect_config), CNET_RECOVERY_POLICY_VERSION, 1u,
+      until, 10u, 20u, 17u};
+    config.recovery_episode_ms = DIAL_TEST_MAX_MS;
+    check_equal(cnet_managed_dial_init(&close_dial, &config), SALTS_OK);
+    check_equal(cnet_managed_dial_advance(&close_dial, cmeta_monotonic_ms(), &wait), SALTS_OK);
+    while (close_target.connected == 0u && cmeta_monotonic_ms() < until) close_progress();
+    check_equal(close_target.connected, (size_t)1u);
+    check_equal(cnet_listener_accept(&close_listener, &close_peers, &peer_observer,
+                                     &target_peer), SALTS_OK);
+    check_equal(cnet_managed_dial_get_snapshot(&close_dial, &snapshot), SALTS_OK);
+    /* Pending receive forces close through the command queue. The neighbor's
+     * real CONNECT fills its only slot; no poll occurs before both seal calls. */
+    check_equal(cnet_receive(&close_client, snapshot.connection, 1u), SALTS_OK);
+    check_equal(cnet_manager_reserve(&close_manager, &attachment, &neighbor), SALTS_OK);
+    options.uri = uri;
+    check_equal(cnet_manager_connect(&close_manager, neighbor, &options,
+                                     &neighbor_connection), SALTS_OK);
+    check_equal(cnet_managed_dial_seal(&close_dial), SALTS_ENOBUFS);
+    check_equal(cnet_managed_dial_get_snapshot(&close_dial, &snapshot), SALTS_OK);
+    check_true(snapshot.stopping);
+    check_equal(cnet_managed_dial_seal(&close_dial), SALTS_ENOBUFS);
+    check_equal(cnet_managed_dial_destroy(&close_dial), SALTS_EBUSY);
+    check_equal(cnet_managed_dial_advance(&close_dial, cmeta_monotonic_ms(), &wait),
+                 SALTS_ESHUTDOWN);
+    while (close_neighbor.connected == 0u && cmeta_monotonic_ms() < until) close_progress();
+    check_equal(close_neighbor.connected, (size_t)1u);
+    check_equal(cnet_listener_accept(&close_listener, &close_peers, &peer_observer,
+                                     &neighbor_peer), SALTS_OK);
+    check_equal(cnet_managed_dial_seal(&close_dial), SALTS_OK);
+    check_equal(cnet_managed_dial_seal(&close_dial), SALTS_OK);
+    while (snapshot.managed.slot != 0u && cmeta_monotonic_ms() < until) {
+      close_progress();
+      check_equal(cnet_managed_dial_get_snapshot(&close_dial, &snapshot), SALTS_OK);
+    }
+    check_equal(snapshot.managed.slot, (size_t)0u);
+    check_equal(close_target.terminal, (size_t)1u);
+    check_equal(close_neighbor.terminal, (size_t)0u);
+    check_equal(cnet_managed_dial_destroy(&close_dial), SALTS_OK);
+
+    /* The shared Manager neighbor remains usable after the dial has retired. */
+    check_equal(cnet_receive(&close_peers, neighbor_peer, 1u), SALTS_OK);
+    mem_buffer_t *payload = mem_get_buffer(mem_global(), 2u);
+    check_not_null(payload);
+    memcpy(mem_buffer_data(payload), "ok", 2u);
+    mem_set_used(payload, 2u);
+    const int send_status = cnet_send_buffer(&close_client, neighbor_connection, payload);
+    mem_buffer_release(payload);
+    check_equal(send_status, SALTS_OK);
+    while (close_peer.received != 2u && cmeta_monotonic_ms() < until) close_progress();
+    check_equal(close_peer.received, (size_t)2u);
+    check_equal(close_neighbor.terminal, (size_t)0u);
+    check_equal(close_target.terminal, (size_t)1u);
+  }
+}
 spec("CNet owner-driven managed dial and reconnection") {
   it("uses real manager connect attempts without replaying application sends") {
     const cnet_client_config client_config = {

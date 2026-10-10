@@ -86,7 +86,11 @@ int cnet_managed_dial_get_snapshot(cnet_managed_dial *dial,
                                    cnet_managed_dial_snapshot *out);
 
 /* Stop only this dial's own physical connection, never unrelated manager
- * records. Existing CNet terminal/Manager recycle must still complete. */
+ * records. Recovery is sealed even when close admission fails. On failure,
+ * keep the dial and drive CNet/Manager progress, then retry seal; repeated seal
+ * reports the pending admission error until close is accepted. After success,
+ * repeated seal is idempotent. Existing CNet terminal/Manager recycle must still
+ * complete before destroy. advance remains ESHUTDOWN after recovery is sealed. */
 int cnet_managed_dial_seal(cnet_managed_dial *dial);
 int cnet_managed_dial_destroy(cnet_managed_dial *dial); /* EBUSY until recycle. */
 
