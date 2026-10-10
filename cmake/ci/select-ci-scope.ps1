@@ -17,15 +17,17 @@ $full = $EventName -eq "workflow_dispatch"
 # Normal ACE development runs full Linux CTest. An explicit [ACE-MATRIX]
 # marker on the same long-lived Draft PR runs host-complete integration tests
 # and cross-builds; the marker is removable after the qualification checkpoint.
+$cflow1105Qualification = $HeadBranch -eq 'fix/cflow-1105-cross-thread-stop' -and
+  $EventName -eq 'pull_request' -and -not $PrepareRelease
 $aceBranchPr = ($HeadBranch -eq 'feature/cmeta-ace-patterns' -or
-  ($HeadBranch -eq 'fix/cflow-1105-cross-thread-stop' -and $AceSan)) -and
+  ($cflow1105Qualification -and $AceSan)) -and
   $EventName -eq 'pull_request' -and -not $PrepareRelease
 if (($AceMatrix -or $AceSan) -and -not $aceBranchPr) {
   throw "ACE qualification is restricted to its long-lived PR"
 }
 if ($AceMatrix -and $AceSan) { throw "ACE-MATRIX and ACE-SAN are exclusive" }
-$acePatternsDevelopment = $aceBranchPr -and -not $AceMatrix
-$aceFullMatrixQualification = $aceBranchPr -and $AceMatrix
+$acePatternsDevelopment = $aceBranchPr -and -not $AceMatrix -and -not $cflow1105Qualification
+$aceFullMatrixQualification = ($aceBranchPr -and $AceMatrix) -or $cflow1105Qualification
 $aceSanitizerQualification = $aceBranchPr -and $AceSan
 # Preserve the historical integration branch's complete Linux coverage.
 $componentIntegration = ($HeadBranch -eq 'feature/cmeta-pattern-component-runtime' -and
@@ -171,6 +173,13 @@ if ($aceSanitizerQualification) {
 }
 $builds = @()
 foreach ($profile in $profiles) {
+  # #1105 runs existing Linux sanitizer profiles and the full host test matrix,
+  # not cross-compilation/package jobs. This cannot affect the long-lived ACE PR.
+  if ($cflow1105Qualification -and $profile.id -notin @(
+      'linux-release', 'windows-release', 'macos-release',
+      'macos-clang-release', 'linux-ace-asan-ubsan', 'linux-ace-tsan')) {
+    continue
+  }
   # Keep regular ACE PRs on Linux only, but do not discard the explicit
   # ASan+UBSan/TSan Debug profiles supplied for an [ACE-SAN] qualification.
   if ($acePatternsDevelopment -and $profile.id -ne 'linux-release' -and
